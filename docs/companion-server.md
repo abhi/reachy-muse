@@ -41,7 +41,7 @@ reachy-companion serve
 
 The server listens on port 8765 at the path `/v1`, with TLS and the paired certificate. Stop it with Ctrl-C.
 
-`reachy-companion serve --insecure` serves plain `ws://` without TLS. Use it only for tests.
+`reachy-companion serve --insecure` serves plain `ws://` without TLS, and listens only on 127.0.0.1 unless you pass `--bind`. Use it only for tests.
 
 ## Add the companion to the robot
 

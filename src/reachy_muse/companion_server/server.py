@@ -10,6 +10,7 @@ import asyncio
 import hmac
 import logging
 import ssl
+from contextlib import aclosing
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Awaitable, Callable, Dict, Optional, Sequence, Tuple, Union
@@ -51,7 +52,7 @@ from musegadget.reachy_companion_protocol import (
     encode_audio,
 )
 
-from reachy_companion.engines import Endpoint, Hearing, HearingSession, Narrator, Partial, Voice
+from reachy_companion.engines import Endpoint, Hearing, Narrator, Partial, Voice
 
 log = logging.getLogger("reachy_companion")
 
@@ -59,6 +60,7 @@ SUPPORTED_VERSIONS = (VERSION,)
 PATH = "/v1"
 HELLO_TIMEOUT = 5.0
 CLOSE_POLICY_VIOLATION = 1008
+CLOSE_INTERNAL_ERROR = 1011
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,8 @@ class CompanionServer:
     """`async with CompanionServer(engines, token) as server:` serves until the block exits."""
 
     def __init__(self, engines: Engines, token: str, *, ssl_context: Optional[ssl.SSLContext] = None, host: str = "127.0.0.1", port: int = 0) -> None:
+        offered = engines.offered()
+        encode(Welcome(VERSION, tuple(offered), tuple((op.value, name) for op, name in offered.items())))  # refuse names the codec would refuse
         self.engines = engines
         self.token = token.encode()
         self.ssl_context = ssl_context
@@ -124,7 +128,8 @@ def _only_v1(connection: ServerConnection, request):
 
 @dataclass
 class _Hear:
-    session: HearingSession
+    """Microphone frames and the finishing close, in arrival order. Abort and gap cancel the task instead."""
+
     queue: "asyncio.Queue[Union[bytes, CloseHow]]"
     task: Optional[asyncio.Task] = None
 
@@ -166,9 +171,11 @@ class _Session:
                         await self._message(decode(frame, sender=Sender.ROBOT))
                 except ProtocolError as error:
                     await self._send(_error(error.code, str(error)))
+                except ConnectionClosed:
+                    raise
                 except Exception as error:
                     log.exception("handling a frame failed")
-                    await self._send(_error(ErrorCode.INTERNAL, f"{type(error).__name__}: {error}"))
+                    await self._fatal(ErrorCode.INTERNAL, error)
         finally:
             await self._stop_everything()
 
@@ -219,15 +226,17 @@ class _Session:
         if message.stream in self.hearing:
             await self._send(_error(ErrorCode.BAD_REQUEST, f"hear stream {message.stream} is already open", stream=message.stream))
             return
-        assert self.engines.hearing is not None
-        hear = _Hear(self.engines.hearing.open(message.pre_roll_frames), asyncio.Queue())
-        self.hearing[message.stream] = hear
-        hear.task = asyncio.create_task(self._guard(lambda: self._hear(message.stream, hear), stream=message.stream))
+        hear = self.hearing[message.stream] = _Hear(asyncio.Queue())
+        hear.task = asyncio.create_task(self._guard(lambda: self._hear(message, hear), stream=message.stream))
 
     async def _hear_close(self, message: HearClose) -> None:
         hear = self.hearing.get(message.stream)
-        if hear is not None:
-            hear.queue.put_nowait(message.how)
+        if hear is None:
+            return
+        if message.how is CloseHow.FINISH:
+            hear.queue.put_nowait(CloseHow.FINISH)
+        else:
+            self._end_hearing(message.stream, hear)
 
     async def _audio(self, frame: AudioFrame) -> None:
         if frame.kind is not AudioKind.MIC:
@@ -240,24 +249,23 @@ class _Session:
             self.sequence.accept(frame)
         except ProtocolError as error:
             self._end_hearing(frame.stream, hear)
-            hear.queue.put_nowait(CloseHow.ABORT)
             await self._send(_error(ErrorCode.GAP, str(error), stream=frame.stream))
             return
         hear.queue.put_nowait(frame.pcm)
 
-    async def _hear(self, stream: int, hear: _Hear) -> None:
-        rev = 0
+    async def _hear(self, message: HearOpen, hear: _Hear) -> None:
+        assert self.engines.hearing is not None
+        stream, rev = message.stream, 0
+        session = self.engines.hearing.open(message.pre_roll_frames)
         try:
             while True:
                 item = await hear.queue.get()
-                if item is CloseHow.ABORT:
-                    return
                 if item is CloseHow.FINISH:
-                    text = await hear.session.finish()
+                    text = await session.finish()
                     self._end_hearing(stream, hear)
                     await self._send(HearEndpoint(stream, text, True))
                     return
-                for event in await hear.session.feed(item):
+                for event in await session.feed(item):
                     if isinstance(event, Partial):
                         await self._send(HearPartial(stream, rev, event.text))
                         rev += 1
@@ -267,12 +275,16 @@ class _Session:
                         return
         finally:
             self._end_hearing(stream, hear)
-            await hear.session.close()
+            await session.close()
 
     def _end_hearing(self, stream: int, hear: _Hear) -> None:
+        """Free the stream id at once; a cancelled task sends nothing more under it."""
         if self.hearing.get(stream) is hear:
             del self.hearing[stream]
             self.sequence.forget(stream)
+            assert hear.task is not None
+            if hear.task is not asyncio.current_task():
+                hear.task.cancel()
 
     # ---- speak
 
@@ -297,11 +309,12 @@ class _Session:
         frame_bytes = self.out_rate // 10 * 2
         pending = b""
         try:
-            async for chunk in self.engines.voice.speak(message.text, message.voice, self.out_rate):
-                pending += chunk
-                while len(pending) >= frame_bytes:
-                    await self._speech_frame(message.stream, speech, pending[:frame_bytes])
-                    pending = pending[frame_bytes:]
+            async with aclosing(self.engines.voice.speak(message.text, message.voice, self.out_rate)) as chunks:
+                async for chunk in chunks:
+                    pending += chunk
+                    while len(pending) >= frame_bytes:
+                        await self._speech_frame(message.stream, speech, pending[:frame_bytes])
+                        pending = pending[frame_bytes:]
             if pending:
                 await self._speech_frame(message.stream, speech, pending)
         finally:
@@ -347,20 +360,21 @@ class _Session:
             pass
         except Exception as error:
             log.exception("op failed (stream=%s id=%s)", stream, id)
-            try:
-                await self._send(_error(ErrorCode.MODEL, f"{type(error).__name__}: {error}", stream=stream, id=id))
-            except ConnectionClosed:
-                pass
+            await self._fatal(ErrorCode.MODEL, error, stream=stream, id=id)
+
+    async def _fatal(self, code: ErrorCode, error: Exception, *, stream: Optional[int] = None, id: Optional[int] = None) -> None:
+        """Spec rule 5: error{model|internal} takes the link down on the robot, so close it here too."""
+        try:
+            await self._send(_error(code, f"{type(error).__name__}: {error}", stream=stream, id=id))
+            await self.ws.close(CLOSE_INTERNAL_ERROR, code.value)
+        except ConnectionClosed:
+            pass
 
     async def _stop_everything(self) -> None:
-        """Abort hearing through its queue, so each session is closed even if its task has not started yet."""
-        hearing = [h.task for h in self.hearing.values()]
-        for hear in self.hearing.values():
-            hear.queue.put_nowait(CloseHow.ABORT)
-        cancelled = [s.task for s in self.speaking.values()] + list(self.narrating.values())
-        for task in cancelled:
+        tasks = [h.task for h in self.hearing.values()] + [s.task for s in self.speaking.values()] + list(self.narrating.values())
+        for task in tasks:
             task.cancel()
-        await asyncio.gather(*hearing, *cancelled, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 _ROUTES: Dict[type, Tuple[Optional[Op], Callable[[_Session, Message], Awaitable[None]]]] = {

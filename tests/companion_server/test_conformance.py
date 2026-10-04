@@ -45,7 +45,7 @@ from musegadget.reachy_companion_protocol import (
     message_type,
 )
 
-from reachy_companion.engines import EchoNarrator, ScriptedHearing, ToneVoice
+from reachy_companion.engines import EchoNarrator, Partial, ScriptedHearing, ToneVoice
 from reachy_companion.pair import pair
 from reachy_companion.server import CompanionServer, Engines
 
@@ -120,6 +120,41 @@ class FailingNarrator(EchoNarrator):
 
     async def lines(self, request, reply):
         raise RuntimeError("boom")
+
+    async def acknowledge(self, request):
+        return tuple(NarratedLine(f"Line {n}.", None) for n in range(4))
+
+
+class SlowHearing:
+    """A partial for every frame, 50 ms after it arrives: slower than the robot sends."""
+
+    name = "slow"
+
+    def __init__(self, *, stall=False):
+        self.stall = stall
+        self.closed = []
+
+    def open(self, pre_roll_frames):
+        hearing, index = self, len(self.closed)
+        self.closed.append(False)
+
+        class Session:
+            heard = 0
+
+            async def feed(self, pcm):
+                if hearing.stall:
+                    await asyncio.Event().wait()
+                await asyncio.sleep(0.05)
+                self.heard += 1
+                return [Partial(f"p{self.heard}")]
+
+            async def finish(self):
+                return f"p{self.heard}"
+
+            async def close(self):
+                hearing.closed[index] = True
+
+        return Session()
 
 
 def scenario(script, *, engines=STUBS, **server):
@@ -237,6 +272,41 @@ def test_aborted_hear_stream_gets_no_endpoint():
     scenario(script)
 
 
+def test_abort_silences_a_busy_hear_stream_and_frees_its_id():
+    async def script(companion):
+        ws = await connected(companion)
+        await send(ws, HearOpen(stream=1, pre_roll_frames=0))
+        await mic(ws, 1, range(3))
+        await asyncio.sleep(0.03)
+        await send(ws, HearClose(stream=1, how=CloseHow.ABORT))
+        await send(ws, HearOpen(stream=1, pre_roll_frames=0))
+        await mic(ws, 1, [0])
+        await send(ws, HearClose(stream=1, how=CloseHow.FINISH))
+        assert [await recv(ws) for _ in range(2)] == [HearPartial(1, 0, "p1"), HearEndpoint(1, "p1", True)]
+        await asyncio.sleep(0.3)
+        await nothing_else_arrived(ws)
+        assert hearing.closed == [True, True]
+
+    hearing = SlowHearing()
+    scenario(script, engines=Engines(hearing=hearing, narrator=EchoNarrator()))
+
+
+def test_gap_silences_a_busy_hear_stream():
+    async def script(companion):
+        ws = await connected(companion)
+        await send(ws, HearOpen(stream=1, pre_roll_frames=0))
+        await mic(ws, 1, [0, 1])
+        await asyncio.sleep(0.03)
+        await mic(ws, 1, [3])
+        assert await recv(ws) == Error(ErrorCode.GAP, "gap/gap: stream 1 expected seq 2, got 3", stream=1)
+        await asyncio.sleep(0.3)
+        await nothing_else_arrived(ws)
+        assert hearing.closed == [True]
+
+    hearing = SlowHearing()
+    scenario(script, engines=Engines(hearing=hearing, narrator=EchoNarrator()))
+
+
 def test_microphone_gap_fails_only_that_stream():
     async def script(companion):
         ws = await connected(companion)
@@ -312,8 +382,28 @@ def test_narrator_failure_is_error_model_for_that_id():
         ws = await connected(companion)
         await send(ws, Narrate(id=7, op=NarrateOp.LINES, request="hi", reply="Hello."))
         assert await recv(ws) == Error(ErrorCode.MODEL, "RuntimeError: boom", id=7)
+        with pytest.raises(ConnectionClosed):
+            await recv(ws)
+        assert ws.close_code == 1011
 
     scenario(script, engines=Engines(narrator=FailingNarrator()))
+
+
+def test_narrator_output_the_codec_refuses_is_error_model():
+    async def script(companion):
+        ws = await connected(companion)
+        await send(ws, Narrate(id=8, op=NarrateOp.ACKNOWLEDGE, request="hi"))
+        assert await recv(ws) == Error(ErrorCode.MODEL, "ProtocolError: bad_request/too_many: lines has more than 3 items", id=8)
+
+    scenario(script, engines=Engines(narrator=FailingNarrator()))
+
+
+def test_model_names_the_codec_would_refuse_fail_at_startup():
+    class LongName(EchoNarrator):
+        name = "n" * 121
+
+    with pytest.raises(ProtocolError):
+        CompanionServer(Engines(narrator=LongName()), TOKEN)
 
 
 @pytest.mark.parametrize(
@@ -381,6 +471,21 @@ def test_shutdown_closes_the_robot_with_going_away():
         return ws.close_code
 
     assert asyncio.run(asyncio.wait_for(script(), 10)) == 1001
+
+
+def test_shutdown_with_a_stalled_hearing_engine_still_closes_the_session():
+    async def script():
+        async with CompanionServer(Engines(hearing=hearing), TOKEN) as companion:
+            ws = await connected(companion)
+            await send(ws, HearOpen(stream=1, pre_roll_frames=0))
+            await mic(ws, 1, [0])
+            await asyncio.sleep(0.1)
+        with pytest.raises(ConnectionClosed):
+            await recv(ws)
+        return ws.close_code, hearing.closed
+
+    hearing = SlowHearing(stall=True)
+    assert asyncio.run(asyncio.wait_for(script(), 3)) == (1001, [True])
 
 
 def test_cli_serve_answers_a_robot_and_stops_on_sigint(tmp_path):

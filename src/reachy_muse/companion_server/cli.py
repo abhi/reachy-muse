@@ -24,7 +24,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     pair_command.add_argument("--force", action="store_true", help="replace the existing pairing; every robot must be added again")
 
     serve_command = commands.add_parser("serve", help="serve the robot")
-    serve_command.add_argument("--bind", default="0.0.0.0", help="the address to listen on")
+    serve_command.add_argument("--bind", help="the address to listen on (default: every interface, or 127.0.0.1 with --insecure)")
     serve_command.add_argument("--port", type=int, default=pairing.DEFAULT_PORT)
     serve_command.add_argument("--insecure", action="store_true", help="plain ws:// without TLS, for tests only")
 
@@ -46,7 +46,7 @@ async def _serve(args: argparse.Namespace) -> None:
     stop = asyncio.get_running_loop().create_future()
     for sig in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(sig, lambda: stop.done() or stop.set_result(None))
-    async with CompanionServer(engines, paired.token, ssl_context=tls, host=args.bind, port=args.port) as server:
+    async with CompanionServer(engines, paired.token, ssl_context=tls, host=args.bind or ("127.0.0.1" if args.insecure else "0.0.0.0"), port=args.port) as server:
         logging.info("serving %s (stub engines)%s", server.url, "  INSECURE: no TLS" if args.insecure else "")
         await stop
     logging.info("stopped")

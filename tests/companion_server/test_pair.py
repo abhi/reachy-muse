@@ -39,3 +39,12 @@ def test_pair_fills_in_a_missing_token_without_touching_the_certificate(tmp_path
     (tmp_path / "token").unlink()
     healed = pair(tmp_path, hosts=["studio.local"])
     assert healed.pin == first.pin and healed.token != first.token
+
+
+def test_pair_replaces_a_certificate_that_does_not_match_its_key(tmp_path):
+    first = pair(tmp_path, hosts=["studio.local"])
+    (tmp_path / "key.pem").write_bytes(pair(tmp_path / "other", hosts=["x"]).key_path.read_bytes())
+    (tmp_path / "token").chmod(0o644)
+    healed = pair(tmp_path, hosts=["studio.local"])
+    assert (healed.pin != first.pin, healed.token == first.token, mode(tmp_path / "token")) == (True, True, 0o600)
+    healed.tls_context()

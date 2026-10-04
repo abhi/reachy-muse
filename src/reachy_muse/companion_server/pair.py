@@ -62,13 +62,24 @@ def pair(state_dir: Path, *, hosts: Iterable[str], force: bool = False) -> Pairi
     state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     state_dir.chmod(0o700)
     cert, key, token = state_dir / "cert.pem", state_dir / "key.pem", state_dir / "token"
-    if force or not (cert.exists() and key.exists()):
+    if force or not _usable(cert, key):
         cert_pem, key_pem = _self_signed(list(hosts))
         _write(key, key_pem)
         _write(cert, cert_pem)
     if force or not token.exists():
         _write(token, ("rc1_" + base64.urlsafe_b64encode(secrets.token_bytes(TOKEN_BYTES)).rstrip(b"=").decode()).encode())
+    for path in (cert, key, token):
+        path.chmod(0o600)
     return load(state_dir)
+
+
+def _usable(cert: Path, key: Path) -> bool:
+    """False for a missing file or a key from a run that crashed before writing its certificate."""
+    try:
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert, key)
+    except (OSError, ssl.SSLError):
+        return False
+    return True
 
 
 def load(state_dir: Path) -> Pairing:
