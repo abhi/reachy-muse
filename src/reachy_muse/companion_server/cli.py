@@ -27,6 +27,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     serve_command.add_argument("--bind", help="the address to listen on (default: every interface, or 127.0.0.1 with --insecure)")
     serve_command.add_argument("--port", type=int, default=pairing.DEFAULT_PORT)
     serve_command.add_argument("--insecure", action="store_true", help="plain ws:// without TLS, for tests only")
+    serve_command.add_argument("--engines", choices=("real", "stub"), default="real", help="real speech models, or the stubs the tests use")
+    serve_command.add_argument("--delay-ms", type=int, default=480, help="Voxtral's transcription delay; lower is faster and may be less accurate")
+    serve_command.add_argument("--final-pass", action=argparse.BooleanOptionalAction, default=True, help="re-transcribe each whole utterance with Parakeet when the turn ends")
 
     args = parser.parse_args(argv)
     if args.command == "pair":
@@ -41,12 +44,25 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
 async def _serve(args: argparse.Namespace) -> None:
     paired = pairing.load(args.state_dir)
-    engines = Engines(hearing=ScriptedHearing(), voice=ToneVoice(), narrator=EchoNarrator())
+    engines = await _engines(args)
     tls = None if args.insecure else paired.tls_context()
     stop = asyncio.get_running_loop().create_future()
     for sig in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(sig, lambda: stop.done() or stop.set_result(None))
     async with CompanionServer(engines, paired.token, ssl_context=tls, host=args.bind or ("127.0.0.1" if args.insecure else "0.0.0.0"), port=args.port) as server:
-        logging.info("serving %s (stub engines)%s", server.url, "  INSECURE: no TLS" if args.insecure else "")
+        logging.info("serving %s (%s engines)%s", server.url, args.engines, "  INSECURE: no TLS" if args.insecure else "")
         await stop
     logging.info("stopped")
+
+
+async def _engines(args: argparse.Namespace) -> Engines:
+    if args.engines == "stub":
+        return Engines(hearing=ScriptedHearing(), voice=ToneVoice(), narrator=EchoNarrator())
+    from reachy_companion.hearing_voxtral import HearingConfig, VoxtralHearing
+    from reachy_companion.voice_kokoro import KokoroVoice
+
+    hearing = VoxtralHearing(HearingConfig(delay_ms=args.delay_ms, final_pass=args.final_pass))
+    voice = KokoroVoice()
+    logging.info("loading the speech models; the first run downloads about 5.6 GB")
+    await asyncio.gather(hearing.load(), voice.load())
+    return Engines(hearing=hearing, voice=voice, narrator=EchoNarrator())

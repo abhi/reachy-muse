@@ -492,7 +492,7 @@ def test_cli_serve_answers_a_robot_and_stops_on_sigint(tmp_path):
     state = ["--state-dir", str(tmp_path)]
     subprocess.run([sys.executable, "-m", "reachy_companion", *state, "pair"], check=True, capture_output=True)
     token = (tmp_path / "token").read_text()
-    command = [sys.executable, "-m", "reachy_companion", *state, "serve", "--bind", "127.0.0.1", "--port", "0", "--insecure"]
+    command = [sys.executable, "-m", "reachy_companion", *state, "serve", "--bind", "127.0.0.1", "--port", "0", "--insecure", "--engines", "stub"]
     with subprocess.Popen(command, stderr=subprocess.PIPE, text=True) as server:
         try:
             url = next(match.group(1) for line in server.stderr if (match := re.search(r"serving (ws://\S+)", line)))
