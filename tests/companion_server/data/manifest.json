@@ -1,0 +1,36 @@
+{
+  "source": "mac-stt-benchmark/public-corpus",
+  "cases": [
+    {
+      "name": "reminder",
+      "file": "reminder.wav",
+      "reference": "Remind me at eight to call Maya, not at nine.",
+      "critical": [
+        "remind",
+        "call maya",
+        "not at nine"
+      ]
+    },
+    {
+      "name": "correction",
+      "file": "correction.wav",
+      "reference": "Actually make that eight apples instead of seven, and keep the oat milk.",
+      "critical": [
+        "actually",
+        "eight apples",
+        "instead of seven",
+        "oat milk"
+      ]
+    },
+    {
+      "name": "negation",
+      "file": "negation.wav",
+      "reference": "Do not cancel the reminder, and never move it to nine.",
+      "critical": [
+        "do not cancel",
+        "never",
+        "nine"
+      ]
+    }
+  ]
+}
