@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reachy-companion"
+version = "0.1.0"
+description = "A Mac companion that hears, speaks and narrates for a Reachy Mini robot"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["musegadget", "websockets>=13", "cryptography>=41"]
+
+[project.scripts]
+reachy-companion = "reachy_companion.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["reachy_companion*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
