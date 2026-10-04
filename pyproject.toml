@@ -22,6 +22,7 @@ real = [
     "parakeet-mlx==0.5.3",
     "transformers==5.18.0",
     "huggingface-hub==1.33.0",
+    "mlx-lm==0.32.0",
     "onnxruntime>=1.20",
     "numpy>=2",
     "soxr==1.1.0",
