@@ -638,14 +638,16 @@ def test_invalid_token_is_rejected_without_printing_it(tmp_path, monkeypatch, ca
     assert 'secret-invalid-value' not in capsys.readouterr().err
 
 
-def test_pair_uses_explicit_state_and_existing_cli(tmp_path, monkeypatch):
+@pytest.mark.parametrize('result, code', [('PAIRED', 0), ('ALREADY_PAIRED', 1), ('WINDOW_CLOSED', 1)])
+def test_pair_uses_explicit_state_and_the_sdk_pairing(tmp_path, monkeypatch, result, code):
+    from musegadget.pairing import PairResult
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
     captured = {}
-    def pair(args):
-        captured.update(state=config.state_dir(), force=args.force, timeout=args.timeout)
-        return 0
-    monkeypatch.setattr('musegadget.cli.cmd_pair', pair)
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'pair', '--timeout', '90']) == 0
+    def pair(*, force, timeout_s):
+        captured.update(state=config.state_dir(), force=force, timeout=timeout_s)
+        return PairResult[result]
+    monkeypatch.setattr('musegadget.pairing.pair', pair)
+    assert reachy_cli.main(['--state-dir', str(tmp_path), 'pair', '--timeout', '90']) == code
     assert captured == {'state': tmp_path, 'force': False, 'timeout': 90}
 
 

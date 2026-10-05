@@ -648,8 +648,8 @@ def main(argv=None) -> int:
             os.environ[config.SDK_TOKEN_ENV] = args.sdk_token_file.expanduser().read_text().strip()
             config.sdk_token()
         if args.command == "pair":
-            from musegadget.cli import cmd_pair
-            return cmd_pair(args)
+            from musegadget.pairing import PairResult, pair
+            return 0 if pair(force=args.force, timeout_s=args.timeout) is PairResult.PAIRED else 1
         if args.command == "doctor":
             return doctor(args)
         if args.command == "companion":
