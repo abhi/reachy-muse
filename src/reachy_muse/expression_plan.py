@@ -9,8 +9,8 @@ import math
 from typing import Callable, Dict, Optional, Tuple, Union
 
 from musegadget.reachy.expressions import Expression
-from musegadget.reachy_capabilities import Partial
-from musegadget.reachy_hardware import GESTURE_DURATION_S
+from reachy_muse.capabilities import Partial
+from reachy_muse.hardware import GESTURE_DURATION_S
 
 
 TILT_WORDS = 3

@@ -14,7 +14,7 @@ import pytest
 
 np = pytest.importorskip("numpy")
 
-from musegadget.vosk_wake import VoskWakeWordDetector
+from reachy_muse.vosk_wake import VoskWakeWordDetector
 
 
 class FakeRecognizer:
@@ -140,7 +140,7 @@ def test_pcm_conversion_preserves_extrema_and_strided_sample_order_in_bounded_bl
 
 
 def test_empty_audio_is_a_noop_even_after_a_logged_window(models, monkeypatch):
-    import musegadget.vosk_wake as module
+    import reachy_muse.vosk_wake as module
 
     directory, instances, _ = models
     detector = VoskWakeWordDetector(directory)
@@ -176,11 +176,11 @@ def test_invalid_native_result_is_not_accepted_as_a_wake(models, monkeypatch, ra
 
 
 def test_health_logs_continue_after_startup_and_reset_keeps_the_logging_cadence(models, monkeypatch, caplog):
-    import musegadget.vosk_wake as module
+    import reachy_muse.vosk_wake as module
 
     directory, _, _ = models
     detector = VoskWakeWordDetector(directory)
-    caplog.set_level("INFO", logger="musegadget.vosk_wake")
+    caplog.set_level("INFO", logger="reachy_muse.vosk_wake")
 
     def feed(at, value, count=16000, delay=0):
         times = iter((at, at + delay))
@@ -304,7 +304,7 @@ def test_model_vocabulary_must_include_wake_and_competing_words(models):
 
 def test_optional_dependencies_load_only_when_constructing_a_detector(models, monkeypatch):
     directory, _, _ = models
-    import musegadget.vosk_wake as module
+    import reachy_muse.vosk_wake as module
     monkeypatch.setitem(sys.modules, "vosk", None)
     monkeypatch.setitem(sys.modules, "numpy", None)
     importlib.reload(module)

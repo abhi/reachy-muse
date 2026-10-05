@@ -5,7 +5,7 @@ import stat
 
 from cryptography import x509
 
-from reachy_companion.pair import pair
+from reachy_muse.companion_server.pair import pair
 
 
 def mode(path):

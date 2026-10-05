@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from musegadget.local_face_tracking import (
+from reachy_muse.local_face_tracking import (
     FACE_LOSS_SECONDS, PITCH_LIMIT, YAW_LIMIT, FaceFollower, _Face, _FaceTracker,
     default_face_model,
 )

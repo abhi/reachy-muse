@@ -12,9 +12,9 @@ import uuid
 import pytest
 
 from musegadget import config
-from musegadget import reachy_cli
+import reachy_muse.cli
 from musegadget.link_client import HttpStreamError, SideChat
-from musegadget.reachy_speaker_eq import COMPANION_SPEAKER_EQ_GAINS, SPEAKER_EQ_GAINS
+from reachy_muse.speaker_eq import COMPANION_SPEAKER_EQ_GAINS, SPEAKER_EQ_GAINS
 from musegadget.reachy.prompts import CHAT_SETUP_MESSAGE
 from musegadget.reachy.replies import ReplyStyle
 
@@ -24,7 +24,7 @@ SETUP_NONCE = "a" * 32
 
 @pytest.fixture(autouse=True)
 def fixed_setup_nonce(monkeypatch):
-    monkeypatch.setattr(reachy_cli.secrets, "token_hex", lambda size: SETUP_NONCE)
+    monkeypatch.setattr(reachy_muse.cli.secrets, "token_hex", lambda size: SETUP_NONCE)
 
 
 def setup_wire_message(message=CHAT_SETUP_MESSAGE):
@@ -32,22 +32,22 @@ def setup_wire_message(message=CHAT_SETUP_MESSAGE):
 
 
 def first_setup_hash():
-    return reachy_cli.ReachySideChat("reachy-1").setup_sha256
+    return reachy_muse.cli.ReachySideChat("reachy-1").setup_sha256
 
 
 @pytest.mark.parametrize('options, enabled', [([], False), (['--face-follow'], True),
                                             (['--face-follow', '--face-follow-model', '/tmp/yunet.onnx'], True)])
 def test_camera_following_is_explicit_and_passes_local_model_to_motion_owner(monkeypatch, options, enabled):
-    from musegadget.local_face_tracking import default_face_model
+    from reachy_muse.local_face_tracking import default_face_model
     captured = {}
 
     def hardware(**kwargs):
         captured.update(kwargs)
         return object()
 
-    monkeypatch.setattr('musegadget.reachy_hardware.ReachyController', hardware)
-    args = reachy_cli.parser().parse_args(['run', *options])
-    reachy_cli._hardware(args)
+    monkeypatch.setattr('reachy_muse.hardware.ReachyController', hardware)
+    args = reachy_muse.cli.parser().parse_args(['run', *options])
+    reachy_muse.cli._hardware(args)
     expected = args.face_follow_model or default_face_model() if enabled else None
     assert captured['face_follow_model'] == expected
     assert captured['enable_motion'] is True
@@ -55,9 +55,9 @@ def test_camera_following_is_explicit_and_passes_local_model_to_motion_owner(mon
 
 def test_doctor_does_not_activate_the_camera_detector(monkeypatch):
     captured = {}
-    monkeypatch.setattr('musegadget.reachy_hardware.ReachyController',
+    monkeypatch.setattr('reachy_muse.hardware.ReachyController',
                         lambda **kwargs: captured.update(kwargs))
-    reachy_cli._hardware(reachy_cli.parser().parse_args(['doctor']))
+    reachy_muse.cli._hardware(reachy_muse.cli.parser().parse_args(['doctor']))
     assert captured['face_follow_model'] is None
 
 
@@ -67,10 +67,10 @@ def test_doctor_does_not_activate_the_camera_detector(monkeypatch):
 ])
 def test_invalid_camera_configuration_fails_before_hardware_start(tmp_path, monkeypatch, options, error):
     monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
-    monkeypatch.setattr(reachy_cli, '_hardware', lambda *args: pytest.fail('hardware must not start'))
-    args = reachy_cli.parser().parse_args(['--state-dir', str(tmp_path), 'run', *options])
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: pytest.fail('hardware must not start'))
+    args = reachy_muse.cli.parser().parse_args(['--state-dir', str(tmp_path), 'run', *options])
     with pytest.raises(ValueError, match=error):
-        asyncio.run(reachy_cli.run(args))
+        asyncio.run(reachy_muse.cli.run(args))
 
 
 class ChatSession:
@@ -137,37 +137,37 @@ class ChatSession:
 def test_dedicated_chat_is_created_once_and_resumed_after_restart(tmp_path):
     async def check():
         first = ChatSession()
-        selected = await reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(first, 'vm-1')
+        selected = await reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(first, 'vm-1')
         assert str(uuid.UUID(selected)) == selected
         assert first.requests == [selected]
         assert first.posts == [(setup_wire_message(), selected)]
         assert first.subscription_closed
-        saved = json.loads((tmp_path / reachy_cli.CHAT_STATE_FILE).read_text())
+        saved = json.loads((tmp_path / reachy_muse.cli.CHAT_STATE_FILE).read_text())
         assert saved == {'version': 2, 'device_id': 'reachy-1',
                          'chats': {'vm-1': {'session_id': selected, 'initialized': True,
                                           'applied_setup_sha256': first_setup_hash()}}}
-        assert (tmp_path / reachy_cli.CHAT_STATE_FILE).stat().st_mode & 0o777 == 0o600
+        assert (tmp_path / reachy_muse.cli.CHAT_STATE_FILE).stat().st_mode & 0o777 == 0o600
         reconnect = ChatSession(200)
-        assert await reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(reconnect, 'vm-1') == selected
+        assert await reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(reconnect, 'vm-1') == selected
         assert reconnect.posts == []
         second_vm = ChatSession()
-        other = await reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(second_vm, 'vm-2')
+        other = await reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(second_vm, 'vm-2')
         assert other != selected
-        assert await reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(ChatSession(200), 'vm-1') == selected
+        assert await reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(ChatSession(200), 'vm-1') == selected
     asyncio.run(check())
 
 
 def test_v1_initialized_chat_migrates_in_place_with_current_setup(tmp_path):
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
-    config.save_json(reachy_cli.CHAT_STATE_FILE, {
+    config.save_json(reachy_muse.cli.CHAT_STATE_FILE, {
         'version': 1, 'device_id': 'reachy-1',
         'chats': {'vm-1': {'session_id': selected, 'initialized': True}},
     }, tmp_path)
     session = ChatSession(200)
-    assert asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(
+    assert asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(
         session, 'vm-1')) == selected
     assert session.posts == [(setup_wire_message(), selected)]
-    saved = json.loads((tmp_path / reachy_cli.CHAT_STATE_FILE).read_text())
+    saved = json.loads((tmp_path / reachy_muse.cli.CHAT_STATE_FILE).read_text())
     assert saved['version'] == 2
     assert saved['chats']['vm-1'] == {
         'session_id': selected, 'initialized': True,
@@ -177,10 +177,10 @@ def test_v1_initialized_chat_migrates_in_place_with_current_setup(tmp_path):
 
 def test_changed_setup_refreshes_same_chat_once(tmp_path):
     async def check():
-        original = reachy_cli.ReachySideChat('reachy-1', tmp_path, setup_message='first setup')
+        original = reachy_muse.cli.ReachySideChat('reachy-1', tmp_path, setup_message='first setup')
         selected = await original.prepare(ChatSession(), 'vm-1')
         changed_session = ChatSession(200)
-        changed = reachy_cli.ReachySideChat('reachy-1', tmp_path, setup_message='second setup')
+        changed = reachy_muse.cli.ReachySideChat('reachy-1', tmp_path, setup_message='second setup')
         assert await changed.prepare(changed_session, 'vm-1') == selected
         assert changed_session.posts == [(setup_wire_message('second setup'), selected)]
         assert changed_session.timeline[:2] == ['subscribe', 'post']
@@ -192,8 +192,8 @@ def test_changed_setup_refreshes_same_chat_once(tmp_path):
 
 def test_pending_newer_setup_prevents_old_applied_digest_from_skipping(tmp_path):
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
-    old = reachy_cli.ReachySideChat('reachy-1', tmp_path, setup_message='old setup')
-    config.save_json(reachy_cli.CHAT_STATE_FILE, {
+    old = reachy_muse.cli.ReachySideChat('reachy-1', tmp_path, setup_message='old setup')
+    config.save_json(reachy_muse.cli.CHAT_STATE_FILE, {
         'version': 2, 'device_id': 'reachy-1', 'chats': {'vm-1': {
             'session_id': selected,
             'initialized': False,
@@ -209,10 +209,10 @@ def test_dedicated_chat_waits_for_registration_before_any_http_or_state_write(tm
     async def check():
         session = ChatSession()
         session.registered.clear()
-        pending = asyncio.create_task(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
+        pending = asyncio.create_task(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
         await asyncio.sleep(0)
         assert session.requests == []
-        assert not (tmp_path / reachy_cli.CHAT_STATE_FILE).exists()
+        assert not (tmp_path / reachy_muse.cli.CHAT_STATE_FILE).exists()
         session.registered.set()
         await pending
     asyncio.run(check())
@@ -222,7 +222,7 @@ def test_dedicated_chat_waits_for_registration_before_any_http_or_state_write(tm
 def test_chat_lookup_failure_never_posts_or_falls_back_to_main(tmp_path, status):
     session = ChatSession(status)
     with pytest.raises(HttpStreamError):
-        asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
+        asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
     assert session.posts == []
     assert session.requests[0]
 
@@ -236,25 +236,25 @@ def test_chat_lookup_failure_never_posts_or_falls_back_to_main(tmp_path, status)
 def test_failed_creation_retains_same_id_for_safe_retry(tmp_path, ack):
     session = ChatSession(ack=ack)
     with pytest.raises(RuntimeError):
-        asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
+        asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
     saved_id = session.posts[0][1]
     resumed = ChatSession(200)
-    assert asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(resumed, 'vm-1')) == saved_id
+    assert asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(resumed, 'vm-1')) == saved_id
     assert resumed.posts == [(setup_wire_message(), saved_id)]
 
 
 @pytest.mark.parametrize('contents', ['not-json', '[]', '{"version": 1, "device_id": "another-device", "chats": {}}'])
 def test_invalid_chat_state_stops_before_http(tmp_path, contents):
-    (tmp_path / reachy_cli.CHAT_STATE_FILE).write_text(contents)
+    (tmp_path / reachy_muse.cli.CHAT_STATE_FILE).write_text(contents)
     session = ChatSession()
     with pytest.raises(ValueError):
-        asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
+        asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
     assert session.requests == session.posts == []
 
 
 def test_setup_drain_ignores_other_chats_and_user_messages(tmp_path, monkeypatch):
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
-    monkeypatch.setattr(reachy_cli.uuid, 'uuid4', lambda: uuid.UUID(selected))
+    monkeypatch.setattr(reachy_muse.cli.uuid, 'uuid4', lambda: uuid.UUID(selected))
     session = ChatSession(events=[
         {'event': 'task.status', 'payload': {'session_id': 'other-chat', 'status': 'completed'}},
         {'event': 'delta.message_done', 'payload': {'session_id': selected, 'message_id': 'setup-user'}},
@@ -269,14 +269,14 @@ def test_setup_drain_ignores_other_chats_and_user_messages(tmp_path, monkeypatch
         {'event': 'task.status', 'payload': {'session_id': selected, 'status': 'completed',
                                             'task_id': 'setup-task'}},
     ])
-    assert asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1')) == selected
+    assert asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1')) == selected
     assert session.subscription_closed
 
 
 def test_setup_drain_rejects_completed_turn_with_stale_challenge(tmp_path, monkeypatch):
-    monkeypatch.setattr(reachy_cli, 'CHAT_SETUP_TIMEOUT_S', 0.01)
+    monkeypatch.setattr(reachy_muse.cli, 'CHAT_SETUP_TIMEOUT_S', 0.01)
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
-    monkeypatch.setattr(reachy_cli.uuid, 'uuid4', lambda: uuid.UUID(selected))
+    monkeypatch.setattr(reachy_muse.cli.uuid, 'uuid4', lambda: uuid.UUID(selected))
     session = ChatSession(events=[
         {'event': 'task.status', 'payload': {'session_id': selected, 'status': 'running',
                                             'task_id': 'old-task'}},
@@ -289,14 +289,14 @@ def test_setup_drain_rejects_completed_turn_with_stale_challenge(tmp_path, monke
                                             'task_id': 'old-task'}},
     ])
     with pytest.raises(RuntimeError, match='did not finish'):
-        asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
-    saved = json.loads((tmp_path / reachy_cli.CHAT_STATE_FILE).read_text())
+        asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
+    saved = json.loads((tmp_path / reachy_muse.cli.CHAT_STATE_FILE).read_text())
     assert 'applied_setup_sha256' not in saved['chats']['vm-1']
 
 
 def test_exact_challenge_in_final_response_succeeds_without_task_metadata(tmp_path):
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
-    config.save_json(reachy_cli.CHAT_STATE_FILE, {
+    config.save_json(reachy_muse.cli.CHAT_STATE_FILE, {
         'version': 1, 'device_id': 'reachy-1',
         'chats': {'vm-1': {'session_id': selected, 'initialized': True}},
     }, tmp_path)
@@ -306,7 +306,7 @@ def test_exact_challenge_in_final_response_succeeds_without_task_metadata(tmp_pa
             'display_text': f'Ready {SETUP_NONCE}',
         }},
     ])
-    assert asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(
+    assert asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(
         session, 'vm-1')) == selected
 
 
@@ -338,7 +338,7 @@ def test_setup_child_completion_cannot_release_a_still_running_root(completion):
                     'session_id': selected, 'message_id': 'setup-assistant',
                     'display_text': challenge}}
 
-        drain = asyncio.create_task(reachy_cli.ReachySideChat._drain_setup(
+        drain = asyncio.create_task(reachy_muse.cli.ReachySideChat._drain_setup(
             events(), selected, challenge, armed))
         try:
             await asyncio.wait_for(child_done.wait(), 1)
@@ -369,23 +369,23 @@ def test_failed_setup_task_is_never_marked_applied(tmp_path, status):
             yield event
     session.subscribe_chat = subscribe
     with pytest.raises(RuntimeError, match='did not apply'):
-        asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
-    saved = json.loads((tmp_path / reachy_cli.CHAT_STATE_FILE).read_text())
+        asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
+    saved = json.loads((tmp_path / reachy_muse.cli.CHAT_STATE_FILE).read_text())
     assert 'applied_setup_sha256' not in saved['chats']['vm-1']
 
 
 def test_setup_without_terminal_event_times_out_and_closes_subscription(tmp_path, monkeypatch):
-    monkeypatch.setattr(reachy_cli, 'CHAT_SETUP_TIMEOUT_S', 0.01)
+    monkeypatch.setattr(reachy_muse.cli, 'CHAT_SETUP_TIMEOUT_S', 0.01)
     session = ChatSession(events=[])
     with pytest.raises(RuntimeError, match='did not finish'):
-        asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
+        asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
     assert session.subscription_closed
 
 
 def test_setup_completion_without_fresh_challenge_is_rejected(tmp_path, monkeypatch):
-    monkeypatch.setattr(reachy_cli, 'CHAT_SETUP_TIMEOUT_S', 0.01)
+    monkeypatch.setattr(reachy_muse.cli, 'CHAT_SETUP_TIMEOUT_S', 0.01)
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
-    monkeypatch.setattr(reachy_cli.uuid, 'uuid4', lambda: uuid.UUID(selected))
+    monkeypatch.setattr(reachy_muse.cli.uuid, 'uuid4', lambda: uuid.UUID(selected))
     session = ChatSession(events=[
         {'event': 'task.status', 'payload': {'session_id': selected, 'status': 'running',
                                             'task_id': 'setup-task'}},
@@ -393,14 +393,14 @@ def test_setup_completion_without_fresh_challenge_is_rejected(tmp_path, monkeypa
                                             'task_id': 'setup-task'}},
     ])
     with pytest.raises(RuntimeError, match='did not finish'):
-        asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
+        asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
     assert session.subscription_closed
 
 
 def test_cancelled_setup_closes_subscription_and_keeps_persisted_id(tmp_path):
     async def check():
         session = ChatSession(events=[])
-        pending = asyncio.create_task(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
+        pending = asyncio.create_task(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
         while not session.posts:
             await asyncio.sleep(0)
         await asyncio.sleep(0)
@@ -408,13 +408,13 @@ def test_cancelled_setup_closes_subscription_and_keeps_persisted_id(tmp_path):
         with pytest.raises(asyncio.CancelledError):
             await pending
         assert session.subscription_closed
-        saved = json.loads((tmp_path / reachy_cli.CHAT_STATE_FILE).read_text())
+        saved = json.loads((tmp_path / reachy_muse.cli.CHAT_STATE_FILE).read_text())
         assert saved['chats']['vm-1'] == {
             'session_id': session.posts[0][1], 'initialized': False,
             'pending_setup_sha256': first_setup_hash(),
         }
         resumed = ChatSession(200)
-        assert await reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(resumed, 'vm-1') == session.posts[0][1]
+        assert await reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(resumed, 'vm-1') == session.posts[0][1]
         assert resumed.subscription_closed
         assert resumed.posts == [(setup_wire_message(), session.posts[0][1])]
     asyncio.run(check())
@@ -422,7 +422,7 @@ def test_cancelled_setup_closes_subscription_and_keeps_persisted_id(tmp_path):
 
 def test_existing_uninitialized_chat_reapplies_setup_before_accepting_completion(tmp_path):
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
-    config.save_json(reachy_cli.CHAT_STATE_FILE, {
+    config.save_json(reachy_muse.cli.CHAT_STATE_FILE, {
         'version': 2, 'device_id': 'reachy-1', 'chats': {
             'vm-1': {'session_id': selected, 'initialized': False,
                      'pending_setup_sha256': first_setup_hash(),
@@ -437,21 +437,21 @@ def test_existing_uninitialized_chat_reapplies_setup_before_accepting_completion
                                                   'parent_message_id': 'setup-assistant',
                                                   'display_text': f'Ready {SETUP_NONCE}'}},
     ])
-    assert asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1')) == selected
+    assert asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1')) == selected
     assert session.posts == [(setup_wire_message(), selected)]
     assert session.subscription_closed
-    saved = json.loads((tmp_path / reachy_cli.CHAT_STATE_FILE).read_text())
+    saved = json.loads((tmp_path / reachy_muse.cli.CHAT_STATE_FILE).read_text())
     assert saved['chats']['vm-1']['initialized'] is True
 
 
 def test_existing_chat_after_lost_ack_reposts_before_marking_setup_applied(tmp_path):
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
-    config.save_json(reachy_cli.CHAT_STATE_FILE, {
+    config.save_json(reachy_muse.cli.CHAT_STATE_FILE, {
         'version': 1, 'device_id': 'reachy-1',
         'chats': {'vm-1': {'session_id': selected, 'initialized': False}},
     }, tmp_path)
     session = ChatSession(200)
-    assert asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1')) == selected
+    assert asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1')) == selected
     assert session.posts == [(setup_wire_message(), selected)]
     assert session.subscription_closed
 
@@ -463,17 +463,17 @@ def test_setup_eof_without_completion_keeps_initialization_pending(tmp_path, mon
             if False:
                 yield {}
 
-    monkeypatch.setattr(reachy_cli, 'CHAT_SETUP_TIMEOUT_S', 0.01)
+    monkeypatch.setattr(reachy_muse.cli, 'CHAT_SETUP_TIMEOUT_S', 0.01)
     session = EndedSession()
     with pytest.raises(ConnectionError, match='subscription ended'):
-        asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
-    saved = json.loads((tmp_path / reachy_cli.CHAT_STATE_FILE).read_text())
+        asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
+    saved = json.loads((tmp_path / reachy_muse.cli.CHAT_STATE_FILE).read_text())
     assert saved['chats']['vm-1']['initialized'] is False
 
 
 def test_existing_chat_subscription_failure_is_reported_without_waiting_for_ready(tmp_path):
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
-    config.save_json(reachy_cli.CHAT_STATE_FILE, {
+    config.save_json(reachy_muse.cli.CHAT_STATE_FILE, {
         'version': 1, 'device_id': 'reachy-1',
         'chats': {'vm-1': {'session_id': selected, 'initialized': True}},
     }, tmp_path)
@@ -485,7 +485,7 @@ def test_existing_chat_subscription_failure_is_reported_without_waiting_for_read
 
     with pytest.raises(ConnectionError, match='subscription ended'):
         asyncio.run(asyncio.wait_for(
-            reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(
+            reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(
                 ClosedBeforeReady(200), 'vm-1'),
             .1,
         ))
@@ -502,27 +502,27 @@ def test_setup_message_count_bounds_final_events_without_start():
     armed = asyncio.Event()
     armed.set()
     with pytest.raises(RuntimeError, match='too many side-chat setup messages'):
-        asyncio.run(reachy_cli.ReachySideChat._drain_setup(
+        asyncio.run(reachy_muse.cli.ReachySideChat._drain_setup(
             events(), 'side-chat', f'Ready {SETUP_NONCE}', armed))
 
 
 @pytest.mark.parametrize('thread_value', [False, None, 'true'])
 def test_creation_requires_explicit_thread_confirmation(tmp_path, monkeypatch, thread_value):
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
-    monkeypatch.setattr(reachy_cli.uuid, 'uuid4', lambda: uuid.UUID(selected))
+    monkeypatch.setattr(reachy_muse.cli.uuid, 'uuid4', lambda: uuid.UUID(selected))
     session = ChatSession(ack={'ok': True, 'response': {'session_id': selected,
                                                       'is_thread': thread_value}})
     with pytest.raises(RuntimeError, match='did not confirm'):
-        asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
+        asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
 
 
 def test_nested_creation_ack_is_accepted(tmp_path, monkeypatch):
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
-    monkeypatch.setattr(reachy_cli.uuid, 'uuid4', lambda: uuid.UUID(selected))
+    monkeypatch.setattr(reachy_muse.cli.uuid, 'uuid4', lambda: uuid.UUID(selected))
     session = ChatSession(ack={'ok': True, 'response': {'result': {'session_id': selected,
                                                                  'is_thread': True,
                                                                  'message_id': 'setup-user'}}})
-    assert asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1')) == selected
+    assert asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1')) == selected
 
 
 @pytest.mark.parametrize('selection, expected_session, owned', [
@@ -553,10 +553,10 @@ def test_cli_selects_owned_side_chat_by_default_and_preserves_explicit_routes(
 
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
     monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
-    monkeypatch.setattr(reachy_cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
-    monkeypatch.setattr(reachy_cli, '_hardware', lambda *args: Hardware())
-    monkeypatch.setattr('musegadget.reachy_voice.ReachyService', Service)
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'run', *selection]) == 0
+    monkeypatch.setattr(reachy_muse.cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: Hardware())
+    monkeypatch.setattr('reachy_muse.conversation.ReachyService', Service)
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', *selection]) == 0
     assert captured['session_id'] == expected_session
     assert captured['owns_chat'] is owned
     prepare = captured['prepare_chat']
@@ -569,24 +569,24 @@ def test_cli_selects_owned_side_chat_by_default_and_preserves_explicit_routes(
         assert "one JSON object per line" not in prepare.__self__.setup_message
         assert "Both antennas are enabled" in prepare.__self__.setup_message
     else:
-        assert not (tmp_path / reachy_cli.CHAT_STATE_FILE).exists()
+        assert not (tmp_path / reachy_muse.cli.CHAT_STATE_FILE).exists()
 
 
 def test_main_and_explicit_session_conflict_before_hardware(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
     monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
-    monkeypatch.setattr(reachy_cli, '_hardware', lambda *args: (_ for _ in ()).throw(
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: (_ for _ in ()).throw(
         AssertionError('hardware started with conflicting chat options')))
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'run', '--main-chat',
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', '--main-chat',
                            '--session-id', 'existing-side-chat']) == 1
     assert 'choose either --main-chat or --session-id' in capsys.readouterr().err
 
 
 def test_native_media_connects_to_local_daemon(monkeypatch):
     captured = {}
-    monkeypatch.setattr('musegadget.reachy_hardware.ReachyController',
+    monkeypatch.setattr('reachy_muse.hardware.ReachyController',
                         lambda **kwargs: captured.update(kwargs))
-    reachy_cli._hardware(reachy_cli.parser().parse_args(['run']))
+    reachy_muse.cli._hardware(reachy_muse.cli.parser().parse_args(['run']))
     assert captured == {'host': 'localhost', 'port': 8000,
                         'connection_mode': 'localhost_only', 'media_backend': 'local',
                         'enable_motion': True, 'antenna_mode': 'both', 'face_follow_model': None,
@@ -601,17 +601,17 @@ def test_native_media_connects_to_local_daemon(monkeypatch):
 ])
 def test_speaker_eq_profile_follows_the_mode_chosen_at_startup(monkeypatch, command, gains):
     captured = {}
-    monkeypatch.setattr('musegadget.reachy_hardware.ReachyController',
+    monkeypatch.setattr('reachy_muse.hardware.ReachyController',
                         lambda **kwargs: captured.update(kwargs))
-    reachy_cli._hardware(reachy_cli.parser().parse_args(command))
+    reachy_muse.cli._hardware(reachy_muse.cli.parser().parse_args(command))
     assert captured['speaker_eq_gains'] == gains
 
 
 def test_remote_media_uses_supported_sdk_connection_mode(monkeypatch):
     captured = {}
-    monkeypatch.setattr('musegadget.reachy_hardware.ReachyController',
+    monkeypatch.setattr('reachy_muse.hardware.ReachyController',
                         lambda **kwargs: captured.update(kwargs))
-    reachy_cli._hardware(reachy_cli.parser().parse_args(
+    reachy_muse.cli._hardware(reachy_muse.cli.parser().parse_args(
         ['run', '--host', '192.0.2.1', '--media-backend', 'webrtc']))
     assert captured['connection_mode'] == 'network'
     assert captured['media_backend'] == 'webrtc'
@@ -619,9 +619,9 @@ def test_remote_media_uses_supported_sdk_connection_mode(monkeypatch):
 
 def test_unpaired_run_does_not_enable_hardware(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
-    monkeypatch.setattr(reachy_cli, '_hardware', lambda *args: (_ for _ in ()).throw(
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: (_ for _ in ()).throw(
         AssertionError('hardware started before pairing')))
-    assert asyncio.run(reachy_cli.run(reachy_cli.parser().parse_args(['run']))) == 1
+    assert asyncio.run(reachy_muse.cli.run(reachy_muse.cli.parser().parse_args(['run']))) == 1
     assert 'not paired with Muse' in capsys.readouterr().err
 
 
@@ -629,7 +629,7 @@ def test_invalid_token_is_rejected_without_printing_it(tmp_path, monkeypatch, ca
     token = tmp_path / 'token'
     token.write_text('secret-invalid-value')
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
-    assert reachy_cli.main(['--state-dir', str(tmp_path), '--sdk-token-file', str(token),
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), '--sdk-token-file', str(token),
                            'doctor']) == 1
     assert 'secret-invalid-value' not in capsys.readouterr().err
 
@@ -645,7 +645,7 @@ def test_pair_uses_explicit_state_and_the_sdk_pairing(tmp_path, monkeypatch, cap
             on_open(SetupWindow('ReachyMini', timeout_s, has_sdk_token=False))
         return PairResult(PairOutcome[result])
     monkeypatch.setattr('musegadget.pair.pair', pair)
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'pair', '--timeout', '90']) == code
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'pair', '--timeout', '90']) == code
     assert captured == {'state': tmp_path, 'force': False, 'timeout': 90}
     opened = 'Setup open for 1 minutes. In the Muse app, add a device and choose ReachyMini.\n'
     no_token = ('Reachy: no SDK token yet. Get one at gadgets.muse.ai and pass it with --sdk-token-file. '
@@ -697,13 +697,13 @@ def test_streaming_option_reaches_the_conversation_service(tmp_path, monkeypatch
     speech_backends = iter((speech, progress_speech))
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
     monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
-    monkeypatch.setattr(reachy_cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
-    monkeypatch.setattr(reachy_cli, '_hardware', lambda *args: Hardware())
-    monkeypatch.setattr('musegadget.local_speech.PiperSpeech', lambda model: next(speech_backends))
-    monkeypatch.setattr('musegadget.speech_gate.SileroSpeechGate', object)
-    monkeypatch.setattr('musegadget.local_transcription.WhisperTranscriber', lambda model: Speech('transcriber'))
-    monkeypatch.setattr('musegadget.reachy_voice.ReachyService', Service)
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'on-robot',
+    monkeypatch.setattr(reachy_muse.cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: Hardware())
+    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model: next(speech_backends))
+    monkeypatch.setattr('reachy_muse.speech_gate.SileroSpeechGate', object)
+    monkeypatch.setattr('reachy_muse.local_transcription.WhisperTranscriber', lambda model: Speech('transcriber'))
+    monkeypatch.setattr('reachy_muse.conversation.ReachyService', Service)
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'on-robot',
                            '--stt-model', str(tmp_path / 'whisper'), '--tts-model',
                            str(tmp_path / 'voice.onnx'), '--stream-replies']) == 0
     backends = captured['backends'](object())
@@ -719,9 +719,9 @@ def test_streaming_option_reaches_the_conversation_service(tmp_path, monkeypatch
 def test_invalid_wake_timeout_is_rejected_before_hardware(tmp_path, monkeypatch, capsys, timeout):
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
     monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
-    monkeypatch.setattr(reachy_cli, '_hardware', lambda *args: (_ for _ in ()).throw(
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: (_ for _ in ()).throw(
         AssertionError('hardware started with an invalid wake timeout')))
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'run', '--wake-timeout', timeout]) == 1
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', '--wake-timeout', timeout]) == 1
     assert '--wake-timeout must be between 1 and 300 seconds' in capsys.readouterr().err
 
 
@@ -772,34 +772,34 @@ def test_wake_model_phrase_and_idle_timeout_reach_the_service(tmp_path, monkeypa
 
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
     monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
-    monkeypatch.setattr(reachy_cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
-    monkeypatch.setattr(reachy_cli, '_hardware', lambda *args: Hardware())
+    monkeypatch.setattr(reachy_muse.cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: Hardware())
     transcriber = Transcriber()
     def recognize(model):
         captured['stt_model'] = model
         return transcriber
     factories = {
-        'whisper': 'musegadget.local_transcription.WhisperTranscriber',
-        'moonshine': 'musegadget.local_transcription.MoonshineTranscriber',
-        'sherpa-streaming': 'musegadget.streaming_transcription.SherpaStreamingTranscriber',
+        'whisper': 'reachy_muse.local_transcription.WhisperTranscriber',
+        'moonshine': 'reachy_muse.local_transcription.MoonshineTranscriber',
+        'sherpa-streaming': 'reachy_muse.streaming_transcription.SherpaStreamingTranscriber',
     }
     for name, factory in factories.items():
         monkeypatch.setattr(factory, recognize if name == stt_backend else
                             lambda model: pytest.fail('wrong transcription backend selected'))
-    monkeypatch.setattr('musegadget.local_speech.PiperSpeech', lambda model: Transcriber())
+    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model: Transcriber())
     speech_gate = object()
-    monkeypatch.setattr('musegadget.speech_gate.SileroSpeechGate', lambda: speech_gate)
+    monkeypatch.setattr('reachy_muse.speech_gate.SileroSpeechGate', lambda: speech_gate)
     if backend == 'vosk':
-        monkeypatch.setitem(sys.modules, 'musegadget.vosk_wake', SimpleNamespace(VoskWakeWordDetector=wake))
-        monkeypatch.setitem(sys.modules, 'musegadget.wake_word', None)
+        monkeypatch.setitem(sys.modules, 'reachy_muse.vosk_wake', SimpleNamespace(VoskWakeWordDetector=wake))
+        monkeypatch.setitem(sys.modules, 'reachy_muse.wake_word', None)
     else:
-        monkeypatch.setitem(sys.modules, 'musegadget.wake_word', SimpleNamespace(WakeWordDetector=wake))
-        monkeypatch.setitem(sys.modules, 'musegadget.vosk_wake', None)
-    monkeypatch.setattr('musegadget.reachy_voice.ReachyService', Service)
-    caplog.set_level('INFO', logger='musegadget.reachy_cli')
+        monkeypatch.setitem(sys.modules, 'reachy_muse.wake_word', SimpleNamespace(WakeWordDetector=wake))
+        monkeypatch.setitem(sys.modules, 'reachy_muse.vosk_wake', None)
+    monkeypatch.setattr('reachy_muse.conversation.ReachyService', Service)
+    caplog.set_level('INFO', logger='reachy_muse.cli')
     model = tmp_path / 'keywords'
     backend_args = ['--wake-backend', backend] if backend is not None else []
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'on-robot', '--stt-model',
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'on-robot', '--stt-model',
                            str(tmp_path / 'whisper'), '--wake-model', str(model),
                            '--tts-model', str(tmp_path / 'voice.onnx'),
                            '--wake-phrase', 'hey muse', '--wake-timeout', '10',
@@ -817,10 +817,10 @@ def test_wake_model_phrase_and_idle_timeout_reach_the_service(tmp_path, monkeypa
 def test_vosk_backend_requires_a_model_before_hardware(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
     monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
-    monkeypatch.setitem(sys.modules, 'musegadget.vosk_wake', None)
-    monkeypatch.setattr(reachy_cli, '_hardware', lambda *args: (_ for _ in ()).throw(
+    monkeypatch.setitem(sys.modules, 'reachy_muse.vosk_wake', None)
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: (_ for _ in ()).throw(
         AssertionError('hardware started without a Vosk model')))
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'run', '--wake-backend', 'vosk']) == 1
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', '--wake-backend', 'vosk']) == 1
     assert '--wake-backend vosk requires --wake-model' in capsys.readouterr().err
 
 
@@ -834,7 +834,7 @@ def test_vosk_backend_requires_a_model_before_hardware(tmp_path, monkeypatch, ca
 def test_startup_and_cleanup_failures_attempt_all_resource_cleanup(
         tmp_path, monkeypatch, capsys, operation, failed_resource, stt_backend):
     from musegadget.identity import Identity
-    monkeypatch.setattr('musegadget.speech_gate.SileroSpeechGate', object)
+    monkeypatch.setattr('reachy_muse.speech_gate.SileroSpeechGate', object)
 
     class Resource:
         def __init__(self, name):
@@ -892,19 +892,19 @@ def test_startup_and_cleanup_failures_attempt_all_resource_cleanup(
 
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
     monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
-    monkeypatch.setattr(reachy_cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
-    monkeypatch.setattr(reachy_cli, '_hardware', lambda *args: hardware)
-    monkeypatch.setattr('musegadget.local_speech.PiperSpeech', lambda model: next(speech_backends))
+    monkeypatch.setattr(reachy_muse.cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: hardware)
+    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model: next(speech_backends))
     factory = {
-        'whisper': 'musegadget.local_transcription.WhisperTranscriber',
-        'moonshine': 'musegadget.local_transcription.MoonshineTranscriber',
-        'sherpa-streaming': 'musegadget.streaming_transcription.SherpaStreamingTranscriber',
+        'whisper': 'reachy_muse.local_transcription.WhisperTranscriber',
+        'moonshine': 'reachy_muse.local_transcription.MoonshineTranscriber',
+        'sherpa-streaming': 'reachy_muse.streaming_transcription.SherpaStreamingTranscriber',
     }[stt_backend]
     monkeypatch.setattr(factory, lambda model: transcriber)
-    monkeypatch.setitem(sys.modules, 'musegadget.wake_word', SimpleNamespace(
+    monkeypatch.setitem(sys.modules, 'reachy_muse.wake_word', SimpleNamespace(
         WakeWordDetector=lambda model, phrase: detector))
-    monkeypatch.setattr('musegadget.reachy_voice.ReachyService', Service)
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'on-robot',
+    monkeypatch.setattr('reachy_muse.conversation.ReachyService', Service)
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'on-robot',
                            '--tts-model', str(tmp_path / 'voice.onnx'),
                            '--stt-model', str(tmp_path / 'whisper'),
                            '--wake-model', str(tmp_path / 'wake'), '--stt-backend', stt_backend]) == 1
@@ -936,11 +936,11 @@ def test_missing_speech_gate_stops_before_capture_and_closes_prepared_resources(
 
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
     monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
-    monkeypatch.setattr(reachy_cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
-    monkeypatch.setattr(reachy_cli, '_hardware', lambda *args: Hardware())
-    monkeypatch.setattr('musegadget.local_speech.PiperSpeech', lambda model: Speech())
-    monkeypatch.setattr('musegadget.speech_gate.SileroSpeechGate', missing_gate)
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'on-robot',
+    monkeypatch.setattr(reachy_muse.cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: Hardware())
+    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model: Speech())
+    monkeypatch.setattr('reachy_muse.speech_gate.SileroSpeechGate', missing_gate)
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'on-robot',
                            '--tts-model', str(tmp_path / 'voice.onnx'),
                            '--stt-model', str(tmp_path / 'whisper')]) == 1
     assert 'Silero VAD asset is missing' in capsys.readouterr().err
@@ -962,18 +962,18 @@ def test_missing_speech_gate_stops_before_capture_and_closes_prepared_resources(
 def test_each_mode_rejects_missing_and_foreign_flags_before_anything_starts(
         tmp_path, monkeypatch, capsys, argv, errors):
     monkeypatch.setattr(config, 'load_json', lambda *args: pytest.fail('pairing read with invalid flags'))
-    monkeypatch.setattr(reachy_cli, '_hardware', lambda *args: pytest.fail('hardware started with invalid flags'))
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'run', *argv]) == 2
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: pytest.fail('hardware started with invalid flags'))
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', *argv]) == 2
     assert capsys.readouterr().err == ''.join(f'Reachy: {error}\n' for error in errors)
 
 
 def test_companion_mode_needs_the_on_robot_models_and_a_saved_companion(tmp_path, monkeypatch, capsys):
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'companion']) == 2
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'companion']) == 2
     assert capsys.readouterr().err == ('Reachy: --mode companion needs --stt-model\n'
                                        'Reachy: --mode companion needs --tts-model\n')
-    monkeypatch.setattr(reachy_cli, '_hardware', lambda *args: pytest.fail('hardware started without a companion'))
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: pytest.fail('hardware started without a companion'))
     (tmp_path / config.PAIRING_FILE).write_text('{"paired": true}')
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'companion',
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'companion',
                             '--stt-model', 'whisper', '--tts-model', 'voice.onnx']) == 1
     assert capsys.readouterr().err == ('Reachy: --mode companion needs a companion; '
                                        'run `muse-reachy companion add` first\n')
@@ -981,15 +981,15 @@ def test_companion_mode_needs_the_on_robot_models_and_a_saved_companion(tmp_path
 
 def test_companion_add_saves_url_pin_and_token_for_the_owner_only_and_remove_forgets_them(tmp_path, capsys):
     pin = 'sha256:' + '4f' * 32
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'companion', 'add', 'wss://studio.local:8765',
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'companion', 'add', 'wss://studio.local:8765',
                             '--pin', pin, '--token', 'rc1_secret']) == 0
-    saved = tmp_path / reachy_cli.COMPANION_FILE
+    saved = tmp_path / reachy_muse.cli.COMPANION_FILE
     assert json.loads(saved.read_text()) == {'url': 'wss://studio.local:8765', 'pin': pin, 'token': 'rc1_secret'}
     assert stat.S_IMODE(saved.stat().st_mode) == 0o600
     assert capsys.readouterr().out == 'Reachy saved its companion at wss://studio.local:8765.\n'
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'companion', 'remove']) == 0
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'companion', 'remove']) == 0
     assert not saved.exists()
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'companion', 'status']) == 1
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'companion', 'status']) == 1
     assert capsys.readouterr().out == ('Reachy forgot its companion.\n'
                                        'Reachy has no companion. Run `muse-reachy companion add` first.\n')
 
@@ -997,9 +997,9 @@ def test_companion_add_saves_url_pin_and_token_for_the_owner_only_and_remove_for
 def test_companion_add_reads_the_token_from_stdin_when_it_is_not_an_argument(tmp_path, monkeypatch, capsys):
     pin = 'sha256:' + '4f' * 32
     monkeypatch.setattr(sys, 'stdin', io.StringIO('rc1_secret\n'))
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'companion', 'add', 'wss://studio.local:8765',
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'companion', 'add', 'wss://studio.local:8765',
                             '--pin', pin]) == 0
-    saved = json.loads((tmp_path / reachy_cli.COMPANION_FILE).read_text())
+    saved = json.loads((tmp_path / reachy_muse.cli.COMPANION_FILE).read_text())
     assert saved == {'url': 'wss://studio.local:8765', 'pin': pin, 'token': 'rc1_secret'}
     assert capsys.readouterr().out == 'Reachy saved its companion at wss://studio.local:8765.\n'
 
@@ -1011,10 +1011,10 @@ def test_companion_add_reads_the_token_from_stdin_when_it_is_not_an_argument(tmp
     ('wss://studio.local:8765', 'sha256:' + '4f' * 32, 'rc1 secret', 'token must be 1 to 128 bytes'),
 ])
 def test_companion_add_refuses_what_the_link_could_not_use(tmp_path, capsys, url, pin, token, error):
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'companion', 'add', url, '--pin', pin,
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'companion', 'add', url, '--pin', pin,
                             '--token', token]) == 1
     assert error in capsys.readouterr().err
-    assert not (tmp_path / reachy_cli.COMPANION_FILE).exists()
+    assert not (tmp_path / reachy_muse.cli.COMPANION_FILE).exists()
 
 
 @pytest.mark.parametrize('argv, style, voice', [
@@ -1061,14 +1061,14 @@ def test_each_mode_starts_the_conversation_with_its_reply_style_and_voice(tmp_pa
     companion = {'url': 'wss://127.0.0.1:9', 'pin': 'sha256:' + '4f' * 32, 'token': 'rc1_secret'}
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
     monkeypatch.setattr(config, 'load_json',
-                        lambda name, *args: companion if name == reachy_cli.COMPANION_FILE else {'paired': True})
-    monkeypatch.setattr(reachy_cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
-    monkeypatch.setattr(reachy_cli, '_hardware', lambda *args: Hardware())
-    monkeypatch.setattr('musegadget.local_speech.PiperSpeech', lambda model: Model())
-    monkeypatch.setattr('musegadget.local_transcription.WhisperTranscriber', lambda model: Model())
-    monkeypatch.setattr('musegadget.speech_gate.SileroSpeechGate', object)
-    monkeypatch.setattr('musegadget.reachy_voice.ReachyService', Service)
-    assert reachy_cli.main(['--state-dir', str(tmp_path), 'run', *argv]) == 0
+                        lambda name, *args: companion if name == reachy_muse.cli.COMPANION_FILE else {'paired': True})
+    monkeypatch.setattr(reachy_muse.cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: Hardware())
+    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model: Model())
+    monkeypatch.setattr('reachy_muse.local_transcription.WhisperTranscriber', lambda model: Model())
+    monkeypatch.setattr('reachy_muse.speech_gate.SileroSpeechGate', object)
+    monkeypatch.setattr('reachy_muse.conversation.ReachyService', Service)
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', *argv]) == 0
     backends = captured['backends'](object())
     assert (backends.reply_style(), type(backends.voice).__name__) == (style, voice)
     # A stop request while the robot starts ends the run cleanly instead of killing the process.

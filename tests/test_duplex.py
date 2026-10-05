@@ -4,12 +4,13 @@ import asyncio
 
 import pytest
 
-from musegadget import muse_turn, reachy_voice
-from musegadget.reachy_capabilities import Mode
-from musegadget.reachy_local_backends import backends_for
-from musegadget.reachy_voice import VoiceConversation, _SpeechJob
-from test_reachy_duplex_voice import duplex
-from test_reachy_voice import FakeHardware, FakeSession, bounded, cancel_task, chat_event, sentence_frame
+from musegadget import muse_turn
+import reachy_muse.conversation
+from reachy_muse.capabilities import Mode
+from reachy_muse.local_backends import backends_for
+from reachy_muse.conversation import VoiceConversation, _SpeechJob
+from test_duplex_voice import duplex
+from test_conversation import FakeHardware, FakeSession, bounded, cancel_task, chat_event, sentence_frame
 
 
 class OrderedSpeech:
@@ -47,7 +48,7 @@ async def _deliver_reply(session, number, text, expression):
 
 def test_paused_old_answer_does_not_block_next_request_and_jobs_keep_turn_scope(monkeypatch):
     monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     async def scenario():
         hardware = FakeHardware()

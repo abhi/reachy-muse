@@ -12,9 +12,9 @@ from collections import deque
 from typing import Optional, Tuple
 
 from musegadget.reachy.replies import ReplyStyle
-from musegadget.reachy_capabilities import Backends, CapabilityUnavailable, HeardAudio, SpokenLine, grounded
-from musegadget.reachy_companion_protocol import MAX_REPLY_BYTES
-from musegadget.reachy_progress import ProgressPlan
+from reachy_muse.capabilities import Backends, CapabilityUnavailable, HeardAudio, SpokenLine, grounded
+from reachy_muse.protocol import MAX_REPLY_BYTES
+from reachy_muse.progress import ProgressPlan
 
 log = logging.getLogger(__name__)
 
@@ -326,7 +326,7 @@ class FailoverNarrator:
 
 def companion_backends(local: Backends, link) -> Backends:
     """Mode 3: the companion's parts, each backed by the on-robot part of mode 2."""
-    from musegadget.reachy_companion_client import (
+    from reachy_muse.companion_client import (
         CompanionHearing, CompanionNarrator, CompanionVoice, VoiceRole,
     )
 

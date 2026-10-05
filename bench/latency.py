@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from websockets.asyncio.client import ClientConnection, connect
 
-from musegadget.reachy_companion_protocol import (
+from reachy_muse.protocol import (
     AudioKind,
     CloseHow,
     HearClose,
@@ -173,7 +173,7 @@ def spread(values: Sequence[float]) -> Dict[str, float]:
 
 def start_server(serve_args: Sequence[str]) -> Tuple[subprocess.Popen, str, str]:
     state = Path(tempfile.mkdtemp(prefix="reachy-bench-"))
-    base = [sys.executable, "-m", "reachy_companion", "--state-dir", str(state)]
+    base = [sys.executable, "-m", "reachy_muse.companion_server", "--state-dir", str(state)]
     subprocess.run([*base, "pair", "--host", "127.0.0.1"], check=True, capture_output=True)
     server = subprocess.Popen([*base, "serve", "--insecure", "--port", "0", *serve_args], stderr=subprocess.PIPE, text=True)
     assert server.stderr is not None

@@ -8,10 +8,10 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
-from reachy_companion import pair as pairing
-from reachy_companion.engines import EchoNarrator, ScriptedHearing, ToneVoice
-from reachy_companion.narrator_mlx import DEFAULT_REPO
-from reachy_companion.server import CompanionServer, Engines
+from reachy_muse.companion_server import pair as pairing
+from reachy_muse.companion_server.engines import EchoNarrator, ScriptedHearing, ToneVoice
+from reachy_muse.companion_server.narrator_mlx import DEFAULT_REPO
+from reachy_muse.companion_server.server import CompanionServer, Engines
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
@@ -62,9 +62,9 @@ async def _serve(args: argparse.Namespace) -> None:
 async def _engines(args: argparse.Namespace) -> Engines:
     if args.engines == "stub":
         return Engines(hearing=ScriptedHearing(), voice=ToneVoice(), narrator=EchoNarrator())
-    from reachy_companion.hearing_voxtral import HearingConfig, VoxtralHearing
-    from reachy_companion.narrator_mlx import MlxNarrator
-    from reachy_companion.voice_kokoro import KokoroVoice, Loudness
+    from reachy_muse.companion_server.hearing_voxtral import HearingConfig, VoxtralHearing
+    from reachy_muse.companion_server.narrator_mlx import MlxNarrator
+    from reachy_muse.companion_server.voice_kokoro import KokoroVoice, Loudness
 
     hearing = VoxtralHearing(HearingConfig(delay_ms=args.delay_ms, final_pass=args.final_pass))
     voice = KokoroVoice(args.voice, Loudness(target_dbfs=args.loudness))

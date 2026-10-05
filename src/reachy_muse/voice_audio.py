@@ -36,7 +36,7 @@ def _audio_dependencies():
         import av
         import numpy
     except ImportError as exc:
-        raise RuntimeError("Voice audio requires pip install 'musegadget[reachy]'") from exc
+        raise RuntimeError("Voice audio requires pip install 'reachy-muse[robot]'") from exc
     return av, numpy
 
 
@@ -96,7 +96,7 @@ class TurnRecorder:
             try:
                 import webrtcvad
             except ImportError as exc:
-                raise RuntimeError("Voice audio requires pip install 'musegadget[reachy]'") from exc
+                raise RuntimeError("Voice audio requires pip install 'reachy-muse[robot]'") from exc
             vad = webrtcvad.Vad(2)
         self._vad = vad
         self._input_rate = input_rate

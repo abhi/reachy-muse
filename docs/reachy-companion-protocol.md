@@ -4,8 +4,8 @@ This is the normative wire protocol between a Reachy Mini robot and its companio
 The companion is a computer on the same LAN that hears, speaks and narrates for the robot.
 The robot owns the conversation. The companion is stateless between requests.
 
-The codec is `musegadget/reachy_companion_protocol.py`.
-Golden vectors ship in the package at `musegadget/data/companion_protocol_v1/`.
+The codec is `src/reachy_muse/protocol.py`.
+Golden vectors ship in the package at `src/reachy_muse/data/companion_protocol_v1/`.
 A companion implementation must pass every vector.
 
 ## Transport

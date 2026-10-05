@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from test_reachy_duplex_voice import duplex
-from test_reachy_voice import FakeHardware, bounded, cancel_task
+from test_duplex_voice import duplex
+from test_conversation import FakeHardware, bounded, cancel_task
 
 
 def test_blocked_playback_resets_keyword_and_resampler_history(duplex, monkeypatch):

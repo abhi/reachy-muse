@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     import numpy as np
 
-    from musegadget.reachy_progress import ProgressPlan
+    from reachy_muse.progress import ProgressPlan
 
     SpeechRole = Literal["ack", "progress", "answer", "notice"]
 

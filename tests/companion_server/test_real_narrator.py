@@ -7,12 +7,12 @@ from pathlib import Path
 import pytest
 from websockets.asyncio.client import connect
 
-from musegadget.reachy_companion_protocol import Hello, Narrate, NarrateOp, NarrateResult, Op, Sender, Welcome, decode, encode
-from reachy_companion.server import CompanionServer, Engines
+from reachy_muse.protocol import Hello, Narrate, NarrateOp, NarrateResult, Op, Sender, Welcome, decode, encode
+from reachy_muse.companion_server.server import CompanionServer, Engines
 
 pytestmark = pytest.mark.real
 
-EVALS = Path(__file__).resolve().parents[1] / "evals" / "narrator"
+EVALS = Path(__file__).resolve().parents[2] / "evals" / "narrator"
 sys.path.insert(0, str(EVALS))
 from run import ask_for, score  # noqa: E402
 
@@ -23,7 +23,7 @@ TOKEN = "rc1_test_token_0123456789abcdef0123456789"
 
 
 def test_the_real_narrator_answers_three_eval_cases_over_the_websocket():
-    from reachy_companion.narrator_mlx import MlxNarrator
+    from reachy_muse.companion_server.narrator_mlx import MlxNarrator
 
     async def run():
         narrator = MlxNarrator()

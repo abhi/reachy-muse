@@ -16,15 +16,18 @@ Running on the robot uses its native microphone and speaker. Reachy's official
 explains SSH access and its preinstalled `/venvs/apps_venv` environment. Stop any
 other robot app before starting this integration.
 
-Copy this repository to `/home/pollen/muse-gadget-sdk`. To keep the existing
-Reachy apps environment intact, create a separate environment that can use its
-installed SDK and media dependencies:
+Copy this repository to `/home/pollen/reachy-muse` and the
+[Muse Gadget SDK](https://github.com/abhi/muse-gadget-sdk) to
+`/home/pollen/muse-gadget-sdk`. To keep the existing Reachy apps environment
+intact, create a separate environment that can use its installed SDK and media
+dependencies:
 
 ```sh
 /venvs/apps_venv/bin/python -m venv --system-site-packages ~/muse-reachy-venv
 printf '%s\n' /venvs/apps_venv/lib/python3.12/site-packages \
   > ~/muse-reachy-venv/lib/python3.12/site-packages/reachy_apps.pth
 ~/muse-reachy-venv/bin/pip install --no-deps -e ~/muse-gadget-sdk/linux
+~/muse-reachy-venv/bin/pip install --no-deps -e ~/reachy-muse
 ~/muse-reachy-venv/bin/pip install webrtcvad-wheels
 ~/muse-reachy-venv/bin/pip install piper-tts
 ~/muse-reachy-venv/bin/pip install faster-whisper==1.2.1
@@ -33,8 +36,8 @@ printf '%s\n' /venvs/apps_venv/lib/python3.12/site-packages \
 ~/muse-reachy-venv/bin/python -c 'from huggingface_hub import snapshot_download; snapshot_download("Systran/faster-whisper-tiny.en", local_dir="/home/pollen/.local/share/musegadget-reachy/whisper-tiny.en", token=False)'
 ```
 
-Adjust `python3.12` if the robot uses another Python version. If the SDK is not
-preinstalled, install `~/muse-gadget-sdk/linux[reachy]` in the environment instead.
+Adjust `python3.12` if the robot uses another Python version. If the Reachy SDK is not
+preinstalled, install `~/reachy-muse[robot]` in the environment instead.
 Reachy's local audio backend needs its platform-specific GStreamer setup.
 
 Bluetooth setup uses `dbus-python` and `gi`. They must be importable by this
@@ -95,8 +98,9 @@ stops startup with a message such as
 ## Companion mode
 
 A companion is a computer on your network, such as a Mac, that runs the
-companion server. The server lives in its own repository. This SDK holds the
-robot's side: the client, the wire protocol and its test vectors.
+companion server, the `reachy-companion` command from this repository. See
+[the companion server guide](companion-server.md). Both sides share the wire
+protocol in `src/reachy_muse/protocol.py` and its test vectors.
 
 Pair once. The companion's `pair` command prints its address, certificate pin
 and token. Save them on the robot:
@@ -377,10 +381,12 @@ recognition does not renew authorization; an expired window closes admission
 while previously accepted turns remain queued. `--wake-timeout 0` requires a new
 wake phrase for each request, including requests made while Muse is busy.
 
-Install the optional runtime and official English model:
+Install the packages of the `wake` extra and the official English model.
+The install section above already installed reachy-muse and the SDK with
+`--no-deps`, so install the extra's packages directly:
 
 ```sh
-~/muse-reachy-venv/bin/pip install -e "$HOME/muse-gadget-sdk/linux[reachy-wake]"
+~/muse-reachy-venv/bin/pip install sherpa-onnx==1.13.8 sentencepiece==0.2.2
 mkdir -p ~/.local/share/musegadget-reachy
 curl -fL https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2 \
   -o /tmp/muse-reachy-keywords.tar.bz2
@@ -403,11 +409,11 @@ later user messages contain only the recognized request. Explicit main-chat or
 existing-chat modes retain their initial instruction prefix.
 `--wake-timeout` accepts 1 to 300 seconds.
 
-Sherpa remains the default wake backend. To evaluate Vosk, install its optional
-runtime alongside the Reachy dependencies:
+Sherpa remains the default wake backend. To evaluate Vosk, install the package
+of the `wake-vosk` extra:
 
 ```sh
-~/muse-reachy-venv/bin/pip install -e "$HOME/muse-gadget-sdk/linux[reachy,reachy-wake-vosk]"
+~/muse-reachy-venv/bin/pip install vosk==0.3.45
 ```
 
 Extract the official [small US English Vosk model](https://alphacephei.com/vosk/models)
@@ -464,7 +470,7 @@ For startup after reboot, adapt and install
 [`../examples/muse-reachy.service`](../examples/muse-reachy.service):
 
 ```sh
-sudo cp ~/muse-gadget-sdk/linux/examples/muse-reachy.{service,path} /etc/systemd/system/
+sudo cp ~/reachy-muse/examples/muse-reachy.{service,path} /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now muse-reachy.service muse-reachy.path
 sudo journalctl -u muse-reachy -f
@@ -521,7 +527,7 @@ are not selected automatically.
 This backend is experimental. The tested local streaming models have not met
 the accuracy and latency checks on Reachy Mini, so Whisper remains the default.
 
-The optional `reachy-stt-streaming` extra pins Sherpa ONNX 1.13.8. Install the
+The optional `stt-streaming` extra pins Sherpa ONNX 1.13.8. Install the
 [English streaming Zipformer model](https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26)
 separately and select its directory with `--stt-model`. It requires the int8
 encoder, float decoder, int8 joiner with `chunk-16-left-128` filenames, and
@@ -529,7 +535,9 @@ encoder, float decoder, int8 joiner with `chunk-16-left-128` filenames, and
 with four active paths; it does not download assets automatically.
 
 ```sh
-pip install 'musegadget[reachy-stt-streaming]'
+pip install --no-deps -e ~/muse-gadget-sdk/linux
+pip install --no-deps -e ~/reachy-muse
+pip install sherpa-onnx==1.13.8
 muse-reachy run --mode on-robot --stt-backend sherpa-streaming \
   --stt-model /path/to/zipformer-en-2023-06-26 \
   --tts-model /path/to/voice.onnx --stream-replies
@@ -564,7 +572,7 @@ transcripts, or chat IDs. Producer gaps are not measurements of speaker underrun
 confirm audible continuity on the physical device before claiming a playback fix.
 
 Piper is a separate GPL-licensed program, invoked as a subprocess. Its model is
-not bundled with this SDK. Use `--mode muse-voice` to request Muse's native
+not bundled with reachy-muse. Use `--mode muse-voice` to request Muse's native
 voice output and stream its MP3 response once your VM supports it.
 
 ## Local face following
@@ -593,7 +601,7 @@ a later camera error disables tracking while voice stays available.
 The local SDK 1.9 speaker path receives the official SDK 1.10 shell equalization
 and limiter in float32 at 48 kHz, then converts back to the device's native
 output format and rate. `--mode companion` installs a gentler curve,
-`COMPANION_SPEAKER_EQ_GAINS` in `reachy_speaker_eq.py`, which halves the low
+`COMPANION_SPEAKER_EQ_GAINS` in `speaker_eq.py`, which halves the low
 cuts and presence boosts for the companion's Kokoro voice until a listening test
 tunes it. Other modes keep the official curve tuned for Piper. The curve is chosen
 once at startup: switching it per line would also change audio already queued in
@@ -756,8 +764,10 @@ does not provide access to the robot's microphone and speaker.
 ## Develop
 
 ```sh
-cd linux
-uv run --with pytest --with '.[reachy]' pytest -q
+~/muse-reachy-venv/bin/pip install --no-deps -e ~/muse-gadget-sdk/linux
+~/muse-reachy-venv/bin/pip install --no-deps -e ~/reachy-muse
+~/muse-reachy-venv/bin/pip install pytest
+~/muse-reachy-venv/bin/python -m pytest -q tests --ignore=tests/companion_server
 ```
 
 The tests cover the real Noise protocol, voice-note uploads, split subscription
@@ -767,4 +777,4 @@ motor commands. No robot or Muse account is needed for those tests. Use
 
 The robot command list contains only the Reachy commands. It does not advertise
 the generic Linux shell or file commands. State files and credentials retain
-the Linux SDK's owner-only storage policy.
+the Muse Gadget SDK's owner-only storage policy.

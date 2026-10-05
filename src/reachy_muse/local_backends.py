@@ -11,8 +11,8 @@ from typing import Awaitable, Callable, Optional, Tuple
 
 from musegadget.reachy.expressions import Expression
 from musegadget.reachy.replies import ReplyStyle, spoken_reply
-from musegadget.reachy_capabilities import WAKE_CUE, Backends, Endpoint, HeardAudio, Mode, Partial, SpokenLine
-from musegadget.reachy_progress import PUBLIC_PROGRESS_PHRASES, ProgressPlan
+from reachy_muse.capabilities import WAKE_CUE, Backends, Endpoint, HeardAudio, Mode, Partial, SpokenLine
+from reachy_muse.progress import PUBLIC_PROGRESS_PHRASES, ProgressPlan
 
 log = logging.getLogger(__name__)
 ACKNOWLEDGEMENTS = (
@@ -65,7 +65,7 @@ class _LocalEndedTurn:
 
     async def endpoint(self) -> Optional[Endpoint]:
         """The turn as Muse receives it; None when its transcription was lost."""
-        from musegadget.streaming_transcription import StreamingTranscriptionError, StreamingWorkerError
+        from reachy_muse.streaming_transcription import StreamingTranscriptionError, StreamingWorkerError
 
         self.start()
         if self._recognition is None:
@@ -111,7 +111,7 @@ class LocalHearingTurn:
         self._recorder.finish_initial_capture()
 
     def take(self) -> HeardAudio:
-        from musegadget.voice_audio import SpeechAudio, SpeechEnd
+        from reachy_muse.voice_audio import SpeechAudio, SpeechEnd
 
         wav, self._wav = self._wav, None
         events = self._recorder.take_audio_events() if self._recognizer is not None else ()
@@ -141,7 +141,7 @@ class LocalHearingTurn:
         return HeardAudio(ended, failures, transcript_lost)
 
     def _listen(self, audio: bytearray) -> int:
-        from musegadget.streaming_transcription import StreamingTranscriptionError, StreamingWorkerError
+        from reachy_muse.streaming_transcription import StreamingTranscriptionError, StreamingWorkerError
 
         if not audio or self._failed:
             audio.clear()
@@ -183,7 +183,7 @@ class LocalHearing:
             log.info("Reachy streaming recognition ready: audio processed before endpoint")
 
     def open_turn(self, sample_rate: int, *, silence_s: float, vad=None, **options) -> LocalHearingTurn:
-        from musegadget.voice_audio import TurnRecorder
+        from reachy_muse.voice_audio import TurnRecorder
 
         recorder = TurnRecorder(sample_rate, silence_s=silence_s, max_s=60.0,
                                 **({"stream_audio": True} if self._streaming else {}),
@@ -263,7 +263,7 @@ class MuseVoice:
         self.session = session
 
     def stream(self, line: SpokenLine, output_rate: int):
-        from musegadget.voice_audio import Mp3Decoder
+        from reachy_muse.voice_audio import Mp3Decoder
 
         decoder = Mp3Decoder(output_rate)
         mp3 = self.session.stream_tts(line.muse_message_id)
@@ -320,7 +320,7 @@ def split_sentences(text: str) -> Tuple[str, ...]:
 def backends_for(mode: Mode, session, *, speech=None, progress_speech=None, transcriber=None,
                  stream_replies: bool = False, wake: bool = False, companion=None) -> Backends:
     if mode is Mode.COMPANION:
-        from musegadget.reachy_failover import companion_backends
+        from reachy_muse.failover import companion_backends
         local = backends_for(Mode.ON_ROBOT, session, speech=speech, progress_speech=progress_speech,
                              transcriber=transcriber, stream_replies=stream_replies, wake=wake)
         return companion_backends(local, companion)

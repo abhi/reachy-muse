@@ -7,10 +7,11 @@ import asyncio
 
 import pytest
 
-from musegadget import muse_turn, reachy_voice
-from musegadget.reachy_capabilities import Mode
-from musegadget.reachy_local_backends import backends_for
-from musegadget.reachy_voice import TurnOutcome, VoiceConversation
+from musegadget import muse_turn
+import reachy_muse.conversation
+from reachy_muse.capabilities import Mode
+from reachy_muse.local_backends import backends_for
+from reachy_muse.conversation import TurnOutcome, VoiceConversation
 
 
 class Session:

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import FrozenSet, List, Optional, Tuple
 
-from musegadget.reachy_capabilities import grounded
+from reachy_muse.capabilities import grounded
 
 _UNITS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
           "sixteen seventeen eighteen nineteen").split()

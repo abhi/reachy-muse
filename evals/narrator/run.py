@@ -23,11 +23,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from musegadget.reachy_capabilities import grounded
-from musegadget.reachy_companion_protocol import NarrateOp
+from reachy_muse.capabilities import grounded
+from reachy_muse.protocol import NarrateOp
 
-from reachy_companion.grounding import ungrounded
-from reachy_companion.narrator_mlx import MARKUP, MAX_LINE_BYTES, OPS, Ask, MlxNarrator, parse
+from reachy_muse.companion_server.grounding import ungrounded
+from reachy_muse.companion_server.narrator_mlx import MARKUP, MAX_LINE_BYTES, OPS, Ask, MlxNarrator, parse
 
 HERE = Path(__file__).resolve().parent
 

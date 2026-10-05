@@ -24,7 +24,7 @@ import pytest
 np = pytest.importorskip("numpy")
 av = pytest.importorskip("av")
 
-from musegadget.voice_audio import Mp3Decoder, SpeechAudio, SpeechEnd, TurnRecorder
+from reachy_muse.voice_audio import Mp3Decoder, SpeechAudio, SpeechEnd, TurnRecorder
 
 
 class ScriptVad:

@@ -1,7 +1,7 @@
 import pytest
 
-from musegadget.reachy_capabilities import grounded
-from reachy_companion.grounding import missing_facts, ungrounded
+from reachy_muse.capabilities import grounded
+from reachy_muse.companion_server.grounding import missing_facts, ungrounded
 
 REPLY = ("Tomorrow in Lyon it will be 18 degrees with a 40% chance of rain. "
          "Your dentist appointment with Dr. Okafor is at 7:45 pm on October 12th, and the copay is $25.50.")

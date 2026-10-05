@@ -12,8 +12,8 @@ import pytest
 np = pytest.importorskip("numpy")
 av = pytest.importorskip("av")
 
-from musegadget import local_speech
-from musegadget.local_speech import PiperSpeech
+from reachy_muse import local_speech
+from reachy_muse.local_speech import PiperSpeech
 
 
 @pytest.fixture
@@ -99,7 +99,7 @@ def test_real_process_streams_resampled_pcm_and_keeps_text_off_command_line(mode
 
     actual = asyncio.run(collect(PiperSpeech(model), text))
 
-    assert calls[0][0] == (sys.executable, "-m", "musegadget.local_speech", "--model", str(model))
+    assert calls[0][0] == (sys.executable, "-m", "reachy_muse.local_speech", "--model", str(model))
     assert calls[0][1]["stderr"] == asyncio.subprocess.DEVNULL
     assert input_path.read_text() == text
     assert processes[0].returncode == -9

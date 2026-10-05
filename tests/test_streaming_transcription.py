@@ -10,8 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from musegadget import streaming_transcription as streaming
-from musegadget.streaming_transcription import (
+from reachy_muse import streaming_transcription as streaming
+from reachy_muse.streaming_transcription import (
     SherpaStreamingTranscriber, StreamingBufferOverflow, StreamingTranscriptionError,
     StreamingWorkerError,
 )
@@ -38,7 +38,7 @@ def worker(tmp_path, monkeypatch):
 import os, sys, time
 from pathlib import Path
 import numpy
-from musegadget.streaming_transcription import _worker
+from reachy_muse.streaming_transcription import _worker
 
 if os.environ.get('STREAM_TEST_BOOTSTRAPPED'):
     Path(os.environ['STREAM_TEST_BOOTSTRAPPED']).touch()

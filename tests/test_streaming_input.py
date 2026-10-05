@@ -4,13 +4,13 @@ import asyncio
 
 import pytest
 
-from test_reachy_duplex_voice import duplex
-from test_reachy_duplex import OrderedSpeech
-from test_reachy_voice import bounded
-from musegadget.streaming_transcription import (
+from test_duplex_voice import duplex
+from test_duplex import OrderedSpeech
+from test_conversation import bounded
+from reachy_muse.streaming_transcription import (
     StreamingBufferOverflow, StreamingTranscriptionError,
 )
-from musegadget.reachy_capabilities import Partial
+from reachy_muse.capabilities import Partial
 
 
 class StreamingRecognizer:

@@ -35,7 +35,7 @@ def test_clarity_is_the_share_of_energy_between_1_and_4_khz():
 def test_parakeet_hears_the_rendered_test_sentences_almost_word_for_word(tmp_path):
     from bench.score_voices import score
     from bench.voices import SENTENCES, render_all
-    from reachy_companion.voice_kokoro import Loudness
+    from reachy_muse.companion_server.voice_kokoro import Loudness
 
     render_all(tmp_path, ["af_heart"], SENTENCES, Loudness())
     result = score(json.loads((tmp_path / "manifest.json").read_text()), tmp_path)

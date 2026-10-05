@@ -17,19 +17,19 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Awaitable, Callable
 
-from musegadget import __version__
-from musegadget import reachy_expression_plan as plan
+from reachy_muse import __version__
+from reachy_muse import expression_plan as plan
 from musegadget.link_client import DeviceDescription, LinkSession, Outcome, acknowledgement
 from musegadget.muse_turn import AgentStatus, MuseTurn, ReplayScope, Reply, TaskFinished, TurnEvent
 from musegadget.reachy.commands import COMMAND_SPECS
 from musegadget.reachy.expressions import Expression
 from musegadget.reachy.prompts import SETUP_REQUEST, STOP_REQUEST, spoken_request, voice_context
 from musegadget.reachy.replies import ReplyProtocolError, ReplyRevisionError, ReplyStyle, SentenceStream
-from musegadget.reachy_capabilities import WAKE_CUE, Backends, EndedTurn, Endpoint, SpokenLine
-from musegadget.reachy_follow_up import FollowUp, classify_follow_up, is_small_talk, request_topic
-from musegadget.reachy_progress import BackendStatus, ProgressPlan, ProgressUpdate, backend_status_from_event
+from reachy_muse.capabilities import WAKE_CUE, Backends, EndedTurn, Endpoint, SpokenLine
+from reachy_muse.follow_up import FollowUp, classify_follow_up, is_small_talk, request_topic
+from reachy_muse.progress import BackendStatus, ProgressPlan, ProgressUpdate, backend_status_from_event
 from musegadget.service import Service
-from musegadget.speech_playback import PCMPlayer, SpeechPlayback
+from reachy_muse.speech_playback import PCMPlayer, SpeechPlayback
 
 log = logging.getLogger(__name__)
 REPLY_TIMEOUT_S = 180.0
@@ -1045,7 +1045,7 @@ class VoiceConversation:
 
     async def _capture_microphone(self, capture: _CaptureBuffer) -> None:
         """Drain the SDK independently of keyword inference and conversation work."""
-        from musegadget.reachy_hardware import ReachyHardwareError
+        from reachy_muse.hardware import ReachyHardwareError
         last_sample = time.monotonic()
         previous_duration = None
         try:
@@ -1226,7 +1226,7 @@ class VoiceConversation:
             job.aside_audible = False
             result, = await asyncio.gather(task, return_exceptions=True)
             if isinstance(result, Exception):
-                from musegadget.reachy_hardware import ReachyHardwareError
+                from reachy_muse.hardware import ReachyHardwareError
                 if isinstance(result, ReachyHardwareError) and not turn_cancelled:
                     raise result
                 log.warning("Reachy's own spoken line failed: %s", type(result).__name__)
@@ -1253,7 +1253,7 @@ class VoiceConversation:
                 await self._end_asides(job, let_playing_finish=True)
                 log.warning("Muse finished without reply text; returning to listening")
                 if self.backends.voice.speaks_text:
-                    from musegadget.reachy_hardware import ReachyHardwareError
+                    from reachy_muse.hardware import ReachyHardwareError
                     try:
                         await self._announce("Muse returned an empty reply. Please try again.",
                                              started=started, defer_playback=job.defer_playback)
@@ -1711,7 +1711,7 @@ class ReachyService(Service):
         return self.executor.run_command(name, params, timeout_ms)
 
     async def serve(self, session: LinkSession, vm: dict, stop: asyncio.Event) -> Outcome:
-        from musegadget.reachy_hardware import ReachyHardwareError
+        from reachy_muse.hardware import ReachyHardwareError
 
         hardware = self.executor
         stop_link = asyncio.Event()

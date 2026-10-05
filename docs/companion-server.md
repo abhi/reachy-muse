@@ -1,18 +1,18 @@
-# reachy-companion
+# Run the companion server on a Mac
 
 A Mac on the same network can hear, speak and narrate for a Reachy Mini robot.
-This repository is the server that runs on the Mac.
+The `reachy-companion` command is the server that runs on the Mac.
 
 The robot stays in charge of the conversation. It sends microphone audio and text to the companion, and the companion returns transcripts, speech audio and short spoken lines.
-The wire protocol belongs to the robot's SDK, [muse-gadget-sdk](../muse-gadget-sdk). This server imports the SDK's codec, so both sides use the same rules. The protocol spec is `linux/docs/reachy-companion-protocol.md` in that repository.
+The robot and the server import the same codec, `src/reachy_muse/protocol.py`, so both sides use the same rules. The protocol spec is [reachy-companion-protocol.md](reachy-companion-protocol.md).
 
-Hearing, speech and narration run real models on the Mac. Each engine is a Protocol in `reachy_companion/engines.py`.
+Hearing, speech and narration run real models on the Mac. Each engine is a Protocol in `src/reachy_muse/companion_server/engines.py`.
 
 - Hearing uses Voxtral Mini 4B Realtime for the running transcript. Silero VAD and Smart Turn v3 decide when the user has finished. Parakeet TDT v2 then transcribes the whole utterance again for the final text.
 - Speech uses Kokoro-82M. It speaks one sentence at a time, at the rate the robot asks for, raised to -20 dBFS RMS with peaks held under -1 dBFS. `serve --voice NAME` picks the voice (default `af_heart`) and `--loudness DBFS` the level.
 - Narration uses Qwen3-4B-Instruct-2507, 4-bit, through mlx-lm. It writes the acknowledgement, the progress lines and the condensed answer. See [Narration](#narration).
 
-The `mac-speech-bench-2` study in the SDK repository chose the speech models. `evals/narrator` chose the narrator.
+A speech benchmark on the Mac, mac-speech-bench-2, chose the speech models. `evals/narrator` chose the narrator.
 
 ## What the Mac needs
 
@@ -22,14 +22,15 @@ The `mac-speech-bench-2` study in the SDK repository chose the speech models. `e
 
 ## Install
 
-The SDK checkout must sit next to this one.
+Use Python 3.10 or later. To develop against a local checkout of the Muse Gadget SDK, put it next to this repository:
 
 ```sh
-uv venv
-uv pip install -e ../muse-gadget-sdk/linux -e '.[test,real]'
+uv venv --python 3.13
+uv pip install -e '.[companion-server,test]' --override <(echo "musegadget @ file://$PWD/../muse-gadget-sdk/linux")
+uv pip install -e ../muse-gadget-sdk/linux
 ```
 
-The `real` extra installs the speech models' packages. Without it, only `serve --engines stub` works.
+The `companion-server` extra installs the speech models' packages. Without it, only `serve --engines stub` works.
 
 ## Pair
 
@@ -75,18 +76,18 @@ On the robot, paste the values that `pair` printed:
 muse-reachy companion add wss://studio.local:8765 --pin sha256:4f… --token rc1_…
 ```
 
-The robot then trusts only this certificate and sends the token when it connects. The `companion add` command arrives in the SDK's companion client step (S4).
+The robot then trusts only this certificate and sends the token when it connects. 
 
 ## Test
 
 ```sh
-.venv/bin/python -m pytest
+.venv/bin/python -m pytest tests/companion_server
 ```
 
-The conformance tests run every golden vector from the SDK through the codec, then drive the real server with a WebSocket client. They use the stub engines and take about a second.
+The conformance tests run every golden vector through the codec, then drive the real server with a WebSocket client. They use the stub engines and take about a second.
 
 ```sh
-.venv/bin/python -m pytest -m real -s
+.venv/bin/python -m pytest tests/companion_server -m real -s
 ```
 
 These slow tests load the real models. One sends three recorded requests to the server in real time and checks the transcripts for the words that matter, such as "eight" and "not". Then it checks that speech comes back. The other sends three eval cases to the narrator over the WebSocket and scores its lines.
@@ -116,14 +117,14 @@ The robot asks for three kinds of line:
 - `acknowledge` restates the request right after the user stops talking. It never claims a result.
   A greeting, a thank-you, other small talk, or a request under three words gets no line. A fixed rule decides this before the model runs, because Qwen3-4B restated "how are you" as "Okay, checking how you are." even when the prompt told it to stay silent.
 - `progress` says what is happening, based only on Muse's public status label.
-- `lines` condenses Muse's reply into one to three sentences, each with an expression from the SDK's vocabulary.
+- `lines` condenses Muse's reply into one to three sentences, each with an expression from the SDK's vocabulary, `musegadget.reachy.expressions.Expression`.
 
 The model answers in JSON. The narrator parses that answer and checks every line before it sends it:
 
 - at most one line for `acknowledge` and `progress`, at most three for `lines`, each at most 240 bytes, with no markup;
 - an expression from the SDK's `Expression`;
 - no result claimed in an acknowledgement, and no repeat of a progress line already said;
-- no fact that the request, status or reply does not state. `reachy_companion/grounding.py` checks numbers, number words, ordinals, decimals, times, amounts, date words and names. It also runs the SDK's `grounded()`, so the robot accepts every line it passes.
+- no fact that the request, status or reply does not state. `src/reachy_muse/companion_server/grounding.py` checks numbers, number words, ordinals, decimals, times, amounts, date words and names. It also runs the robot's `grounded()` from `reachy_muse.capabilities`, so the robot accepts every line it passes.
 
 A rejected answer gets one retry that names the problems, if the op's deadline leaves time. After that, `acknowledge` and `progress` return no lines, so the robot says its own, and `lines` returns the reply's first three sentences without markup.
 

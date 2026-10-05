@@ -5,7 +5,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from musegadget.reachy_progress import (
+from reachy_muse.progress import (
     PUBLIC_PROGRESS_PHRASES, WAITING_LINES, BackendActivity, BackendStatus, ProgressPlan, ProgressUpdate,
     backend_activity_from_status, backend_status_from_event, progress_from_activity,
     validate_public_progress, waiting_progress,

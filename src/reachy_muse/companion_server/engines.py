@@ -11,7 +11,7 @@ import struct
 from dataclasses import dataclass
 from typing import AsyncIterator, Optional, Protocol, Sequence, Tuple, Union
 
-from musegadget.reachy_companion_protocol import MAX_LINE_BYTES, NarratedLine, VoiceRole
+from reachy_muse.protocol import MAX_LINE_BYTES, NarratedLine, VoiceRole
 
 
 @dataclass(frozen=True)

@@ -19,7 +19,7 @@ from pathlib import Path
 import struct
 import sys
 
-from musegadget.reachy_capabilities import Partial
+from reachy_muse.capabilities import Partial
 
 SAMPLE_RATE = 16000
 MAX_TURN_SAMPLES = 60 * SAMPLE_RATE
@@ -168,7 +168,7 @@ call. A hung call kills/reaps the process and fails every affected turn.
                 await self._pump
             self._loop = asyncio.get_running_loop()
             spawn = asyncio.create_task(asyncio.create_subprocess_exec(
-                sys.executable, "-m", "musegadget.streaming_transcription", "--model",
+                sys.executable, "-m", "reachy_muse.streaming_transcription", "--model",
                 str(self.model_path),
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL))

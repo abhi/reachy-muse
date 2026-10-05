@@ -30,7 +30,7 @@ from typing import Dict, Optional, Tuple
 from websockets.asyncio.server import serve
 
 from musegadget.reachy.expressions import Expression
-from musegadget.reachy_companion_protocol import (
+from reachy_muse.protocol import (
     MAX_ERROR_MESSAGE_BYTES,
     MAX_LINE_BYTES,
     VERSION,

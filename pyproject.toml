@@ -3,20 +3,30 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "reachy-companion"
+name = "reachy-muse"
 version = "0.1.0"
-description = "A Mac companion that hears, speaks and narrates for a Reachy Mini robot"
+description = "Talk to Muse through a Reachy Mini robot, with an optional Mac companion"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.10"
-dependencies = ["musegadget", "websockets>=13", "cryptography>=41"]
+# For a local SDK checkout, install it first: pip install -e ../muse-gadget-sdk/linux
+dependencies = [
+    "musegadget @ git+https://github.com/abhi/muse-gadget-sdk@sdk/reachy-gadget-api#subdirectory=linux",
+]
 
 [project.scripts]
-reachy-companion = "reachy_companion.cli:main"
+muse-reachy = "reachy_muse.cli:main"
+reachy-companion = "reachy_muse.companion_server.cli:main"
 
 [project.optional-dependencies]
 test = ["pytest"]
-# Pinned to the versions mac-speech-bench-2 measured.
-real = [
+robot = ["reachy-mini>=1.9,<2", "numpy>=1.24", "av>=12", "webrtcvad-wheels>=2.0.14"]
+wake = ["sherpa-onnx==1.13.8", "sentencepiece==0.2.2"]
+wake-vosk = ["vosk==0.3.45"]
+stt-streaming = ["sherpa-onnx==1.13.8"]
+# Pinned to the versions mac-speech-bench-2 measured, on Apple Silicon.
+companion-server = [
+    "cryptography>=41",
     "mlx==0.32.3",
     "mlx-audio==0.5.7",
     "parakeet-mlx==0.5.3",
@@ -32,7 +42,10 @@ real = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["reachy_companion*"]
+where = ["src"]
+
+[tool.setuptools.package-data]
+reachy_muse = ["data/face_tracking/*", "data/companion_protocol_v1/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

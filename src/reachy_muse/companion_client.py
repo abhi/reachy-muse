@@ -26,8 +26,8 @@ from typing import AsyncIterator, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from musegadget.reachy.replies import ReplyStyle
-from musegadget.reachy_capabilities import CapabilityUnavailable, Endpoint, HeardAudio, Partial, SpokenLine
-from musegadget.reachy_companion_protocol import (
+from reachy_muse.capabilities import CapabilityUnavailable, Endpoint, HeardAudio, Partial, SpokenLine
+from reachy_muse.protocol import (
     MAX_ALREADY_SAID, MAX_LINE_BYTES, MAX_MIC_PCM_BYTES, MAX_OUTSTANDING_NARRATIONS, MAX_REPLY_BYTES,
     MAX_REQUEST_BYTES, MAX_STATUS_BYTES, MAX_TEXT_FRAME_BYTES, VERSION, AudioKind, CloseHow, Error,
     ErrorCode, HearClose, HearEndpoint, HearOpen, HearPartial, Hello, Narrate, NarratedLine, NarrateOp,
@@ -494,7 +494,7 @@ class CompanionHearingTurn:
         self._recorder.finish_initial_capture()
 
     def take(self) -> HeardAudio:
-        from musegadget.voice_audio import SpeechAudio, SpeechEnd
+        from reachy_muse.voice_audio import SpeechAudio, SpeechEnd
 
         for event in self._recorder.take_audio_events():
             if isinstance(event, SpeechAudio):
@@ -567,7 +567,7 @@ class CompanionHearing:
         await self.link.settled()
 
     def open_turn(self, sample_rate: int, *, silence_s: float, vad=None, **options) -> CompanionHearingTurn:
-        from musegadget.voice_audio import TurnRecorder
+        from reachy_muse.voice_audio import TurnRecorder
 
         recorder = TurnRecorder(sample_rate, silence_s=silence_s, max_s=60.0, stream_audio=True,
                                 **({"vad": vad} if vad is not None else {}), **options)

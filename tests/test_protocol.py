@@ -10,7 +10,7 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 from fake_companion import TOKEN, FakeCompanion
-from musegadget.reachy_companion_protocol import (
+from reachy_muse.protocol import (
     MESSAGES,
     AudioFrame,
     AudioKind,
@@ -33,7 +33,7 @@ from musegadget.reachy_companion_protocol import (
     message_type,
 )
 
-VECTORS = files("musegadget") / "data" / "companion_protocol_v1"
+VECTORS = files("reachy_muse") / "data" / "companion_protocol_v1"
 VALID = json.loads((VECTORS / "valid.json").read_text(encoding="utf-8"))
 INVALID = json.loads((VECTORS / "invalid.json").read_text(encoding="utf-8"))
 

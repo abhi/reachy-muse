@@ -1,6 +1,6 @@
 import pytest
 
-from musegadget.reachy_follow_up import FollowUp, classify_follow_up, request_topic
+from reachy_muse.follow_up import FollowUp, classify_follow_up, request_topic
 
 
 @pytest.mark.parametrize("utterance, expected", [

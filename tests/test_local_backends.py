@@ -4,10 +4,10 @@ import pytest
 
 from musegadget.reachy.expressions import Expression
 from musegadget.reachy.replies import ReplyStyle
-from musegadget.reachy_capabilities import HeardAudio, Mode, Partial, SpokenLine
-from musegadget.reachy_local_backends import LocalHearing, LocalVoice, MuseVoice, RuleNarrator, backends_for
-from musegadget.streaming_transcription import StreamingTranscriptionError
-from test_reachy_voice import FakeSession, mp3_tone  # noqa: F401
+from reachy_muse.capabilities import HeardAudio, Mode, Partial, SpokenLine
+from reachy_muse.local_backends import LocalHearing, LocalVoice, MuseVoice, RuleNarrator, backends_for
+from reachy_muse.streaming_transcription import StreamingTranscriptionError
+from test_conversation import FakeSession, mp3_tone  # noqa: F401
 
 
 @pytest.mark.parametrize("name, expected", [

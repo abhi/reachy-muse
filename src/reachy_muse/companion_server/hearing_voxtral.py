@@ -16,9 +16,9 @@ from typing import Any, Callable, List, Optional, Sequence, TypeVar
 
 import numpy as np
 
-from reachy_companion.engines import Endpoint, HearEvent, Partial
+from reachy_muse.companion_server.engines import Endpoint, HearEvent, Partial
 
-log = logging.getLogger("reachy_companion")
+log = logging.getLogger("reachy_muse.companion_server")
 
 RATE = 16_000
 VOXTRAL = "mlx-community/Voxtral-Mini-4B-Realtime-2602-4bit"

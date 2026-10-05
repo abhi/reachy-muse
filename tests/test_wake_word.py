@@ -13,7 +13,7 @@ import pytest
 
 np = pytest.importorskip("numpy")
 
-from musegadget.wake_word import MODEL_FILES, PHONETIC_MODEL_FILES, WakeDetection, WakeWordDetector, _encoder_timing
+from reachy_muse.wake_word import MODEL_FILES, PHONETIC_MODEL_FILES, WakeDetection, WakeWordDetector, _encoder_timing
 
 
 def protobuf_string(field, value):
@@ -197,7 +197,7 @@ def test_confirmed_label_with_different_tokens_cannot_authorize_a_cut(timed_mode
 
 @pytest.mark.parametrize('step_s, timed', [(.174, True), (.176, False)])
 def test_alignment_accepts_measured_replay_cost_but_keeps_a_bounded_deadline(timed_models, monkeypatch, step_s, timed):
-    import musegadget.wake_word as module
+    import reachy_muse.wake_word as module
 
     directory, instances = timed_models
     detector = WakeWordDetector(directory)
@@ -317,7 +317,7 @@ def test_encoder_metadata_rejects_duplicate_keys_and_truncated_graph(tmp_path):
 
 def test_supported_timing_is_exposed_for_startup_readiness(timed_models, caplog):
     directory, _ = timed_models
-    caplog.set_level('INFO', logger='musegadget.wake_word')
+    caplog.set_level('INFO', logger='reachy_muse.wake_word')
     detector = WakeWordDetector(directory)
     assert detector.timing_supported
     assert 'Acoustic wake-tail timing ready' in caplog.text
@@ -458,11 +458,11 @@ def test_an_unregistered_result_never_wakes_the_conversation(models):
 
 
 def test_microphone_summaries_continue_after_startup_with_fresh_window_stats(models, monkeypatch, caplog):
-    import musegadget.wake_word as module
+    import reachy_muse.wake_word as module
 
     directory, _ = models
     detector = WakeWordDetector(directory)
-    caplog.set_level("INFO", logger="musegadget.wake_word")
+    caplog.set_level("INFO", logger="reachy_muse.wake_word")
 
     def feed(at, value, count=16000, delay=0):
         times = iter((at, at + delay))
@@ -595,7 +595,7 @@ def test_missing_model_files_fail_before_optional_imports(tmp_path):
 def test_optional_dependencies_are_imported_only_when_a_detector_is_created(models, monkeypatch):
     directory, _ = models
     monkeypatch.setitem(sys.modules, "sherpa_onnx", None)
-    import musegadget.wake_word as module
+    import reachy_muse.wake_word as module
     importlib.reload(module)
     with pytest.raises(RuntimeError, match="requires sherpa-onnx and sentencepiece"):
         WakeWordDetector(directory)

@@ -13,13 +13,15 @@ import wave
 
 import pytest
 
-from musegadget import muse_turn, reachy_local_backends, reachy_voice
+from musegadget import muse_turn
+import reachy_muse.local_backends
+import reachy_muse.conversation
 from musegadget.reachy.replies import ReplyStyle
-from musegadget.reachy_capabilities import Mode
-from musegadget.reachy_local_backends import backends_for
+from reachy_muse.capabilities import Mode
+from reachy_muse.local_backends import backends_for
 from musegadget.muse_turn import MuseTurn, ReplayScope, TaskFinished
-from musegadget.reachy_progress import BackendActivity, BackendStatus
-from musegadget.reachy_voice import (
+from reachy_muse.progress import BackendActivity, BackendStatus
+from reachy_muse.conversation import (
     BackendStatusSegment, MuseJob, ProgressSegment, SpeechSegment,
     TurnOutcome, VoiceConversation,
 )
@@ -240,7 +242,7 @@ def test_idle_subscription_snapshots_are_retired_before_the_next_ack():
 
 
 def test_cancelled_unacknowledged_owned_turn_retires_pending_ids(monkeypatch):
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
     async def scenario():
         started = asyncio.Event()
         class BlockedSession(FakeSession):
@@ -341,9 +343,9 @@ def test_dedicated_chat_ack_must_confirm_the_selected_thread(ack):
 
 
 def test_owned_chat_backend_stages_are_spoken_once_and_answer_stops_them(monkeypatch):
-    from musegadget.reachy_progress import ProgressPlan
+    from reachy_muse.progress import ProgressPlan
     clock = 0.0
-    monkeypatch.setattr(reachy_voice.time, "monotonic", lambda: clock)
+    monkeypatch.setattr(reachy_muse.conversation.time, "monotonic", lambda: clock)
     session = FakeSession()
     conversation = VoiceConversation(session, FakeHardware(),
                                      backends=backends_for(Mode.MUSE_VOICE, session),
@@ -372,9 +374,9 @@ def test_owned_chat_backend_stages_are_spoken_once_and_answer_stops_them(monkeyp
 
 
 def test_lunch_request_reports_working_phase_before_delayed_answer(monkeypatch):
-    from musegadget.reachy_progress import ProgressPlan
+    from reachy_muse.progress import ProgressPlan
     clock = 0.0
-    monkeypatch.setattr(reachy_voice.time, "monotonic", lambda: clock)
+    monkeypatch.setattr(reachy_muse.conversation.time, "monotonic", lambda: clock)
     session = FakeSession()
     conversation = VoiceConversation(session, FakeHardware(),
                                      backends=backends_for(Mode.MUSE_VOICE, session),
@@ -398,9 +400,9 @@ def test_lunch_request_reports_working_phase_before_delayed_answer(monkeypatch):
 
 
 def test_early_public_milestone_survives_the_first_twenty_second_cue(monkeypatch):
-    from musegadget.reachy_progress import ProgressPlan
+    from reachy_muse.progress import ProgressPlan
     clock = 0.0
-    monkeypatch.setattr(reachy_voice.time, "monotonic", lambda: clock)
+    monkeypatch.setattr(reachy_muse.conversation.time, "monotonic", lambda: clock)
     session = FakeSession()
     conversation = VoiceConversation(session, FakeHardware(),
                                      backends=backends_for(Mode.MUSE_VOICE, session),
@@ -430,8 +432,8 @@ def test_progress_only_final_does_not_mark_reply_played_or_complete():
 def test_progress_playback_is_preempted_and_closed_before_answer_or_turn_cleanup(
         monkeypatch, streaming_speech, ending):
     np = pytest.importorskip("numpy")
-    from musegadget.reachy_progress import ProgressPlan
-    monkeypatch.setattr(reachy_local_backends, "ProgressPlan",
+    from reachy_muse.progress import ProgressPlan
+    monkeypatch.setattr(reachy_muse.local_backends, "ProgressPlan",
                         lambda text, started: ProgressPlan(text, started, first_delay_s=0))
 
     async def scenario():
@@ -499,8 +501,8 @@ def test_progress_playback_is_preempted_and_closed_before_answer_or_turn_cleanup
 
 
 def test_answer_queued_before_progress_due_suppresses_the_cue(monkeypatch, streaming_speech):
-    from musegadget.reachy_progress import ProgressPlan
-    monkeypatch.setattr(reachy_local_backends, "ProgressPlan",
+    from reachy_muse.progress import ProgressPlan
+    monkeypatch.setattr(reachy_muse.local_backends, "ProgressPlan",
                         lambda text, started: ProgressPlan(text, started, first_delay_s=0))
 
     async def scenario():
@@ -535,7 +537,7 @@ def test_answer_queued_before_progress_due_suppresses_the_cue(monkeypatch, strea
 
 
 def test_progress_clock_starts_after_muse_acknowledges(monkeypatch, streaming_speech):
-    from musegadget.reachy_progress import ProgressPlan
+    from reachy_muse.progress import ProgressPlan
     origins = []
     acknowledged = []
 
@@ -543,7 +545,7 @@ def test_progress_clock_starts_after_muse_acknowledges(monkeypatch, streaming_sp
         origins.append(started)
         return ProgressPlan(text, started)
 
-    monkeypatch.setattr(reachy_local_backends, "ProgressPlan", make_plan)
+    monkeypatch.setattr(reachy_muse.local_backends, "ProgressPlan", make_plan)
 
     async def scenario():
         hardware = FakeHardware()
@@ -573,9 +575,9 @@ def test_progress_clock_starts_after_muse_acknowledges(monkeypatch, streaming_sp
 
 
 def test_completed_progress_hardware_error_survives_answer_race(monkeypatch, streaming_speech):
-    from musegadget.reachy_hardware import ReachyHardwareError
-    from musegadget.reachy_progress import ProgressPlan
-    monkeypatch.setattr(reachy_local_backends, "ProgressPlan",
+    from reachy_muse.hardware import ReachyHardwareError
+    from reachy_muse.progress import ProgressPlan
+    monkeypatch.setattr(reachy_muse.local_backends, "ProgressPlan",
                         lambda text, started: ProgressPlan(text, started, first_delay_s=0))
 
     async def scenario():
@@ -616,9 +618,9 @@ def test_completed_progress_hardware_error_survives_answer_race(monkeypatch, str
 def test_preemption_finishes_pending_hardware_call_before_flush_and_answer(
         monkeypatch, streaming_speech, blocked_call, fail):
     np = pytest.importorskip("numpy")
-    from musegadget.reachy_hardware import ReachyHardwareError
-    from musegadget.reachy_progress import ProgressPlan
-    monkeypatch.setattr(reachy_local_backends, "ProgressPlan",
+    from reachy_muse.hardware import ReachyHardwareError
+    from reachy_muse.progress import ProgressPlan
+    monkeypatch.setattr(reachy_muse.local_backends, "ProgressPlan",
                         lambda text, started: ProgressPlan(text, started, first_delay_s=0))
 
     async def scenario():
@@ -747,7 +749,7 @@ def test_queued_notice_waits_for_paused_direct_acknowledgement_or_progress(progr
         try:
             while not conversation._speaker_lock.locked():
                 await asyncio.sleep(0)
-            conversation._output_queue.put_nowait(reachy_voice._SpeechJob(None,
+            conversation._output_queue.put_nowait(reachy_muse.conversation._SpeechJob(None,
                 'Public retry.', state='listening'))
             while not conversation._output_busy:
                 await asyncio.sleep(0)
@@ -855,7 +857,7 @@ def test_failed_deferred_turn_does_not_flush_the_output_pipeline():
 
 
 def test_standard_progress_audio_is_cached_without_playback_or_answer_synthesis(streaming_speech):
-    from musegadget.reachy_progress import PUBLIC_PROGRESS_PHRASES
+    from reachy_muse.progress import PUBLIC_PROGRESS_PHRASES
 
     async def scenario():
         hardware = FakeHardware()
@@ -887,7 +889,7 @@ def streaming_speech(monkeypatch):
     np = pytest.importorskip("numpy")
     monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
     monkeypatch.setattr(muse_turn, "EMPTY_REPLY_GRACE_S", 0)
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     class Speech:
         def __init__(self, hardware):
@@ -1184,7 +1186,7 @@ def test_muse_knows_local_face_follow_does_not_supply_camera_vision_or_identity(
 
 @pytest.fixture
 def prepared_speech():
-    from musegadget.local_speech import PreparedSpeech
+    from reachy_muse.local_speech import PreparedSpeech
     np = pytest.importorskip("numpy")
 
     class Speech:
@@ -1296,8 +1298,8 @@ def test_cancelled_turn_reaps_current_and_lookahead_before_microphone_reopens(pr
 def test_authoritative_revision_during_progress_shutdown_speaks_only_replacement(
         monkeypatch, prepared_speech):
     np = pytest.importorskip("numpy")
-    from musegadget.reachy_progress import ProgressPlan
-    monkeypatch.setattr(reachy_local_backends, "ProgressPlan",
+    from reachy_muse.progress import ProgressPlan
+    monkeypatch.setattr(reachy_muse.local_backends, "ProgressPlan",
                         lambda text, started: ProgressPlan(text, started, first_delay_s=0))
 
     async def scenario():
@@ -1491,7 +1493,7 @@ def test_transcript_only_completed_message_queues_tts_without_text_deltas():
 def test_local_voice_speaks_muse_text_and_executes_its_expression(monkeypatch):
     np = pytest.importorskip("numpy")
     monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     class LocalSpeech:
         def __init__(self):
@@ -1534,7 +1536,7 @@ def test_local_voice_speaks_muse_text_and_executes_its_expression(monkeypatch):
 def test_expression_setup_uses_a_separate_text_turn_and_speaks_readiness(monkeypatch):
     np = pytest.importorskip("numpy")
     monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
     spoken = []
 
     class LocalSpeech:
@@ -1569,7 +1571,7 @@ def test_expression_setup_uses_a_separate_text_turn_and_speaks_readiness(monkeyp
 def test_local_recognition_sends_words_to_muse_and_ignores_empty_speech(monkeypatch, recognized):
     np = pytest.importorskip("numpy")
     monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
     recordings = []
 
     class LocalRecognition:
@@ -1612,7 +1614,7 @@ def test_local_recognition_sends_words_to_muse_and_ignores_empty_speech(monkeypa
 def test_empty_muse_reply_announces_the_problem_and_resumes_without_reconnecting(monkeypatch, speech_fails):
     np = pytest.importorskip("numpy")
     monkeypatch.setattr(muse_turn, "EMPTY_REPLY_GRACE_S", 0)
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
     spoken = []
 
     class LocalSpeech:
@@ -1648,7 +1650,7 @@ def test_empty_muse_reply_announces_the_problem_and_resumes_without_reconnecting
 
 def test_reply_emotion_is_present_during_speech_without_a_delayed_extra_move(monkeypatch):
     np = pytest.importorskip("numpy")
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     class LocalSpeech:
         async def stream(self, text, rate):
@@ -1676,7 +1678,7 @@ def test_reply_emotion_is_present_during_speech_without_a_delayed_extra_move(mon
 ])
 def test_contextual_acknowledgement_waits_for_words_and_skips_unmatched_input(monkeypatch, recognized, expected_ack):
     np = pytest.importorskip("numpy")
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
     monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
     synthesized = []
     hardware = FakeHardware()
@@ -1707,7 +1709,7 @@ def test_contextual_acknowledgement_waits_for_words_and_skips_unmatched_input(mo
                                          backends=backends_for(Mode.ON_ROBOT, session, speech=LocalSpeech(),
                                                                transcriber=LocalRecognition()))
         conversation.backends.voice.phrases = {phrase: (np.full(80, .1, dtype=np.float32),)
-                                               for phrase in reachy_local_backends.ACKNOWLEDGEMENTS}
+                                               for phrase in reachy_muse.local_backends.ACKNOWLEDGEMENTS}
         subscriber = asyncio.create_task(conversation._subscribe())
         await session.chat_subscribed.wait()
         await conversation.turn(b"voice")
@@ -1721,7 +1723,7 @@ def test_contextual_acknowledgement_waits_for_words_and_skips_unmatched_input(mo
 
 def test_cancelling_request_stops_contextual_acknowledgement_before_listening_resumes(monkeypatch):
     np = pytest.importorskip("numpy")
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     class LocalRecognition:
         async def transcribe(self, wav):
@@ -1753,8 +1755,8 @@ def test_cancelling_request_stops_contextual_acknowledgement_before_listening_re
 @pytest.mark.parametrize("request_fails", [False, True])
 def test_completed_acknowledgement_hardware_failure_propagates_and_restores_capture(monkeypatch, request_fails):
     np = pytest.importorskip("numpy")
-    from musegadget.reachy_hardware import ReachyHardwareError
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    from reachy_muse.hardware import ReachyHardwareError
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     class BrokenSpeaker(FakeHardware):
         def play_audio(self, samples):
@@ -1796,8 +1798,8 @@ def test_completed_acknowledgement_hardware_failure_propagates_and_restores_capt
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_turn_cancellation_preserves_cancellation_after_acknowledgement_hardware_failure(monkeypatch, cleanup_fails):
     np = pytest.importorskip("numpy")
-    from musegadget.reachy_hardware import ReachyHardwareError
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    from reachy_muse.hardware import ReachyHardwareError
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     class BrokenSpeaker(FakeHardware):
         def play_audio(self, samples):
@@ -1853,7 +1855,7 @@ def test_turn_cancellation_preserves_cancellation_after_acknowledgement_hardware
     ("Say pineapple sunshine.", None), ("I am sad.", None),
 ])
 def test_question_acknowledgement_matches_intent_without_a_generic_fallback(text, expected):
-    assert reachy_local_backends.contextual_acknowledgement(text) == expected
+    assert reachy_muse.local_backends.contextual_acknowledgement(text) == expected
 
 
 @pytest.mark.parametrize("text, expected", [
@@ -1862,12 +1864,12 @@ def test_question_acknowledgement_matches_intent_without_a_generic_fallback(text
     ("Please say Hey Muse.", "Please say Hey Muse."),
 ])
 def test_only_exact_leading_wake_phrase_is_stripped_from_followups(text, expected):
-    assert reachy_voice.strip_wake_prefix(text, "hey muse") == expected
+    assert reachy_muse.conversation.strip_wake_prefix(text, "hey muse") == expected
 
 
 def test_first_wake_question_discards_words_before_exact_invocation():
-    assert reachy_voice.question_after_wake("Background private words. Hey, Muse! What time is it?", "hey muse") == "What time is it?"
-    assert reachy_voice.question_after_wake("Background private words only.", "hey muse") is None
+    assert reachy_muse.conversation.question_after_wake("Background private words. Hey, Muse! What time is it?", "hey muse") == "What time is it?"
+    assert reachy_muse.conversation.question_after_wake("Background private words only.", "hey muse") is None
 
 
 def test_wake_and_contextual_cues_are_cached_without_overlapping_synthesis(monkeypatch):
@@ -1886,7 +1888,7 @@ def test_wake_and_contextual_cues_are_cached_without_overlapping_synthesis(monke
                                                                transcriber=object(), wake=True),
                                          wake_detector=Wake())
         await conversation.warm_up()
-        assert synthesized == [*reachy_local_backends.ACKNOWLEDGEMENTS, "Yes?"]
+        assert synthesized == [*reachy_muse.local_backends.ACKNOWLEDGEMENTS, "Yes?"]
         assert set(conversation.backends.voice.phrases) == set(synthesized)
         assert not conversation.hardware.played
     asyncio.run(bounded(scenario()))
@@ -1895,7 +1897,7 @@ def test_wake_and_contextual_cues_are_cached_without_overlapping_synthesis(monke
 @pytest.mark.parametrize("recognized", ["Hey, Muse!", "Private background words without a recognized invocation"])
 def test_wake_only_or_unconfirmed_boundary_is_local_then_clean_followup_gets_context_once(monkeypatch, recognized):
     np = pytest.importorskip("numpy")
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
     monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
     class Wake:
         phrase = "hey muse"
@@ -1941,7 +1943,7 @@ def test_wake_only_or_unconfirmed_boundary_is_local_then_clean_followup_gets_con
 
 def test_same_breath_wake_question_strips_pre_wake_words_and_sends_one_request(monkeypatch):
     np = pytest.importorskip("numpy")
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
     monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
     class Wake:
         phrase = "hey muse"
@@ -1979,7 +1981,7 @@ def test_same_breath_wake_question_strips_pre_wake_words_and_sends_one_request(m
 
 def test_wake_microphone_gates_asr_preserves_preroll_and_closes_only_after_turn_finishes(monkeypatch):
     np = pytest.importorskip("numpy")
-    from musegadget import voice_audio
+    from reachy_muse import voice_audio
     feeds = []
     preroll_complete = threading.Event()
     class Recorder:
@@ -2083,7 +2085,7 @@ def test_wake_microphone_gates_asr_preserves_preroll_and_closes_only_after_turn_
 @pytest.mark.parametrize("pending_same_chunk", [False, True])
 def test_delayed_wake_endpoint_and_pending_same_chunk_keep_the_question(monkeypatch, pending_same_chunk):
     np = pytest.importorskip("numpy")
-    from musegadget import voice_audio
+    from reachy_muse import voice_audio
     class Recorder:
         def finish_initial_capture(self):
             pass
@@ -2143,7 +2145,7 @@ def test_delayed_wake_endpoint_and_pending_same_chunk_keep_the_question(monkeypa
 def test_sleeping_detector_receives_stateful_16k_resampling_and_preroll_is_bounded(monkeypatch):
     np = pytest.importorskip("numpy")
     pytest.importorskip("av")
-    from musegadget import voice_audio
+    from reachy_muse import voice_audio
     captured = []
     captured_complete = threading.Event()
     class Recorder:
@@ -2199,7 +2201,7 @@ def test_sleeping_detector_receives_stateful_16k_resampling_and_preroll_is_bound
 
 def test_continuous_capture_preserves_realtime_frames_during_slow_keyword_bursts(monkeypatch):
     np = pytest.importorskip("numpy")
-    from musegadget import voice_audio
+    from reachy_muse import voice_audio
     class Recorder:
         def finish_initial_capture(self):
             pass
@@ -2285,7 +2287,7 @@ def test_continuous_capture_preserves_realtime_frames_during_slow_keyword_bursts
 def test_capture_fifo_bounds_audio_duration_and_marks_every_loss_boundary():
     np = pytest.importorskip("numpy")
     async def scenario():
-        buffer = reachy_voice._CaptureBuffer(10)
+        buffer = reachy_muse.conversation._CaptureBuffer(10)
         buffer.push(np.array([1] * 4, dtype=np.float32))
         buffer.push(np.array([2] * 4, dtype=np.float32))
         buffer.push(np.array([3] * 8, dtype=np.float32))
@@ -2314,7 +2316,7 @@ def test_capture_fifo_bounds_audio_duration_and_marks_every_loss_boundary():
 
 def test_capture_overflow_resets_keyword_and_recording_before_retained_audio(monkeypatch, caplog):
     np = pytest.importorskip("numpy")
-    from musegadget import voice_audio
+    from reachy_muse import voice_audio
     class Recorder:
         def finish_initial_capture(self):
             pass
@@ -2350,12 +2352,12 @@ def test_capture_overflow_resets_keyword_and_recording_before_retained_audio(mon
         loop = asyncio.get_running_loop()
         ready = asyncio.Event()
         overflow_committed = asyncio.Event()
-        original_push = reachy_voice._CaptureBuffer.push
+        original_push = reachy_muse.conversation._CaptureBuffer.push
         def push(buffer, sample, **options):
             original_push(buffer, sample, **options)
             if int(sample[0]) == 8:
                 overflow_committed.set()
-        monkeypatch.setattr(reachy_voice._CaptureBuffer, "push", push)
+        monkeypatch.setattr(reachy_muse.conversation._CaptureBuffer, "push", push)
         class Hardware(FakeHardware):
             def set_state(self, state, **options):
                 super().set_state(state, **options)
@@ -2389,7 +2391,7 @@ def test_capture_overflow_resets_keyword_and_recording_before_retained_audio(mon
 def test_capture_hardware_failure_propagates_and_cancels_its_producer():
     pytest.importorskip("webrtcvad")
     pytest.importorskip("av")
-    from musegadget.reachy_hardware import ReachyHardwareError
+    from reachy_muse.hardware import ReachyHardwareError
     class Hardware(FakeHardware):
         broken = False
         def read_audio(self):
@@ -2412,7 +2414,7 @@ def test_capture_hardware_failure_propagates_and_cancels_its_producer():
 
 
 def test_slow_recording_feed_keeps_microphone_producer_draining_and_joins_on_cancel(monkeypatch):
-    from musegadget import voice_audio
+    from reachy_muse import voice_audio
     np = pytest.importorskip("numpy")
     release, returned = threading.Event(), threading.Event()
 
@@ -2439,7 +2441,7 @@ def test_slow_recording_feed_keeps_microphone_producer_draining_and_joins_on_can
                 super().set_state(state, **options)
                 loop.call_soon_threadsafe(ready.set)
 
-        original_push = reachy_voice._CaptureBuffer.push
+        original_push = reachy_muse.conversation._CaptureBuffer.push
 
         def push(buffer, samples, **options):
             original_push(buffer, samples, **options)
@@ -2447,7 +2449,7 @@ def test_slow_recording_feed_keeps_microphone_producer_draining_and_joins_on_can
                 committed.set()
 
         monkeypatch.setattr(voice_audio, "TurnRecorder", Recorder)
-        monkeypatch.setattr(reachy_voice._CaptureBuffer, "push", push)
+        monkeypatch.setattr(reachy_muse.conversation._CaptureBuffer, "push", push)
         session, hardware = FakeSession(), Hardware()
         session.chat_subscribed.set()
         microphone = asyncio.create_task(VoiceConversation(session, hardware,
@@ -2528,7 +2530,7 @@ def test_read_started_during_playback_stays_discarded_after_unmute():
         session = FakeSession()
         conversation = VoiceConversation(session, hardware, backends=backends_for(Mode.MUSE_VOICE, session))
         conversation._muted = True
-        buffer = reachy_voice._CaptureBuffer(16000)
+        buffer = reachy_muse.conversation._CaptureBuffer(16000)
         producer = asyncio.create_task(conversation._capture_microphone(buffer))
         try:
             while not entered.is_set():
@@ -2547,7 +2549,7 @@ def test_read_started_during_playback_stays_discarded_after_unmute():
 
 def test_non_wake_capture_gap_clears_the_listening_pose(monkeypatch):
     np = pytest.importorskip("numpy")
-    from musegadget import voice_audio
+    from reachy_muse import voice_audio
     class Recorder:
         def finish_initial_capture(self):
             pass
@@ -2584,7 +2586,7 @@ def test_non_wake_capture_gap_clears_the_listening_pose(monkeypatch):
 
 def test_blank_first_wake_gives_local_cue_but_blank_followup_is_empty(monkeypatch):
     np = pytest.importorskip("numpy")
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
     class Wake:
         phrase = "hey muse"
     class Recognition:
@@ -2611,10 +2613,10 @@ def test_blank_first_wake_gives_local_cue_but_blank_followup_is_empty(monkeypatc
 def test_missing_asr_wake_boundary_opens_time_for_question_after_slow_recognition(monkeypatch, echo_cancelled):
     from types import SimpleNamespace
     np = pytest.importorskip("numpy")
-    from musegadget import voice_audio
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    from reachy_muse import voice_audio
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
     clock = [1000.0]
-    monkeypatch.setattr(reachy_voice, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(reachy_muse.conversation, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     class Recorder:
         def finish_initial_capture(self):
             pass
@@ -2666,9 +2668,9 @@ def test_missing_asr_wake_boundary_opens_time_for_question_after_slow_recognitio
         apply_plan = conversation._plan
         async def observed_plan(event):
             await apply_plan(event)
-            if isinstance(event, reachy_voice.plan.TurnDone):
+            if isinstance(event, reachy_muse.conversation.plan.TurnDone):
                 recognition_window_opened.set()
-            if isinstance(event, reachy_voice.plan.OutputIdle):
+            if isinstance(event, reachy_muse.conversation.plan.OutputIdle):
                 output_idle.set()
         conversation._plan = observed_plan
         microphone = asyncio.create_task(conversation._microphone())
@@ -2692,8 +2694,8 @@ def test_missing_asr_wake_boundary_opens_time_for_question_after_slow_recognitio
 
 def test_repeated_empty_vad_turns_cannot_keep_a_wake_session_open(monkeypatch):
     np = pytest.importorskip("numpy")
-    from musegadget import voice_audio
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    from reachy_muse import voice_audio
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
     class Recorder:
         def finish_initial_capture(self):
             pass
@@ -2934,7 +2936,7 @@ async def cancel_task(task):
 def test_ack_race_and_multiple_messages_play_real_mp3_once_each(mp3_tone, monkeypatch, caplog):
     np = pytest.importorskip("numpy")
     monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0.01)
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     async def before_ack(session):
         events = [
@@ -3016,7 +3018,7 @@ def test_replayed_subscription_events_do_not_queue_old_replies():
 def test_rejected_or_invalid_voice_ack_restores_capture_and_clears_playback(
     acknowledgement, error_type, monkeypatch,
 ):
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     async def scenario():
         session = FakeSession(acknowledgement=acknowledgement)
@@ -3033,7 +3035,7 @@ def test_rejected_or_invalid_voice_ack_restores_capture_and_clears_playback(
 
 
 def test_voice_reply_timeout_restores_capture(monkeypatch):
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     async def scenario():
         hardware = FakeHardware()
@@ -3054,8 +3056,8 @@ def test_timely_final_reply_finishes_all_sentences_after_response_deadline(
     from types import SimpleNamespace
     np = pytest.importorskip("numpy")
     clock = [0.0]
-    monkeypatch.setattr(reachy_voice, "time", SimpleNamespace(monotonic=lambda: clock[0]))
-    caplog.set_level("INFO", logger="musegadget.reachy_voice")
+    monkeypatch.setattr(reachy_muse.conversation, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    caplog.set_level("INFO", logger="reachy_muse.conversation")
 
     async def scenario():
         hardware = FakeHardware()
@@ -3109,7 +3111,7 @@ def test_timely_final_reply_finishes_all_sentences_after_response_deadline(
 
 
 def test_stalled_answer_speech_has_its_own_bound_and_closes_playback(monkeypatch, streaming_speech):
-    monkeypatch.setattr(reachy_voice, "SPEECH_TIMEOUT_S", .03)
+    monkeypatch.setattr(reachy_muse.conversation, "SPEECH_TIMEOUT_S", .03)
 
     async def scenario():
         entered, closed = asyncio.Event(), asyncio.Event()
@@ -3151,7 +3153,7 @@ def test_stalled_answer_speech_has_its_own_bound_and_closes_playback(monkeypatch
 
 
 def test_subscription_error_ends_conversation_and_flushes_playback(monkeypatch):
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     async def scenario():
         session = FakeSession()
@@ -3197,7 +3199,7 @@ def test_microphone_continues_draining_echo_while_reply_is_active(monkeypatch):
         def reset(self):
             pass
 
-    from musegadget import voice_audio
+    from reachy_muse import voice_audio
     monkeypatch.setattr(voice_audio, "TurnRecorder", Recorder)
 
     async def scenario():
@@ -3246,11 +3248,11 @@ def test_microphone_continues_draining_echo_while_reply_is_active(monkeypatch):
 
 
 def test_real_noise_voice_note_gets_text_completion_and_paced_tts_burst(mp3_tone, monkeypatch):
-    from test_link_client import registered_session
+    from fake_muse_vm import registered_session
     from musegadget.noise import ApplicationResponse, BodyChunk, ServiceFrame
 
     monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0.01)
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     async def scenario():
         session, vm, stop, task = await registered_session()
@@ -3307,7 +3309,7 @@ def test_real_noise_voice_note_gets_text_completion_and_paced_tts_burst(mp3_tone
 
 
 def test_initial_motion_failure_restores_capture_and_releases_tracker(monkeypatch):
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     class FailedHardware(FakeHardware):
         def set_state(self, state, *, expression=None):
@@ -3328,7 +3330,7 @@ def test_initial_motion_failure_restores_capture_and_releases_tracker(monkeypatc
 
 
 def test_playback_flush_failure_still_restores_capture(monkeypatch):
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     class FailedHardware(FakeHardware):
         def clear_audio(self):
@@ -3346,7 +3348,7 @@ def test_playback_flush_failure_still_restores_capture(monkeypatch):
 
 
 def test_cancelling_an_unacknowledged_turn_flushes_audio_and_restores_capture(monkeypatch):
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     async def scenario():
         sending = asyncio.Event()
@@ -3373,7 +3375,7 @@ def test_cancelling_an_unacknowledged_turn_flushes_audio_and_restores_capture(mo
 def test_hardware_failure_leaves_service_for_a_fresh_controller(monkeypatch):
     from musegadget.identity import Identity
     from musegadget.link_client import Outcome
-    from musegadget.reachy_hardware import ReachyHardwareError
+    from reachy_muse.hardware import ReachyHardwareError
 
     class IdleLink:
         registered_at = None
@@ -3395,12 +3397,12 @@ def test_hardware_failure_leaves_service_for_a_fresh_controller(monkeypatch):
         async def run(self):
             raise ReachyHardwareError("microphone disconnected")
 
-    monkeypatch.setattr(reachy_voice, "VoiceConversation", FailedConversation)
+    monkeypatch.setattr(reachy_muse.conversation, "VoiceConversation", FailedConversation)
 
     async def scenario():
         hardware = FakeHardware()
         link = IdleLink()
-        service = reachy_voice.ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=hardware,
+        service = reachy_muse.conversation.ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=hardware,
                                              backends=lambda session: backends_for(Mode.MUSE_VOICE, session))
         with pytest.raises(ReachyHardwareError, match="microphone disconnected"):
             await service.serve(link, {"vm_id": "vm-1"}, asyncio.Event())
@@ -3411,9 +3413,10 @@ def test_hardware_failure_leaves_service_for_a_fresh_controller(monkeypatch):
 
 
 def test_cli_closes_failed_hardware_and_exits_for_service_restart(monkeypatch, tmp_path, capsys):
-    from musegadget import config, reachy_cli
+    from musegadget import config
+    import reachy_muse.cli
     from musegadget.identity import Identity
-    from musegadget.reachy_hardware import ReachyHardwareError
+    from reachy_muse.hardware import ReachyHardwareError
 
     class Hardware:
         starts = 0
@@ -3442,10 +3445,10 @@ def test_cli_closes_failed_hardware_and_exits_for_service_restart(monkeypatch, t
     monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
     monkeypatch.setattr(config, "load_json", lambda *args: {"paired": True})
     monkeypatch.setattr(config, "sdk_token", lambda: None)
-    monkeypatch.setattr(reachy_cli.identity, "load_or_create", lambda: Identity("02:00:00:ab:cd:ef"))
-    monkeypatch.setattr(reachy_cli, "_hardware", lambda *args, **kwargs: hardware)
-    monkeypatch.setattr(reachy_voice, "ReachyService", FailedService)
-    assert reachy_cli.main(["--state-dir", str(tmp_path), "run"]) == 1
+    monkeypatch.setattr(reachy_muse.cli.identity, "load_or_create", lambda: Identity("02:00:00:ab:cd:ef"))
+    monkeypatch.setattr(reachy_muse.cli, "_hardware", lambda *args, **kwargs: hardware)
+    monkeypatch.setattr(reachy_muse.conversation, "ReachyService", FailedService)
+    assert reachy_muse.cli.main(["--state-dir", str(tmp_path), "run"]) == 1
     assert (hardware.starts, hardware.closes, FailedService.runs) == (1, 1, 1)
     assert "Reachy: microphone disconnected" in capsys.readouterr().err
 
@@ -3456,7 +3459,8 @@ def test_cli_closes_failed_hardware_and_exits_for_service_restart(monkeypatch, t
 def test_cli_passes_explicit_session_or_default_route_to_service(
     chat_args, expected_session, monkeypatch, tmp_path,
 ):
-    from musegadget import config, reachy_cli
+    from musegadget import config
+    import reachy_muse.cli
     from musegadget.identity import Identity
 
     class Hardware:
@@ -3481,10 +3485,10 @@ def test_cli_passes_explicit_session_or_default_route_to_service(
     monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
     monkeypatch.setattr(config, "load_json", lambda *args: {"paired": True})
     monkeypatch.setattr(config, "sdk_token", lambda: None)
-    monkeypatch.setattr(reachy_cli.identity, "load_or_create", lambda: Identity("02:00:00:ab:cd:ef"))
-    monkeypatch.setattr(reachy_cli, "_hardware", lambda *args, **kwargs: Hardware())
-    monkeypatch.setattr(reachy_voice, "ReachyService", Service)
-    assert reachy_cli.main(["--state-dir", str(tmp_path), "run", *chat_args]) == 0
+    monkeypatch.setattr(reachy_muse.cli.identity, "load_or_create", lambda: Identity("02:00:00:ab:cd:ef"))
+    monkeypatch.setattr(reachy_muse.cli, "_hardware", lambda *args, **kwargs: Hardware())
+    monkeypatch.setattr(reachy_muse.conversation, "ReachyService", Service)
+    assert reachy_muse.cli.main(["--state-dir", str(tmp_path), "run", *chat_args]) == 0
     assert selected == [expected_session]
 
 

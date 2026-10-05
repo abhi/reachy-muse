@@ -25,7 +25,7 @@ from musegadget import config, identity
 from musegadget.reachy.prompts import (CHAT_SETUP_MESSAGE, CHAT_SETUP_PREFIX, CHAT_SETUP_SUFFIX, setup_challenge_reply,
                                       voice_context, with_setup_challenge)
 from musegadget.reachy.replies import ReplyStyle
-from musegadget.reachy_capabilities import Mode
+from reachy_muse.capabilities import Mode
 
 
 CHAT_STATE_FILE = "reachy-chat.json"
@@ -356,7 +356,7 @@ def parser() -> argparse.ArgumentParser:
 
 
 def companion_command(args) -> int:
-    from musegadget.reachy_companion_client import parse_pin, parse_url
+    from reachy_muse.companion_client import parse_pin, parse_url
 
     if args.companion_command == "add":
         if args.token is not None:
@@ -397,7 +397,7 @@ def saved_companion() -> dict | None:
 
 
 async def _probe(saved: dict):
-    from musegadget.reachy_companion_client import CompanionLink
+    from reachy_muse.companion_client import CompanionLink
 
     link = CompanionLink.from_config(saved, out_rate=16000)
     running = asyncio.ensure_future(link.run())
@@ -410,9 +410,9 @@ async def _probe(saved: dict):
 
 
 def _hardware(args, *, motion=True):
-    from musegadget.reachy_hardware import ReachyController
-    from musegadget.local_face_tracking import default_face_model
-    from musegadget.reachy_speaker_eq import COMPANION_SPEAKER_EQ_GAINS, SPEAKER_EQ_GAINS
+    from reachy_muse.hardware import ReachyController
+    from reachy_muse.local_face_tracking import default_face_model
+    from reachy_muse.speaker_eq import COMPANION_SPEAKER_EQ_GAINS, SPEAKER_EQ_GAINS
     # One speaker curve per mode: the GStreamer EQ cannot switch per line without glitches.
     companion = getattr(args, "mode", None) == Mode.COMPANION.value
     face_model = None
@@ -427,8 +427,8 @@ def _hardware(args, *, motion=True):
 
 
 async def run(args) -> int:
-    from musegadget.reachy_local_backends import backends_for
-    from musegadget.reachy_voice import ReachyService
+    from reachy_muse.local_backends import backends_for
+    from reachy_muse.conversation import ReachyService
 
     if not config.load_json(config.PAIRING_FILE):
         print("Reachy is not paired with Muse. Run `muse-reachy pair` on the robot first.",
@@ -472,28 +472,28 @@ async def run(args) -> int:
     link_task = None
     try:
         if args.tts_model is not None:
-            from musegadget.local_speech import PiperSpeech
+            from reachy_muse.local_speech import PiperSpeech
             speech = PiperSpeech(args.tts_model)
             progress_speech = PiperSpeech(args.tts_model)
         if args.stt_model is not None:
-            from musegadget.speech_gate import SileroSpeechGate
+            from reachy_muse.speech_gate import SileroSpeechGate
             speech_gate = await asyncio.to_thread(SileroSpeechGate)
             logging.getLogger(__name__).info("Reachy speech gate ready: Silero")
             if args.stt_backend == "sherpa-streaming":
-                from musegadget.streaming_transcription import SherpaStreamingTranscriber
+                from reachy_muse.streaming_transcription import SherpaStreamingTranscriber
                 transcriber = SherpaStreamingTranscriber(args.stt_model)
             elif args.stt_backend == "moonshine":
-                from musegadget.local_transcription import MoonshineTranscriber
+                from reachy_muse.local_transcription import MoonshineTranscriber
                 transcriber = MoonshineTranscriber(args.stt_model)
             else:
-                from musegadget.local_transcription import WhisperTranscriber
+                from reachy_muse.local_transcription import WhisperTranscriber
                 transcriber = WhisperTranscriber(args.stt_model)
         if args.wake_model is not None:
             if args.wake_backend == "vosk":
-                from musegadget.vosk_wake import VoskWakeWordDetector
+                from reachy_muse.vosk_wake import VoskWakeWordDetector
                 wake_factory = VoskWakeWordDetector
             else:
-                from musegadget.wake_word import WakeWordDetector
+                from reachy_muse.wake_word import WakeWordDetector
                 wake_factory = WakeWordDetector
             wake_detector = await asyncio.to_thread(wake_factory, args.wake_model,
                                                    phrase=args.wake_phrase)
@@ -517,7 +517,7 @@ async def run(args) -> int:
             loop.add_signal_handler(sig, service.stop)
         await asyncio.to_thread(robot.start)
         if companion is not None:
-            from musegadget.reachy_companion_client import CompanionLink
+            from reachy_muse.companion_client import CompanionLink
             # The companion speaks at the speaker's rate, which Reachy knows only once it has started.
             link = CompanionLink.from_config(companion, out_rate=robot.output_sample_rate)
             link_task = asyncio.ensure_future(link.run())

@@ -22,12 +22,12 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from musegadget.reachy_capabilities import Expression
-from musegadget.reachy_companion_protocol import MAX_LINE_BYTES, NarratedLine, NarrateOp
+from musegadget.reachy.expressions import Expression
+from reachy_muse.protocol import MAX_LINE_BYTES, NarratedLine, NarrateOp
 
-from reachy_companion.grounding import ROBOT_REJECTS, ungrounded
+from reachy_muse.companion_server.grounding import ROBOT_REJECTS, ungrounded
 
-log = logging.getLogger("reachy_companion")
+log = logging.getLogger("reachy_muse.companion_server")
 
 DEFAULT_REPO = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
 PREFIX = '{"lines": ['

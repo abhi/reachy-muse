@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from musegadget.speech_gate import SileroSpeechGate
+from reachy_muse.speech_gate import SileroSpeechGate
 
 
 class FakeSession:

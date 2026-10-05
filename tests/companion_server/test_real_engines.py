@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 
 from bench.latency import hear, missing, read_wav, robot, speak, speech_end_s
-from reachy_companion.engines import EchoNarrator
-from reachy_companion.server import CompanionServer, Engines
+from reachy_muse.companion_server.engines import EchoNarrator
+from reachy_muse.companion_server.server import CompanionServer, Engines
 
 pytestmark = pytest.mark.real
 
@@ -17,8 +17,8 @@ TOKEN = "rc1_test_token_0123456789abcdef0123456789"
 
 
 def test_real_engines_hear_the_critical_words_and_speak_over_the_websocket():
-    from reachy_companion.hearing_voxtral import VoxtralHearing
-    from reachy_companion.voice_kokoro import KokoroVoice
+    from reachy_muse.companion_server.hearing_voxtral import VoxtralHearing
+    from reachy_muse.companion_server.voice_kokoro import KokoroVoice
 
     async def run():
         hearing, voice = VoxtralHearing(), KokoroVoice()

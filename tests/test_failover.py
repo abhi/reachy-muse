@@ -4,12 +4,12 @@ import asyncio
 
 import pytest
 
-from musegadget import reachy_failover
-from musegadget.reachy_capabilities import CapabilityUnavailable, HeardAudio, SpokenLine
-from musegadget.reachy_companion_client import CompanionHearingTurn, _HearStream
-from musegadget.reachy_companion_protocol import HearEndpoint
-from musegadget.reachy_failover import CompanionRoute, FailoverHearing, FailoverNarrator
-from musegadget.voice_audio import SpeechAudio, SpeechEnd
+import reachy_muse.failover
+from reachy_muse.capabilities import CapabilityUnavailable, HeardAudio, SpokenLine
+from reachy_muse.companion_client import CompanionHearingTurn, _HearStream
+from reachy_muse.protocol import HearEndpoint
+from reachy_muse.failover import CompanionRoute, FailoverHearing, FailoverNarrator
+from reachy_muse.voice_audio import SpeechAudio, SpeechEnd
 
 np = pytest.importorskip("numpy")
 
@@ -148,7 +148,7 @@ class RobotNarrator:
 
 
 def test_a_rested_narrator_is_asked_again_after_the_cooldown(monkeypatch):
-    monkeypatch.setattr(reachy_failover, "COOLDOWN_S", .2)
+    monkeypatch.setattr(reachy_muse.failover, "COOLDOWN_S", .2)
     companion = InventingNarrator()
     route = CompanionRoute(Link())
     route.begin_turn()
@@ -164,7 +164,7 @@ def test_a_rested_narrator_is_asked_again_after_the_cooldown(monkeypatch):
 
 
 def test_rested_hearing_stays_on_the_robot_and_is_tried_again_after_the_cooldown(monkeypatch):
-    monkeypatch.setattr(reachy_failover, "COOLDOWN_S", .2)
+    monkeypatch.setattr(reachy_muse.failover, "COOLDOWN_S", .2)
     gone = CapabilityUnavailable("the companion did not end the turn", link_down=False)
     lost = CapabilityUnavailable("the link dropped")
     companion = ScriptedHearing(*(ScriptedTurn([outcome]) for outcome in (gone, lost, gone, gone)), ScriptedTurn([]))

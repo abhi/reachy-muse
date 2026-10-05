@@ -13,8 +13,8 @@ import wave
 
 import pytest
 
-from musegadget import local_transcription
-from musegadget.local_transcription import MoonshineTranscriber, WhisperTranscriber
+from reachy_muse import local_transcription
+from reachy_muse.local_transcription import MoonshineTranscriber, WhisperTranscriber
 
 
 @pytest.fixture
@@ -154,7 +154,7 @@ def test_transcribes_real_wav_packet_without_text_in_argv_or_diagnostics(model, 
     text = asyncio.run(transcribe_and_close(WhisperTranscriber(model), wav))
     assert text == "Pineapple sunshine. Café."
     assert worker[2].read_text().splitlines() == [hashlib.sha256(wav).hexdigest()]
-    assert worker[0][0][0] == (sys.executable, "-m", "musegadget.local_transcription", "--model", str(model))
+    assert worker[0][0][0] == (sys.executable, "-m", "reachy_muse.local_transcription", "--model", str(model))
     assert worker[0][0][1]["stderr"] == asyncio.subprocess.DEVNULL
     assert worker[1][0].returncode == -9
     captured = capsys.readouterr()
@@ -375,7 +375,7 @@ def test_moonshine_uses_one_warm_private_packet_worker(moonshine_model, worker, 
         finally:
             await transcriber.close()
     asyncio.run(scenario())
-    assert worker[0][0][0] == (sys.executable, "-m", "musegadget.local_transcription",
+    assert worker[0][0][0] == (sys.executable, "-m", "reachy_muse.local_transcription",
                              "--model", str(moonshine_model), "--backend", "moonshine")
     assert worker[0][0][1]["stderr"] == asyncio.subprocess.DEVNULL
     assert worker[1][0].returncode == -9

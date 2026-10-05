@@ -2,7 +2,7 @@
 
 import pytest
 
-from musegadget.reachy_capabilities import grounded
+from reachy_muse.capabilities import grounded
 
 REPLY = ("Lisbon is sunny today with a high of 24 degrees. The 7:30 pm tram costs $3.10, "
          "and the drive to Sintra takes 2 hours.")

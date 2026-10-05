@@ -5,12 +5,13 @@ import time
 
 import pytest
 
-from musegadget import reachy_local_backends, reachy_voice
-from musegadget.reachy_capabilities import Mode
-from musegadget.reachy_follow_up import is_small_talk
-from musegadget.reachy_local_backends import backends_for
-from musegadget.reachy_voice import VoiceConversation
-from test_reachy_voice import FakeHardware, FakeSession, cancel_task, chat_event
+import reachy_muse.local_backends
+import reachy_muse.conversation
+from reachy_muse.capabilities import Mode
+from reachy_muse.follow_up import is_small_talk
+from reachy_muse.local_backends import backends_for
+from reachy_muse.conversation import VoiceConversation
+from test_conversation import FakeHardware, FakeSession, cancel_task, chat_event
 
 np = pytest.importorskip("numpy")
 
@@ -85,7 +86,7 @@ def conversation_for(labels, hardware, request, *, ack_chunks=1):
             Mode.ON_ROBOT, session, speech=Speech(), progress_speech=Speech(), transcriber=Recognition()))
         conversation.backends.voice.phrases = {
             phrase: tuple(labels.samples(phrase) for _ in range(ack_chunks))
-            for phrase in reachy_local_backends.ACKNOWLEDGEMENTS}
+            for phrase in reachy_muse.local_backends.ACKNOWLEDGEMENTS}
         return conversation
     return build
 
@@ -108,7 +109,7 @@ def answer_after(delay_s, reply, *, when=None):
 
 
 def run_turn(monkeypatch, build, send_hook, *, timeout=6):
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
 
     async def scenario():
         session = FakeSession(send_hook=send_hook)
@@ -148,7 +149,7 @@ def test_a_slow_answer_is_acknowledged_once_the_grace_has_passed(monkeypatch):
                           answer_after(1.6, "Sunny all day. [reachy:happy]"))
     assert hardware.spoken() == ["Let me check the weather.", "Sunny all day."]
     ack_started = hardware.timeline[0][1] - dispatched
-    assert reachy_voice.ACK_GRACE_S <= ack_started < reachy_voice.ACK_GRACE_S + .3
+    assert reachy_muse.conversation.ACK_GRACE_S <= ack_started < reachy_muse.conversation.ACK_GRACE_S + .3
 
 
 def test_an_answer_arriving_mid_acknowledgement_lets_it_finish_then_plays_at_once(monkeypatch):
@@ -164,7 +165,7 @@ def test_an_answer_arriving_mid_acknowledgement_lets_it_finish_then_plays_at_onc
 
 
 def test_a_long_turn_without_labels_keeps_saying_waiting_lines_without_asking_the_narrator(monkeypatch):
-    from musegadget.reachy_progress import ProgressPlan
+    from reachy_muse.progress import ProgressPlan
     labels = Labels()
     hardware = PacedHardware(labels)
     narrated = []
@@ -203,10 +204,10 @@ def test_a_long_turn_without_labels_keeps_saying_waiting_lines_without_asking_th
 
 
 def test_a_request_heard_while_muse_works_is_held_with_a_nod_and_later_ones_get_one_short_line(monkeypatch):
-    from test_reachy_pins import Rig, Transcripts, run_scenario
+    from test_pins import Rig, Transcripts, run_scenario
 
     rig = Rig(monkeypatch)
-    busy = "tts:" + reachy_voice.BUSY_CUE
+    busy = "tts:" + reachy_muse.conversation.BUSY_CUE
 
     transcripts = Transcripts("What's the weather tomorrow?", "What time is it in Tokyo?",
                               "Who won the game last night?", "How tall is Everest?")

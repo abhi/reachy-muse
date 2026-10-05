@@ -61,7 +61,7 @@ class _LocalTranscriber:
         await self._stop_worker()
         backend_args = ("--backend", self._backend) if self._backend != "whisper" else ()
         spawn = asyncio.create_task(asyncio.create_subprocess_exec(
-            sys.executable, "-m", "musegadget.local_transcription", "--model", str(self.model_path),
+            sys.executable, "-m", "reachy_muse.local_transcription", "--model", str(self.model_path),
             *backend_args,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,

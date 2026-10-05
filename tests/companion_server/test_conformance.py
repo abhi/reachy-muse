@@ -14,7 +14,7 @@ import pytest
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-from musegadget.reachy_companion_protocol import (
+from reachy_muse.protocol import (
     MESSAGES,
     AudioFrame,
     AudioKind,
@@ -45,11 +45,11 @@ from musegadget.reachy_companion_protocol import (
     message_type,
 )
 
-from reachy_companion.engines import EchoNarrator, Partial, ScriptedHearing, ToneVoice
-from reachy_companion.pair import pair
-from reachy_companion.server import CompanionServer, Engines
+from reachy_muse.companion_server.engines import EchoNarrator, Partial, ScriptedHearing, ToneVoice
+from reachy_muse.companion_server.pair import pair
+from reachy_muse.companion_server.server import CompanionServer, Engines
 
-VECTORS = files("musegadget") / "data" / "companion_protocol_v1"
+VECTORS = files("reachy_muse") / "data" / "companion_protocol_v1"
 VALID = json.loads((VECTORS / "valid.json").read_text(encoding="utf-8"))
 INVALID = json.loads((VECTORS / "invalid.json").read_text(encoding="utf-8"))
 
@@ -490,9 +490,9 @@ def test_shutdown_with_a_stalled_hearing_engine_still_closes_the_session():
 
 def test_cli_serve_answers_a_robot_and_stops_on_sigint(tmp_path):
     state = ["--state-dir", str(tmp_path)]
-    subprocess.run([sys.executable, "-m", "reachy_companion", *state, "pair"], check=True, capture_output=True)
+    subprocess.run([sys.executable, "-m", "reachy_muse.companion_server", *state, "pair"], check=True, capture_output=True)
     token = (tmp_path / "token").read_text()
-    command = [sys.executable, "-m", "reachy_companion", *state, "serve", "--bind", "127.0.0.1", "--port", "0", "--insecure", "--engines", "stub"]
+    command = [sys.executable, "-m", "reachy_muse.companion_server", *state, "serve", "--bind", "127.0.0.1", "--port", "0", "--insecure", "--engines", "stub"]
     with subprocess.Popen(command, stderr=subprocess.PIPE, text=True) as server:
         try:
             url = next(match.group(1) for line in server.stderr if (match := re.search(r"serving (ws://\S+)", line)))

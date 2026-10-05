@@ -5,7 +5,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from musegadget.reachy_speaker_eq import (
+from reachy_muse.speaker_eq import (
     COMPANION_SPEAKER_EQ_GAINS,
     EQ_BIN_NAME,
     SPEAKER_EQ_GAINS,

@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from musegadget import reachy_voice
+import reachy_muse.conversation
 from musegadget.identity import Identity
 from musegadget.link_client import Outcome
-from musegadget.reachy_capabilities import Mode, Partial
-from musegadget.reachy_local_backends import backends_for
-from test_reachy_voice import FakeHardware, FakeSession, chat_event, mp3_tone, sentence_frame  # noqa: F401
+from reachy_muse.capabilities import Mode, Partial
+from reachy_muse.local_backends import backends_for
+from test_conversation import FakeHardware, FakeSession, chat_event, mp3_tone, sentence_frame  # noqa: F401
 
 np = pytest.importorskip("numpy")
 pytest.importorskip("av")
@@ -157,7 +157,7 @@ class TextCodedVoice:
         return audio()
 
     def prepare(self, text, output_rate):
-        from musegadget.local_speech import PreparedSpeech
+        from reachy_muse.local_speech import PreparedSpeech
         return PreparedSpeech(self.stream(text, output_rate))
 
 
@@ -179,7 +179,7 @@ class FailingStreamingTranscriber:
         pass
 
     def open_turn(self):
-        from musegadget.streaming_transcription import StreamingTranscriptionError
+        from reachy_muse.streaming_transcription import StreamingTranscriptionError
 
         class Turn:
             def feed(self, pcm):
@@ -252,7 +252,7 @@ class Rig:
         backends = functools.partial(backends_for, mode, speech=speech, progress_speech=progress_speech,
                                      transcriber=transcriber, stream_replies=stream_replies,
                                      wake="wake_detector" in fields)
-        return reachy_voice.ReachyService(
+        return reachy_muse.conversation.ReachyService(
             identity=Identity("02:00:00:ab:cd:ef"), executor=self.hardware, silence_s=.2,
             speech_gate=Vad(), backends=backends,
             **({"prepare_chat": prepare_chat, "owns_chat": True} if owned else {}), **fields)
@@ -574,7 +574,7 @@ def test_cancel_while_muse_works_drops_the_request_and_asks_muse_to_stop(monkeyp
 
 def test_cancel_after_the_answer_started_skips_the_rest_without_asking_muse_to_stop(monkeypatch):
     rig = Rig(monkeypatch)
-    acknowledged = {"robot": "play", "audio": "tts:" + reachy_voice.CANCEL_ACKNOWLEDGEMENT}
+    acknowledged = {"robot": "play", "audio": "tts:" + reachy_muse.conversation.CANCEL_ACKNOWLEDGEMENT}
     rig.hardware.echo_cancelled_input = True
 
     async def muse(session, request):
@@ -600,7 +600,7 @@ def test_cancel_after_the_answer_started_skips_the_rest_without_asking_muse_to_s
     assert [event["text"] for event in record["events"] if event.get("muse") == "send_chat"] == [
         "Can you search for the latest robot news?"]
     assert [event["audio"] for event in record["events"] if event.get("robot") == "play"][-2:] == [
-        "tts:Robots learned to fold laundry.", "tts:" + reachy_voice.CANCEL_ACKNOWLEDGEMENT]
+        "tts:Robots learned to fold laundry.", "tts:" + reachy_muse.conversation.CANCEL_ACKNOWLEDGEMENT]
 
 
 def test_stop_talking_during_an_answer_silences_it_and_keeps_the_waiting_request(monkeypatch):
@@ -660,7 +660,7 @@ def test_stop_talking_before_the_answer_cancels_the_request(monkeypatch):
     assert [event["text"] for event in record["events"] if event.get("muse") == "send_chat"] == [
         "Can you search for the latest robot news?", "Please stop working on my previous request."]
     plays = [event["audio"] for event in record["events"] if event.get("robot") == "play"]
-    assert "tts:" + reachy_voice.CANCEL_ACKNOWLEDGEMENT in plays
+    assert "tts:" + reachy_muse.conversation.CANCEL_ACKNOWLEDGEMENT in plays
     assert "tts:Robots learned to fold laundry." not in plays
 
 
@@ -704,7 +704,7 @@ def test_new_request_waits_behind_the_running_one_and_a_third_is_turned_away(mon
 
     async def muse(session, request):
         if request == 1:
-            turned_away = {"robot": "play", "audio": "tts:" + reachy_voice.BUSY_CUE}
+            turned_away = {"robot": "play", "audio": "tts:" + reachy_muse.conversation.BUSY_CUE}
             await rig.wait_until_or_timeout(lambda: turned_away in rig.recording.events, 10)
             await session.answer(request, "Sunny and warm all day. [reachy:happy]")
         else:
@@ -725,7 +725,7 @@ def test_new_request_waits_behind_the_running_one_and_a_third_is_turned_away(mon
 
 def test_answer_held_for_ongoing_talk_is_spoken_after_the_hold_limit_and_turns_talk_away_once(monkeypatch):
     rig = Rig(monkeypatch)
-    monkeypatch.setattr(reachy_voice, "ANSWER_HOLD_LIMIT_S", 1.0)
+    monkeypatch.setattr(reachy_muse.conversation, "ANSWER_HOLD_LIMIT_S", 1.0)
     rig.hardware.echo_cancelled_input = True
     chatter = ["The game was great.", "Pass the salt.", "I love that song.", "It rained all day.",
                "We should paint the fence.", "The bus was late."]
@@ -762,15 +762,15 @@ def test_answer_held_for_ongoing_talk_is_spoken_after_the_hold_limit_and_turns_t
         event["audio"] for event in record["events"][:talk_ended[0]] if event.get("robot") == "play"]
     plays = [event["audio"] for event in record["events"] if event.get("robot") == "play"]
     first_job = plays[:plays.index("tts:It was a close one.")]
-    assert first_job.count("tts:" + reachy_voice.BUSY_CUE) == 1
+    assert first_job.count("tts:" + reachy_muse.conversation.BUSY_CUE) == 1
 
 
 def test_late_answer_is_introduced_with_the_requests_own_words(monkeypatch):
     rig = Rig(monkeypatch)
-    monkeypatch.setattr(reachy_voice, "LATE_ANSWER_S", .5)
+    monkeypatch.setattr(reachy_muse.conversation, "LATE_ANSWER_S", .5)
 
     async def muse(session, request):
-        await asyncio.sleep(reachy_voice.ACK_GRACE_S + .5)
+        await asyncio.sleep(reachy_muse.conversation.ACK_GRACE_S + .5)
         await session.answer(request, "Robots learned to fold laundry. [reachy:happy]")
 
     service = rig.service(muse, speech=rig.voice(), progress_speech=rig.voice("progress_tts"),

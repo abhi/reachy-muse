@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from musegadget.speech_playback import PCMPlayer, SpeechPlayback
+from reachy_muse.speech_playback import PCMPlayer, SpeechPlayback
 
 
 class Clock:

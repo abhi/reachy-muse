@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from musegadget import reachy_duplex_audio as duplex
+from reachy_muse import duplex_audio as duplex
 
 
 class GstError(Exception):

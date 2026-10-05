@@ -23,8 +23,8 @@ import pytest
 
 np = pytest.importorskip("numpy")
 
-from musegadget import reachy_hardware
-from musegadget.reachy_hardware import EMOTIONS_DATASET, ReachyController, ReachyHardwareError
+import reachy_muse.hardware
+from reachy_muse.hardware import EMOTIONS_DATASET, ReachyController, ReachyHardwareError
 
 
 def pose_factory(x=0, y=0, z=0, roll=0, pitch=0, yaw=0, degrees=True, mm=True):
@@ -152,9 +152,9 @@ def hardware():
 
 
 def test_controller_installs_the_speaker_eq_profile_it_was_given(monkeypatch):
-    from musegadget import reachy_speaker_eq
+    import reachy_muse.speaker_eq
     installed = []
-    monkeypatch.setattr(reachy_speaker_eq, "install_speaker_eq",
+    monkeypatch.setattr(reachy_muse.speaker_eq, "install_speaker_eq",
                         lambda audio, *, gains: installed.append(gains))
     robot = FakeRobot()
     controller = ReachyController(robot_factory=lambda **kwargs: robot, pose_factory=pose_factory,
@@ -263,7 +263,7 @@ def test_progress_ear_accent_is_pronounced_bounded_and_preserves_the_head_pose(t
 
 def test_progress_cue_keeps_the_head_glance_clock_and_clears_when_thinking_ends(monkeypatch):
     clock = [100.0]
-    monkeypatch.setattr(reachy_hardware, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(reachy_muse.hardware, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     controller = ReachyController(pose_factory=pose_factory)
     controller._np = np
     robot = FakeRobot()
@@ -317,7 +317,7 @@ def test_gestures_layer_on_the_resting_pose(state, gesture, age, axis, expected)
 
 def test_gesture_survives_speech_onset_and_preserves_the_expression(monkeypatch):
     clock = [10.0]
-    monkeypatch.setattr(reachy_hardware, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(reachy_muse.hardware, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     controller = ReachyController(pose_factory=pose_factory)
     controller._np = np
     controller.set_state("thinking", expression="curious")
@@ -339,7 +339,7 @@ def test_gesture_survives_speech_onset_and_preserves_the_expression(monkeypatch)
 
 def test_thinking_variations_keep_the_glance_clock(monkeypatch):
     clock = [10.0]
-    monkeypatch.setattr(reachy_hardware, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(reachy_muse.hardware, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     controller = ReachyController(pose_factory=pose_factory)
     controller.set_state("thinking")
     clock[0] = 15
@@ -404,7 +404,7 @@ def test_rare_thinking_glance_is_visible_without_changing_face_gaze():
 
 def test_consecutive_happy_sentences_each_start_a_motif_without_resetting_thinking(monkeypatch):
     clock = [100.]
-    monkeypatch.setattr(reachy_hardware, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(reachy_muse.hardware, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     controller = ReachyController(pose_factory=pose_factory)
     controller._np = np
     controller.set_state("speaking", expression="happy")
@@ -423,7 +423,7 @@ def test_consecutive_happy_sentences_each_start_a_motif_without_resetting_thinki
 
 
 def test_pose_smoothing_keeps_the_same_response_when_target_write_frequency_changes():
-    from musegadget.reachy_hardware import _blend_factor
+    from reachy_muse.hardware import _blend_factor
     fractions = []
     for interval in (.01, .025, .05):
         fraction = 0.

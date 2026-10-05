@@ -19,7 +19,7 @@ from typing import Dict, List, Sequence
 
 import numpy as np
 
-from reachy_companion.voice_kokoro import REPO, Loudness, load_model, pcm16, render
+from reachy_muse.companion_server.voice_kokoro import REPO, Loudness, load_model, pcm16, render
 
 RATE = 48_000
 HERE = Path(__file__).resolve().parent

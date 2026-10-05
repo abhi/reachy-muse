@@ -16,9 +16,9 @@ from typing import Any, AsyncIterator, List
 
 import numpy as np
 
-from musegadget.reachy_companion_protocol import VoiceRole
+from reachy_muse.protocol import VoiceRole
 
-log = logging.getLogger("reachy_companion")
+log = logging.getLogger("reachy_muse.companion_server")
 
 REPO = "mlx-community/Kokoro-82M-bf16"
 # The bench round-tripped af_heart with zero word errors. Every role speaks in the one voice.

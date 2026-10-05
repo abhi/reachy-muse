@@ -3,9 +3,9 @@ import json
 
 import pytest
 
-from musegadget.reachy_capabilities import Expression
-from musegadget.reachy_companion_protocol import NarratedLine, NarrateOp
-from reachy_companion.narrator_mlx import Ask, MlxNarrator, fallback, parse
+from musegadget.reachy.expressions import Expression
+from reachy_muse.protocol import NarratedLine, NarrateOp
+from reachy_muse.companion_server.narrator_mlx import Ask, MlxNarrator, fallback, parse
 
 REMINDER = Ask(NarrateOp.LINES, "remind me to call Maya at eight",
                reply="**Done.** I set a reminder to call Maya at 8 pm tonight.\n\n- It repeats daily.")

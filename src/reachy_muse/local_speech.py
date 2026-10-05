@@ -111,7 +111,7 @@ class PiperSpeech:
             return
         await self._stop_worker()
         spawn = asyncio.create_task(asyncio.create_subprocess_exec(
-            sys.executable, "-m", "musegadget.local_speech", "--model", str(self.model_path),
+            sys.executable, "-m", "reachy_muse.local_speech", "--model", str(self.model_path),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         ))

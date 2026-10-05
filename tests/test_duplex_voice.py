@@ -7,20 +7,22 @@ import wave
 
 import pytest
 
-from musegadget import muse_turn, reachy_voice, voice_audio
+from musegadget import muse_turn
+from reachy_muse import voice_audio
+import reachy_muse.conversation
 from musegadget.reachy.replies import ReplyStyle
-from musegadget.reachy_capabilities import Mode
-from musegadget.reachy_local_backends import LocalHearing, backends_for
-from musegadget.reachy_voice import TurnOutcome, VoiceConversation
-from musegadget.wake_word import WakeDetection
-from test_reachy_voice import FakeHardware, FakeSession, bounded, cancel_task, chat_event, sentence_frame
+from reachy_muse.capabilities import Mode
+from reachy_muse.local_backends import LocalHearing, backends_for
+from reachy_muse.conversation import TurnOutcome, VoiceConversation
+from reachy_muse.wake_word import WakeDetection
+from test_conversation import FakeHardware, FakeSession, bounded, cancel_task, chat_event, sentence_frame
 
 
 @pytest.fixture
 def duplex(monkeypatch):
     np = pytest.importorskip("numpy")
     pytest.importorskip("av")
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
     monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", .01)
 
     class Vad:
@@ -57,7 +59,7 @@ def duplex(monkeypatch):
                 super().play_audio(samples)
                 loop.call_soon_threadsafe(playback.put_nowait, samples.copy())
 
-        original_buffer = reachy_voice._CaptureBuffer
+        original_buffer = reachy_muse.conversation._CaptureBuffer
 
         class Buffer(original_buffer):
             previous = None
@@ -78,7 +80,7 @@ def duplex(monkeypatch):
                     self.previous = acknowledgements.pop(id(chunk.samples), None)
                 return chunk
 
-        monkeypatch.setattr(reachy_voice, "_CaptureBuffer", Buffer)
+        monkeypatch.setattr(reachy_muse.conversation, "_CaptureBuffer", Buffer)
         session = FakeSession()
         session.chat_subscribed.set()
         hardware = Hardware()

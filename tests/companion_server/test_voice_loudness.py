@@ -3,8 +3,8 @@ import asyncio
 import numpy as np
 import pytest
 
-from musegadget.reachy_companion_protocol import VoiceRole
-from reachy_companion.voice_kokoro import Loudness, pcm16
+from reachy_muse.protocol import VoiceRole
+from reachy_muse.companion_server.voice_kokoro import Loudness, pcm16
 
 RATE = 48_000
 TIME = np.arange(RATE) / RATE
@@ -35,7 +35,7 @@ def test_silence_stays_silent_and_the_same_sentence_always_comes_out_the_same():
 
 @pytest.mark.real
 def test_a_real_kokoro_sentence_reaches_the_target_without_clipping():
-    from reachy_companion.voice_kokoro import KokoroVoice
+    from reachy_muse.companion_server.voice_kokoro import KokoroVoice
 
     async def run():
         voice = KokoroVoice()

@@ -18,7 +18,7 @@ from typing import Awaitable, Callable, Dict, Optional, Sequence, Tuple, Union
 from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
-from musegadget.reachy_companion_protocol import (
+from reachy_muse.protocol import (
     MAX_ERROR_MESSAGE_BYTES,
     MAX_OUTSTANDING_NARRATIONS,
     MAX_TEXT_FRAME_BYTES,
@@ -52,9 +52,9 @@ from musegadget.reachy_companion_protocol import (
     encode_audio,
 )
 
-from reachy_companion.engines import Endpoint, Hearing, Narrator, Partial, Voice
+from reachy_muse.companion_server.engines import Endpoint, Hearing, Narrator, Partial, Voice
 
-log = logging.getLogger("reachy_companion")
+log = logging.getLogger("reachy_muse.companion_server")
 
 SUPPORTED_VERSIONS = (VERSION,)
 PATH = "/v1"

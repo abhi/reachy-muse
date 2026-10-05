@@ -196,9 +196,9 @@ class ReachyController:
         self._gesture_name = None
         try:
             self._robot = self._robot_factory(**self._connect_options)
-            from musegadget import reachy_speaker_eq
-            self._speaker_eq = reachy_speaker_eq.install_speaker_eq(
-                self._robot.media.audio, gains=self._speaker_eq_gains or reachy_speaker_eq.SPEAKER_EQ_GAINS)
+            import reachy_muse.speaker_eq
+            self._speaker_eq = reachy_muse.speaker_eq.install_speaker_eq(
+                self._robot.media.audio, gains=self._speaker_eq_gains or reachy_muse.speaker_eq.SPEAKER_EQ_GAINS)
             self._sample_rate = self._robot.media.get_input_audio_samplerate()
             self._output_sample_rate = self._robot.media.get_output_audio_samplerate()
             if min(self._sample_rate, self._output_sample_rate) <= 0:
@@ -211,7 +211,7 @@ class ReachyController:
                 capture_sink.set_property("max-buffers", 2)
                 capture_sink.set_property("drop", True)
             self._robot.media.start_playing()
-            from musegadget.reachy_duplex_audio import verified_echo_cancelled_input
+            from reachy_muse.duplex_audio import verified_echo_cancelled_input
             self.echo_cancelled_input = verified_echo_cancelled_input(self._robot.media.audio)
             log.info("Reachy microphone echo cancellation: %s",
                      "verified hardware duplex" if self.echo_cancelled_input else "playback gating")
@@ -362,7 +362,7 @@ class ReachyController:
             return
         factory = self._face_follower_factory
         if factory is None:
-            from musegadget.local_face_tracking import FaceFollower
+            from reachy_muse.local_face_tracking import FaceFollower
             factory = FaceFollower
         self._face_follower = factory(
             self._robot.media.get_frame, self._face_follow_model,
@@ -399,7 +399,7 @@ class ReachyController:
         target = follower.target() if follower is not None else None
         if target is None:
             return pose
-        from musegadget.local_face_tracking import PITCH_LIMIT, YAW_LIMIT
+        from reachy_muse.local_face_tracking import PITCH_LIMIT, YAW_LIMIT
         coordinates = self._pose_parameters(pose)
         coordinates["yaw"] = math.degrees(target.yaw)
         coordinates["pitch"] = math.degrees(target.pitch)

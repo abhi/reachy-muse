@@ -7,14 +7,14 @@ import socket
 import pytest
 
 from fake_companion import TOKEN, FakeCompanion
-from musegadget import reachy_voice
+import reachy_muse.conversation
 from musegadget.identity import Identity
 from musegadget.reachy.expressions import Expression
-from musegadget.reachy_capabilities import COMPANION_NOTICE, Mode
-from musegadget.reachy_companion_client import CompanionLink, LinkState
-from musegadget.reachy_companion_protocol import HearOpen, Narrate, Sender, SpeakStart, decode
-from musegadget.reachy_local_backends import backends_for
-from test_reachy_pins import CHUNK, VOICE_SAMPLE, PinHardware, PinSession, Recording, TextCodedVoice, Transcriber, Vad
+from reachy_muse.capabilities import COMPANION_NOTICE, Mode
+from reachy_muse.companion_client import CompanionLink, LinkState
+from reachy_muse.protocol import HearOpen, Narrate, Sender, SpeakStart, decode
+from reachy_muse.local_backends import backends_for
+from test_pins import CHUNK, VOICE_SAMPLE, PinHardware, PinSession, Recording, TextCodedVoice, Transcriber, Vad
 
 np = pytest.importorskip("numpy")
 pytest.importorskip("av")
@@ -24,7 +24,7 @@ IDENTITY = Identity("02:00:00:ab:cd:ef")
 QUESTION = "tell me about the old castles and dragons"
 PARTIALS = ("tell me about", "tell me about the old castles", QUESTION)
 PLAIN_PROMPT = "Answer in one to three short, plain spoken sentences"
-SLOW_S = reachy_voice.ACK_GRACE_S + .5
+SLOW_S = reachy_muse.conversation.ACK_GRACE_S + .5
 
 
 class CompanionHardware(PinHardware):
@@ -55,7 +55,7 @@ class Conversation:
         backends = functools.partial(backends_for, Mode.COMPANION, speech=TextCodedVoice(self.recording, "tts"),
                                      progress_speech=TextCodedVoice(self.recording, "progress_tts"),
                                      transcriber=Transcriber(transcript), companion=self.link)
-        self.service = reachy_voice.ReachyService(
+        self.service = reachy_muse.conversation.ReachyService(
             identity=IDENTITY, executor=self.hardware, silence_s=.2, speech_gate=Vad(), backends=backends,
             **({"prepare_chat": prepare_chat, "owns_chat": True} if owned else {}))
         self._voiced = 0
@@ -343,7 +343,7 @@ LOCAL_REQUEST = "The user's spoken request is: what the robot heard"
 
 
 def test_a_turn_the_companion_never_ends_is_finished_on_the_robot_within_the_deadline(monkeypatch):
-    from musegadget.reachy_companion_client import ENDPOINT_WAIT_S
+    from reachy_muse.companion_client import ENDPOINT_WAIT_S
 
     async def run():
         async with FakeCompanion(partials=PARTIALS, frames_per_partial=12, no_endpoint=True) as companion:
@@ -388,8 +388,8 @@ def hear_streams_opened(companion):
 
 
 def test_three_turns_the_companion_never_ends_rest_only_its_hearing(monkeypatch):
-    from musegadget import reachy_companion_client
-    monkeypatch.setattr(reachy_companion_client, "ENDPOINT_WAIT_S", .5)
+    import reachy_muse.companion_client
+    monkeypatch.setattr(reachy_muse.companion_client, "ENDPOINT_WAIT_S", .5)
 
     async def run():
         async with FakeCompanion(partials=PARTIALS, frames_per_partial=12, no_endpoint=True) as companion:

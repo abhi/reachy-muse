@@ -7,11 +7,12 @@ import wave
 
 import pytest
 
-from musegadget import reachy_voice, voice_audio
-from musegadget.reachy_capabilities import Mode
-from musegadget.reachy_local_backends import backends_for
-from musegadget.reachy_voice import VoiceConversation
-from test_reachy_voice import FakeHardware, FakeSession, bounded, cancel_task
+from reachy_muse import voice_audio
+import reachy_muse.conversation
+from reachy_muse.capabilities import Mode
+from reachy_muse.local_backends import backends_for
+from reachy_muse.conversation import VoiceConversation
+from test_conversation import FakeHardware, FakeSession, bounded, cancel_task
 
 
 @dataclass(frozen=True)
@@ -25,7 +26,7 @@ class Detection:
 def handoff(monkeypatch):
     np = pytest.importorskip("numpy")
     pytest.importorskip("av")
-    monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
     real_recorder = voice_audio.TurnRecorder
 
     class Vad:
