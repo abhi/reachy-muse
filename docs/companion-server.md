@@ -129,6 +129,8 @@ A rejected answer gets one retry that names the problems, if the op's deadline l
 
 Latencies are from the 67-case set. The robot waits 0.9 s for an acknowledgement, 1.5 s for progress and 4 s for lines.
 
+Through `serve` with every real engine loaded, over the WebSocket, Qwen3-4B took 0.39/0.44 s to acknowledge, 0.37/0.38 s for progress and 0.53/0.79 s for lines (p50/p95, all 97 cases), while a speak stream ran beside each narration. The server's memory footprint peaked at 12 GB.
+
 Qwen3-4B is the default. Its first answer passed every case in both sets, so it never needed a retry or a fallback. It is also the fastest at the acknowledgement and holds the least memory but one. After the check, no model returned an ungrounded line. Llama said a forbidden fact once on the held-out set, and Phi once on the main set.
 
 To score a model:
