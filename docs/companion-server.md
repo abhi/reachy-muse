@@ -99,6 +99,16 @@ These slow tests load the real models. One sends three recorded requests to the 
 
 The script starts `serve` and acts as the robot. It reports how long the final text takes after the user stops, how often partial text arrives, and how long the first speech frame takes. Pass `--corpus` to use other WAVs, and any `serve` option such as `--no-final-pass`.
 
+## Compare voices
+
+```sh
+.venv/bin/python bench/voices.py --list                # the voices this Kokoro has
+.venv/bin/python bench/voices.py                       # six test sentences in six voices, into bench/out/voices
+.venv/bin/python bench/score_voices.py bench/out/voices/manifest.json --recordings DIR
+```
+
+`voices.py` renders each sentence the way `serve` speaks it: 48 kHz, at the `--loudness` level. The sentences hold names, numbers and a negation, and `manifest.json` lists the words in each that must survive. Play every file on the robot and record it from the robot's microphone under the same path, such as `DIR/bm_george/03.wav`. `score_voices.py` transcribes the recordings with Parakeet and reports, per voice, the word error rate, how many critical words were heard intact, and the share of energy between 1 and 4 kHz. Without `--recordings` it scores the rendered files, which gives the baseline before the speaker and the room. Pick the winner with `serve --voice NAME`.
+
 ## Narration
 
 The robot asks for three kinds of line:

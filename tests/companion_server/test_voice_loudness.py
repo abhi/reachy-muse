@@ -30,7 +30,7 @@ def test_a_peak_the_gain_would_push_past_full_scale_is_held_under_the_ceiling():
 def test_silence_stays_silent_and_the_same_sentence_always_comes_out_the_same():
     assert pcm16(Loudness().apply(np.zeros(480, np.float32))) == bytes(960)
     noise = np.random.default_rng(7).normal(0, 0.05, RATE).astype(np.float32)
-    assert pcm16(Loudness().apply(noise.copy())) == pcm16(Loudness().apply(noise.copy()))
+    assert pcm16(Loudness().apply(noise)) == pcm16(Loudness().apply(noise))
 
 
 @pytest.mark.real
