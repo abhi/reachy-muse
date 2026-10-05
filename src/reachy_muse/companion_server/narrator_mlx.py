@@ -59,6 +59,8 @@ OPS: Dict[NarrateOp, _Op] = {
         'For example, "set a timer for ten minutes" becomes "Sure, a timer for ten minutes." and '
         '"what\'s the weather in Oslo" becomes "Okay, checking the weather in Oslo." '
         "Do not answer the request, and do not say that anything is done, set, found, added or booked: the work has not started. "
+        'If the request is a greeting, a thank-you or small talk rather than a task, such as "how are you" or "good morning", '
+        'answer {"lines": []} so nothing is said before the reply. '
         "Use the expression nod or listening.",
         max_lines=1, max_tokens=48, budget_s=0.8),
     NarrateOp.PROGRESS: _Op(
@@ -183,6 +185,24 @@ def _plain(text: str) -> str:
     return " ".join(re.sub(r"[^\w\s]", "", text.casefold()).split())
 
 
+_CHAT = re.compile(
+    r"(?:\s*(?:hi|hello|hey|hiya|yo|reachy|there|good (?:morning|afternoon|evening|night)|morning|"
+    r"thanks?(?: you)?(?: (?:so|very) much)?|thank you|cheers|bye|goodbye|see you(?: later)?|good job|well done|"
+    r"how are you(?: doing)?(?: today)?|how(?:'s| is) it going|how are things|what'?s up|what is up|sup|"
+    r"how(?:'s| is| was) your day(?: been| going)?|sleep well|you(?:'re| are) (?:funny|awesome|great|the best)|"
+    r"that (?:was|is|'s) (?:really |very |so )?(?:helpful|great|useful|perfect|nice)|"
+    r"nice to meet you|okay|ok|cool|great|nice|awesome|got it)\b)+")
+
+
+def small_talk(request: str) -> bool:
+    """A greeting, thanks or other chat, or a request too short to restate. It gets no acknowledgement.
+
+    Restating "how are you" gave lines like "Let me show how are you", which is worse than saying nothing.
+    """
+    words = re.sub(r"[^\w\s']", " ", request.casefold()).split()
+    return len(words) < 3 or _CHAT.fullmatch(" ".join(words)) is not None
+
+
 def fallback(ask: Ask) -> Tuple[NarratedLine, ...]:
     """What the narrator says when the model's answer can't be used."""
     if ask.op is not NarrateOp.LINES:
@@ -237,6 +257,8 @@ class MlxNarrator:
 
     def narrate(self, ask: Ask) -> Narration:
         """Ask the model, check its answer, retry once if there is time, else fall back. Runs on the narrator thread."""
+        if ask.op is NarrateOp.ACKNOWLEDGE and small_talk(ask.request):
+            return Narration((), (), fell_back=False)
         op = OPS[ask.op]
         started = time.perf_counter()
         conversation = messages(ask)

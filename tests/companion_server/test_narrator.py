@@ -77,3 +77,15 @@ def test_two_rejected_answers_fall_back():
     assert (narration.fell_back, len(narration.attempts)) == (True, 2)
     assert narration.lines == fallback(REMINDER)
     assert asyncio.run(Scripted("not json", "not json").acknowledge("what time is it")) == ()
+
+
+@pytest.mark.parametrize("request_", ["how are you", "Thanks!", "good morning", "hi Reachy", "what's up", "Hi Reachy, how are you doing today?",
+                                      "hey reachy how's your day been", "thank you, that was really helpful", "good night reachy, sleep well", "stop"])
+def test_small_talk_and_very_short_requests_get_no_acknowledgement(request_):
+    restating = answer(("Okay, let me show how are you.", "nod"))
+    assert asyncio.run(Scripted(restating).acknowledge(request_)) == ()
+
+
+def test_a_task_after_a_greeting_is_still_acknowledged():
+    narrator = Scripted(answer(("Sure, a timer for ten minutes.", "nod")))
+    assert asyncio.run(narrator.acknowledge("good morning, set a timer for ten minutes")) == (NarratedLine("Sure, a timer for ten minutes.", Expression.NOD),)

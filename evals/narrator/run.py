@@ -6,7 +6,8 @@
 
 A case passes when every line it finally returns is grounded by this repo's check and by the SDK's
 grounded(), matches none of the case's forbidden patterns, fits the format (count, 240 bytes, no
-markup) and carries a valid expression (a fallback line may carry none). "Raw" scores the model's
+markup) and carries a valid expression (a fallback line may carry none). A "silent" case passes only
+when nothing is said: small talk gets no acknowledgement. "Raw" scores the model's
 first answer alone, before the check, the retry and the fallback.
 """
 
@@ -58,6 +59,7 @@ def score(case: Dict[str, Any], lines, fell_back: bool) -> Dict[str, Any]:
         "format": [t for t in texts if not t or len(t.encode("utf-8")) > MAX_LINE_BYTES or MARKUP.search(t)]
                   + (["too many lines"] if len(texts) > OPS[ask.op].max_lines else []),
         "expression": [l.text for l in lines if l.expression is None and not fell_back],
+        "spoke_to_small_talk": texts if case.get("silent") else [],
     }
     result["pass"] = not any(result.values())
     expect = case.get("expect")
@@ -80,13 +82,14 @@ def run_model(repo: str, repeat: int, cases_file: str) -> Dict[str, Any]:
             began = time.perf_counter()
             narration = narrator.narrate(ask_for(case))
             seconds = time.perf_counter() - began
-        raw_lines, raw_problems = parse(ask_for(case), narration.attempts[0].raw)
+        first = narration.attempts[0].raw if narration.attempts else '{"lines": []}'  # no attempt: the small-talk rule answered
+        raw_lines, raw_problems = parse(ask_for(case), first)
         raw = score(case, raw_lines, fell_back=False)
         records.append({
             "id": case["id"], "op": case["op"], "category": case["category"], "seconds": seconds,
             "lines": [[l.text, l.expression.value if l.expression else None] for l in narration.lines],
             "fell_back": narration.fell_back, "attempts": len(narration.attempts),
-            "first_answer": narration.attempts[0].raw, "first_problems": list(raw_problems),
+            "first_answer": first, "first_problems": list(raw_problems),
             "raw_pass": not raw_problems and raw["pass"], "raw_ungrounded": raw["ungrounded"], "raw_forbidden": raw["forbidden"],
             **score(case, narration.lines, narration.fell_back),
         })

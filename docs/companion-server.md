@@ -104,6 +104,7 @@ The script starts `serve` and acts as the robot. It reports how long the final t
 The robot asks for three kinds of line:
 
 - `acknowledge` restates the request right after the user stops talking. It never claims a result.
+  A greeting, a thank-you, other small talk, or a request under three words gets no line. A fixed rule decides this before the model runs, because Qwen3-4B restated "how are you" as "Okay, checking how you are." even when the prompt told it to stay silent.
 - `progress` says what is happening, based only on Muse's public status label.
 - `lines` condenses Muse's reply into one to three sentences, each with an expression from the SDK's vocabulary.
 
@@ -126,6 +127,8 @@ A rejected answer gets one retry that names the problems, if the op's deadline l
 | Phi-4-mini-instruct 4-bit | MIT | 66 + 30 | 54 + 20 | 7 + 7 | 8 + 8 | 0.36/0.78 s | 0.35/0.80 s | 0.34/0.73 s | 2.2 GB | 3.0 GB |
 | Llama-3.1-8B-Instruct 4-bit | Llama 3.1 Community | 67 + 29 | 61 + 28 | 1 + 0 | 0 + 0 | 0.54/0.59 s | 0.53/0.55 s | 0.63/2.05 s | 4.5 GB | 5.3 GB |
 | granite-4.1-8b 4-bit | Apache-2.0 | 67 + 30 | 61 + 24 | 3 + 5 | 4 + 5 | 0.63/0.73 s | 0.65/0.70 s | 0.84/2.53 s | 5.2 GB | 5.9 GB |
+
+After the table was made, the main set gained five small-talk cases that expect no acknowledgement. Qwen3-4B passes all 72, with 0 ungrounded. The other models were not rerun.
 
 Latencies are from the 67-case set. The robot waits 0.9 s for an acknowledgement, 1.5 s for progress and 4 s for lines.
 

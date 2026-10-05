@@ -899,6 +899,41 @@
       ]
     },
     {
+      "id": "ack-chat-how-are-you",
+      "category": "small talk",
+      "op": "acknowledge",
+      "request": "how are you",
+      "silent": true
+    },
+    {
+      "id": "ack-chat-thanks",
+      "category": "small talk",
+      "op": "acknowledge",
+      "request": "thanks",
+      "silent": true
+    },
+    {
+      "id": "ack-chat-good-morning",
+      "category": "small talk",
+      "op": "acknowledge",
+      "request": "good morning",
+      "silent": true
+    },
+    {
+      "id": "ack-chat-hi-reachy",
+      "category": "small talk",
+      "op": "acknowledge",
+      "request": "hi Reachy",
+      "silent": true
+    },
+    {
+      "id": "ack-chat-whats-up",
+      "category": "small talk",
+      "op": "acknowledge",
+      "request": "what's up",
+      "silent": true
+    },
+    {
       "id": "progress-flights-first",
       "category": "progress",
       "op": "progress",
