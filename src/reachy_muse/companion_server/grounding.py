@@ -95,6 +95,9 @@ def facts(text: str) -> Facts:
     return Facts(frozenset(numbers), frozenset(times), amounts, frozenset(words & _DATE_WORDS), frozenset(words))
 
 
+ROBOT_REJECTS = "the robot's grounded() rejects it"
+
+
 def ungrounded(line: str, *sources: str) -> List[str]:
     """Why the robot could reject `line`, as short descriptions. Empty means grounded.
 
@@ -102,7 +105,7 @@ def ungrounded(line: str, *sources: str) -> List[str]:
     """
     problems = missing_facts(line, *sources)
     if not problems and not grounded(line, *sources):
-        problems.append("a figure written differently from the source")
+        problems.append(ROBOT_REJECTS)
     return problems
 
 

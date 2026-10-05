@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from musegadget.reachy_capabilities import Expression
 from musegadget.reachy_companion_protocol import MAX_LINE_BYTES, NarratedLine, NarrateOp
 
-from reachy_companion.grounding import ungrounded
+from reachy_companion.grounding import ROBOT_REJECTS, ungrounded
 
 log = logging.getLogger("reachy_companion")
 
@@ -40,6 +40,7 @@ Rules for every text:
 - One plain spoken sentence of at most 25 words. No markdown, lists, emoji, links or quotation marks.
 - Never add a fact. Every number, time, date, amount and name you say must be in the input.
 - Copy figures exactly as the input writes them. Keep "7:45 pm" as "7:45 pm" and "$25.50" as "$25.50"; never turn words into digits or digits into words.
+- Speak to the user: call them "you" and their things "your", never "me" or "my".
 - Start each sentence with a plain word such as "Sure", "Okay", "Your", "It", "The" or "There", or with a name from the input."""
 
 
@@ -53,19 +54,24 @@ class _Op:
 
 _OPS: Dict[NarrateOp, _Op] = {
     NarrateOp.ACKNOWLEDGE: _Op(
-        "The user just finished speaking. Write exactly one line, at most 12 words, that shows you heard the request, "
-        'for example "Okay, let me check that for you." or "Sure, a reminder about the dentist." '
+        "The user just finished speaking. Write exactly one line, at most 12 words, that restates what they asked "
+        "in the request's own key words, so they know you heard it right. "
+        'For example, "set a timer for ten minutes" becomes "Sure, a timer for ten minutes." and '
+        '"what\'s the weather in Oslo" becomes "Okay, checking the weather in Oslo." '
         "Do not answer the request, and do not say that anything is done, set, found, added or booked: the work has not started. "
         "Use the expression nod or listening.",
         max_lines=1, max_tokens=48, budget_s=0.8),
     NarrateOp.PROGRESS: _Op(
         "The user is waiting while their request is worked on. Write exactly one line, at most 12 words, "
         "that tells them what is happening now, based only on the status. "
+        'For example, "Looking at flights now." becomes "Still looking at flights for you." '
+        'and "Comparing the options." becomes "Okay, comparing the options now." '
         "Do not guess results, websites, names, prices or counts. "
         "Do not repeat a line already said; say something new or say it differently. Use the expression thinking.",
         max_lines=1, max_tokens=48, budget_s=1.35),
     NarrateOp.LINES: _Op(
         "Turn the reply into one to three short sentences for the robot to say, leading with the answer to the request. "
+        "Never write more than three, even for a long reply: keep the facts that answer the request and drop the rest. "
         'Keep the facts that matter word for word: numbers, times, amounts, names, and every "not", "no" or "couldn\'t". '
         "If the reply says it could not find or verify something, say so. If the reply does not answer the request, "
         "say what the reply does say and never fill the gap. Leave out markdown, lists, links and filler. "
@@ -165,7 +171,11 @@ def _line_problems(ask: Ask, text: str) -> List[str]:
         problems.append(f"the line {quoted} claims a result before the work has started")
     if ask.op is NarrateOp.PROGRESS and _plain(text) in {_plain(s) for s in ask.already_said}:
         problems.append(f"the line {quoted} was already said")
-    problems += [f"the line {quoted} says {fact}, which the input does not" for fact in ungrounded(text, *ask.sources())]
+    for fact in ungrounded(text, *ask.sources()):
+        if fact == ROBOT_REJECTS:
+            problems.append(f"the robot's own check rejects the line {quoted}: start it with a plain word and copy every figure as written")
+        else:
+            problems.append(f"the line {quoted} says {fact}, which the input does not")
     return problems
 
 
