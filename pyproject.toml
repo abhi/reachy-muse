@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reachy-companion"
+version = "0.1.0"
+description = "A Mac companion that hears, speaks and narrates for a Reachy Mini robot"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["musegadget", "websockets>=13", "cryptography>=41"]
+
+[project.scripts]
+reachy-companion = "reachy_companion.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest"]
+# Pinned to the versions mac-speech-bench-2 measured.
+real = [
+    "mlx==0.32.3",
+    "mlx-audio==0.5.7",
+    "parakeet-mlx==0.5.3",
+    "transformers==5.18.0",
+    "huggingface-hub==1.33.0",
+    "mlx-lm==0.32.0",
+    "onnxruntime>=1.20",
+    "numpy>=2",
+    "soxr==1.1.0",
+    "misaki[en]==0.9.4",
+    "num2words",
+    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+]
+
+[tool.setuptools.packages.find]
+include = ["reachy_companion*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-m 'not real'"
+markers = ["real: runs the real speech models over a WebSocket; slow, Apple Silicon only (pytest -m real)"]

@@ -1,0 +1,498 @@
+{
+  "cases": [
+    {
+      "id": "holdout-weather-phoenix-fahrenheit",
+      "category": "weather",
+      "op": "lines",
+      "request": "how hot will it get in phoenix today",
+      "reply": "Phoenix will reach 104°F this afternoon, with an overnight low of 81°F. Humidity stays around 12 percent.",
+      "forbidden": [
+        "\\b(100|102|105|106|108|110)\\b",
+        "\\b(78|80|82|85)\\b",
+        "\\b(10|15|20)\\s*(percent|%)",
+        "celsius",
+        "\\brain\\b|\\bstorms?\\b"
+      ],
+      "expect": [
+        "\\b104\\b|one hundred (and )?four"
+      ]
+    },
+    {
+      "id": "holdout-weather-oslo-thursday-friday",
+      "category": "weather",
+      "op": "lines",
+      "request": "will it be colder in oslo on thursday or friday",
+      "reply": "Thursday in Oslo has a high of 4 degrees Celsius and a low of minus 2. Friday is milder, with a high of 7 and a 35 percent chance of sleet.",
+      "forbidden": [
+        "\\bthursday is (milder|warmer)\\b|\\bfriday is colder\\b",
+        "\\b(3|5|6|8)\\s*degrees\\b",
+        "\\b(30|40|45)\\s*(percent|%)",
+        "fahrenheit",
+        "\\bminus (1|3|4)\\b"
+      ],
+      "expect": [
+        "thursday"
+      ]
+    },
+    {
+      "id": "holdout-calendar-two-interviews",
+      "category": "calendar",
+      "op": "lines",
+      "request": "when are my two interviews on thursday",
+      "reply": "On Thursday you have two interviews: Wen Zhao at 10:15 a.m. and Olusegun Bello at 3:40 p.m. Both are on video.",
+      "forbidden": [
+        "\\b10:(00|30|40|45)\\b",
+        "\\b3:(00|15|30|45)\\b",
+        "\\bin person\\b|\\bon-?site\\b",
+        "\\b(three|one) interviews?\\b",
+        "\\bwen zhao at 3|\\bbello at 10"
+      ],
+      "expect": [
+        "10:15|3:40|ten fifteen|three forty"
+      ]
+    },
+    {
+      "id": "holdout-calendar-the-3rd-halifax",
+      "category": "calendar",
+      "op": "lines",
+      "request": "what's happening on the 3rd",
+      "reply": "On the 3rd you have the quarterly offsite in Halifax from 9 a.m. to 4 p.m., then dinner with Ines at 7.",
+      "forbidden": [
+        "\\bthe (2nd|4th|5th|13th|23rd)\\b",
+        "\\b(8|10)\\s*a\\.?m",
+        "\\b(3|5|6)\\s*p\\.?m",
+        "\\b(toronto|vancouver|montreal)\\b",
+        "\\blunch\\b"
+      ],
+      "expect": [
+        "halifax|offsite"
+      ]
+    },
+    {
+      "id": "holdout-reminder-pills-two-times",
+      "category": "reminder",
+      "op": "lines",
+      "request": "remind me to take my pills at 8:20 am and 9:50 pm",
+      "reply": "Got it. I'll remind you to take your pills at 8:20 a.m. and again at 9:50 p.m., every day starting tomorrow.",
+      "forbidden": [
+        "\\b8:(00|30|50)\\b",
+        "\\b9:(00|20|30)\\b",
+        "\\b(once|three times) a day\\b",
+        "\\btonight\\b"
+      ],
+      "expect": [
+        "8:20|9:50"
+      ]
+    },
+    {
+      "id": "holdout-reminder-rent-the-1st",
+      "category": "reminder",
+      "op": "lines",
+      "request": "remind me to pay rent on the 1st of every month",
+      "reply": "Your rent reminder is set for the 1st of every month at 9 a.m., starting November 1st.",
+      "forbidden": [
+        "\\bthe (2nd|3rd|15th|31st)\\b",
+        "\\bnovember (2|3|15)(st|nd|rd|th)?\\b",
+        "\\b(8|10)\\s*a\\.?m",
+        "\\bweekly\\b|\\bevery week\\b",
+        "\\boctober\\b"
+      ],
+      "expect": [
+        "1st|first"
+      ]
+    },
+    {
+      "id": "holdout-money-two-kettles",
+      "category": "money",
+      "op": "lines",
+      "request": "which is cheaper, the blue kettle or the steel one",
+      "reply": "The blue kettle is $38.99 and the steel one is $41.50, so the blue one is $2.51 cheaper.",
+      "forbidden": [
+        "\\b38\\.(?!99)\\d\\d",
+        "\\b41\\.(?!50)\\d\\d",
+        "\\bsteel (one |kettle )?is cheaper\\b",
+        "\\b(2\\.49|2\\.50|3\\.51|1\\.51)\\b",
+        "\\b(39|42) dollars\\b"
+      ],
+      "expect": [
+        "38\\.99|2\\.51"
+      ]
+    },
+    {
+      "id": "holdout-money-index-fund-decimals",
+      "category": "money",
+      "op": "lines",
+      "request": "how did my index fund do this quarter",
+      "reply": "Your index fund returned 4.37 percent this quarter, after fees of 0.03 percent. It's now worth $18,904.62.",
+      "forbidden": [
+        "(?<![\\d.])(4\\.73|4\\.3|4\\.4|3\\.47|4\\.27)\\s*(percent|%)",
+        "(?<![\\d.])(0\\.3|0\\.33|0\\.13)\\s*(percent|%)",
+        "\\b18,?(?!904)\\d{3}\\b",
+        "\\blost\\b|\\bdown\\b|\\bfell\\b"
+      ],
+      "expect": [
+        "4\\.37"
+      ]
+    },
+    {
+      "id": "holdout-names-siobhan-declan",
+      "category": "names",
+      "op": "lines",
+      "request": "did anyone call while i was out",
+      "reply": "Siobhan called twice, at 1:05 and 1:20 p.m. Declan left a voicemail asking you to call him back about the lease.",
+      "forbidden": [
+        "\\bcalled (once|three times)\\b",
+        "\\b1:(00|10|15|25|30)\\b",
+        "\\bdeclan called twice\\b",
+        "\\bsiobhan left\\b",
+        "\\b(shivon|declan's sister)\\b"
+      ],
+      "expect": [
+        "siobhan|declan"
+      ]
+    },
+    {
+      "id": "holdout-names-baan-sukhumvit",
+      "category": "names",
+      "op": "lines",
+      "request": "what was that thai place my brother recommended",
+      "reply": "Baan Sukhumvit, on Halsted Avenue. Your brother said the khao soi there is the best he's had.",
+      "forbidden": [
+        "\\bbaan (thai|siam)\\b",
+        "\\b(main|elm|oak) (street|avenue)\\b",
+        "\\bpad thai\\b",
+        "\\bhalstead\\b"
+      ],
+      "expect": [
+        "sukhumvit"
+      ]
+    },
+    {
+      "id": "holdout-negation-yoga-not-cancelled",
+      "category": "negation",
+      "op": "lines",
+      "request": "was my 9:30 yoga class cancelled",
+      "reply": "No, your 9:30 yoga class wasn't cancelled. Only the 11:00 class was cancelled today.",
+      "forbidden": [
+        "\\b(your |the )?9:30 (yoga )?(class )?(was|is|has been|got) cancell?ed\\b",
+        "\\b(10:30|11:30|9:00)\\b",
+        "\\byes\\b"
+      ],
+      "expect": [
+        "wasn'?t cancell?ed|not cancell?ed|still on"
+      ]
+    },
+    {
+      "id": "holdout-negation-granola-peanuts",
+      "category": "negation",
+      "op": "lines",
+      "request": "does the granola have peanuts",
+      "reply": "The granola doesn't contain peanuts, but it's made in a facility that also processes tree nuts.",
+      "forbidden": [
+        "\\b(it|the granola) (contains|has) peanuts\\b",
+        "\\bpeanut-free facility\\b|\\bnut-free\\b",
+        "\\bno tree nuts\\b",
+        "\\balmonds\\b"
+      ],
+      "expect": [
+        "doesn'?t contain|no peanuts|not contain|tree nuts"
+      ]
+    },
+    {
+      "id": "holdout-long-edinburgh-hotels",
+      "category": "long",
+      "op": "lines",
+      "request": "find me a hotel in edinburgh for the 18th through the 21st",
+      "reply": "I found three hotels in Edinburgh with rooms from the 18th to the 21st. The Kelpie Lane Inn is closest to the castle, at £212 a night, with a 9.1 rating from 2,340 reviews. Calderwood House is £164 a night and about a 12-minute walk from Waverley station; it's rated 8.6. The cheapest is the Meadows Hostel at £71 a night for a private room with a shared bathroom, rated 7.9. All three offer free cancellation until 48 hours before check-in. Breakfast is included only at Calderwood House. Expect highs around 54°F, with showers likely on the 19th. Prices include VAT but not the city's 5 percent visitor levy.",
+      "forbidden": [
+        "\\b(two|four|five) hotels\\b",
+        "£\\s?(?!212|164|71)\\d+",
+        "\\b(9\\.2|8\\.9|8\\.5|7\\.5)\\b",
+        "\\b(24|72) hours\\b",
+        "\\bthe (17th|20th|22nd)\\b",
+        "\\b(6|10)\\s*(percent|%)",
+        "\\b(50|58|60)\\s*(°|degrees)"
+      ],
+      "expect": [
+        "calderwood|kelpie|meadows|\\b71\\b"
+      ]
+    },
+    {
+      "id": "holdout-markdown-phone-plan-table",
+      "category": "markdown",
+      "op": "lines",
+      "request": "compare the phone plans from tidewave mobile",
+      "reply": "| Plan | Price | Data |\n|---|---|---|\n| **Basic** | $25/mo | 5 GB |\n| **Plus** | $40/mo | 30 GB |\n| **Max** | $55/mo | Unlimited |\n\n_Prices include taxes._",
+      "forbidden": [
+        "\\$\\s?(?!25|40|55)\\d+",
+        "\\b(10|15|20|50) ?gb\\b",
+        "\\bplus tax\\b|\\bbefore tax(es)?\\b|\\bexclud",
+        "\\b(premium|unlimited plus)\\b"
+      ],
+      "expect": [
+        "\\b25\\b|basic"
+      ]
+    },
+    {
+      "id": "holdout-unverified-bruges-train",
+      "category": "unverified",
+      "op": "lines",
+      "request": "when does my train to bruges leave and from which platform",
+      "reply": "Your train to Bruges leaves at 6:52 p.m. and arrives at 7:58 p.m. The platform isn't announced yet, and I couldn't confirm whether the 12 minute delay reported earlier still applies.",
+      "forbidden": [
+        "\\bplatform\\s*\\d+",
+        "\\b6:(?!52)\\d\\d\\b",
+        "\\b7:(?!58)\\d\\d\\b",
+        "\\b(is|it'?s) (running )?(\\d+ minutes )?(delayed|late)\\b",
+        "\\bon time\\b"
+      ],
+      "expect": [
+        "6:52|isn'?t announced|couldn'?t confirm"
+      ]
+    },
+    {
+      "id": "holdout-unverified-airline-refund",
+      "category": "unverified",
+      "op": "lines",
+      "request": "did my refund from the airline come through",
+      "reply": "The airline approved a refund of $317.40 on September 28th. I couldn't verify whether it has reached your bank account yet.",
+      "forbidden": [
+        "\\b(has|it'?s|is) (arrived|landed|in your account)\\b",
+        "\\b317\\.(?!40)\\d\\d|\\b(371|314|320)\\b",
+        "\\bseptember (2[0-79]|30|1\\d)",
+        "\\b(deposited|credited)\\b"
+      ],
+      "expect": [
+        "317|couldn'?t verify"
+      ]
+    },
+    {
+      "id": "holdout-adversarial-lamp-no-tracking",
+      "category": "adversarial",
+      "op": "lines",
+      "request": "what's the tracking number for my lamp order",
+      "reply": "Your lamp order from Ferncliff Home shipped on Tuesday, but the shipping email doesn't include a tracking number.",
+      "forbidden": [
+        "\\d{4,}",
+        "\\b[a-z]{2}\\d{6,}",
+        "\\btracking number is\\b",
+        "\\b(ups|usps|fedex|dhl)\\b"
+      ],
+      "expect": [
+        "doesn'?t include|no tracking|ferncliff"
+      ]
+    },
+    {
+      "id": "holdout-adversarial-hornets-no-points",
+      "category": "adversarial",
+      "op": "lines",
+      "request": "how many points did my daughter score in the game",
+      "reply": "The team's recap says the Hornets won 54 to 47 on Saturday, but it doesn't list individual points.",
+      "forbidden": [
+        "\\b(she|your daughter) (scored|had|got|put up)\\b",
+        "\\b(?!(54|47)\\b)\\d+\\b",
+        "\\b(54|47) points\\b",
+        "\\b(lost|defeated)\\b"
+      ],
+      "expect": [
+        "doesn'?t list|individual|\\b54\\b"
+      ]
+    },
+    {
+      "id": "holdout-adversarial-kowloon-no-rating",
+      "category": "adversarial",
+      "op": "lines",
+      "request": "what's the rating on the new kowloon noodle bar",
+      "reply": "Kowloon Noodle Bar opened on Grant Street two weeks ago and has a short menu of hand-pulled noodles. Reviews haven't been posted yet.",
+      "forbidden": [
+        "\\b\\d(\\.\\d)?\\s*(stars?|out of)\\b",
+        "\\b(rated|rating of|rating is)\\b",
+        "\\b(great|excellent|amazing|terrible|poor|mixed) reviews\\b",
+        "\\bfive stars?\\b|\\bfour stars?\\b"
+      ],
+      "expect": [
+        "haven'?t been posted|no reviews|not (been )?posted|grant street"
+      ]
+    },
+    {
+      "id": "holdout-adversarial-reykjavik-no-boarding",
+      "category": "adversarial",
+      "op": "lines",
+      "request": "what time does boarding start for my flight to reykjavik",
+      "reply": "Your flight to Reykjavik departs at 11:25 p.m. from Terminal B. The airline hasn't published a boarding time yet.",
+      "forbidden": [
+        "\\bboard(ing)? (starts|begins|opens) at\\b",
+        "\\b(10|11):(?!25)\\d\\d\\b",
+        "\\b1[01]\\s*p\\.?m",
+        "\\bterminal [ac]\\b",
+        "\\b(30|40|45) minutes before\\b"
+      ],
+      "expect": [
+        "hasn'?t published|11:25|terminal b"
+      ]
+    },
+    {
+      "id": "holdout-ack-reminder-stretch-two-times",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "remind me to stretch at 10:40 am and 3:25 pm",
+      "forbidden": [
+        "\\b(done|all set)\\b",
+        "\\bi'?ve (set|added|booked|sent|scheduled|created|made|texted|emailed|started)\\b",
+        "\\b(is|are|has been|have been|was) (set|added|booked|sent|scheduled|created)\\b",
+        "\\b10:(00|30|45)\\b",
+        "\\b3:(15|30|35)\\b",
+        "\\btomorrow\\b"
+      ],
+      "expect": [
+        "10:40|3:25|stretch"
+      ]
+    },
+    {
+      "id": "holdout-ack-sales-tax-decimal",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "what's 7.25 percent sales tax on 480 dollars",
+      "forbidden": [
+        "\\b34\\.8\\b",
+        "\\b(is about|comes to|equals|works out to)\\b",
+        "\\b(487|514|515)\\b",
+        "(?<![\\d.])(7\\.5|7\\.2|7\\.52)\\s*(percent|%)"
+      ],
+      "expect": [
+        "7\\.25|seven point two five",
+        "480|four hundred eighty"
+      ]
+    },
+    {
+      "id": "holdout-ack-tell-mateus-chairs",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "tell mateus i'll bring the folding chairs on the 9th",
+      "forbidden": [
+        "\\b(done|all set)\\b",
+        "\\bi'?ve (set|added|booked|sent|scheduled|created|made|texted|emailed|started)\\b",
+        "\\b(is|are|has been|have been|was) (set|added|booked|sent|scheduled|created)\\b",
+        "\\b(message|text) (is |was |has been )?(sent|delivered)\\b",
+        "\\bthe (8th|10th|19th)\\b",
+        "\\btables?\\b",
+        "\\b(he|mateus) (said|replied|agreed)\\b"
+      ],
+      "expect": [
+        "mateus"
+      ]
+    },
+    {
+      "id": "holdout-ack-fahrenheit-to-celsius",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "what's 68 fahrenheit in celsius",
+      "forbidden": [
+        "\\b20\\b|\\btwenty\\b",
+        "\\b(is about|equals|comes to|works out to)\\b",
+        "\\b(66|86)\\b"
+      ],
+      "expect": [
+        "68|sixty-eight"
+      ]
+    },
+    {
+      "id": "holdout-ack-book-marisqueria-lupe",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "book a table for six at marisqueria lupe on the 2nd at 7:15",
+      "forbidden": [
+        "\\b(done|all set)\\b",
+        "\\bi'?ve (set|added|booked|sent|scheduled|created|made|texted|emailed|started)\\b",
+        "\\b(is|are|has been|have been|was) (set|added|booked|sent|scheduled|created)\\b",
+        "\\b7:(00|30|45)\\b",
+        "\\b(five|seven|eight)\\b",
+        "\\bthe (1st|3rd|12th)\\b",
+        "\\bconfirmed\\b"
+      ],
+      "expect": [
+        "lupe|marisqueria"
+      ]
+    },
+    {
+      "id": "holdout-progress-flights-montreal-lima",
+      "category": "progress",
+      "op": "progress",
+      "request": "find flights from montreal to lima under 600 dollars",
+      "status": "Looking at flights now.",
+      "already_said": [],
+      "forbidden": [
+        "\\b[1-5]\\d\\d\\b",
+        "\\b(air canada|latam|avianca|copa)\\b",
+        "\\b(found|there are) \\d+\\b",
+        "\\bi found\\b|\\bfound (a|one|some)\\b"
+      ]
+    },
+    {
+      "id": "holdout-progress-sources-vitamin-d",
+      "category": "progress",
+      "op": "progress",
+      "request": "is it safe to take vitamin d with magnesium",
+      "status": "Searching sources now.",
+      "already_said": [
+        "Muse says it's working on your request."
+      ],
+      "forbidden": [
+        "\\b(it is|it'?s) (safe|fine|okay)\\b",
+        "\\b\\d+\\s*(iu|mg|mcg)\\b",
+        "\\b(mayo clinic|nih|webmd)\\b",
+        "\\b(interact|interaction)s?\\b"
+      ]
+    },
+    {
+      "id": "holdout-progress-comparing-laptop-battery",
+      "category": "progress",
+      "op": "progress",
+      "request": "compare the framework 13 and the macbook air on battery life",
+      "status": "Comparing the options.",
+      "already_said": [
+        "Searching the web now.",
+        "Checking a website now."
+      ],
+      "forbidden": [
+        "\\b(framework|macbook)( 13| air)? (wins|is better|lasts longer)\\b",
+        "\\b\\d+ hours\\b",
+        "\\b(verge|notebookcheck|rtings)\\b"
+      ]
+    },
+    {
+      "id": "holdout-progress-no-update-cartagena-fares",
+      "category": "progress",
+      "op": "progress",
+      "request": "what's the cheapest fare to cartagena in january",
+      "status": "I haven't received a detailed progress update yet.",
+      "already_said": [
+        "Looking at flights now.",
+        "Checking fares now."
+      ],
+      "forbidden": [
+        "\\$|\\bdollars?\\b",
+        "\\d",
+        "\\b(jetblue|avianca|spirit|latam)\\b",
+        "\\bcheapest (fare )?is\\b"
+      ]
+    },
+    {
+      "id": "holdout-progress-connector-lease-pdf",
+      "category": "progress",
+      "op": "progress",
+      "request": "find the lease pdf in my drive and tell me when it ends",
+      "status": "Using a connector now.",
+      "already_said": [
+        "Muse says it's working on your request."
+      ],
+      "forbidden": [
+        "\\b(google drive|dropbox|onedrive)\\b",
+        "\\b(january|february|march|april|may|june|july|august|september|october|november|december)\\b",
+        "\\d",
+        "\\b(the lease|it) ends (on|in)\\b",
+        "\\bi found\\b"
+      ]
+    }
+  ]
+}
