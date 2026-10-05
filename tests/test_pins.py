@@ -245,7 +245,6 @@ class Rig:
     def service(self, muse, *, mp3=b"", owned=True, rejected=False, speech=None, progress_speech=None,
                 transcriber=None, stream_replies=False, **fields):
         self.session = PinSession(self.recording, muse, mp3=mp3, owned=owned, rejected=rejected)
-        self.monkeypatch.setattr(reachy_voice, "LinkSession", lambda **_: self.session)
 
         async def prepare_chat(session, vm):
             return "robot-chat"
@@ -281,21 +280,33 @@ class Rig:
         while not predicate() and asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(.005)
 
-    async def quiet(self, span=.6):
+    async def quiet(self, *rest, span=.6, timeout=20):
+        """Waits until the robot's last state is one of ``rest`` and nothing else happens for ``span``.
+
+        ``rest`` defaults to idle or error. Silence alone is not enough, because the robot can
+        go quiet for ``span`` between two state changes.
+        """
+        rest = [[state] for state in rest or ("idle", "error")]
+        deadline = asyncio.get_running_loop().time() + timeout
         seen = -1
-        while seen != len(self.recording.events):
+        while seen != len(self.recording.events) or self.states()[-1:] not in rest:
+            assert asyncio.get_running_loop().time() < deadline, self.states()[-5:]
             seen = len(self.recording.events)
             await asyncio.sleep(span)
 
+    def states(self):
+        return [event["state"] for event in self.recording.events if event.get("robot") == "set_state"]
+
 
 async def converse(rig, service, user):
-    session = asyncio.create_task(service._session({"vm_id": "vm-1", "vm_auth_token": "token"}, {}))
+    stop = asyncio.Event()
+    session = asyncio.create_task(service.serve(rig.session, {"vm_id": "vm-1"}, stop))
     try:
         await rig.quiet()
         await user()
         await rig.quiet()
     finally:
-        service.stop()
+        stop.set()
         await asyncio.wait_for(session, 5)
         await asyncio.gather(*rig.session.scripts)
 
@@ -511,7 +522,7 @@ def test_detail_said_while_muse_works_goes_to_the_same_chat_and_the_answer_waits
 
     async def user():
         rig.say()
-        await rig.quiet()
+        await rig.quiet("thinking")
         rig.say(voiced_s=1)
     check("follow_up_detail", run_scenario(rig, service, user))
 
@@ -532,7 +543,7 @@ def test_detail_answered_after_muse_finishes_the_original_is_still_spoken(monkey
 
     async def user():
         rig.say()
-        await rig.quiet()
+        await rig.quiet("thinking")
         rig.say(voiced_s=1)
     record = run_scenario(rig, service, user)
     assert [event["audio"] for event in record["events"] if event.get("robot") == "play"
@@ -556,7 +567,7 @@ def test_cancel_while_muse_works_drops_the_request_and_asks_muse_to_stop(monkeyp
 
     async def user():
         rig.say()
-        await rig.quiet()
+        await rig.quiet("thinking")
         rig.say()
     check("follow_up_cancel", run_scenario(rig, service, user))
 
@@ -643,11 +654,11 @@ def test_stop_talking_before_the_answer_cancels_the_request(monkeypatch):
 
     async def user():
         rig.say()
-        await rig.quiet()
+        await rig.quiet("thinking")
         rig.say()
     record = run_scenario(rig, service, user)
     assert [event["text"] for event in record["events"] if event.get("muse") == "send_chat"] == [
-        "Can you search for the latest robot news?", reachy_voice.STOP_REQUEST]
+        "Can you search for the latest robot news?", "Please stop working on my previous request."]
     plays = [event["audio"] for event in record["events"] if event.get("robot") == "play"]
     assert "tts:" + reachy_voice.CANCEL_ACKNOWLEDGEMENT in plays
     assert "tts:Robots learned to fold laundry." not in plays
@@ -674,7 +685,7 @@ def test_muse_reply_to_the_stop_request_is_not_spoken_as_the_next_answer(monkeyp
 
     async def user():
         rig.say()
-        await rig.quiet()
+        await rig.quiet("thinking")
         rig.say()
         await rig.wait_until_or_timeout(lambda: rig.session.requests == 3, 5)
         await rig.quiet()
@@ -682,7 +693,7 @@ def test_muse_reply_to_the_stop_request_is_not_spoken_as_the_next_answer(monkeyp
     record = run_scenario(rig, service, user)
     assert [event["text"].rsplit(": ", 1)[-1] for event in record["events"]
             if event.get("muse") == "send_chat"][1:] == [
-        "Can you search for the latest robot news?", reachy_voice.STOP_REQUEST, "What time is it in Tokyo?"]
+        "Can you search for the latest robot news?", "Please stop working on my previous request.", "What time is it in Tokyo?"]
     plays = [event["audio"] for event in record["events"] if event.get("robot") == "play"]
     assert "tts:Okay, I've stopped." not in plays
     assert plays[-1] == "tts:It is nine in the morning there."
@@ -705,9 +716,9 @@ def test_new_request_waits_behind_the_running_one_and_a_third_is_turned_away(mon
 
     async def user():
         rig.say()
-        await rig.quiet()
+        await rig.quiet("thinking")
         rig.say()
-        await rig.quiet()
+        await rig.quiet("thinking")
         rig.say()
     check("follow_up_queued", run_scenario(rig, service, user))
 

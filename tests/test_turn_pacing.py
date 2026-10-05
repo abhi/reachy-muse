@@ -222,13 +222,13 @@ def test_a_request_heard_while_muse_works_is_held_with_a_nod_and_later_ones_get_
 
     async def user():
         rig.say()
-        await rig.quiet()
+        await rig.quiet("thinking")
         marks["second"] = len(rig.recording.events)
         rig.say()
-        await rig.quiet()
+        await rig.quiet("thinking")
         marks["third"] = len(rig.recording.events)
         rig.say()
-        await rig.quiet()
+        await rig.quiet("thinking")
         rig.say()
         await rig.wait_until_or_timeout(lambda: not transcripts.texts)
         marks["fourth"] = len(rig.recording.events)

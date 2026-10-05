@@ -23,12 +23,12 @@ from musegadget.link_client import DeviceDescription, LinkSession, Outcome, ackn
 from musegadget.muse_turn import AgentStatus, MuseTurn, ReplayScope, Reply, TaskFinished, TurnEvent
 from musegadget.reachy.commands import COMMAND_SPECS
 from musegadget.reachy.expressions import Expression
-from musegadget.reachy.prompts import SETUP_REQUEST, voice_context
+from musegadget.reachy.prompts import SETUP_REQUEST, STOP_REQUEST, spoken_request, voice_context
 from musegadget.reachy.replies import ReplyProtocolError, ReplyRevisionError, ReplyStyle, SentenceStream
 from musegadget.reachy_capabilities import WAKE_CUE, Backends, EndedTurn, Endpoint, SpokenLine
 from musegadget.reachy_follow_up import FollowUp, classify_follow_up, is_small_talk, request_topic
 from musegadget.reachy_progress import BackendStatus, ProgressPlan, ProgressUpdate, backend_status_from_event
-from musegadget.service import DEFAULT_NOISE_HOST, Service
+from musegadget.service import Service
 from musegadget.speech_playback import PCMPlayer, SpeechPlayback
 
 log = logging.getLogger(__name__)
@@ -43,7 +43,6 @@ TRANSCRIPTION_RETRY_CUE = "I missed part of that. Please say it again."
 LATE_ANSWER_S = 20.0
 ANSWER_HOLD_LIMIT_S = 8.0
 CANCEL_ACKNOWLEDGEMENT = "Okay, I'll drop that."
-STOP_REQUEST = "Please stop working on my previous request."
 # Muse may answer Reachy's stop request without naming it as the parent; such messages
 # this soon after a stop are taken as that answer, not the next request's.
 STOP_REPLY_WINDOW_S = 5.0
@@ -1499,7 +1498,7 @@ class VoiceConversation:
         if style is self._muse_style:
             return text
         log.info("Reachy switched Muse's reply style to %s", style.value)
-        return self._voice_context(style) + "\n\nThe user's spoken request is: " + text
+        return spoken_request(self._voice_context(style), text)
 
     def _voice_context(self, style: ReplyStyle | None = None) -> str:
         return voice_context(
@@ -1705,16 +1704,16 @@ class ReachyService(Service):
     wake_timeout_s: float = 10.0
     speech_gate: object | None = None
 
-    async def _session(self, vm: dict, pairing: dict) -> tuple[Outcome, float]:
+    def describe(self) -> DeviceDescription:
+        return DeviceDescription(self.identity.node_id, "Reachy Mini", __version__, COMMAND_SPECS)
+
+    def run_command(self, name: str, params: dict, timeout_ms: int | None = None) -> dict:
+        return self.executor.run_command(name, params, timeout_ms)
+
+    async def serve(self, session: LinkSession, vm: dict, stop: asyncio.Event) -> Outcome:
         from musegadget.reachy_hardware import ReachyHardwareError
 
         hardware = self.executor
-        device = DeviceDescription(self.identity.node_id, "Reachy Mini", __version__, COMMAND_SPECS)
-        session = LinkSession(noise_host=pairing.get("noise_host") or DEFAULT_NOISE_HOST,
-                              vm_id=vm["vm_id"] or vm["vm_name"],
-                              vm_auth_token=vm["vm_auth_token"], device=device,
-                              run_command=hardware.run_command)
-        self._current = session
         stop_link = asyncio.Event()
         async def converse():
             await session.registered.wait()
@@ -1731,8 +1730,7 @@ class ReachyService(Service):
             await voice.run()
         link_task = asyncio.create_task(session.run(stop_link))
         voice_task = asyncio.create_task(converse())
-        stop_task = asyncio.create_task(self._stop.wait())
-        started = time.monotonic()
+        stop_task = asyncio.create_task(stop.wait())
         outcome = Outcome.CLOSED
         try:
             done, _ = await asyncio.wait({link_task, voice_task, stop_task},
@@ -1755,5 +1753,4 @@ class ReachyService(Service):
             await asyncio.gather(voice_task, stop_task, return_exceptions=True)
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(link_task, 5)
-            self._current = None
-        return outcome, time.monotonic() - (session.registered_at or started)
+        return outcome

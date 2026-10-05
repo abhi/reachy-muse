@@ -47,7 +47,6 @@ class Conversation:
         self.recording = Recording()
         self.hardware = CompanionHardware(self.recording)
         self.session = PinSession(self.recording, muse, owned=owned)
-        monkeypatch.setattr(reachy_voice, "LinkSession", lambda **_: self.session)
         self.link = CompanionLink(url, token=TOKEN, insecure=True, out_rate=self.hardware.output_sample_rate,
                                   backoff_s=backoff_s, **link)
 
@@ -63,13 +62,14 @@ class Conversation:
 
     async def run(self, user):
         tasks = [asyncio.ensure_future(self.link.run()), asyncio.ensure_future(self._room_tone())]
-        session = asyncio.ensure_future(self.service._session({"vm_id": "vm-1", "vm_auth_token": VM_TOKEN}, {}))
+        stop = asyncio.Event()
+        session = asyncio.ensure_future(self.service.serve(self.session, {"vm_id": "vm-1", "vm_auth_token": VM_TOKEN}, stop))
         try:
             await self.quiet()
             await user()
             await self.quiet()
         finally:
-            self.service.stop()
+            stop.set()
             await asyncio.wait_for(session, 5)
             await asyncio.gather(*self.session.scripts)
             for task in tasks:

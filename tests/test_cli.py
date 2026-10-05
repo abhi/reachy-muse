@@ -635,16 +635,28 @@ def test_invalid_token_is_rejected_without_printing_it(tmp_path, monkeypatch, ca
 
 
 @pytest.mark.parametrize('result, code', [('PAIRED', 0), ('ALREADY_PAIRED', 1), ('WINDOW_CLOSED', 1)])
-def test_pair_uses_explicit_state_and_the_sdk_pairing(tmp_path, monkeypatch, result, code):
-    from musegadget.pairing import PairResult
+def test_pair_uses_explicit_state_and_the_sdk_pairing(tmp_path, monkeypatch, capsys, result, code):
+    from musegadget.pair import PairOutcome, PairResult, SetupWindow
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
     captured = {}
-    def pair(*, force, timeout_s):
+    def pair(*, on_open, force, timeout_s):
         captured.update(state=config.state_dir(), force=force, timeout=timeout_s)
-        return PairResult[result]
-    monkeypatch.setattr('musegadget.pairing.pair', pair)
+        if result != 'ALREADY_PAIRED':
+            on_open(SetupWindow('ReachyMini', timeout_s, has_sdk_token=False))
+        return PairResult(PairOutcome[result])
+    monkeypatch.setattr('musegadget.pair.pair', pair)
     assert reachy_cli.main(['--state-dir', str(tmp_path), 'pair', '--timeout', '90']) == code
     assert captured == {'state': tmp_path, 'force': False, 'timeout': 90}
+    opened = 'Setup open for 1 minutes. In the Muse app, add a device and choose ReachyMini.\n'
+    no_token = ('Reachy: no SDK token yet. Get one at gadgets.muse.ai and pass it with --sdk-token-file. '
+                'Gadgets without one will stop pairing.\n')
+    assert capsys.readouterr() == {
+        'PAIRED': (opened + f'Reachy is paired with Muse. The pairing is saved in {tmp_path}.\n', no_token),
+        'ALREADY_PAIRED': ('', f'Reachy is already paired. The pairing is saved in {tmp_path}. '
+                               'Pass --force to pair again.\n'),
+        'WINDOW_CLOSED': (opened, no_token + 'Setup window closed without pairing. '
+                                             'Run `muse-reachy pair` to try again.\n'),
+    }[result]
 
 
 def test_streaming_option_reaches_the_conversation_service(tmp_path, monkeypatch):

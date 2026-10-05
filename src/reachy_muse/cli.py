@@ -22,7 +22,8 @@ import time
 import uuid
 
 from musegadget import config, identity
-from musegadget.reachy.prompts import CHAT_SETUP_MESSAGE, CHAT_SETUP_PREFIX, CHAT_SETUP_SUFFIX, voice_context
+from musegadget.reachy.prompts import (CHAT_SETUP_MESSAGE, CHAT_SETUP_PREFIX, CHAT_SETUP_SUFFIX, setup_challenge_reply,
+                                      voice_context, with_setup_challenge)
 from musegadget.reachy.replies import ReplyStyle
 from musegadget.reachy_capabilities import Mode
 
@@ -123,8 +124,8 @@ class ReachySideChat:
 
     async def _apply_setup(self, session, session_id: str, *, subscribe_first: bool) -> dict:
         nonce = secrets.token_hex(16)
-        expected = f"Ready {nonce}"
-        message = f"{self.setup_message}\n\nInitialization challenge: reply exactly {expected}"
+        expected = setup_challenge_reply(nonce)
+        message = with_setup_challenge(self.setup_message, nonce)
         armed = asyncio.Event()
         drain = None
         if subscribe_first:
@@ -607,6 +608,29 @@ def doctor(args) -> int:
         robot.close()
 
 
+def pair_reachy(args) -> int:
+    from musegadget.pair import PairOutcome, SetupWindow, pair
+
+    def setup_open(window: SetupWindow) -> None:
+        if not window.has_sdk_token:
+            print("Reachy: no SDK token yet. Get one at gadgets.muse.ai and pass it with --sdk-token-file. "
+                  "Gadgets without one will stop pairing.", file=sys.stderr)
+        print(f"Setup open for {window.timeout_s // 60} minutes. In the Muse app, add a device "
+              f"and choose {window.ble_name}.")
+
+    result = pair(on_open=setup_open, force=args.force, timeout_s=args.timeout)
+    if result.outcome is PairOutcome.PAIRED:
+        print(f"Reachy is paired with Muse. The pairing is saved in {config.state_dir()}.")
+        return 0
+    print({
+        PairOutcome.ALREADY_PAIRED: f"Reachy is already paired. The pairing is saved in {config.state_dir()}. "
+                                    "Pass --force to pair again.",
+        PairOutcome.INVALID_SDK_TOKEN: f"Reachy: {result.sdk_token_problem}",
+        PairOutcome.WINDOW_CLOSED: "Setup window closed without pairing. Run `muse-reachy pair` to try again.",
+    }[result.outcome], file=sys.stderr)
+    return 1
+
+
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
     problems = mode_problems(args) if args.command == "run" else []
@@ -625,8 +649,7 @@ def main(argv=None) -> int:
             os.environ[config.SDK_TOKEN_ENV] = args.sdk_token_file.expanduser().read_text().strip()
             config.sdk_token()
         if args.command == "pair":
-            from musegadget.pairing import PairResult, pair
-            return 0 if pair(force=args.force, timeout_s=args.timeout) is PairResult.PAIRED else 1
+            return pair_reachy(args)
         if args.command == "doctor":
             return doctor(args)
         if args.command == "companion":

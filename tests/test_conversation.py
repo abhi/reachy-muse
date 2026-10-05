@@ -3395,17 +3395,16 @@ def test_hardware_failure_leaves_service_for_a_fresh_controller(monkeypatch):
         async def run(self):
             raise ReachyHardwareError("microphone disconnected")
 
-    monkeypatch.setattr(reachy_voice, "LinkSession", IdleLink)
     monkeypatch.setattr(reachy_voice, "VoiceConversation", FailedConversation)
 
     async def scenario():
         hardware = FakeHardware()
-        hardware.run_command = lambda *args: {"ok": True}
+        link = IdleLink()
         service = reachy_voice.ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=hardware,
                                              backends=lambda session: backends_for(Mode.MUSE_VOICE, session))
         with pytest.raises(ReachyHardwareError, match="microphone disconnected"):
-            await service._session({"vm_id": "vm-1", "vm_auth_token": "token"}, {})
-        assert service._current is None
+            await service.serve(link, {"vm_id": "vm-1"}, asyncio.Event())
+        assert link.stopped
         assert hardware.states == []
 
     asyncio.run(bounded(scenario()))
