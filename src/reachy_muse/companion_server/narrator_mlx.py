@@ -52,7 +52,7 @@ class _Op:
     budget_s: float  # a little under the robot's deadline for this op
 
 
-_OPS: Dict[NarrateOp, _Op] = {
+OPS: Dict[NarrateOp, _Op] = {
     NarrateOp.ACKNOWLEDGE: _Op(
         "The user just finished speaking. Write exactly one line, at most 12 words, that restates what they asked "
         "in the request's own key words, so they know you heard it right. "
@@ -115,7 +115,7 @@ class Narration:
 
 
 def messages(ask: Ask) -> List[Dict[str, str]]:
-    op = _OPS[ask.op]
+    op = OPS[ask.op]
     if ask.op is NarrateOp.ACKNOWLEDGE:
         given = f"Request: {ask.request}"
     elif ask.op is NarrateOp.PROGRESS:
@@ -145,7 +145,7 @@ def parse(ask: Ask, raw: str) -> Tuple[Tuple[NarratedLine, ...], Tuple[str, ...]
 
 
 def _count_problems(ask: Ask, lines: Sequence[NarratedLine]) -> List[str]:
-    most = _OPS[ask.op].max_lines
+    most = OPS[ask.op].max_lines
     if len(lines) > most:
         return [f"there are {len(lines)} lines; at most {most} are allowed"]
     if ask.op is NarrateOp.LINES and not lines:
@@ -153,7 +153,7 @@ def _count_problems(ask: Ask, lines: Sequence[NarratedLine]) -> List[str]:
     return []
 
 
-_MARKUP = re.compile(r"[*#`_~|<>\[\]{}]|https?://|www\.|^\s*(?:[-•]|\d+[.)])\s")
+MARKUP = re.compile(r"[*#`_~|<>\[\]{}]|https?://|www\.|^\s*(?:[-•]|\d+[.)])\s")
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿]")
 _CLAIM = re.compile(r"\b(?:done|all set|i've|i have|has been|have been|here's|here is|found|it's set|is set)\b", re.IGNORECASE)
 
@@ -165,7 +165,7 @@ def _line_problems(ask: Ask, text: str) -> List[str]:
         problems.append("a line is empty")
     if len(text.encode("utf-8")) > MAX_LINE_BYTES:
         problems.append(f"the line {quoted} is longer than {MAX_LINE_BYTES} bytes")
-    if _MARKUP.search(text) or _EMOJI.search(text):
+    if MARKUP.search(text) or _EMOJI.search(text):
         problems.append(f"the line {quoted} has markup, a link or an emoji")
     if ask.op is NarrateOp.ACKNOWLEDGE and _CLAIM.search(text):
         problems.append(f"the line {quoted} claims a result before the work has started")
@@ -237,7 +237,7 @@ class MlxNarrator:
 
     def narrate(self, ask: Ask) -> Narration:
         """Ask the model, check its answer, retry once if there is time, else fall back. Runs on the narrator thread."""
-        op = _OPS[ask.op]
+        op = OPS[ask.op]
         started = time.perf_counter()
         conversation = messages(ask)
         attempts: List[Attempt] = []

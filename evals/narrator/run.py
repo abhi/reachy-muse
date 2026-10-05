@@ -22,14 +22,13 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
+from musegadget.reachy_capabilities import grounded
+from musegadget.reachy_companion_protocol import NarrateOp
+
+from reachy_companion.grounding import ungrounded
+from reachy_companion.narrator_mlx import MARKUP, MAX_LINE_BYTES, OPS, Ask, MlxNarrator, parse
+
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parents[1]))
-
-from musegadget.reachy_capabilities import grounded  # noqa: E402
-from musegadget.reachy_companion_protocol import NarrateOp  # noqa: E402
-
-from reachy_companion.grounding import ungrounded  # noqa: E402
-from reachy_companion.narrator_mlx import _MARKUP, _OPS, MAX_LINE_BYTES, Ask, MlxNarrator, parse  # noqa: E402
 
 CANDIDATES = (
     "mlx-community/Qwen3-4B-Instruct-2507-4bit",
@@ -56,8 +55,8 @@ def score(case: Dict[str, Any], lines, fell_back: bool) -> Dict[str, Any]:
         "ungrounded": [f"{t}: {p}" for t in texts for p in ungrounded(t, *ask.sources())],
         "robot_rejects": [t for t in texts if not grounded(t, *ask.sources())],
         "forbidden": forbidden,
-        "format": [t for t in texts if not t or len(t.encode("utf-8")) > MAX_LINE_BYTES or _MARKUP.search(t)]
-                  + (["too many lines"] if len(texts) > _OPS[ask.op].max_lines else []),
+        "format": [t for t in texts if not t or len(t.encode("utf-8")) > MAX_LINE_BYTES or MARKUP.search(t)]
+                  + (["too many lines"] if len(texts) > OPS[ask.op].max_lines else []),
         "expression": [l.text for l in lines if l.expression is None and not fell_back],
     }
     result["pass"] = not any(result.values())
