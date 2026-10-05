@@ -21,6 +21,7 @@ from musegadget import __version__
 from musegadget import reachy_expression_plan as plan
 from musegadget.link_client import DeviceDescription, LinkSession, Outcome, acknowledgement
 from musegadget.muse_turn import AgentStatus, MuseTurn, ReplayScope, Reply, TaskFinished, TurnEvent
+from musegadget.reachy.commands import COMMAND_SPECS
 from musegadget.reachy.expressions import Expression
 from musegadget.reachy.prompts import SETUP_REQUEST, voice_context
 from musegadget.reachy.replies import ReplyProtocolError, ReplyRevisionError, ReplyStyle, SentenceStream
@@ -1705,7 +1706,7 @@ class ReachyService(Service):
     speech_gate: object | None = None
 
     async def _session(self, vm: dict, pairing: dict) -> tuple[Outcome, float]:
-        from musegadget.reachy_hardware import COMMAND_SPECS, ReachyHardwareError
+        from musegadget.reachy_hardware import ReachyHardwareError
 
         hardware = self.executor
         device = DeviceDescription(self.identity.node_id, "Reachy Mini", __version__, COMMAND_SPECS)

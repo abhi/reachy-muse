@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from musegadget.reachy.commands import POSE_LIMITS, parse_command
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -49,12 +51,6 @@ EXPRESSION_POSES = {
     "thinking": ({"roll": 12, "pitch": -5, "z": 5}, [-45, 45]),
     "error": ({"pitch": 8, "z": -3}, [-35, 35]),
 }
-POSE_LIMITS = {
-    "x": (-15.0, 15.0), "y": (-15.0, 15.0), "z": (-10.0, 20.0),
-    "roll": (-20.0, 20.0), "pitch": (-20.0, 20.0), "yaw": (-35.0, 35.0),
-    "body_yaw": (-35.0, 35.0),
-    "right_antenna": (-90.0, 90.0), "left_antenna": (-90.0, 90.0),
-}
 _MOTION_PERIOD_S = 0.025
 GESTURE_DURATION_S = 1.6
 _GESTURE_KEYFRAMES = ((0., 0.), (.25, 1.), (.45, 1.), (.95, -1.),
@@ -72,39 +68,6 @@ def _blend_factor(reference: float, elapsed_s: float) -> float:
     elapsed_s = max(0.0, min(0.1, elapsed_s))
     return 1 - (1 - reference) ** (elapsed_s / _MOTION_PERIOD_S)
 
-COMMAND_SPECS = {
-    "reachy.expression": {
-        "description": (
-            "Express an emotion with Reachy Mini. Built-in names: neutral, happy, "
-            "sad, surprised, curious, nod, shake, listening, thinking, error. "
-            "An exact recorded emotion name uses Pollen's official library. "
-            "No sound effect is played, so this can accompany Muse speech."
-        ),
-        "required": {"name": {"type": "string", "description": "Expression name."}},
-        "optional": {
-            "intensity": {"type": "number", "description": "Motion strength, 0.1 to 1. Default 0.6."},
-            "duration": {"type": "number", "description": "Built-in expression duration in seconds, 0.2 to 5. Default 1.5. Recorded moves keep their timing."},
-        },
-        "timeout_ms": 20000,
-    },
-    "reachy.move": {
-        "description": (
-            "Move Reachy Mini smoothly. Head translation uses millimeters; "
-            "rotation and antenna positions use degrees. Commands are bounded "
-            "and serialized with expressions. Omitted coordinates keep their "
-            "current position."
-        ),
-        "required": {},
-        "optional": {
-            **{key: {"type": "number", "description": f"{key}: {low:g} to {high:g} {'mm' if key in ('x', 'y', 'z') else 'degrees'}."}
-               for key, (low, high) in POSE_LIMITS.items()},
-            "duration": {"type": "number", "description": "Travel time in seconds, 0.2 to 5. Default 0.8."},
-            "hold": {"type": "number", "description": "Hold the resulting pose for 0 to 5 seconds. Default 0.5."},
-        },
-        "timeout_ms": 15000,
-    },
-}
-
 
 class ReachyHardwareError(RuntimeError):
     """The robot connection or media backend needs a fresh controller."""
@@ -118,16 +81,6 @@ class _Command:
     done: threading.Event = field(default_factory=threading.Event)
     cancelled: threading.Event = field(default_factory=threading.Event)
     result: dict | None = None
-
-
-def _number(params: dict, key: str, default: float, low: float, high: float) -> float:
-    value = params.get(key, default)
-    if isinstance(value, bool) or not isinstance(value, (float, int)):
-        raise ValueError(f"{key} must be a number")
-    value = float(value)
-    if not math.isfinite(value) or not low <= value <= high:
-        raise ValueError(f"{key} must be between {low:g} and {high:g}")
-    return value
 
 
 class ReachyController:
@@ -368,38 +321,10 @@ class ReachyController:
             self._require_running()
             if not self._enable_motion:
                 raise RuntimeError("Reachy Mini motion is disabled for this session")
-            if name not in COMMAND_SPECS:
-                raise ValueError(f"unsupported command: {name}")
-            if not isinstance(params, dict):
-                raise ValueError("command parameters must be an object")
-            spec = COMMAND_SPECS[name]
-            unknown = set(params) - set(spec["required"]) - set(spec["optional"])
-            if unknown:
-                raise ValueError(f"unknown parameter: {sorted(unknown)[0]}")
-            checked = dict(params)
-            if name == "reachy.expression":
-                expression = params.get("name")
-                if not isinstance(expression, str) or not expression or len(expression) > 80:
-                    raise ValueError("name must be an expression name")
-                checked["intensity"] = _number(params, "intensity", 0.6, 0.1, 1)
-                checked["duration"] = _number(params, "duration", 1.5, 0.2, 5)
-            else:
-                if not set(params).intersection(POSE_LIMITS):
-                    raise ValueError("provide at least one head, antenna, or body coordinate")
-                for index in self._inactive_antennas:
-                    key = ("right_antenna", "left_antenna")[index]
-                    if key in params:
-                        raise ValueError(f"{key} is inactive for antenna_mode={self.antenna_mode}")
-                for key, (low, high) in POSE_LIMITS.items():
-                    if key in params:
-                        checked[key] = _number(params, key, 0, low, high)
-                checked["duration"] = _number(params, "duration", 0.8, 0.2, 5)
-                checked["hold"] = _number(params, "hold", 0.5, 0, 5)
-            timeout = _number({"timeout_ms": timeout_ms if timeout_ms is not None else spec["timeout_ms"]},
-                              "timeout_ms", spec["timeout_ms"], 1, 30000) / 1000
-            request = _Command(name, checked, time.monotonic() + timeout)
+            command = parse_command(name, params, antenna_mode=self.antenna_mode, timeout_ms=timeout_ms)
+            request = _Command(command.name, command.params, time.monotonic() + command.timeout_s)
             self._commands.put_nowait(request)
-            if not request.done.wait(timeout):
+            if not request.done.wait(command.timeout_s):
                 request.cancelled.set()
                 return {"ok": False, "error": "Reachy Mini command timed out"}
             return request.result
