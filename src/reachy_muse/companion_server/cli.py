@@ -10,6 +10,7 @@ from typing import Optional, Sequence
 
 from reachy_companion import pair as pairing
 from reachy_companion.engines import EchoNarrator, ScriptedHearing, ToneVoice
+from reachy_companion.narrator_mlx import DEFAULT_REPO
 from reachy_companion.server import CompanionServer, Engines
 
 
@@ -30,6 +31,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     serve_command.add_argument("--engines", choices=("real", "stub"), default="real", help="real speech models, or the stubs the tests use")
     serve_command.add_argument("--delay-ms", type=int, default=480, help="Voxtral's transcription delay; lower is faster and may be less accurate")
     serve_command.add_argument("--final-pass", action=argparse.BooleanOptionalAction, default=True, help="re-transcribe each whole utterance with Parakeet when the turn ends")
+    serve_command.add_argument("--narrator-model", default=DEFAULT_REPO, help="the MLX instruction model that narrates; evals/narrator chose the default")
 
     args = parser.parse_args(argv)
     if args.command == "pair":
@@ -59,10 +61,12 @@ async def _engines(args: argparse.Namespace) -> Engines:
     if args.engines == "stub":
         return Engines(hearing=ScriptedHearing(), voice=ToneVoice(), narrator=EchoNarrator())
     from reachy_companion.hearing_voxtral import HearingConfig, VoxtralHearing
+    from reachy_companion.narrator_mlx import MlxNarrator
     from reachy_companion.voice_kokoro import KokoroVoice
 
     hearing = VoxtralHearing(HearingConfig(delay_ms=args.delay_ms, final_pass=args.final_pass))
     voice = KokoroVoice()
-    logging.info("loading the speech models; the first run downloads about 5.6 GB")
-    await asyncio.gather(hearing.load(), voice.load())
-    return Engines(hearing=hearing, voice=voice, narrator=EchoNarrator())
+    narrator = MlxNarrator(args.narrator_model)
+    logging.info("loading the speech and narrator models; the first run downloads about 7.9 GB")
+    await asyncio.gather(hearing.load(), voice.load(), narrator.load())
+    return Engines(hearing=hearing, voice=voice, narrator=narrator)
