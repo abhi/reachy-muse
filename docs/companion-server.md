@@ -9,7 +9,7 @@ The wire protocol belongs to the robot's SDK, [muse-gadget-sdk](../muse-gadget-s
 Hearing, speech and narration run real models on the Mac. Each engine is a Protocol in `reachy_companion/engines.py`.
 
 - Hearing uses Voxtral Mini 4B Realtime for the running transcript. Silero VAD and Smart Turn v3 decide when the user has finished. Parakeet TDT v2 then transcribes the whole utterance again for the final text.
-- Speech uses Kokoro-82M. It speaks one sentence at a time, at the rate the robot asks for.
+- Speech uses Kokoro-82M. It speaks one sentence at a time, at the rate the robot asks for, raised to -20 dBFS RMS with peaks held under -1 dBFS. `serve --voice NAME` picks the voice (default `af_heart`) and `--loudness DBFS` the level.
 - Narration uses Qwen3-4B-Instruct-2507, 4-bit, through mlx-lm. It writes the acknowledgement, the progress lines and the condensed answer. See [Narration](#narration).
 
 The `mac-speech-bench-2` study in the SDK repository chose the speech models. `evals/narrator` chose the narrator.

@@ -21,8 +21,8 @@ from musegadget.reachy_companion_protocol import VoiceRole
 log = logging.getLogger("reachy_companion")
 
 REPO = "mlx-community/Kokoro-82M-bf16"
-# The bench round-tripped af_heart with zero word errors. A second voice is untested, so both roles share it.
-VOICES = {VoiceRole.MAIN: "af_heart", VoiceRole.PROGRESS: "af_heart"}
+# The bench round-tripped af_heart with zero word errors. Every role speaks in the one voice.
+DEFAULT_VOICE = "af_heart"
 
 
 @dataclass(frozen=True)
@@ -53,27 +53,33 @@ class Loudness:
 class KokoroVoice:
     name = "kokoro-82m"
 
-    def __init__(self, loudness: Loudness = Loudness()) -> None:
+    def __init__(self, voice: str = DEFAULT_VOICE, loudness: Loudness = Loudness()) -> None:
+        self.voice = voice
         self.loudness = loudness
         self._thread = ThreadPoolExecutor(1, thread_name_prefix="voice")
         self._model: Any = None
 
     async def load(self) -> None:
-        self._model = await asyncio.get_running_loop().run_in_executor(self._thread, _load)
+        self._model = await asyncio.get_running_loop().run_in_executor(self._thread, load_model, self.voice)
 
     async def speak(self, text: str, role: VoiceRole, out_rate: int) -> AsyncIterator[bytes]:
         loop = asyncio.get_running_loop()
         for sentence in sentences(text):
-            yield await loop.run_in_executor(self._thread, self._synthesize, sentence, VOICES[role], out_rate)
+            yield await loop.run_in_executor(self._thread, self._synthesize, sentence, out_rate)
 
-    def _synthesize(self, sentence: str, voice: str, out_rate: int) -> bytes:
-        parts = [np.asarray(result.audio, dtype=np.float32).reshape(-1) for result in self._model.generate(sentence, voice=voice)]
-        audio = np.concatenate(parts) if parts else np.zeros(0, np.float32)
-        if out_rate != self._model.sample_rate:
-            import soxr
+    def _synthesize(self, sentence: str, out_rate: int) -> bytes:
+        return pcm16(self.loudness.apply(render(self._model, sentence, self.voice, out_rate)))
 
-            audio = soxr.resample(audio, self._model.sample_rate, out_rate)
-        return pcm16(self.loudness.apply(audio))
+
+def render(model: Any, sentence: str, voice: str, out_rate: int) -> np.ndarray:
+    """Kokoro's float audio for one sentence at out_rate, before any gain."""
+    parts = [np.asarray(result.audio, dtype=np.float32).reshape(-1) for result in model.generate(sentence, voice=voice)]
+    audio = np.concatenate(parts) if parts else np.zeros(0, np.float32)
+    if out_rate != model.sample_rate:
+        import soxr
+
+        audio = soxr.resample(audio, model.sample_rate, out_rate)
+    return audio
 
 
 def pcm16(audio: np.ndarray) -> bytes:
@@ -84,11 +90,11 @@ def sentences(text: str) -> List[str]:
     return [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
 
 
-def _load() -> Any:
-    from mlx_audio.tts.utils import load_model
+def load_model(voice: str) -> Any:
+    from mlx_audio.tts.utils import load_model as load
 
     started = time.perf_counter()
-    model = load_model(REPO)
-    list(model.generate("Hello there.", voice=VOICES[VoiceRole.MAIN]))  # the first call builds the phonemizer pipeline, about 5 s
-    log.info("voice %s ready in %.1f s", REPO, time.perf_counter() - started)
+    model = load(REPO)
+    list(model.generate("Hello there.", voice=voice))  # the first call builds the phonemizer pipeline, about 5 s
+    log.info("voice %s %s ready in %.1f s", REPO, voice, time.perf_counter() - started)
     return model

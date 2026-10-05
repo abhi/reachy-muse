@@ -31,6 +31,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     serve_command.add_argument("--engines", choices=("real", "stub"), default="real", help="real speech models, or the stubs the tests use")
     serve_command.add_argument("--delay-ms", type=int, default=480, help="Voxtral's transcription delay; lower is faster and may be less accurate")
     serve_command.add_argument("--final-pass", action=argparse.BooleanOptionalAction, default=True, help="re-transcribe each whole utterance with Parakeet when the turn ends")
+    serve_command.add_argument("--voice", default="af_heart", help="the Kokoro voice for every spoken line, such as af_heart or bm_george")
+    serve_command.add_argument("--loudness", type=float, default=-20.0, metavar="DBFS", help="the RMS level each spoken sentence is raised or lowered to")
     serve_command.add_argument("--narrator-model", default=DEFAULT_REPO, help="the MLX instruction model that narrates; evals/narrator chose the default")
 
     args = parser.parse_args(argv)
@@ -62,10 +64,10 @@ async def _engines(args: argparse.Namespace) -> Engines:
         return Engines(hearing=ScriptedHearing(), voice=ToneVoice(), narrator=EchoNarrator())
     from reachy_companion.hearing_voxtral import HearingConfig, VoxtralHearing
     from reachy_companion.narrator_mlx import MlxNarrator
-    from reachy_companion.voice_kokoro import KokoroVoice
+    from reachy_companion.voice_kokoro import KokoroVoice, Loudness
 
     hearing = VoxtralHearing(HearingConfig(delay_ms=args.delay_ms, final_pass=args.final_pass))
-    voice = KokoroVoice()
+    voice = KokoroVoice(args.voice, Loudness(target_dbfs=args.loudness))
     narrator = MlxNarrator(args.narrator_model)
     logging.info("loading the speech and narrator models; the first run downloads about 7.9 GB")
     await asyncio.gather(hearing.load(), voice.load(), narrator.load())
