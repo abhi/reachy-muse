@@ -72,8 +72,11 @@ class KokoroVoice:
 
 
 def render(model: Any, sentence: str, voice: str, out_rate: int) -> np.ndarray:
-    """Kokoro's float audio for one sentence at out_rate, before any gain."""
-    parts = [np.asarray(result.audio, dtype=np.float32).reshape(-1) for result in model.generate(sentence, voice=voice)]
+    """Kokoro's float audio for one sentence at out_rate, before any gain.
+
+    A voice's first letter is its accent ("a" American, "b" British), and Kokoro pronounces the text in that accent.
+    """
+    parts = [np.asarray(result.audio, dtype=np.float32).reshape(-1) for result in model.generate(sentence, voice=voice, lang_code=voice[0])]
     audio = np.concatenate(parts) if parts else np.zeros(0, np.float32)
     if out_rate != model.sample_rate:
         import soxr
@@ -95,6 +98,6 @@ def load_model(voice: str) -> Any:
 
     started = time.perf_counter()
     model = load(REPO)
-    list(model.generate("Hello there.", voice=voice))  # the first call builds the phonemizer pipeline, about 5 s
+    list(model.generate("Hello there.", voice=voice, lang_code=voice[0]))  # the first call builds the phonemizer pipeline, about 5 s
     log.info("voice %s %s ready in %.1f s", REPO, voice, time.perf_counter() - started)
     return model
