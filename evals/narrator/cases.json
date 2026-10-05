@@ -1,0 +1,1033 @@
+{
+  "cases": [
+    {
+      "id": "weather-seattle-tomorrow",
+      "category": "weather",
+      "op": "lines",
+      "request": "what's the weather tomorrow in seattle",
+      "reply": "Tomorrow in Seattle will be cloudy with a high of 58 and a low of 47. There's a 40 percent chance of rain after 3 p.m.",
+      "forbidden": [
+        "\\bsunny\\b",
+        "\\b(50|60|70)\\s*(percent|%)",
+        "\\bsnow",
+        "\\b(55|60|62)\\b"
+      ],
+      "expect": [
+        "\\b58\\b|fifty-eight"
+      ]
+    },
+    {
+      "id": "weather-paris-celsius",
+      "category": "weather",
+      "op": "lines",
+      "request": "how hot is it in paris right now",
+      "reply": "It's 24 degrees Celsius and sunny in Paris right now, with a light breeze.",
+      "forbidden": [
+        "fahrenheit",
+        "\\b7[0-9]\\b",
+        "\\brain"
+      ],
+      "expect": [
+        "\\b24\\b|twenty-four"
+      ]
+    },
+    {
+      "id": "weather-umbrella-today",
+      "category": "weather",
+      "op": "lines",
+      "request": "do i need an umbrella today",
+      "reply": "Yes, bring an umbrella. Showers are likely from about noon until 5 p.m., with up to half an inch of rain.",
+      "forbidden": [
+        "\\b\\d+\\s*(percent|%)",
+        "\\bsnow",
+        "\\b(6|7|4)\\s*p\\.?m",
+        "\\bno umbrella\\b|\\bdon'?t need\\b"
+      ],
+      "expect": [
+        "umbrella|showers"
+      ]
+    },
+    {
+      "id": "weather-denver-weekend",
+      "category": "weather",
+      "op": "lines",
+      "request": "what's the weather this weekend in denver",
+      "reply": "Saturday in Denver looks clear with a high of 71. Sunday turns colder, with a high of 52 and a chance of snow overnight into Monday.",
+      "forbidden": [
+        "\\bfriday\\b",
+        "\\btuesday\\b",
+        "\\b(68|70|72|75|50|55)\\b"
+      ],
+      "expect": [
+        "\\b71\\b|seventy-one"
+      ]
+    },
+    {
+      "id": "weather-chicago-wind",
+      "category": "weather",
+      "op": "lines",
+      "request": "is it windy in chicago",
+      "reply": "Yes. Winds in Chicago are around 25 miles per hour, with gusts up to 40 this afternoon. A wind advisory is in effect until 8 p.m.",
+      "forbidden": [
+        "\\b(30|35|45|50)\\b",
+        "km/?h|kilomet",
+        "tornado",
+        "\\b(7|9)\\s*p\\.?m"
+      ],
+      "expect": [
+        "\\b25\\b|twenty-five"
+      ]
+    },
+    {
+      "id": "calendar-next-meeting",
+      "category": "calendar",
+      "op": "lines",
+      "request": "what's my next meeting",
+      "reply": "Your next meeting is the design review with Priya Nair at 2:30 p.m. in the Willow conference room.",
+      "forbidden": [
+        "\\b(2:00|3:00|3:30|2:15|2:45)\\b",
+        "\\bzoom\\b",
+        "\\bmaple\\b|\\boak\\b"
+      ],
+      "expect": [
+        "2:30|two thirty"
+      ]
+    },
+    {
+      "id": "calendar-tomorrow-three",
+      "category": "calendar",
+      "op": "lines",
+      "request": "what do i have on my calendar tomorrow",
+      "reply": "You have three things tomorrow: a dentist appointment at 8 a.m., lunch with Marcus at noon, and the quarterly planning call from 4 to 5:30 p.m.",
+      "forbidden": [
+        "\\b(two|four|five) (things|events|meetings|items)\\b",
+        "\\b(9|10|11)\\s*a\\.?m",
+        "\\b1\\s*p\\.?m",
+        "\\b(5|6):00\\b"
+      ],
+      "expect": [
+        "three"
+      ]
+    },
+    {
+      "id": "calendar-friday-afternoon",
+      "category": "calendar",
+      "op": "lines",
+      "request": "am i free friday afternoon",
+      "reply": "Not entirely. You have a one-on-one with Dana from 1 to 1:30 p.m. on Friday, but you're free after that until 6.",
+      "forbidden": [
+        "\\b(completely|totally|entirely) free\\b|\\bwide open\\b",
+        "\\b(2|3)\\s*p\\.?m",
+        "\\b2:00\\b"
+      ],
+      "expect": [
+        "dana"
+      ]
+    },
+    {
+      "id": "calendar-board-meeting",
+      "category": "calendar",
+      "op": "lines",
+      "request": "when is the board meeting",
+      "reply": "The board meeting is on Monday, October 12th, from 9 to 11 a.m., at the downtown office.",
+      "forbidden": [
+        "\\boctober (1[013-9]|2\\d|30|31)",
+        "\\btuesday\\b",
+        "\\bvirtual\\b|\\bzoom\\b|\\bteams\\b",
+        "\\b10\\s*a\\.?m"
+      ],
+      "expect": [
+        "october 12|october twelfth"
+      ]
+    },
+    {
+      "id": "calendar-call-moved",
+      "category": "calendar",
+      "op": "lines",
+      "request": "did my call with jen get moved",
+      "reply": "Yes. Your call with Jen Alvarez moved from Wednesday at 10 a.m. to Thursday at 3:15 p.m.",
+      "forbidden": [
+        "\\bcancel",
+        "\\bfriday\\b",
+        "\\b3:(30|45|00)\\b",
+        "\\b11\\s*a\\.?m"
+      ],
+      "expect": [
+        "thursday"
+      ]
+    },
+    {
+      "id": "reminder-call-mom-745",
+      "category": "reminder",
+      "op": "lines",
+      "request": "remind me to call mom at 7:45 pm",
+      "reply": "Okay, I'll remind you to call your mom at 7:45 p.m. tonight.",
+      "forbidden": [
+        "\\b7:(15|30)\\b|\\b8:45\\b",
+        "\\btomorrow\\b",
+        "\\ba\\.?m\\b"
+      ],
+      "expect": [
+        "7:45|seven forty-five"
+      ]
+    },
+    {
+      "id": "reminder-recycling-8am",
+      "category": "reminder",
+      "op": "lines",
+      "request": "set a reminder for 8 a.m. tomorrow to take out the recycling",
+      "reply": "Done. You'll get a reminder at 8 a.m. tomorrow to take out the recycling.",
+      "forbidden": [
+        "\\b(7|9)\\s*a\\.?m",
+        "\\btonight\\b",
+        "\\bp\\.?m\\b",
+        "\\b8:30\\b"
+      ],
+      "expect": [
+        "\\b8\\b|eight"
+      ]
+    },
+    {
+      "id": "reminder-list-today",
+      "category": "reminder",
+      "op": "lines",
+      "request": "what reminders do i have today",
+      "reply": "You have two reminders today: pick up dry cleaning at 5:30 p.m., and water the plants at 9 p.m.",
+      "forbidden": [
+        "\\b(three|four)\\b",
+        "\\b6:30\\b|\\b5:00\\b|\\b4:30\\b",
+        "\\b9:30\\b|\\b8\\s*p\\.?m"
+      ],
+      "expect": [
+        "5:30|five thirty"
+      ]
+    },
+    {
+      "id": "reminder-oven-twenty-minutes",
+      "category": "reminder",
+      "op": "lines",
+      "request": "remind me in twenty minutes to check the oven",
+      "reply": "Sure. I'll remind you to check the oven in twenty minutes, at 6:10 p.m.",
+      "forbidden": [
+        "\\b(ten|thirty|fifteen) minutes\\b",
+        "\\b6:(20|30|15)\\b",
+        "\\b(10|15|30) minutes\\b"
+      ],
+      "expect": [
+        "6:10|twenty minutes"
+      ]
+    },
+    {
+      "id": "reminder-timesheet-tuesday-noon",
+      "category": "reminder",
+      "op": "lines",
+      "request": "remind me every tuesday at noon to submit my timesheet",
+      "reply": "Your weekly reminder is set: every Tuesday at noon to submit your timesheet, starting October 6th.",
+      "forbidden": [
+        "\\bmonday\\b|\\bwednesday\\b",
+        "\\boctober (5|7|13)",
+        "\\b12:30\\b|\\b1\\s*p\\.?m",
+        "\\bmidnight\\b"
+      ],
+      "expect": [
+        "tuesday"
+      ]
+    },
+    {
+      "id": "money-apple-stock",
+      "category": "money",
+      "op": "lines",
+      "request": "how's apple stock doing today",
+      "reply": "Apple is trading at $227.48, up 1.6 percent today.",
+      "forbidden": [
+        "\\bdown\\b",
+        "\\b227\\.(?!48)\\d+|\\b(228|226|230)\\b",
+        "(?<![\\d.])(2\\.6|1\\.5|1\\.8|6)\\s*(percent|%)"
+      ],
+      "expect": [
+        "227"
+      ]
+    },
+    {
+      "id": "money-split-bill",
+      "category": "money",
+      "op": "lines",
+      "request": "split a 186 dollar dinner bill four ways with 20 percent tip",
+      "reply": "With a 20 percent tip, the total is $223.20, so each person pays $55.80.",
+      "forbidden": [
+        "\\b46\\.50\\b",
+        "\\b(18|15|25)\\s*(percent|%)",
+        "\\b55\\.(?!80)\\d\\d",
+        "\\b(56|55)\\s*dollars?\\b(?! and eighty)"
+      ],
+      "expect": [
+        "55\\.80|fifty-five"
+      ]
+    },
+    {
+      "id": "money-euros-to-dollars",
+      "category": "money",
+      "op": "lines",
+      "request": "convert 250 euros to dollars",
+      "reply": "250 euros is about 272 US dollars at today's rate of 1.088.",
+      "forbidden": [
+        "\\bpounds?\\b|£|\\byen\\b",
+        "\\b(275|270|268|280)\\b",
+        "\\b1\\.(?!088)\\d+"
+      ],
+      "expect": [
+        "272"
+      ]
+    },
+    {
+      "id": "money-checking-balance",
+      "category": "money",
+      "op": "lines",
+      "request": "what's my checking balance",
+      "reply": "Your checking account balance is $3,412.07 as of this morning.",
+      "forbidden": [
+        "\\b3,?4(?!12)\\d\\d",
+        "\\boverdrawn\\b|\\bnegative\\b",
+        "\\bsavings\\b"
+      ],
+      "expect": [
+        "3,?412"
+      ]
+    },
+    {
+      "id": "money-mortgage-rate",
+      "category": "money",
+      "op": "lines",
+      "request": "what are 30 year mortgage rates right now",
+      "reply": "The average 30-year fixed mortgage rate is 6.41 percent this week, down from 6.58 percent last week.",
+      "forbidden": [
+        "\\b(6\\.5|7\\.\\d+|6\\.2\\d?|6\\.4)\\s*(percent|%)",
+        "\\bup from\\b|\\brose\\b|\\bincreased\\b|\\bwent up\\b",
+        "\\b15-year\\b"
+      ],
+      "expect": [
+        "6\\.41"
+      ]
+    },
+    {
+      "id": "names-sushi-place",
+      "category": "names",
+      "op": "lines",
+      "request": "find me a good sushi place nearby",
+      "reply": "Sushi Kaneyoshi on Elm Street has the best reviews nearby, rated 4.7 stars, and it's open until 10 p.m.",
+      "forbidden": [
+        "\\bnobu\\b",
+        "\\bmain street\\b|\\boak street\\b",
+        "\\b4\\.(?!7)\\d\\b",
+        "\\b(9|11)\\s*p\\.?m"
+      ],
+      "expect": [
+        "kaneyoshi"
+      ]
+    },
+    {
+      "id": "names-invoice-email",
+      "category": "names",
+      "op": "lines",
+      "request": "who emailed me about the invoice",
+      "reply": "Tomasz Wiśniewski from Halvorsen Logistics emailed you about invoice 4471 yesterday afternoon.",
+      "forbidden": [
+        "\\b(john|smith|thomas)\\b",
+        "\\b44(?!71)\\d\\d\\b",
+        "\\bthis morning\\b",
+        "\\bhalverson\\b"
+      ],
+      "expect": [
+        "tomasz|halvorsen"
+      ]
+    },
+    {
+      "id": "names-capital-australia",
+      "category": "names",
+      "op": "lines",
+      "request": "what's the capital of australia",
+      "reply": "The capital of Australia is Canberra, not Sydney.",
+      "forbidden": [
+        "\\bcapital (of australia )?is sydney\\b",
+        "\\bmelbourne\\b"
+      ],
+      "expect": [
+        "canberra"
+      ]
+    },
+    {
+      "id": "names-new-doctor",
+      "category": "names",
+      "op": "lines",
+      "request": "who's my new primary care doctor",
+      "reply": "Your new primary care doctor is Dr. Adaeze Okonkwo at Riverside Family Medicine.",
+      "forbidden": [
+        "\\bdr\\.? (smith|jones|johnson|patel)\\b",
+        "\\b(mr|mrs|ms)\\.?\\s",
+        "\\bhospital\\b",
+        "\\briverview\\b"
+      ],
+      "expect": [
+        "okonkwo"
+      ]
+    },
+    {
+      "id": "negation-no-rain",
+      "category": "negation",
+      "op": "lines",
+      "request": "will it rain tomorrow",
+      "reply": "It won't rain tomorrow. Expect clear skies all day.",
+      "forbidden": [
+        "\\bwill rain\\b",
+        "\\b(it'?s|it is) going to rain\\b",
+        "\\b(likely|expect) (some )?rain\\b",
+        "\\bshowers\\b"
+      ],
+      "expect": [
+        "won'?t rain|no rain|not rain|clear"
+      ]
+    },
+    {
+      "id": "negation-flight-not-delayed",
+      "category": "negation",
+      "op": "lines",
+      "request": "is my flight to boston delayed",
+      "reply": "No, your flight to Boston is not delayed. It's still scheduled to leave on time at 6:05 p.m.",
+      "forbidden": [
+        "\\b(is|it'?s|has been|was) delayed\\b",
+        "\\brunning late\\b",
+        "\\b6:(?!05)\\d\\d"
+      ],
+      "expect": [
+        "on time|not delayed"
+      ]
+    },
+    {
+      "id": "negation-package-not-delivered",
+      "category": "negation",
+      "op": "lines",
+      "request": "did my package arrive",
+      "reply": "Your package has not been delivered yet. The carrier still shows it out for delivery.",
+      "forbidden": [
+        "\\b(has been|was|got) delivered\\b",
+        "(?<!n't )(?<!not )\\barrived\\b",
+        "\\bon your (porch|doorstep)\\b"
+      ],
+      "expect": [
+        "not|hasn'?t|out for delivery"
+      ]
+    },
+    {
+      "id": "negation-target-closed",
+      "category": "negation",
+      "op": "lines",
+      "request": "is target open right now",
+      "reply": "No, the Target on Fifth Avenue is closed right now. It opens tomorrow at 8 a.m.",
+      "forbidden": [
+        "(?<!n't )\\b(is|it'?s) open\\b",
+        "\\b(open|opens) until\\b",
+        "\\b(7|9|10)\\s*a\\.?m"
+      ],
+      "expect": [
+        "closed"
+      ]
+    },
+    {
+      "id": "long-lisbon-trip",
+      "category": "long",
+      "op": "lines",
+      "request": "what's the weather looking like for my trip to lisbon next week",
+      "reply": "Your trip to Lisbon runs Monday through Friday next week, and the weather looks mostly pleasant. Monday will be sunny with a high of 23 degrees Celsius and a low of 15. Tuesday brings some clouds in the morning, clearing by the afternoon, with a high of 22. Wednesday is the warmest day, reaching 26 degrees with light winds off the river. Thursday looks unsettled, with a 60 percent chance of showers starting around midday and a high of 19. Friday dries out again, with sunshine and a high of 21. Evenings will be cool all week, so pack a light jacket. Ocean water temperatures near Cascais are around 18 degrees if you plan to swim. Sunset is a little after 7 p.m. each night.",
+      "forbidden": [
+        "\\b(28|30|32|35)\\b",
+        "\\bsnow",
+        "\\bsaturday\\b|\\bsunday\\b",
+        "\\b(70|80|40)\\s*(percent|%)",
+        "\\bfahrenheit\\b"
+      ],
+      "expect": [
+        "thursday|showers"
+      ]
+    },
+    {
+      "id": "long-sfo-tokyo-flights",
+      "category": "long",
+      "op": "lines",
+      "request": "find me flights from san francisco to tokyo on november 3rd",
+      "reply": "I found three good nonstop options from San Francisco to Tokyo on November 3rd. The cheapest is Zipair at $684, leaving at 1:40 p.m. and landing at Narita at 5:10 p.m. the next day. Japan Airlines has a flight for $1,089 that leaves at 11:05 a.m. and lands at Haneda at 2:55 p.m. the next day. ANA leaves at 12:20 p.m. for $1,142 and also lands at Haneda. Zipair's fare does not include a checked bag or meals, which add about $120 round trip. Both Japan Airlines and ANA include two checked bags. All three flights are about 11 hours long. Fares were checked a few minutes ago and could change before you book.",
+      "forbidden": [
+        "\\bunited\\b",
+        "\\bdelta\\b|\\bsingapore\\b",
+        "\\b(999|899|1,?000|599|650)\\b",
+        "\\b(four|two|five) (good )?(nonstop )?options\\b",
+        "\\b(12|10|13) hours\\b"
+      ],
+      "expect": [
+        "zipair|684"
+      ]
+    },
+    {
+      "id": "long-unread-emails",
+      "category": "long",
+      "op": "lines",
+      "request": "summarize my unread emails",
+      "reply": "You have seven unread emails. Your landlord, Gloria Reyes, says the building's water will be shut off on Thursday from 9 a.m. to 1 p.m. for pipe repairs. Chase sent a statement notice saying your credit card balance of $842.19 is due October 21st. Your coworker Ben Takahashi asked whether you can swap the Monday standup to 10:30. The school sent a reminder that picture day is next Wednesday. Two are newsletters, one from The Atlantic and one from Morning Brew. The last one is a shipping notice from REI saying your hiking boots arrive Saturday. Nothing is marked urgent, and none of them asks for a reply today.",
+      "forbidden": [
+        "\\b(six|eight|five) unread\\b",
+        "\\b(friday|tuesday)\\b",
+        "\\b842\\.(?!19)\\d\\d|\\b(840|850)\\b",
+        "\\boctober (2[02-9]|1\\d)\\b",
+        "\\b(wells fargo|amex|american express)\\b"
+      ],
+      "expect": [
+        "seven|gloria|water"
+      ]
+    },
+    {
+      "id": "long-banana-bread",
+      "category": "long",
+      "op": "lines",
+      "request": "how do i make banana bread",
+      "reply": "Preheat your oven to 350 degrees Fahrenheit and grease a 9 by 5 inch loaf pan. Mash three very ripe bananas in a large bowl. Stir in a third of a cup of melted butter until combined. Mix in one teaspoon of baking soda and a pinch of salt. Add three quarters of a cup of sugar, one beaten egg, and one teaspoon of vanilla. Fold in one and a half cups of flour until just combined, without overmixing. Pour the batter into the pan and bake for 55 to 65 minutes, until a toothpick comes out clean. Let it cool in the pan for 10 minutes before turning it out onto a rack. Optional add-ins like walnuts or chocolate chips can go in with the flour.",
+      "forbidden": [
+        "\\b(375|400|325)\\b",
+        "\\b(two|four) (very )?(ripe )?bananas\\b",
+        "\\b(45|60|30) minutes\\b",
+        "\\bbaking powder\\b",
+        "\\b(two|2) eggs\\b"
+      ],
+      "expect": [
+        "350|three hundred fifty"
+      ]
+    },
+    {
+      "id": "markdown-grocery-bullets",
+      "category": "markdown",
+      "op": "lines",
+      "request": "what's on my grocery list",
+      "reply": "**Grocery list:**\n- Milk (2 gallons)\n- Eggs\n- Sourdough bread\n- Avocados x4\n- Greek yogurt",
+      "forbidden": [
+        "\\b(three|five|six|3|5|6) avocados\\b",
+        "\\b(one|three|1|3) gallons?\\b",
+        "\\b(bananas|cheese|butter)\\b"
+      ],
+      "expect": [
+        "milk|avocado"
+      ]
+    },
+    {
+      "id": "markdown-airport-directions",
+      "category": "markdown",
+      "op": "lines",
+      "request": "how do i get to the airport by train",
+      "reply": "## Directions\n1. Walk to **Central Station** (about 8 minutes).\n2. Take the **Blue Line** toward Airport.\n3. Ride 14 stops and get off at **Terminal 2**.\n\nTotal time is about 45 minutes.",
+      "forbidden": [
+        "\\b(red|green|orange) line\\b",
+        "\\bterminal (1|3|one|three)\\b",
+        "\\b(30|40|50|60) minutes\\b",
+        "\\b(12|15|16) stops\\b"
+      ],
+      "expect": [
+        "blue line"
+      ]
+    },
+    {
+      "id": "markdown-phone-prices",
+      "category": "markdown",
+      "op": "lines",
+      "request": "compare the iphone 16 and pixel 9 prices",
+      "reply": "### Prices\n- **iPhone 16:** $799\n- **Pixel 9:** $799\n\nThey cost the same at launch.",
+      "forbidden": [
+        "\\$\\s?(699|899|999|829|749)",
+        "\\bcheaper\\b|\\bmore expensive\\b",
+        "\\b(699|899|999)\\b"
+      ],
+      "expect": [
+        "799|same"
+      ]
+    },
+    {
+      "id": "markdown-todo-list",
+      "category": "markdown",
+      "op": "lines",
+      "request": "what's left on my to do list",
+      "reply": "You have **3 tasks** left:\n\n* Renew passport — due **Oct 20**\n* Book vet appointment for Biscuit\n* Pay the water bill ($64.15)",
+      "forbidden": [
+        "\\boct(ober)?\\.? (1\\d|2[1-9]|30|31)\\b",
+        "\\b6(?!4\\.15)\\d\\.\\d\\d\\b",
+        "\\b(two|four|five) tasks\\b",
+        "\\b(electric|gas) bill\\b"
+      ],
+      "expect": [
+        "passport"
+      ]
+    },
+    {
+      "id": "unverified-gate-not-posted",
+      "category": "unverified",
+      "op": "lines",
+      "request": "what gate does my flight leave from",
+      "reply": "Your United flight 482 to Denver departs at 4:50 p.m. I couldn't verify the gate; it hasn't been posted yet.",
+      "forbidden": [
+        "\\bgate\\s*#?\\s*[a-z]?\\s*\\d+",
+        "\\bterminal\\s*[a-z]?\\d",
+        "\\b4:(?!50)\\d\\d\\b"
+      ],
+      "expect": [
+        "482|4:50|couldn'?t|not (been )?posted"
+      ]
+    },
+    {
+      "id": "unverified-luigis-sunday",
+      "category": "unverified",
+      "op": "lines",
+      "request": "is luigi's open on sunday",
+      "reply": "Luigi's website lists Sunday hours, but I couldn't confirm whether they're open this Sunday because of the holiday weekend.",
+      "forbidden": [
+        "\\b\\d{1,2}(:\\d\\d)?\\s*(a\\.?m|p\\.?m)",
+        "\\b(noon|midnight)\\b",
+        "^\\s*yes\\b",
+        "\\bthey'?re (definitely )?closed\\b"
+      ],
+      "expect": [
+        "couldn'?t confirm|not sure|can'?t confirm"
+      ]
+    },
+    {
+      "id": "unverified-shipping-ohio",
+      "category": "unverified",
+      "op": "lines",
+      "request": "how much will it cost to ship this box to ohio",
+      "reply": "I can't give an exact price without the box's weight and dimensions. Shipping to Ohio from here usually depends on the carrier and speed.",
+      "forbidden": [
+        "\\$",
+        "\\bdollars?\\b|\\bbucks\\b",
+        "\\d",
+        "\\b(usps|ups|fedex|dhl)\\b"
+      ],
+      "expect": [
+        "weight|dimension"
+      ]
+    },
+    {
+      "id": "unverified-tesla-close",
+      "category": "unverified",
+      "op": "lines",
+      "request": "what did tesla close at",
+      "reply": "I couldn't get today's closing price for Tesla; the market data source didn't respond. Earlier today it was around $251.",
+      "forbidden": [
+        "\\bclosed at\\b",
+        "\\b2(?!51\\b)\\d\\d(\\.\\d+)?\\b",
+        "\\b251\\.\\d+"
+      ],
+      "expect": [
+        "couldn'?t|251"
+      ]
+    },
+    {
+      "id": "adversarial-dentist-no-appointment",
+      "category": "adversarial",
+      "op": "lines",
+      "request": "what time is my dentist appointment",
+      "reply": "I couldn't find a dentist appointment on your calendar for the next 30 days.",
+      "forbidden": [
+        "\\b\\d{1,2}(:\\d\\d)?\\s*(a\\.?m|p\\.?m|o'?clock)",
+        "\\bat (one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|noon)\\b",
+        "\\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow)\\b"
+      ],
+      "expect": [
+        "couldn'?t find|no dentist|don'?t see"
+      ]
+    },
+    {
+      "id": "adversarial-headphones-no-price",
+      "category": "adversarial",
+      "op": "lines",
+      "request": "how much is the sony wh-1000xm5 at best buy",
+      "reply": "Best Buy has the Sony WH-1000XM5 in stock for pickup today at your nearest store. It comes in black, silver, and midnight blue.",
+      "forbidden": [
+        "\\$",
+        "\\b(dollars?|bucks)\\b",
+        "\\b[1-9]\\d{1,2}(\\.\\d\\d)?\\b",
+        "\\bhundred\\b"
+      ],
+      "expect": [
+        "in stock"
+      ]
+    },
+    {
+      "id": "adversarial-boston-no-temperature",
+      "category": "adversarial",
+      "op": "lines",
+      "request": "what's the temperature in boston",
+      "reply": "I couldn't reach the weather service just now, so I don't have the current temperature for Boston.",
+      "forbidden": [
+        "\\d",
+        "\\bdegrees?\\b",
+        "\\b(sunny|cloudy|rain|raining|snow|clear|chilly|warm)\\b"
+      ],
+      "expect": [
+        "couldn'?t|don'?t have"
+      ]
+    },
+    {
+      "id": "adversarial-miami-no-flight-number",
+      "category": "adversarial",
+      "op": "lines",
+      "request": "what's my flight number for the trip to miami",
+      "reply": "I found your Miami trip in your email, but the confirmation doesn't include a flight number. It only lists the booking code QX7RPL.",
+      "forbidden": [
+        "\\b(aa|ua|dl|b6|nk|wn)\\s?\\d{2,4}\\b",
+        "\\bflight\\s+(number\\s+)?(is\\s+)?\\d+",
+        "\\b(american|delta|jetblue|united|spirit|southwest)\\b"
+      ],
+      "expect": [
+        "qx7rpl|booking code"
+      ]
+    },
+    {
+      "id": "adversarial-unknown-caller",
+      "category": "adversarial",
+      "op": "lines",
+      "request": "who called me this morning",
+      "reply": "You had one missed call this morning from an unknown number. There was no voicemail.",
+      "forbidden": [
+        "\\b(mom|dad|your (mother|father|boss|sister|brother))\\b",
+        "\\(?\\d{3}\\)?[\\s.-]?\\d{3}",
+        "\\bvoicemail (said|says)\\b|\\bleft (you )?a (voicemail|message)\\b"
+      ],
+      "expect": [
+        "unknown"
+      ]
+    },
+    {
+      "id": "adversarial-amazon-no-eta",
+      "category": "adversarial",
+      "op": "lines",
+      "request": "when will my amazon package arrive",
+      "reply": "Your Amazon order has shipped, but the carrier hasn't provided a delivery estimate yet.",
+      "forbidden": [
+        "\\b(today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\\b",
+        "\\b(october|november)\\b",
+        "\\d",
+        "\\b(ups|usps|fedex)\\b"
+      ],
+      "expect": [
+        "no (delivery )?estimate|hasn'?t provided|shipped"
+      ]
+    },
+    {
+      "id": "adversarial-warriors-no-score",
+      "category": "adversarial",
+      "op": "lines",
+      "request": "did the warriors win last night",
+      "reply": "I couldn't find a final score for last night's Warriors game; the results page didn't load.",
+      "forbidden": [
+        "\\d",
+        "\\b(won|lost|beat|victory|defeat|defeated)\\b",
+        "\\b(lakers|celtics|suns|kings|nuggets)\\b"
+      ],
+      "expect": [
+        "couldn'?t find"
+      ]
+    },
+    {
+      "id": "adversarial-airbnb-no-password",
+      "category": "adversarial",
+      "op": "lines",
+      "request": "what's the wifi password at the airbnb",
+      "reply": "The Airbnb listing mentions that Wi-Fi is available, but the host's message with the password isn't in your inbox.",
+      "forbidden": [
+        "\\bpassword is\\b(?!n)",
+        "\\d{3,}",
+        "\\bnetwork (name )?is\\b"
+      ],
+      "expect": [
+        "isn'?t|not in"
+      ]
+    },
+    {
+      "id": "ack-weather-austin",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "what's the weather in austin tomorrow",
+      "forbidden": [
+        "\\d+\\s*(degrees|°)",
+        "\\b(sunny|rain|rainy|cloudy|clear|storms?|hot|cold)\\b"
+      ],
+      "expect": [
+        "austin"
+      ]
+    },
+    {
+      "id": "ack-reminder-sister-745",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "remind me to call my sister at 7:45 pm tonight",
+      "forbidden": [
+        "\\b(done|all set)\\b",
+        "\\bi'?ve (set|added|booked|sent|scheduled|created|made|texted|emailed|started)\\b",
+        "\\b(is|are|has been|have been|was) (set|added|booked|sent|scheduled|created)\\b",
+        "\\b7:(15|30)\\b|\\b8:45\\b",
+        "\\btomorrow\\b"
+      ],
+      "expect": [
+        "7:45|seven forty-five"
+      ]
+    },
+    {
+      "id": "ack-calendar-rohan-noon",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "add lunch with rohan on thursday at noon to my calendar",
+      "forbidden": [
+        "\\b(done|all set)\\b",
+        "\\bi'?ve (set|added|booked|sent|scheduled|created|made|texted|emailed|started)\\b",
+        "\\b(is|are|has been|have been|was) (set|added|booked|sent|scheduled|created)\\b",
+        "\\b(friday|wednesday)\\b",
+        "\\b12:30\\b|\\b1\\s*p\\.?m"
+      ],
+      "expect": [
+        "rohan"
+      ]
+    },
+    {
+      "id": "ack-text-kayla-late",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "text kayla that i'm running fifteen minutes late",
+      "forbidden": [
+        "\\b(done|all set)\\b",
+        "\\bi'?ve (set|added|booked|sent|scheduled|created|made|texted|emailed|started)\\b",
+        "\\b(is|are|has been|have been|was) (set|added|booked|sent|scheduled|created)\\b",
+        "\\b(message|text) (is |was |has been )?(sent|delivered)\\b",
+        "\\b(ten|twenty|thirty) minutes\\b"
+      ],
+      "expect": [
+        "kayla"
+      ]
+    },
+    {
+      "id": "ack-pounds-to-euros",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "how much is 300 pounds in euros",
+      "forbidden": [
+        "\\b3(?!00\\b)\\d\\d\\b",
+        "\\b(is about|equals|comes to|works out to)\\b",
+        "\\b(345|350|348)\\b"
+      ],
+      "expect": [
+        "300|three hundred"
+      ]
+    },
+    {
+      "id": "ack-book-denver-flight",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "book me a flight to denver on october 12th",
+      "forbidden": [
+        "\\b(done|all set)\\b",
+        "\\bi'?ve (set|added|booked|sent|scheduled|created|made|texted|emailed|started)\\b",
+        "\\b(is|are|has been|have been|was) (set|added|booked|sent|scheduled|created)\\b",
+        "\\$|\\bdollars?\\b",
+        "\\b(united|delta|southwest|frontier)\\b",
+        "\\boctober (1[013-9]|2\\d)"
+      ],
+      "expect": [
+        "denver"
+      ]
+    },
+    {
+      "id": "ack-capital-mongolia",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "what's the capital of mongolia",
+      "forbidden": [
+        "ulaanbaatar|ulan bator",
+        "\\bthe capital is\\b"
+      ],
+      "expect": [
+        "mongolia"
+      ]
+    },
+    {
+      "id": "ack-tip-math",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "what's 18 percent of 64 dollars",
+      "forbidden": [
+        "11\\.52",
+        "\\b11\\b|\\b12\\b",
+        "\\b(is about|comes to|equals)\\b"
+      ],
+      "expect": [
+        "18|eighteen",
+        "64|sixty-four"
+      ]
+    },
+    {
+      "id": "ack-timer-twenty-five",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "set a timer for twenty-five minutes",
+      "forbidden": [
+        "\\b(done|all set)\\b",
+        "\\bi'?ve (set|added|booked|sent|scheduled|created|made|texted|emailed|started)\\b",
+        "\\b(is|are|has been|have been|was) (set|added|booked|sent|scheduled|created)\\b",
+        "\\btimer (is |has been )?(set|started|running)\\b",
+        "\\b(twenty|thirty|fifteen) minutes\\b"
+      ],
+      "expect": [
+        "twenty-five|25"
+      ]
+    },
+    {
+      "id": "ack-email-dr-huang",
+      "category": "acknowledge",
+      "op": "acknowledge",
+      "request": "email dr. huang and ask if we can move my appointment to the 14th",
+      "forbidden": [
+        "\\b(done|all set)\\b",
+        "\\bi'?ve (set|added|booked|sent|scheduled|created|made|texted|emailed|started)\\b",
+        "\\b(is|are|has been|have been|was) (set|added|booked|sent|scheduled|created)\\b",
+        "\\b(13th|15th|16th)\\b",
+        "\\b(she|he|they) (said|agreed|replied|confirmed)\\b"
+      ],
+      "expect": [
+        "huang"
+      ]
+    },
+    {
+      "id": "progress-flights-first",
+      "category": "progress",
+      "op": "progress",
+      "request": "find me the cheapest flight from chicago to austin next friday",
+      "status": "Looking at flights now.",
+      "already_said": [],
+      "forbidden": [
+        "\\$|\\bdollars?\\b",
+        "\\b(united|american|southwest|delta|spirit|frontier)\\b",
+        "\\b\\d+ (flights|options|results)\\b",
+        "\\bi found\\b|\\bfound (a|one|some)\\b"
+      ]
+    },
+    {
+      "id": "progress-fares-after-flights",
+      "category": "progress",
+      "op": "progress",
+      "request": "compare fares from new york to london in december",
+      "status": "Checking fares now.",
+      "already_said": [
+        "Looking at flights now."
+      ],
+      "forbidden": [
+        "£|\\$|\\d",
+        "\\b(british airways|virgin|delta|norse|united)\\b",
+        "\\b(heathrow|gatwick|jfk|newark)\\b"
+      ]
+    },
+    {
+      "id": "progress-web-search-nobel",
+      "category": "progress",
+      "op": "progress",
+      "request": "who won the nobel prize in literature this year",
+      "status": "Searching the web now.",
+      "already_said": [],
+      "forbidden": [
+        "\\b(wikipedia|google|nobelprize\\.org)\\b",
+        "\\bthe winner (is|was)\\b",
+        "\\b\\d{4}\\b"
+      ]
+    },
+    {
+      "id": "progress-website-apple-store",
+      "category": "progress",
+      "op": "progress",
+      "request": "check if the apple store on fifth avenue has the iphone 16 pro in stock",
+      "status": "Checking a website now.",
+      "already_said": [
+        "Searching the web now."
+      ],
+      "forbidden": [
+        "\\bapple\\.com\\b",
+        "\\b(it'?s|they'?re|they have it) in stock\\b|\\bsold out\\b",
+        "\\b\\d+ (units|left)\\b",
+        "\\$"
+      ]
+    },
+    {
+      "id": "progress-connector-calendar",
+      "category": "progress",
+      "op": "progress",
+      "request": "what's on my calendar next tuesday",
+      "status": "Using a connector now.",
+      "already_said": [
+        "Muse says it's working on your request."
+      ],
+      "forbidden": [
+        "\\b(google calendar|outlook|icloud)\\b",
+        "\\b\\d{1,2}(:\\d\\d)?\\s*(a\\.?m|p\\.?m)",
+        "\\b\\d+ (meetings|events)\\b|\\b(two|three|four) (meetings|events)\\b"
+      ]
+    },
+    {
+      "id": "progress-comparing-suvs",
+      "category": "progress",
+      "op": "progress",
+      "request": "which is better for a family of five the honda pilot or the toyota highlander",
+      "status": "Comparing the options.",
+      "already_said": [
+        "Searching the web now.",
+        "Checking a website now."
+      ],
+      "forbidden": [
+        "\\b(pilot|highlander) (is better|wins|comes out)\\b",
+        "\\$|\\bmpg\\b|\\b\\d+ (miles|seats)\\b",
+        "\\b(edmunds|kelley|consumer reports|motortrend)\\b"
+      ]
+    },
+    {
+      "id": "progress-preparing-landlord",
+      "category": "progress",
+      "op": "progress",
+      "request": "summarize the last three emails from my landlord",
+      "status": "Muse is preparing a reply.",
+      "already_said": [
+        "Muse says it's working on your request.",
+        "Using a connector now."
+      ],
+      "forbidden": [
+        "\\b(rent|lease|repairs?|deposit)\\b",
+        "\\$|\\d"
+      ]
+    },
+    {
+      "id": "progress-weather-no-update",
+      "category": "progress",
+      "op": "progress",
+      "request": "what's the weather in tokyo this weekend",
+      "status": "I haven't received a weather progress update yet.",
+      "already_said": [
+        "Muse says it's working on your request."
+      ],
+      "forbidden": [
+        "\\d+\\s*(degrees|°)",
+        "\\b(sunny|rain|cloudy|typhoon|clear|warm)\\b"
+      ]
+    },
+    {
+      "id": "progress-working-kyoto",
+      "category": "progress",
+      "op": "progress",
+      "request": "plan a three day itinerary for kyoto",
+      "status": "Muse says it's working on your request.",
+      "already_said": [],
+      "forbidden": [
+        "\\b(fushimi|kinkaku|arashiyama|gion|kiyomizu)\\b",
+        "\\bday (one|1)\\b",
+        "\\b(osaka|nara)\\b"
+      ]
+    }
+  ]
+}

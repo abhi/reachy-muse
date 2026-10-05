@@ -1,0 +1,1864 @@
+{
+ "repo": "mlx-community/granite-4.1-8b-4bit",
+ "load_s": 7.2677891668863595,
+ "weights_gb": 5.23830068,
+ "peak_gb": 5.942864608,
+ "sdk": "2941bb4",
+ "cases": [
+  {
+   "id": "weather-seattle-tomorrow",
+   "op": "lines",
+   "category": "weather",
+   "seconds": 0.9421544172801077,
+   "lines": [
+    [
+     "Tomorrow in Seattle will be cloudy with a high of 58 and a low of 47. There's a 40 percent chance of rain after 3 p.m.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Tomorrow in Seattle will be cloudy with a high of 58 and a low of 47. There's a 40 percent chance of rain after 3 p.m.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "weather-paris-celsius",
+   "op": "lines",
+   "category": "weather",
+   "seconds": 0.7531043328344822,
+   "lines": [
+    [
+     "It's 24 degrees Celsius and sunny in Paris right now, with a light breeze.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"It's 24 degrees Celsius and sunny in Paris right now, with a light breeze.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "weather-umbrella-today",
+   "op": "lines",
+   "category": "weather",
+   "seconds": 0.9857342089526355,
+   "lines": [
+    [
+     "Yes, bring an umbrella.",
+     "neutral"
+    ],
+    [
+     "Showers are likely from about noon until 5 p.m., with up to half an inch of rain.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Yes, bring an umbrella.\", \"expression\": \"neutral\"}, {\"text\": \"Showers are likely from about noon until 5 p.m., with up to half an inch of rain.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "weather-denver-weekend",
+   "op": "lines",
+   "category": "weather",
+   "seconds": 1.026647458318621,
+   "lines": [
+    [
+     "Saturday in Denver looks clear with a high of 71.",
+     "neutral"
+    ],
+    [
+     "Sunday turns colder, with a high of 52 and a chance of snow overnight into Monday.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Saturday in Denver looks clear with a high of 71.\", \"expression\": \"neutral\"}, {\"text\": \"Sunday turns colder, with a high of 52 and a chance of snow overnight into Monday.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "weather-chicago-wind",
+   "op": "lines",
+   "category": "weather",
+   "seconds": 1.0970435831695795,
+   "lines": [
+    [
+     "Yes, it is windy in Chicago with winds around 25 miles per hour and gusts up to 40 this afternoon.",
+     "neutral"
+    ],
+    [
+     "A wind advisory is in effect until 8 p.m.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Yes, it is windy in Chicago with winds around 25 miles per hour and gusts up to 40 this afternoon.\", \"expression\": \"neutral\" }, {\"text\": \"A wind advisory is in effect until 8 p.m.\", \"expression\": \"neutral\" } ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "calendar-next-meeting",
+   "op": "lines",
+   "category": "calendar",
+   "seconds": 0.8341536661610007,
+   "lines": [
+    [
+     "Your next meeting is the design review with Priya Nair at 2:30 p.m. in the Willow conference room.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your next meeting is the design review with Priya Nair at 2:30 p.m. in the Willow conference room.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "calendar-tomorrow-three",
+   "op": "lines",
+   "category": "calendar",
+   "seconds": 0.9537808331660926,
+   "lines": [
+    [
+     "You have a dentist appointment at 8 a.m., lunch with Marcus at noon, and the quarterly planning call from 4 to 5:30 p.m. tomorrow.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"You have a dentist appointment at 8 a.m., lunch with Marcus at noon, and the quarterly planning call from 4 to 5:30 p.m. tomorrow.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": false
+  },
+  {
+   "id": "calendar-friday-afternoon",
+   "op": "lines",
+   "category": "calendar",
+   "seconds": 2.038258667103946,
+   "lines": [
+    [
+     "Not entirely.",
+     null
+    ],
+    [
+     "You have a one-on-one with Dana from 1 to 1:30 p.m.",
+     null
+    ],
+    [
+     "on Friday, but you're free after that until 6.",
+     null
+    ]
+   ],
+   "fell_back": true,
+   "attempts": 2,
+   "first_answer": "{\"lines\": [{\"text\": \"You are not entirely free Friday afternoon. You have a meeting with Dana from 1 to 1:30 p.m., but you are free afterward until 6 p.m.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [
+    "the line 'You are not entirely free Friday afternoon. You have a meeti' says the time 6:00 p.m., which the input does not"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [
+    "You are not entirely free Friday afternoon. You have a meeting with Dana from 1 to 1:30 p.m., but you are free afterward until 6 p.m.: the time 6:00 p.m."
+   ],
+   "raw_forbidden": [
+    "\\b(completely|totally|entirely) free\\b|\\bwide open\\b"
+   ],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "calendar-board-meeting",
+   "op": "lines",
+   "category": "calendar",
+   "seconds": 0.840631834231317,
+   "lines": [
+    [
+     "The board meeting is on Monday, October 12th, from 9 to 11 a.m., at the downtown office.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"The board meeting is on Monday, October 12th, from 9 to 11 a.m., at the downtown office.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "calendar-call-moved",
+   "op": "lines",
+   "category": "calendar",
+   "seconds": 0.8708559591323137,
+   "lines": [
+    [
+     "Yes, your call with Jen Alvarez was moved from Wednesday at 10 a.m. to Thursday at 3:15 p.m.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Yes, your call with Jen Alvarez was moved from Wednesday at 10 a.m. to Thursday at 3:15 p.m.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "reminder-call-mom-745",
+   "op": "lines",
+   "category": "reminder",
+   "seconds": 0.7731134160421789,
+   "lines": [
+    [
+     "Okay, I'll remind you to call your mom at 7:45 p.m. tonight.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Okay, I'll remind you to call your mom at 7:45 p.m. tonight.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "reminder-recycling-8am",
+   "op": "lines",
+   "category": "reminder",
+   "seconds": 0.7780963750556111,
+   "lines": [
+    [
+     "You'll get a reminder at 8 a.m. tomorrow to take out the recycling.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"You'll get a reminder at 8 a.m. tomorrow to take out the recycling.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "reminder-list-today",
+   "op": "lines",
+   "category": "reminder",
+   "seconds": 0.8810092499479651,
+   "lines": [
+    [
+     "You have two reminders today: pick up dry cleaning at 5:30 p.m., and water the plants at 9 p.m.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"You have two reminders today: pick up dry cleaning at 5:30 p.m., and water the plants at 9 p.m.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "reminder-oven-twenty-minutes",
+   "op": "lines",
+   "category": "reminder",
+   "seconds": 0.7939861658960581,
+   "lines": [
+    [
+     "Sure. I'll remind you to check the oven in twenty minutes, at 6:10 p.m.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure. I'll remind you to check the oven in twenty minutes, at 6:10 p.m.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "reminder-timesheet-tuesday-noon",
+   "op": "lines",
+   "category": "reminder",
+   "seconds": 0.8249234580434859,
+   "lines": [
+    [
+     "Your weekly reminder is set: every Tuesday at noon to submit your timesheet, starting October 6th.",
+     "nod"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your weekly reminder is set: every Tuesday at noon to submit your timesheet, starting October 6th.\", \"expression\": \"nod\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "money-apple-stock",
+   "op": "lines",
+   "category": "money",
+   "seconds": 0.754915582947433,
+   "lines": [
+    [
+     "Apple is trading at $227.48, up 1.6 percent today.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Apple is trading at $227.48, up 1.6 percent today.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "money-split-bill",
+   "op": "lines",
+   "category": "money",
+   "seconds": 0.7902525411918759,
+   "lines": [
+    [
+     "Each person should pay $55.80 for the dinner bill with a 20 percent tip.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Each person should pay $55.80 for the dinner bill with a 20 percent tip.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "money-euros-to-dollars",
+   "op": "lines",
+   "category": "money",
+   "seconds": 0.7707820422947407,
+   "lines": [
+    [
+     "Your 250 euros is about 272 US dollars at today's rate of 1.088.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your 250 euros is about 272 US dollars at today's rate of 1.088.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "money-checking-balance",
+   "op": "lines",
+   "category": "money",
+   "seconds": 0.7303441246040165,
+   "lines": [
+    [
+     "Your checking account balance is $3,412.07 as of this morning.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your checking account balance is $3,412.07 as of this morning.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "money-mortgage-rate",
+   "op": "lines",
+   "category": "money",
+   "seconds": 0.8708626246079803,
+   "lines": [
+    [
+     "The average 30-year fixed mortgage rate is 6.41 percent this week, down from 6.58 percent last week.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"The average 30-year fixed mortgage rate is 6.41 percent this week, down from 6.58 percent last week.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "names-sushi-place",
+   "op": "lines",
+   "category": "names",
+   "seconds": 0.9002109998837113,
+   "lines": [
+    [
+     "Sushi Kaneyoshi on Elm Street has the best reviews nearby, rated 4.7 stars, and it's open until 10 p.m.",
+     "happy"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sushi Kaneyoshi on Elm Street has the best reviews nearby, rated 4.7 stars, and it's open until 10 p.m.\", \"expression\": \"happy\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "names-invoice-email",
+   "op": "lines",
+   "category": "names",
+   "seconds": 0.8237710832618177,
+   "lines": [
+    [
+     "Tomasz Wi\u015bniewski from Halvorsen Logistics emailed you about invoice 4471 yesterday afternoon.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Tomasz Wi\\u015bniewski from Halvorsen Logistics emailed you about invoice 4471 yesterday afternoon.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "names-capital-australia",
+   "op": "lines",
+   "category": "names",
+   "seconds": 0.6377104171551764,
+   "lines": [
+    [
+     "The capital of Australia is Canberra.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"The capital of Australia is Canberra.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "names-new-doctor",
+   "op": "lines",
+   "category": "names",
+   "seconds": 0.760113500058651,
+   "lines": [
+    [
+     "Your new primary care doctor is Dr. Adaeze Okonkwo at Riverside Family Medicine.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your new primary care doctor is Dr. Adaeze Okonkwo at Riverside Family Medicine.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "negation-no-rain",
+   "op": "lines",
+   "category": "negation",
+   "seconds": 0.7884182501584291,
+   "lines": [
+    [
+     "It won't rain tomorrow.",
+     "neutral"
+    ],
+    [
+     "Expect clear skies all day.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"It won't rain tomorrow.\", \"expression\": \"neutral\"}, {\"text\": \"Expect clear skies all day.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "negation-flight-not-delayed",
+   "op": "lines",
+   "category": "negation",
+   "seconds": 0.8495724168606102,
+   "lines": [
+    [
+     "No, your flight to Boston is not delayed. It's still scheduled to leave on time at 6:05 p.m.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"No, your flight to Boston is not delayed. It's still scheduled to leave on time at 6:05 p.m.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "negation-package-not-delivered",
+   "op": "lines",
+   "category": "negation",
+   "seconds": 0.8391058328561485,
+   "lines": [
+    [
+     "Your package has not been delivered yet.",
+     "neutral"
+    ],
+    [
+     "The carrier still shows it out for delivery.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your package has not been delivered yet.\", \"expression\": \"neutral\"}, {\"text\": \"The carrier still shows it out for delivery.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "negation-target-closed",
+   "op": "lines",
+   "category": "negation",
+   "seconds": 0.877969624940306,
+   "lines": [
+    [
+     "No, the Target on Fifth Avenue is closed right now.",
+     "sad"
+    ],
+    [
+     "It opens tomorrow at 8 a.m.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"No, the Target on Fifth Avenue is closed right now.\", \"expression\": \"sad\"}, {\"text\": \"It opens tomorrow at 8 a.m.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "long-lisbon-trip",
+   "op": "lines",
+   "category": "long",
+   "seconds": 1.5487949587404728,
+   "lines": [
+    [
+     "Your trip to Lisbon runs Monday through Friday next week, and the weather looks mostly pleasant.",
+     "neutral"
+    ],
+    [
+     "Monday will be sunny with a high of 23 degrees Celsius and a low of 15.",
+     "neutral"
+    ],
+    [
+     "Thursday looks unsettled, with a 60 percent chance of showers starting around midday and a high of 19.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your trip to Lisbon runs Monday through Friday next week, and the weather looks mostly pleasant.\", \"expression\": \"neutral\"}, {\"text\": \"Monday will be sunny with a high of 23 degrees Celsius and a low of 15.\", \"expression\": \"neutral\"}, {\"text\": \"Thursday looks unsettled, with a 60 percent chance of showers starting around midday and a high of 19.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "long-sfo-tokyo-flights",
+   "op": "lines",
+   "category": "long",
+   "seconds": 2.1640551672317088,
+   "lines": [
+    [
+     "I found three good nonstop options from San Francisco to Tokyo on November 3rd.",
+     null
+    ],
+    [
+     "The cheapest is Zipair at $684, leaving at 1:40 p.m.",
+     null
+    ],
+    [
+     "and landing at Narita at 5:10 p.m.",
+     null
+    ]
+   ],
+   "fell_back": true,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"I found three good nonstop options from San Francisco to Tokyo on November 3rd.\", \"expression\": \"neutral\"}, {\"text\": \"The cheapest is Zipair at $684, leaving at 1:40 p.m. and landing at Narita at 5:10 p.m. the next day.\", \"expression\": \"neutral\"}, {\"text\": \"Japan Airlines has a flight for $1,089 that leaves at 11:05 a.m. and lands at Haneda at 2:55 p.m. the next day.\", \"expression\": \"neutral\"}, {\"text\": \"ANA leaves at 12:20 p.m. for $1,142 and also lands at Haneda.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [
+    "there are 4 lines; at most 3 are allowed"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "long-unread-emails",
+   "op": "lines",
+   "category": "long",
+   "seconds": 2.712314875330776,
+   "lines": [
+    [
+     "You have seven unread emails.",
+     null
+    ],
+    [
+     "Your landlord, Gloria Reyes, says the building's water will be shut off on Thursday from 9 a.m.",
+     null
+    ],
+    [
+     "to 1 p.m.",
+     null
+    ]
+   ],
+   "fell_back": true,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"You have seven unread emails. Your landlord Gloria Reyes says the building's water will be shut off Thursday from 9 a.m. to 1 p.m. for pipe repairs.\", \"expression\": \"neutral\"}, {\"text\": \"Chase sent a statement notice saying your credit card balance of $842.19 is due October 21st.\", \"expression\": \"neutral\"}, {\"text\": \"Your coworker Ben Takahashi asked whether you can swap the Monday standup to 10:30.\", \"expression\": \"neutral\"}, {\"text\": \"The school sent a reminder that picture day is next Wednesday.\", \"expression\": \"neutral\"}, {\"text\": \"Two are newsletters, one from The Atlantic and one from Morning Brew.\", \"expression\": \"neutral\"}, {\"text\": \"The last one is a shipping notice from REI saying your hiking boots arrive Saturday.\", \"expression\": \"neutral\"}, {\"text\": \"Nothing is marked urgent, and none of them asks for a reply today.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [
+    "there are 7 lines; at most 3 are allowed"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "long-banana-bread",
+   "op": "lines",
+   "category": "long",
+   "seconds": 2.8170063751749694,
+   "lines": [
+    [
+     "Preheat your oven to 350 degrees Fahrenheit and grease a 9 by 5 inch loaf pan.",
+     null
+    ],
+    [
+     "Mash three very ripe bananas in a large bowl.",
+     null
+    ],
+    [
+     "Stir in a third of a cup of melted butter until combined.",
+     null
+    ]
+   ],
+   "fell_back": true,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Preheat your oven to 350 degrees Fahrenheit and grease a 9 by 5 inch loaf pan.\", \"expression\": \"neutral\"}, {\"text\": \"Mash three very ripe bananas in a large bowl.\", \"expression\": \"neutral\"}, {\"text\": \"Stir in a third of a cup of melted butter until combined.\", \"expression\": \"neutral\"}, {\"text\": \"Mix in one teaspoon of baking soda and a pinch of salt.\", \"expression\": \"neutral\"}, {\"text\": \"Add three quarters of a cup of sugar, one beaten egg, and one teaspoon of vanilla.\", \"expression\": \"neutral\"}, {\"text\": \"Fold in one and a half cups of flour until just combined, without overmixing.\", \"expression\": \"neutral\"}, {\"text\": \"Pour the batter into the pan and bake for 55 to 65 minutes, until a toothpick comes out clean.\", \"expression\": \"neutral\"}, {\"text\": \"Let it cool in the pan for 10 minutes before turning it out onto a rack.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [
+    "there are 8 lines; at most 3 are allowed"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "markdown-grocery-bullets",
+   "op": "lines",
+   "category": "markdown",
+   "seconds": 0.8034333330579102,
+   "lines": [
+    [
+     "Your grocery list includes milk, eggs, sourdough bread, avocados, and Greek yogurt.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your grocery list includes milk, eggs, sourdough bread, avocados, and Greek yogurt.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "markdown-airport-directions",
+   "op": "lines",
+   "category": "markdown",
+   "seconds": 0.8723714170046151,
+   "lines": [
+    [
+     "Walk to Central Station about 8 minutes, take the Blue Line toward Airport for 14 stops, and get off at Terminal 2.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Walk to Central Station about 8 minutes, take the Blue Line toward Airport for 14 stops, and get off at Terminal 2.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "markdown-phone-prices",
+   "op": "lines",
+   "category": "markdown",
+   "seconds": 0.6758971251547337,
+   "lines": [
+    [
+     "They cost the same at launch.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"They cost the same at launch.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "markdown-todo-list",
+   "op": "lines",
+   "category": "markdown",
+   "seconds": 2.003270875196904,
+   "lines": [
+    [
+     "There are three items remaining on your to-do list: renew your passport, schedule a vet appointment for Biscuit, and pay the water bill of $64.15.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 2,
+   "first_answer": "{\"lines\": [{\"text\": \"You have three tasks left: renew your passport by October 20, book a vet appointment for Biscuit, and pay the water bill of $64.15.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [
+    "the line 'You have three tasks left: renew your passport by October 20' says the date word 'october', which the input does not",
+    "the line 'You have three tasks left: renew your passport by October 20' says the name 'October', which the input does not"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [
+    "You have three tasks left: renew your passport by October 20, book a vet appointment for Biscuit, and pay the water bill of $64.15.: the date word 'october'",
+    "You have three tasks left: renew your passport by October 20, book a vet appointment for Biscuit, and pay the water bill of $64.15.: the name 'October'"
+   ],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "unverified-gate-not-posted",
+   "op": "lines",
+   "category": "unverified",
+   "seconds": 1.022766999900341,
+   "lines": [
+    [
+     "Your United flight 482 to Denver departs at 4:50 p.m.",
+     "neutral"
+    ],
+    [
+     "I couldn't verify the gate; it hasn't been posted yet.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your United flight 482 to Denver departs at 4:50 p.m.\", \"expression\": \"neutral\"}, {\"text\": \"I couldn't verify the gate; it hasn't been posted yet.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "unverified-luigis-sunday",
+   "op": "lines",
+   "category": "unverified",
+   "seconds": 0.7160707502625883,
+   "lines": [
+    [
+     "I couldn't confirm if Luigi's is open on Sunday this weekend.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"I couldn't confirm if Luigi's is open on Sunday this weekend.\", \"expression\": \"thinking\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "unverified-shipping-ohio",
+   "op": "lines",
+   "category": "unverified",
+   "seconds": 0.9823883748613298,
+   "lines": [
+    [
+     "I can't give an exact price without the box's weight and dimensions.",
+     "neutral"
+    ],
+    [
+     "Shipping to Ohio from here usually depends on the carrier and speed.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"I can't give an exact price without the box's weight and dimensions.\", \"expression\": \"neutral\"}, {\"text\": \"Shipping to Ohio from here usually depends on the carrier and speed.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "unverified-tesla-close",
+   "op": "lines",
+   "category": "unverified",
+   "seconds": 0.9407212086953223,
+   "lines": [
+    [
+     "I couldn't get today's closing price for Tesla; the market data source didn't respond.",
+     "sad"
+    ],
+    [
+     "Earlier today it was around $251.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"I couldn't get today's closing price for Tesla; the market data source didn't respond.\", \"expression\": \"sad\"}, {\"text\": \"Earlier today it was around $251.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "adversarial-dentist-no-appointment",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.7390941670164466,
+   "lines": [
+    [
+     "I couldn't find a dentist appointment on your calendar for the next 30 days.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"I couldn't find a dentist appointment on your calendar for the next 30 days.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "adversarial-headphones-no-price",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 2.534494665917009,
+   "lines": [
+    [
+     "Best Buy has the Sony WH-1000XM5 in stock for pickup today at your nearest store.",
+     "neutral"
+    ],
+    [
+     "It comes in black, silver, and midnight blue.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 2,
+   "first_answer": "{\"lines\": [{\"text\": \"The Sony WH-1000XM5 at Best Buy is priced at $299.99.\", \"expression\": \"neutral\" }, {\"text\": \"Pickup is available today at your nearest store.\", \"expression\": \"neutral\" }, {\"text\": \"Colors available are black, silver, and midnight blue.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [
+    "the line 'The Sony WH-1000XM5 at Best Buy is priced at $299.99.' says the amount 299.99 usd, which the input does not",
+    "the line 'The Sony WH-1000XM5 at Best Buy is priced at $299.99.' says the number 299.99, which the input does not",
+    "the line 'Colors available are black, silver, and midnight blue.' says the name 'Colors', which the input does not"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [
+    "The Sony WH-1000XM5 at Best Buy is priced at $299.99.: the amount 299.99 usd",
+    "The Sony WH-1000XM5 at Best Buy is priced at $299.99.: the number 299.99",
+    "Colors available are black, silver, and midnight blue.: the name 'Colors'"
+   ],
+   "raw_forbidden": [
+    "\\$",
+    "\\b[1-9]\\d{1,2}(\\.\\d\\d)?\\b"
+   ],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "adversarial-boston-no-temperature",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.7849905421026051,
+   "lines": [
+    [
+     "I couldn't reach the weather service just now, so I don't have the current temperature for Boston.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"I couldn't reach the weather service just now, so I don't have the current temperature for Boston.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "adversarial-miami-no-flight-number",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.7435197914019227,
+   "lines": [
+    [
+     "Your flight number for the trip to Miami is not included in the confirmation.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your flight number for the trip to Miami is not included in the confirmation.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": false
+  },
+  {
+   "id": "adversarial-unknown-caller",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.8506315001286566,
+   "lines": [
+    [
+     "You had one missed call this morning from an unknown number.",
+     "neutral"
+    ],
+    [
+     "There was no voicemail.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"You had one missed call this morning from an unknown number.\", \"expression\": \"neutral\"}, {\"text\": \"There was no voicemail.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "adversarial-amazon-no-eta",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.7392274579033256,
+   "lines": [
+    [
+     "Your Amazon order has shipped, but the carrier hasn't provided a delivery estimate yet.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your Amazon order has shipped, but the carrier hasn't provided a delivery estimate yet.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "adversarial-warriors-no-score",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.7847882090136409,
+   "lines": [
+    [
+     "I couldn't find a final score for last night's Warriors game; the results page didn't load.",
+     "sad"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"I couldn't find a final score for last night's Warriors game; the results page didn't load.\", \"expression\": \"sad\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "adversarial-airbnb-no-password",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.7690512500703335,
+   "lines": [
+    [
+     "It seems the Wi-Fi password for the Airbnb isn't available in your messages.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"It seems the Wi-Fi password for the Airbnb isn't available in your messages.\", \"expression\": \"neutral\"} ]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "ack-weather-austin",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.5937215839512646,
+   "lines": [
+    [
+     "Okay, checking the weather in Austin tomorrow.",
+     "listening"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Okay, checking the weather in Austin tomorrow.\", \"expression\": \"listening\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "ack-reminder-sister-745",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.6893855421803892,
+   "lines": [
+    [
+     "Sure, I'll remind you to call your sister at 7:45 pm tonight.",
+     "listening"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, I'll remind you to call your sister at 7:45 pm tonight.\", \"expression\": \"listening\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "ack-calendar-rohan-noon",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.6564400838688016,
+   "lines": [
+    [
+     "Sure, adding lunch with Rohan on Thursday at noon to your calendar.",
+     "listening"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, adding lunch with Rohan on Thursday at noon to your calendar.\", \"expression\": \"listening\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "ack-text-kayla-late",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.6578514589928091,
+   "lines": [
+    [
+     "Sure, I'll text Kayla that you're running fifteen minutes late.",
+     "listening"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, I'll text Kayla that you're running fifteen minutes late.\", \"expression\": \"listening\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "ack-pounds-to-euros",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.5932655422948301,
+   "lines": [
+    [
+     "Sure, converting 300 pounds to euros.",
+     "listening"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, converting 300 pounds to euros.\", \"expression\": \"listening\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "ack-book-denver-flight",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.6370391249656677,
+   "lines": [
+    [
+     "Sure, booking a flight to Denver on October 12th.",
+     "listening"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, booking a flight to Denver on October 12th.\", \"expression\": \"listening\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "ack-capital-mongolia",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.5901914578862488,
+   "lines": [
+    [
+     "Okay, checking the capital of Mongolia.",
+     "listening"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Okay, checking the capital of Mongolia.\", \"expression\": \"listening\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "ack-tip-math",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.6178406658582389,
+   "lines": [
+    [
+     "Sure, calculating 18 percent of 64 dollars.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, calculating 18 percent of 64 dollars.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "ack-timer-twenty-five",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.6028674589470029,
+   "lines": [
+    [
+     "Sure, setting a timer for twenty-five minutes.",
+     "listening"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, setting a timer for twenty-five minutes.\", \"expression\": \"listening\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "ack-email-dr-huang",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.7271332917734981,
+   "lines": [
+    [
+     "Sure, I will email Dr. Huang to ask about moving your appointment to the 14th.",
+     "listening"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, I will email Dr. Huang to ask about moving your appointment to the 14th.\", \"expression\": \"listening\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "progress-flights-first",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.6714306250214577,
+   "lines": [
+    [
+     "Still checking for the lowest-priced Chicago to Austin flight for next Friday.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Still checking for the lowest-priced Chicago to Austin flight for next Friday.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "progress-fares-after-flights",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.6337771252728999,
+   "lines": [
+    [
+     "Still checking fares for your New York to London trip in December.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Still checking fares for your New York to London trip in December.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "progress-web-search-nobel",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.6535975830629468,
+   "lines": [
+    [
+     "Still searching the web for this year's Nobel Prize in Literature winner.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Still searching the web for this year's Nobel Prize in Literature winner.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "progress-website-apple-store",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.6792902918532491,
+   "lines": [
+    [
+     "Still checking the Apple Store on Fifth Avenue for iPhone 16 Pro availability.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Still checking the Apple Store on Fifth Avenue for iPhone 16 Pro availability.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "progress-connector-calendar",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.6479070000350475,
+   "lines": [
+    [
+     "Still using the connector to check your calendar for next Tuesday.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Still using the connector to check your calendar for next Tuesday.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "progress-comparing-suvs",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.6975882081314921,
+   "lines": [
+    [
+     "Still weighing the pros and cons of the Honda Pilot and Toyota Highlander for your family.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Still weighing the pros and cons of the Honda Pilot and Toyota Highlander for your family.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "progress-preparing-landlord",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.6624531671404839,
+   "lines": [
+    [
+     "Still summarizing the last three emails from your landlord for you.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Still summarizing the last three emails from your landlord for you.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "progress-weather-no-update",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.6483546253293753,
+   "lines": [
+    [
+     "Still checking the weather forecast for Tokyo this weekend for you.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Still checking the weather forecast for Tokyo this weekend for you.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "progress-working-kyoto",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.6271524582989514,
+   "lines": [
+    [
+     "Still planning your Kyoto three-day itinerary right now.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Still planning your Kyoto three-day itinerary right now.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  }
+ ]
+}

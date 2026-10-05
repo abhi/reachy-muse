@@ -1,0 +1,830 @@
+{
+ "repo": "mlx-community/Phi-4-mini-instruct-4bit",
+ "load_s": 3.664315541740507,
+ "weights_gb": 2.158080008,
+ "peak_gb": 3.208202434,
+ "sdk": "2941bb4",
+ "cases": [
+  {
+   "id": "holdout-weather-phoenix-fahrenheit",
+   "op": "lines",
+   "category": "weather",
+   "seconds": 0.4250128329731524,
+   "lines": [
+    [
+     "The high will be 104\u00b0F this afternoon.",
+     "surprised"
+    ],
+    [
+     "The overnight low will be 81\u00b0F.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"The high will be 104\u00b0F this afternoon.\", \"expression\": \"surprised\"}, {\"text\": \"The overnight low will be 81\u00b0F.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-weather-oslo-thursday-friday",
+   "op": "lines",
+   "category": "weather",
+   "seconds": 0.5244841249659657,
+   "lines": [
+    [
+     "Thursday in Oslo has a high of 4 degrees Celsius and a low of minus 2.",
+     "neutral"
+    ],
+    [
+     "Friday is milder, with a high of 7 and a 35 percent chance of sleet.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Thursday in Oslo has a high of 4 degrees Celsius and a low of minus 2.\", \"expression\": \"neutral\"}, {\"text\": \"Friday is milder, with a high of 7 and a 35 percent chance of sleet.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-calendar-two-interviews",
+   "op": "lines",
+   "category": "calendar",
+   "seconds": 0.446340249851346,
+   "lines": [
+    [
+     "On Thursday you have two interviews: Wen Zhao at 10:15 a.m. and Olusegun Bello at 3:40 p.m. Both are on video.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"On Thursday you have two interviews: Wen Zhao at 10:15 a.m. and Olusegun Bello at 3:40 p.m. Both are on video.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-calendar-the-3rd-halifax",
+   "op": "lines",
+   "category": "calendar",
+   "seconds": 0.37175425002351403,
+   "lines": [
+    [
+     "The third is a quarterly offsite in Halifax from 9 a.m. to 4 p.m.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"The third is a quarterly offsite in Halifax from 9 a.m. to 4 p.m.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-reminder-pills-two-times",
+   "op": "lines",
+   "category": "reminder",
+   "seconds": 0.441426333039999,
+   "lines": [
+    [
+     "Sure, I got it. I'll remind you to take your pills at 8:20 a.m. and again at 9:50 p.m., starting tomorrow.",
+     "happy"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, I got it. I'll remind you to take your pills at 8:20 a.m. and again at 9:50 p.m., starting tomorrow.\", \"expression\": \"happy\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-reminder-rent-the-1st",
+   "op": "lines",
+   "category": "reminder",
+   "seconds": 0.39057108387351036,
+   "lines": [
+    [
+     "Your rent reminder is set for the 1st of every month at 9 a.m., starting November 1st.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your rent reminder is set for the 1st of every month at 9 a.m., starting November 1st.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-money-two-kettles",
+   "op": "lines",
+   "category": "money",
+   "seconds": 0.8561445414088666,
+   "lines": [
+    [
+     "The blue kettle is $38.99 and the steel one is $41.50, so the blue one is $2.51 cheaper.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 2,
+   "first_answer": "{\"lines\": [{\"text\": \"The blue kettle is $38.99 and the steel one is $41.50, so the blue one is $2.51 cheaper.\", \"expression\": \"neutral\"}}]",
+   "first_problems": [
+    "the answer is not valid JSON (Expecting ',' delimiter)"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-money-index-fund-decimals",
+   "op": "lines",
+   "category": "money",
+   "seconds": 0.3129193331114948,
+   "lines": [
+    [
+     "Sure, your index fund performed well this quarter.",
+     "happy"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, your index fund performed well this quarter.\", \"expression\": \"happy\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": false
+  },
+  {
+   "id": "holdout-names-siobhan-declan",
+   "op": "lines",
+   "category": "names",
+   "seconds": 0.7453198749572039,
+   "lines": [
+    [
+     "Siobhan called twice at 1:05 and 1:20 p.m.",
+     "happy"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 2,
+   "first_answer": "{\"lines\": [{\"text\": \"Someone called twice at 1:05 and 1:20 p.m.\", \"expression\": \"surprised\"}]}",
+   "first_problems": [
+    "the line 'Someone called twice at 1:05 and 1:20 p.m.' says the name 'Someone', which the input does not"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [
+    "Someone called twice at 1:05 and 1:20 p.m.: the name 'Someone'"
+   ],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-names-baan-sukhumvit",
+   "op": "lines",
+   "category": "names",
+   "seconds": 0.32024333300068974,
+   "lines": [
+    [
+     "Baan Sukhumvit on Halsted Avenue was recommended.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Baan Sukhumvit on Halsted Avenue was recommended.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-negation-yoga-not-cancelled",
+   "op": "lines",
+   "category": "negation",
+   "seconds": 0.37543033296242356,
+   "lines": [
+    [
+     "I'm sorry, but I couldn't find information on a cancellation for your 9:30 yoga class.",
+     "surprised"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"I'm sorry, but I couldn't find information on a cancellation for your 9:30 yoga class.\", \"expression\": \"surprised\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": false
+  },
+  {
+   "id": "holdout-negation-granola-peanuts",
+   "op": "lines",
+   "category": "negation",
+   "seconds": 0.3572358749806881,
+   "lines": [
+    [
+     "The granola doesn't contain peanuts, but it's made in a facility that also processes tree nuts.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"The granola doesn't contain peanuts, but it's made in a facility that also processes tree nuts.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-long-edinburgh-hotels",
+   "op": "lines",
+   "category": "long",
+   "seconds": 3.0750766252167523,
+   "lines": [
+    [
+     "I found three hotels in Edinburgh with rooms from the 18th to the 21st.",
+     null
+    ],
+    [
+     "The Kelpie Lane Inn is closest to the castle, at \u00a3212 a night, with a 9.1 rating from 2,340 reviews.",
+     null
+    ],
+    [
+     "Calderwood House is \u00a3164 a night and about a 12-minute walk from Waverley station; it's rated 8.6.",
+     null
+    ]
+   ],
+   "fell_back": true,
+   "attempts": 2,
+   "first_answer": "{\"lines\": [{\"text\": \"The Kelpie Lane Inn is closest to the castle, at \u00a3212 a night, with a 9.1 rating from 2,340 reviews.\", \"expression\": \"neutral\"}], \"lines\": [{\"text\": \"Calderwood House is \u00a3164 a night and about a 12-minute walk from Waverley station; it's rated 8.6.\", \"expression\": \"neutral\"}], \"lines\": [{\"text\": \"The cheapest is the Meadows Hostel at \u00a371 a night for a private room with a shared bathroom, rated 7.9.\", \"expression\": \"neutral\"}], \"lines\": [{\"text\": \"All three offer free cancellation until 48 hours before check-in.\", \"expression\": \"neutral\"}], \"lines\": [{\"text\": \"Breakfast is included only at Calderwood House.\", \"expression\": \"neutral\"}], \"lines\": [{\"text\": \"Expect highs around 54\u00b0F, with showers likely on the 19th.\", \"expression\": \"neutral\"}], \"lines\": [{\"text\": \"Prices include VAT but not the city's ",
+   "first_problems": [
+    "the answer is not valid JSON (Unterminated string starting at)"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-markdown-phone-plan-table",
+   "op": "lines",
+   "category": "markdown",
+   "seconds": 0.3210605001077056,
+   "lines": [
+    [
+     "Here are different plans tidewave mobile offers.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Here are different plans tidewave mobile offers.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": false
+  },
+  {
+   "id": "holdout-unverified-bruges-train",
+   "op": "lines",
+   "category": "unverified",
+   "seconds": 0.3972280411981046,
+   "lines": [
+    [
+     "Your train to Bruges leaves at 6:52 p.m. And I couldn't find information on the departure platform.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your train to Bruges leaves at 6:52 p.m. And I couldn't find information on the departure platform.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-unverified-airline-refund",
+   "op": "lines",
+   "category": "unverified",
+   "seconds": 0.3439236246049404,
+   "lines": [
+    [
+     "The airline approved a refund of $317.40 on September 28th.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"The airline approved a refund of $317.40 on September 28th.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-adversarial-lamp-no-tracking",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.34174837497994304,
+   "lines": [
+    [
+     "I'm sorry, but I couldn't find a tracking number in the email you received.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"I'm sorry, but I couldn't find a tracking number in the email you received.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": false
+  },
+  {
+   "id": "holdout-adversarial-hornets-no-points",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.30481587536633015,
+   "lines": [
+    [
+     "I'm sorry, I couldn't find that information.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"I'm sorry, I couldn't find that information.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": false
+  },
+  {
+   "id": "holdout-adversarial-kowloon-no-rating",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.3859717077575624,
+   "lines": [
+    [
+     "The new Kowloon Noodle Bar just opened on Grant Street and has a short menu of hand-pulled noodles.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"The new Kowloon Noodle Bar just opened on Grant Street and has a short menu of hand-pulled noodles.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-adversarial-reykjavik-no-boarding",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.7671608752571046,
+   "lines": [
+    [
+     "Your flight to Reykjavik departs at 11:25 p.m.",
+     null
+    ],
+    [
+     "from Terminal B.",
+     null
+    ],
+    [
+     "The airline hasn't published a boarding time yet.",
+     null
+    ]
+   ],
+   "fell_back": true,
+   "attempts": 2,
+   "first_answer": "{\"lines\": [{\"text\": \"The flight departs at 11:25 p.m. There isn't a published boarding time yet.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [
+    "the line \"The flight departs at 11:25 p.m. There isn't a published boa\" says the name 'There', which the input does not"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [
+    "The flight departs at 11:25 p.m. There isn't a published boarding time yet.: the name 'There'"
+   ],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-ack-reminder-stretch-two-times",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.33575562527403235,
+   "lines": [
+    [
+     "Sure, reminders to stretch at 10:40 am and 3:25 pm.",
+     "listening"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, reminders to stretch at 10:40 am and 3:25 pm.\", \"expression\": \"listening\"}]}\n",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-ack-sales-tax-decimal",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.8241468328051269,
+   "lines": [],
+   "fell_back": true,
+   "attempts": 2,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, seven point twenty five percent sales tax on 480 dollars.\", \"expression\": \"neutral\"}], \"rephrase\": \"Setting sales tax on 480 dollars.\"}",
+   "first_problems": [
+    "the line 'Sure, seven point twenty five percent sales tax on 480 dolla' says the amount 25 %, which the input does not",
+    "the line 'Sure, seven point twenty five percent sales tax on 480 dolla' says the number 7, which the input does not",
+    "the line 'Sure, seven point twenty five percent sales tax on 480 dolla' says the number 25, which the input does not"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [
+    "Sure, seven point twenty five percent sales tax on 480 dollars.: the amount 25 %",
+    "Sure, seven point twenty five percent sales tax on 480 dollars.: the number 7",
+    "Sure, seven point twenty five percent sales tax on 480 dollars.: the number 25"
+   ],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "holdout-ack-tell-mateus-chairs",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.40938970912247896,
+   "lines": [],
+   "fell_back": true,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Mateus, I'll bring the folding chairs on the 9th.\", \"expression\": \"Sure\"}], \"rephrase\": \"Mateus, on the 9th I'll bring the chairs.\"}",
+   "first_problems": [
+    "the expression 'Sure' is not one of neutral, happy, sad, surprised, curious, nod, shake, listening, thinking"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "holdout-ack-fahrenheit-to-celsius",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.7476932499557734,
+   "lines": [],
+   "fell_back": true,
+   "attempts": 2,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, 68 Fahrenheit is 20 Celsius.\", \"expression\": \"neutral\"}], \"reword\": \"What's 68 Fahrenheit in Celsius?\"}\n\n",
+   "first_problems": [
+    "the line 'Sure, 68 Fahrenheit is 20 Celsius.' says the number 20, which the input does not"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [
+    "Sure, 68 Fahrenheit is 20 Celsius.: the number 20"
+   ],
+   "raw_forbidden": [
+    "\\b20\\b|\\btwenty\\b"
+   ],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "holdout-ack-book-marisqueria-lupe",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.6623978340066969,
+   "lines": [],
+   "fell_back": true,
+   "attempts": 2,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, a table for six at Mariscadero Lupe on February 2 at 7:15 PM.\", \"expression\": \"sure\"}]}\n",
+   "first_problems": [
+    "the line 'Sure, a table for six at Mariscadero Lupe on February 2 at 7' says the time 7:15 p.m., which the input does not",
+    "the line 'Sure, a table for six at Mariscadero Lupe on February 2 at 7' says the date word 'february', which the input does not",
+    "the line 'Sure, a table for six at Mariscadero Lupe on February 2 at 7' says the name 'Mariscadero', which the input does not",
+    "the line 'Sure, a table for six at Mariscadero Lupe on February 2 at 7' says the name 'February', which the input does not",
+    "the expression 'sure' is not one of neutral, happy, sad, surprised, curious, nod, shake, listening, thinking"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [
+    "Sure, a table for six at Mariscadero Lupe on February 2 at 7:15 PM.: the time 7:15 p.m.",
+    "Sure, a table for six at Mariscadero Lupe on February 2 at 7:15 PM.: the date word 'february'",
+    "Sure, a table for six at Mariscadero Lupe on February 2 at 7:15 PM.: the name 'Mariscadero'",
+    "Sure, a table for six at Mariscadero Lupe on February 2 at 7:15 PM.: the name 'February'"
+   ],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "holdout-progress-flights-montreal-lima",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.3465750408358872,
+   "lines": [
+    [
+     "Okay, looking for flights from Montreal to Lima now.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Okay, looking for flights from Montreal to Lima now.\", \"expression\": \"neutral\"}],\n \"status\": \"Comparing the options.\"}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "holdout-progress-sources-vitamin-d",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.34054591599851847,
+   "lines": [
+    [
+     "Okay, looking into safety of Vitamin D with Magnesium.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Okay, looking into safety of Vitamin D with Magnesium.\", \"expression\": \"neutral\"}], \"status\": \"Searching sources now.\"}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "holdout-progress-comparing-laptop-battery",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.32804908277466893,
+   "lines": [
+    [
+     "Okay, comparing the options now.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Okay, comparing the options now.\", \"expression\": \"thinking\"}],\"status\": \"Still looking at the options now.\"}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "holdout-progress-no-update-cartagena-fares",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.8036676249466836,
+   "lines": [],
+   "fell_back": true,
+   "attempts": 2,
+   "first_answer": "{\"lines\": [{\"text\": \"The cheapest fare to Cartanaga in January varies depending on dates and offers.\", \"expression\": \"neutral\"}],\"status\": \"I'm calculating different flight options in January.\"}",
+   "first_problems": [
+    "the line 'The cheapest fare to Cartanaga in January varies depending o' says the name 'Cartanaga', which the input does not"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [
+    "The cheapest fare to Cartanaga in January varies depending on dates and offers.: the name 'Cartanaga'"
+   ],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "holdout-progress-connector-lease-pdf",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.70583541598171,
+   "lines": [],
+   "fell_back": true,
+   "attempts": 2,
+   "first_answer": "{\"lines\": [{\"text\": \"Searching for lease file in your drive.\", \"expression\": \"thinking\"}], \"status\": \"Still looking at files in your drive now.\"}",
+   "first_problems": [
+    "the robot's own check rejects the line 'Searching for lease file in your drive.': start it with a plain word and copy every figure as written"
+   ],
+   "raw_pass": false,
+   "raw_ungrounded": [
+    "Searching for lease file in your drive.: the robot's grounded() rejects it"
+   ],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  }
+ ]
+}

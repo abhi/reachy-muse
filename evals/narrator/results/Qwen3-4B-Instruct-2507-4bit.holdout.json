@@ -1,0 +1,865 @@
+{
+ "repo": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+ "load_s": 4.54804908297956,
+ "weights_gb": 2.264693768,
+ "peak_gb": 2.999125504,
+ "sdk": "2941bb4",
+ "cases": [
+  {
+   "id": "holdout-weather-phoenix-fahrenheit",
+   "op": "lines",
+   "category": "weather",
+   "seconds": 0.5936418329365551,
+   "lines": [
+    [
+     "Phoenix will get up to 104\u00b0F today.",
+     "neutral"
+    ],
+    [
+     "It will drop to 81\u00b0F overnight.",
+     "neutral"
+    ],
+    [
+     "Humidity will stay around 12 percent.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Phoenix will get up to 104\u00b0F today.\", \"expression\": \"neutral\"}, {\"text\": \"It will drop to 81\u00b0F overnight.\", \"expression\": \"neutral\"}, {\"text\": \"Humidity will stay around 12 percent.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-weather-oslo-thursday-friday",
+   "op": "lines",
+   "category": "weather",
+   "seconds": 0.49370466684922576,
+   "lines": [
+    [
+     "It will be colder in Oslo on Thursday.",
+     "neutral"
+    ],
+    [
+     "Thursday's low is minus 2 and Friday's high is 7.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"It will be colder in Oslo on Thursday.\", \"expression\": \"neutral\"}, {\"text\": \"Thursday's low is minus 2 and Friday's high is 7.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-calendar-two-interviews",
+   "op": "lines",
+   "category": "calendar",
+   "seconds": 0.48267833329737186,
+   "lines": [
+    [
+     "Your interviews are at 10:15 a.m. with Wen Zhao and 3:40 p.m. with Olusegun Bello.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your interviews are at 10:15 a.m. with Wen Zhao and 3:40 p.m. with Olusegun Bello.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-calendar-the-3rd-halifax",
+   "op": "lines",
+   "category": "calendar",
+   "seconds": 0.5483712079003453,
+   "lines": [
+    [
+     "On the 3rd you have the quarterly offsite in Halifax from 9 a.m. to 4 p.m.",
+     "neutral"
+    ],
+    [
+     "Then dinner with Ines at 7.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"On the 3rd you have the quarterly offsite in Halifax from 9 a.m. to 4 p.m.\", \"expression\": \"neutral\"}, {\"text\": \"Then dinner with Ines at 7.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-reminder-pills-two-times",
+   "op": "lines",
+   "category": "reminder",
+   "seconds": 0.44367737509310246,
+   "lines": [
+    [
+     "Sure, I'll remind you to take your pills at 8:20 am and 9:50 pm.",
+     "nod"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, I'll remind you to take your pills at 8:20 am and 9:50 pm.\", \"expression\": \"nod\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-reminder-rent-the-1st",
+   "op": "lines",
+   "category": "reminder",
+   "seconds": 0.40588670782744884,
+   "lines": [
+    [
+     "Your rent reminder is set for the 1st of every month at 9 a.m.",
+     "nod"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your rent reminder is set for the 1st of every month at 9 a.m.\", \"expression\": \"nod\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-money-two-kettles",
+   "op": "lines",
+   "category": "money",
+   "seconds": 0.6050067921169102,
+   "lines": [
+    [
+     "The blue kettle is $38.99",
+     "neutral"
+    ],
+    [
+     "the steel one is $41.50",
+     "neutral"
+    ],
+    [
+     "so the blue one is $2.51 cheaper",
+     "happy"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"The blue kettle is $38.99\", \"expression\": \"neutral\"}, {\"text\": \"the steel one is $41.50\", \"expression\": \"neutral\"}, {\"text\": \"so the blue one is $2.51 cheaper\", \"expression\": \"happy\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-money-index-fund-decimals",
+   "op": "lines",
+   "category": "money",
+   "seconds": 0.5726453750394285,
+   "lines": [
+    [
+     "Your index fund returned 4.37 percent this quarter, after fees of 0.03 percent.",
+     "nod"
+    ],
+    [
+     "It's now worth $18,904.62.",
+     "happy"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your index fund returned 4.37 percent this quarter, after fees of 0.03 percent.\", \"expression\": \"nod\"}, {\"text\": \"It's now worth $18,904.62.\", \"expression\": \"happy\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-names-siobhan-declan",
+   "op": "lines",
+   "category": "names",
+   "seconds": 0.5687904166989028,
+   "lines": [
+    [
+     "Siobhan called twice, at 1:05 and 1:20 p.m.",
+     "nod"
+    ],
+    [
+     "Declan left a voicemail asking you to call him back about the lease.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Siobhan called twice, at 1:05 and 1:20 p.m.\", \"expression\": \"nod\"}, {\"text\": \"Declan left a voicemail asking you to call him back about the lease.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-names-baan-sukhumvit",
+   "op": "lines",
+   "category": "names",
+   "seconds": 0.4909097501076758,
+   "lines": [
+    [
+     "Baan Sukhumvit on Halsted Avenue.",
+     "nod"
+    ],
+    [
+     "Your brother said the khao soi there is the best he's had.",
+     "happy"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Baan Sukhumvit on Halsted Avenue.\", \"expression\": \"nod\"}, {\"text\": \"Your brother said the khao soi there is the best he's had.\", \"expression\": \"happy\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-negation-yoga-not-cancelled",
+   "op": "lines",
+   "category": "negation",
+   "seconds": 0.49450066732242703,
+   "lines": [
+    [
+     "No, your 9:30 yoga class wasn't cancelled",
+     "neutral"
+    ],
+    [
+     "Only the 11:00 class was cancelled today",
+     "nod"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"No, your 9:30 yoga class wasn't cancelled\", \"expression\": \"neutral\"}, {\"text\": \"Only the 11:00 class was cancelled today\", \"expression\": \"nod\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-negation-granola-peanuts",
+   "op": "lines",
+   "category": "negation",
+   "seconds": 0.4596737497486174,
+   "lines": [
+    [
+     "The granola doesn't contain peanuts",
+     "neutral"
+    ],
+    [
+     "but it's made in a facility that also processes tree nuts",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"The granola doesn't contain peanuts\", \"expression\": \"neutral\"}, {\"text\": \"but it's made in a facility that also processes tree nuts\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-long-edinburgh-hotels",
+   "op": "lines",
+   "category": "long",
+   "seconds": 0.9747636672109365,
+   "lines": [
+    [
+     "Sure, here are three hotels in Edinburgh for the 18th through 21st.",
+     "neutral"
+    ],
+    [
+     "The Kelpie Lane Inn is \u00a3212 a night, near the castle, with 9.1 rating from 2,340 reviews.",
+     "nod"
+    ],
+    [
+     "Calderwood House is \u00a3164 a night, 12-minute walk from Waverley, offers breakfast, rated 8.6.",
+     "nod"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Sure, here are three hotels in Edinburgh for the 18th through 21st.\", \"expression\": \"neutral\"}, {\"text\": \"The Kelpie Lane Inn is \u00a3212 a night, near the castle, with 9.1 rating from 2,340 reviews.\", \"expression\": \"nod\"}, {\"text\": \"Calderwood House is \u00a3164 a night, 12-minute walk from Waverley, offers breakfast, rated 8.6.\", \"expression\": \"nod\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-markdown-phone-plan-table",
+   "op": "lines",
+   "category": "markdown",
+   "seconds": 0.6922039580531418,
+   "lines": [
+    [
+     "The Basic plan costs $25/mo with 5 GB of data.",
+     "neutral"
+    ],
+    [
+     "The Plus plan is $40/mo with 30 GB of data.",
+     "neutral"
+    ],
+    [
+     "The Max plan costs $55/mo with unlimited data.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"The Basic plan costs $25/mo with 5 GB of data.\", \"expression\": \"neutral\"}, {\"text\": \"The Plus plan is $40/mo with 30 GB of data.\", \"expression\": \"neutral\"}, {\"text\": \"The Max plan costs $55/mo with unlimited data.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-unverified-bruges-train",
+   "op": "lines",
+   "category": "unverified",
+   "seconds": 0.491177124902606,
+   "lines": [
+    [
+     "Your train to Bruges leaves at 6:52 p.m.",
+     "neutral"
+    ],
+    [
+     "The platform isn't announced yet.",
+     "curious"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your train to Bruges leaves at 6:52 p.m.\", \"expression\": \"neutral\"}, {\"text\": \"The platform isn't announced yet.\", \"expression\": \"curious\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-unverified-airline-refund",
+   "op": "lines",
+   "category": "unverified",
+   "seconds": 0.5299512087367475,
+   "lines": [
+    [
+     "The refund of $317.40 was approved on September 28th",
+     "neutral"
+    ],
+    [
+     "I couldn't verify if it reached your bank account yet",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"The refund of $317.40 was approved on September 28th\", \"expression\": \"neutral\"}, {\"text\": \"I couldn't verify if it reached your bank account yet\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-adversarial-lamp-no-tracking",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.4670279589481652,
+   "lines": [
+    [
+     "Your lamp order from Ferncliff Home shipped on Tuesday",
+     "neutral"
+    ],
+    [
+     "The shipping email doesn't include a tracking number",
+     "sad"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your lamp order from Ferncliff Home shipped on Tuesday\", \"expression\": \"neutral\"}, {\"text\": \"The shipping email doesn't include a tracking number\", \"expression\": \"sad\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-adversarial-hornets-no-points",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.34234933415427804,
+   "lines": [
+    [
+     "The recap doesn't list your daughter's points.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"The recap doesn't list your daughter's points.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-adversarial-kowloon-no-rating",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.38907404243946075,
+   "lines": [
+    [
+     "The new Kowloon Noodle Bar on Grant Street has no ratings yet.",
+     "neutral"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"The new Kowloon Noodle Bar on Grant Street has no ratings yet.\", \"expression\": \"neutral\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-adversarial-reykjavik-no-boarding",
+   "op": "lines",
+   "category": "adversarial",
+   "seconds": 0.5432744575664401,
+   "lines": [
+    [
+     "Your flight to Reykjavik departs at 11:25 p.m. from Terminal B.",
+     "neutral"
+    ],
+    [
+     "The airline hasn't published a boarding time yet.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Your flight to Reykjavik departs at 11:25 p.m. from Terminal B.\", \"expression\": \"neutral\"}, {\"text\": \"The airline hasn't published a boarding time yet.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-ack-reminder-stretch-two-times",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.37959008291363716,
+   "lines": [
+    [
+     "Okay, remind you to stretch at 10:40 am and 3:25 pm.",
+     "listening"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Okay, remind you to stretch at 10:40 am and 3:25 pm.\", \"expression\": \"listening\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-ack-sales-tax-decimal",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.3620079173706472,
+   "lines": [
+    [
+     "Okay, calculating 7.25 percent sales tax on 480 dollars.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Okay, calculating 7.25 percent sales tax on 480 dollars.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-ack-tell-mateus-chairs",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.3556030001491308,
+   "lines": [
+    [
+     "Okay, telling mateus you'll bring the folding chairs on the 9th.",
+     "nod"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Okay, telling mateus you'll bring the folding chairs on the 9th.\", \"expression\": \"nod\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-ack-fahrenheit-to-celsius",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.32579279132187366,
+   "lines": [
+    [
+     "Okay, converting 68 fahrenheit to celsius.",
+     "listening"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Okay, converting 68 fahrenheit to celsius.\", \"expression\": \"listening\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-ack-book-marisqueria-lupe",
+   "op": "acknowledge",
+   "category": "acknowledge",
+   "seconds": 0.41677079210057855,
+   "lines": [
+    [
+     "Okay, booking a table for six at Marisqueria Lupe on the 2nd at 7:15.",
+     "listening"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Okay, booking a table for six at Marisqueria Lupe on the 2nd at 7:15.\", \"expression\": \"listening\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": true
+  },
+  {
+   "id": "holdout-progress-flights-montreal-lima",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.3052859581075609,
+   "lines": [
+    [
+     "Still looking at flights now for you.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Still looking at flights now for you.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "holdout-progress-sources-vitamin-d",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.3192813340574503,
+   "lines": [
+    [
+     "Still looking up safety of vitamin d with magnesium now.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Still looking up safety of vitamin d with magnesium now.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "holdout-progress-comparing-laptop-battery",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.318873958196491,
+   "lines": [
+    [
+     "Still comparing the options for you now.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Still comparing the options for you now.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "holdout-progress-no-update-cartagena-fares",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.30945458402857184,
+   "lines": [
+    [
+     "Still checking fares for you now.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Still checking fares for you now.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  },
+  {
+   "id": "holdout-progress-connector-lease-pdf",
+   "op": "progress",
+   "category": "progress",
+   "seconds": 0.315245249774307,
+   "lines": [
+    [
+     "Still finding the lease pdf for you.",
+     "thinking"
+    ]
+   ],
+   "fell_back": false,
+   "attempts": 1,
+   "first_answer": "{\"lines\": [{\"text\": \"Still finding the lease pdf for you.\", \"expression\": \"thinking\"}]}",
+   "first_problems": [],
+   "raw_pass": true,
+   "raw_ungrounded": [],
+   "raw_forbidden": [],
+   "ungrounded": [],
+   "robot_rejects": [],
+   "forbidden": [],
+   "format": [],
+   "expression": [],
+   "pass": true,
+   "kept_key_fact": null
+  }
+ ]
+}
