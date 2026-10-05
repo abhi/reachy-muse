@@ -2,7 +2,6 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 
 import asyncio
-from contextlib import asynccontextmanager
 import io
 import json
 import signal
@@ -14,6 +13,7 @@ import pytest
 
 from musegadget import config
 from musegadget import reachy_cli
+from musegadget.link_client import HttpStreamError, SideChat
 from musegadget.reachy_speaker_eq import COMPANION_SPEAKER_EQ_GAINS, SPEAKER_EQ_GAINS
 from musegadget.reachy_capabilities import ReplyStyle
 
@@ -91,10 +91,11 @@ class ChatSession:
         self.posted = asyncio.Event()
         self.timeline = []
 
-    @asynccontextmanager
-    async def stream_http(self, method, path, body, *, headers):
-        self.requests.append((method, path, json.loads(body)))
-        yield SimpleNamespace(status=self.status)
+    async def open_side_chat(self, session_id):
+        self.requests.append(session_id)
+        if self.status in (200, 404):
+            return SideChat(session_id, exists=self.status == 200)
+        raise HttpStreamError(self.status, '/chat/subscribe')
 
     async def send_chat(self, message, session_id):
         self.timeline.append('post')
@@ -142,7 +143,7 @@ def test_dedicated_chat_is_created_once_and_resumed_after_restart(tmp_path):
         first = ChatSession()
         selected = await reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(first, 'vm-1')
         assert str(uuid.UUID(selected)) == selected
-        assert first.requests == [('POST', '/chat/subscribe', {'session_id': selected})]
+        assert first.requests == [selected]
         assert first.posts == [(setup_wire_message(), selected)]
         assert first.subscription_closed
         saved = json.loads((tmp_path / reachy_cli.CHAT_STATE_FILE).read_text())
@@ -223,12 +224,11 @@ def test_dedicated_chat_waits_for_registration_before_any_http_or_state_write(tm
 
 @pytest.mark.parametrize('status', [401, 403, 429, 500])
 def test_chat_lookup_failure_never_posts_or_falls_back_to_main(tmp_path, status):
-    from musegadget.link_client import HttpStreamError
     session = ChatSession(status)
     with pytest.raises(HttpStreamError):
         asyncio.run(reachy_cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
     assert session.posts == []
-    assert session.requests[0][2]['session_id']
+    assert session.requests[0]
 
 
 @pytest.mark.parametrize('ack', [

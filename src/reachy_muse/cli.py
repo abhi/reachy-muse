@@ -95,8 +95,6 @@ class ReachySideChat:
 
     async def prepare(self, session, vm_id: str) -> str:
         """Create or resume the side chat after this link has registered."""
-        from musegadget.link_client import Header, HttpStreamError
-
         await session.registered.wait()
         if not isinstance(vm_id, str) or not vm_id:
             raise ValueError("a Muse VM ID is required to select Reachy's chat")
@@ -108,16 +106,7 @@ class ReachySideChat:
             # Persist before sending: an interrupted creation retries the same ID.
             config.save_json(CHAT_STATE_FILE, state, self.directory)
         session_id = chat["session_id"]
-        body = json.dumps({"session_id": session_id}).encode()
-        async with session.stream_http("POST", "/chat/subscribe", body, headers=[
-            Header("Content-Type", "application/json"), Header("Accept", "application/x-ndjson"),
-        ]) as stream:
-            if 200 <= stream.status < 300:
-                exists = True
-            elif stream.status == 404:
-                exists = False
-            else:
-                raise HttpStreamError(stream.status, "/chat/subscribe")
+        exists = (await session.open_side_chat(session_id)).exists
         if (exists and chat.get("applied_setup_sha256") == self.setup_sha256
                 and "pending_setup_sha256" not in chat):
             return session_id
