@@ -22,23 +22,13 @@ import time
 import uuid
 
 from musegadget import config, identity
+from musegadget.reachy.prompts import CHAT_SETUP_MESSAGE, CHAT_SETUP_PREFIX, CHAT_SETUP_SUFFIX, voice_context
+from musegadget.reachy.replies import ReplyStyle
 from musegadget.reachy_capabilities import Mode
 
 
 CHAT_STATE_FILE = "reachy-chat.json"
 COMPANION_FILE = "companion.json"
-CHAT_SETUP_PREFIX = (
-    "This is Reachy Mini's dedicated side chat for spoken conversations. "
-    "Apply these instructions to every later spoken request in this chat:\n\n"
-)
-CHAT_SETUP_SUFFIX = (
-    "\n\nWhen work takes time, provide brief, truthful public updates about actions or status "
-    "actually associated with the current request. Never expose private reasoning, raw tool "
-    "arguments, credentials, or private data. For this initialization response only, ignore "
-    "the later spoken-response format, perform no external actions, searches, or tool calls, "
-    "and reply only with the exact initialization challenge appended to this message."
-)
-CHAT_SETUP_MESSAGE = CHAT_SETUP_PREFIX + CHAT_SETUP_SUFFIX
 CHAT_SETUP_TIMEOUT_S = 60
 
 
@@ -465,8 +455,6 @@ async def run(args) -> int:
     robot = _hardware(args)
     dedicated_chat = None
     if not args.main_chat and not args.session_id:
-        from musegadget.reachy_capabilities import ReplyStyle
-        from musegadget.reachy_expression import voice_context
         context = voice_context(
             ReplyStyle.EXPRESSIVE_JSON if args.stream_replies else ReplyStyle.MARKER,
             motion_enabled=getattr(robot, "motion_enabled", True),

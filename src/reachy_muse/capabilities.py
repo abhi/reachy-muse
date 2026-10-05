@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, AsyncIterator, Optional, Protocol, Tuple
 
+from musegadget.reachy.expressions import Expression
+from musegadget.reachy.replies import ReplyStyle
+
 if TYPE_CHECKING:
     from typing import Literal
 
@@ -19,35 +22,6 @@ if TYPE_CHECKING:
 
 
 WAKE_CUE = "Yes?"
-
-
-class Expression(str, Enum):
-    NEUTRAL = "neutral"
-    HAPPY = "happy"
-    SAD = "sad"
-    SURPRISED = "surprised"
-    CURIOUS = "curious"
-    NOD = "nod"
-    SHAKE = "shake"
-    LISTENING = "listening"
-    THINKING = "thinking"
-
-    @classmethod
-    def parse(cls, name: object) -> Optional[Expression]:
-        """Unknown names mean no gesture; parsing never raises."""
-        try:
-            return cls(name)
-        except ValueError:
-            return None
-
-
-class ReplyStyle(Enum):
-    """The Muse prompt a request was sent with, which also picks its reply parser."""
-
-    MUSE_VOICE = "muse_voice"      # Muse speaks; a trailing [reachy:NAME] picks the expression
-    MARKER = "marker"              # local speech of a reply with a trailing [reachy:NAME]
-    EXPRESSIVE_JSON = "json"       # local speech of one JSON sentence frame per line
-    PLAIN_SHORT = "plain"          # one to three plain sentences, condensed and voiced by the companion
 
 
 class Mode(Enum):

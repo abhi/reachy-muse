@@ -8,7 +8,8 @@ import wave
 import pytest
 
 from musegadget import muse_turn, reachy_voice, voice_audio
-from musegadget.reachy_capabilities import Mode, ReplyStyle
+from musegadget.reachy.replies import ReplyStyle
+from musegadget.reachy_capabilities import Mode
 from musegadget.reachy_local_backends import LocalHearing, backends_for
 from musegadget.reachy_voice import TurnOutcome, VoiceConversation
 from musegadget.wake_word import WakeDetection

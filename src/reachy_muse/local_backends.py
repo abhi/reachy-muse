@@ -9,10 +9,9 @@ import re
 import time
 from typing import Awaitable, Callable, Optional, Tuple
 
-from musegadget.reachy_capabilities import (
-    WAKE_CUE, Backends, Endpoint, Expression, HeardAudio, Mode, Partial, ReplyStyle, SpokenLine,
-)
-from musegadget.reachy_expression import spoken_reply
+from musegadget.reachy.expressions import Expression
+from musegadget.reachy.replies import ReplyStyle, spoken_reply
+from musegadget.reachy_capabilities import WAKE_CUE, Backends, Endpoint, HeardAudio, Mode, Partial, SpokenLine
 from musegadget.reachy_progress import PUBLIC_PROGRESS_PHRASES, ProgressPlan
 
 log = logging.getLogger(__name__)

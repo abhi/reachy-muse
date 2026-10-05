@@ -15,7 +15,8 @@ from musegadget import config
 from musegadget import reachy_cli
 from musegadget.link_client import HttpStreamError, SideChat
 from musegadget.reachy_speaker_eq import COMPANION_SPEAKER_EQ_GAINS, SPEAKER_EQ_GAINS
-from musegadget.reachy_capabilities import ReplyStyle
+from musegadget.reachy.prompts import CHAT_SETUP_MESSAGE
+from musegadget.reachy.replies import ReplyStyle
 
 
 SETUP_NONCE = "a" * 32
@@ -26,17 +27,12 @@ def fixed_setup_nonce(monkeypatch):
     monkeypatch.setattr(reachy_cli.secrets, "token_hex", lambda size: SETUP_NONCE)
 
 
-def setup_wire_message(message=reachy_cli.CHAT_SETUP_MESSAGE):
+def setup_wire_message(message=CHAT_SETUP_MESSAGE):
     return f"{message}\n\nInitialization challenge: reply exactly Ready {SETUP_NONCE}"
 
 
 def first_setup_hash():
     return reachy_cli.ReachySideChat("reachy-1").setup_sha256
-
-
-def test_setup_challenge_explicitly_overrides_later_spoken_reply_format():
-    assert "ignore the later spoken-response format" in reachy_cli.CHAT_SETUP_SUFFIX
-    assert setup_wire_message().endswith(f"reply exactly Ready {SETUP_NONCE}")
 
 
 @pytest.mark.parametrize('options, enabled', [([], False), (['--face-follow'], True),

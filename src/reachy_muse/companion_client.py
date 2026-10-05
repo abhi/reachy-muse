@@ -25,9 +25,8 @@ from enum import Enum
 from typing import AsyncIterator, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
-from musegadget.reachy_capabilities import (
-    CapabilityUnavailable, Endpoint, HeardAudio, Partial, ReplyStyle, SpokenLine,
-)
+from musegadget.reachy.replies import ReplyStyle
+from musegadget.reachy_capabilities import CapabilityUnavailable, Endpoint, HeardAudio, Partial, SpokenLine
 from musegadget.reachy_companion_protocol import (
     MAX_ALREADY_SAID, MAX_LINE_BYTES, MAX_MIC_PCM_BYTES, MAX_OUTSTANDING_NARRATIONS, MAX_REPLY_BYTES,
     MAX_REQUEST_BYTES, MAX_STATUS_BYTES, MAX_TEXT_FRAME_BYTES, VERSION, AudioKind, CloseHow, Error,

@@ -21,7 +21,10 @@ from musegadget import __version__
 from musegadget import reachy_expression_plan as plan
 from musegadget.link_client import DeviceDescription, LinkSession, Outcome, acknowledgement
 from musegadget.muse_turn import AgentStatus, MuseTurn, ReplayScope, Reply, TaskFinished, TurnEvent
-from musegadget.reachy_capabilities import WAKE_CUE, Backends, EndedTurn, Endpoint, Expression, ReplyStyle, SpokenLine
+from musegadget.reachy.expressions import Expression
+from musegadget.reachy.prompts import SETUP_REQUEST, voice_context
+from musegadget.reachy.replies import ReplyProtocolError, ReplyRevisionError, ReplyStyle, SentenceStream
+from musegadget.reachy_capabilities import WAKE_CUE, Backends, EndedTurn, Endpoint, SpokenLine
 from musegadget.reachy_follow_up import FollowUp, classify_follow_up, is_small_talk, request_topic
 from musegadget.reachy_progress import BackendStatus, ProgressPlan, ProgressUpdate, backend_status_from_event
 from musegadget.service import DEFAULT_NOISE_HOST, Service
@@ -262,7 +265,6 @@ class ReplyReader:
         if stream is None:
             stream = self.streams[reply.message_id] = _ReplyStream(reply)
             if self.style is ReplyStyle.EXPRESSIVE_JSON:
-                from musegadget.reachy_expression import SentenceStream
                 stream.decoder = SentenceStream()
         stream.reply = reply
         if self.style is ReplyStyle.EXPRESSIVE_JSON:
@@ -273,8 +275,6 @@ class ReplyReader:
         return []
 
     def _stream_segments(self) -> list[SpeechSegment | ProgressSegment]:
-        from musegadget.reachy_expression import ReplyProtocolError, ReplyRevisionError, SentenceStream
-
         queued = []
         for message_id, stream in self.streams.items():
             if stream.closed:
@@ -1190,7 +1190,7 @@ class VoiceConversation:
                 and not self._playback.user_speaking):
             job.aside = asyncio.create_task(self._acknowledge(job))
         if wav is None:
-            ack = await self.session.send_chat(self._voice_context(style) + _SETUP_REQUEST[style],
+            ack = await self.session.send_chat(self._voice_context(style) + SETUP_REQUEST[style],
                                                self.session_id)
         elif text is not None:
             ack = await self.session.send_chat(self._ensure_muse_style(style, text),
@@ -1501,7 +1501,6 @@ class VoiceConversation:
         return self._voice_context(style) + "\n\nThe user's spoken request is: " + text
 
     def _voice_context(self, style: ReplyStyle | None = None) -> str:
-        from musegadget.reachy_expression import voice_context
         return voice_context(
             style or self.backends.local_style,
             motion_enabled=getattr(self.hardware, "motion_enabled", True),
@@ -1686,15 +1685,6 @@ class VoiceConversation:
             log.info("Muse expressed %s through Reachy", expression)
         else:
             log.warning("Reachy rejected Muse expression %s: %s", expression, result.get("error"))
-
-
-_SETUP_REQUEST = {
-    ReplyStyle.EXPRESSIVE_JSON: (" For setup, return one sentence frame with text 'Ready to talk' and expression "
-                                 "'nod'. Keep using this sentence protocol for subsequent spoken messages."),
-    ReplyStyle.MARKER: (" For setup, say 'Ready to talk' and append [reachy:nod]. "
-                        "Keep using this expression channel for subsequent spoken messages."),
-    ReplyStyle.PLAIN_SHORT: " For setup, say 'Ready to talk'. Keep this plain style for subsequent spoken messages.",
-}
 
 
 def _backends_required():

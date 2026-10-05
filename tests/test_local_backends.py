@@ -2,7 +2,9 @@ import asyncio
 
 import pytest
 
-from musegadget.reachy_capabilities import Expression, HeardAudio, Mode, Partial, ReplyStyle, SpokenLine
+from musegadget.reachy.expressions import Expression
+from musegadget.reachy.replies import ReplyStyle
+from musegadget.reachy_capabilities import HeardAudio, Mode, Partial, SpokenLine
 from musegadget.reachy_local_backends import LocalHearing, LocalVoice, MuseVoice, RuleNarrator, backends_for
 from musegadget.streaming_transcription import StreamingTranscriptionError
 from test_reachy_voice import FakeSession, mp3_tone  # noqa: F401

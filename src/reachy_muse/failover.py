@@ -11,9 +11,8 @@ import time
 from collections import deque
 from typing import Optional, Tuple
 
-from musegadget.reachy_capabilities import (
-    Backends, CapabilityUnavailable, HeardAudio, ReplyStyle, SpokenLine, grounded,
-)
+from musegadget.reachy.replies import ReplyStyle
+from musegadget.reachy_capabilities import Backends, CapabilityUnavailable, HeardAudio, SpokenLine, grounded
 from musegadget.reachy_companion_protocol import MAX_REPLY_BYTES
 from musegadget.reachy_progress import ProgressPlan
 

@@ -14,7 +14,8 @@ import wave
 import pytest
 
 from musegadget import muse_turn, reachy_local_backends, reachy_voice
-from musegadget.reachy_capabilities import Mode, ReplyStyle
+from musegadget.reachy.replies import ReplyStyle
+from musegadget.reachy_capabilities import Mode
 from musegadget.reachy_local_backends import backends_for
 from musegadget.muse_turn import MuseTurn, ReplayScope, TaskFinished
 from musegadget.reachy_progress import BackendActivity, BackendStatus

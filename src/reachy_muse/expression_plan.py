@@ -8,7 +8,8 @@ from enum import Enum
 import math
 from typing import Callable, Dict, Optional, Tuple, Union
 
-from musegadget.reachy_capabilities import Expression, Partial
+from musegadget.reachy.expressions import Expression
+from musegadget.reachy_capabilities import Partial
 from musegadget.reachy_hardware import GESTURE_DURATION_S
 
 

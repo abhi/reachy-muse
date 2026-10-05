@@ -1,6 +1,7 @@
 import pytest
 
-from musegadget.reachy_capabilities import Expression, Partial
+from musegadget.reachy.expressions import Expression
+from musegadget.reachy_capabilities import Partial
 from musegadget.reachy_expression_plan import (
     AnswerArrived, CaptureGap, ExpressionPlanner, Gesture, Heard, MuseStatus, OutputIdle, Recording, RequestHeld,
     SetState, Started, State, TurnDone, TurnStarted, UserSpeech, WakeClosed, WakeHeard, Working,
