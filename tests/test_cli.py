@@ -973,7 +973,7 @@ def test_companion_add_saves_url_pin_and_token_for_the_owner_only_and_remove_for
     pin = 'sha256:' + '4f' * 32
     assert reachy_cli.main(['--state-dir', str(tmp_path), 'companion', 'add', 'wss://studio.local:8765',
                             '--pin', pin, '--token', 'rc1_secret']) == 0
-    saved = tmp_path / config.COMPANION_FILE
+    saved = tmp_path / reachy_cli.COMPANION_FILE
     assert json.loads(saved.read_text()) == {'url': 'wss://studio.local:8765', 'pin': pin, 'token': 'rc1_secret'}
     assert stat.S_IMODE(saved.stat().st_mode) == 0o600
     assert capsys.readouterr().out == 'Reachy saved its companion at wss://studio.local:8765.\n'
@@ -989,7 +989,7 @@ def test_companion_add_reads_the_token_from_stdin_when_it_is_not_an_argument(tmp
     monkeypatch.setattr(sys, 'stdin', io.StringIO('rc1_secret\n'))
     assert reachy_cli.main(['--state-dir', str(tmp_path), 'companion', 'add', 'wss://studio.local:8765',
                             '--pin', pin]) == 0
-    saved = json.loads((tmp_path / config.COMPANION_FILE).read_text())
+    saved = json.loads((tmp_path / reachy_cli.COMPANION_FILE).read_text())
     assert saved == {'url': 'wss://studio.local:8765', 'pin': pin, 'token': 'rc1_secret'}
     assert capsys.readouterr().out == 'Reachy saved its companion at wss://studio.local:8765.\n'
 
@@ -1004,7 +1004,7 @@ def test_companion_add_refuses_what_the_link_could_not_use(tmp_path, capsys, url
     assert reachy_cli.main(['--state-dir', str(tmp_path), 'companion', 'add', url, '--pin', pin,
                             '--token', token]) == 1
     assert error in capsys.readouterr().err
-    assert not (tmp_path / config.COMPANION_FILE).exists()
+    assert not (tmp_path / reachy_cli.COMPANION_FILE).exists()
 
 
 @pytest.mark.parametrize('argv, style, voice', [
@@ -1051,7 +1051,7 @@ def test_each_mode_starts_the_conversation_with_its_reply_style_and_voice(tmp_pa
     companion = {'url': 'wss://127.0.0.1:9', 'pin': 'sha256:' + '4f' * 32, 'token': 'rc1_secret'}
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
     monkeypatch.setattr(config, 'load_json',
-                        lambda name, *args: companion if name == config.COMPANION_FILE else {'paired': True})
+                        lambda name, *args: companion if name == reachy_cli.COMPANION_FILE else {'paired': True})
     monkeypatch.setattr(reachy_cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
     monkeypatch.setattr(reachy_cli, '_hardware', lambda *args: Hardware())
     monkeypatch.setattr('musegadget.local_speech.PiperSpeech', lambda model: Model())

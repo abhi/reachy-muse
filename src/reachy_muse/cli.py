@@ -26,6 +26,7 @@ from musegadget.reachy_capabilities import Mode
 
 
 CHAT_STATE_FILE = "reachy-chat.json"
+COMPANION_FILE = "companion.json"
 CHAT_SETUP_PREFIX = (
     "This is Reachy Mini's dedicated side chat for spoken conversations. "
     "Apply these instructions to every later spoken request in this chat:\n\n"
@@ -388,11 +389,11 @@ def companion_command(args) -> int:
             raise ValueError("the companion token must be 1 to 128 bytes with no spaces")
         parse_pin(args.pin)
         url = parse_url(args.url)
-        config.save_json(config.COMPANION_FILE, {"url": url, "pin": args.pin, "token": token})
+        config.save_json(COMPANION_FILE, {"url": url, "pin": args.pin, "token": token})
         print(f"Reachy saved its companion at {url}.")
         return 0
     if args.companion_command == "remove":
-        config.delete_json(config.COMPANION_FILE)
+        config.delete_json(COMPANION_FILE)
         print("Reachy forgot its companion.")
         return 0
     saved = saved_companion()
@@ -409,7 +410,7 @@ def companion_command(args) -> int:
 
 
 def saved_companion() -> dict | None:
-    saved = config.load_json(config.COMPANION_FILE)
+    saved = config.load_json(COMPANION_FILE)
     if saved is None or not all(isinstance(saved.get(key), str) for key in ("url", "pin", "token")):
         return None
     return saved
