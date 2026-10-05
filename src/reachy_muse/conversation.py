@@ -19,7 +19,7 @@ from typing import Awaitable, Callable
 
 from musegadget import __version__
 from musegadget import reachy_expression_plan as plan
-from musegadget.link_client import DeviceDescription, LinkSession, Outcome
+from musegadget.link_client import DeviceDescription, LinkSession, Outcome, acknowledgement
 from musegadget.muse_turn import AgentStatus, MuseTurn, ReplayScope, Reply, TaskFinished, TurnEvent
 from musegadget.reachy_capabilities import WAKE_CUE, Backends, EndedTurn, Endpoint, Expression, ReplyStyle, SpokenLine
 from musegadget.reachy_follow_up import FollowUp, classify_follow_up, is_small_talk, request_topic
@@ -1197,7 +1197,7 @@ class VoiceConversation:
                                                self.session_id, **options)
         else:
             ack = await self.session.send_voice(wav, self.session_id, **options)
-        response = _accepted(ack)
+        response = acknowledgement(ack)
         if text is not None or wav is None:
             self._muse_style = style
         if wav is not None and self.backends.progress_voice is not None:
@@ -1441,14 +1441,14 @@ class VoiceConversation:
         if job.answered:
             log.info("Reachy skipped the rest of an answer the user cancelled")
             return
-        response = _accepted(await self.session.send_chat(STOP_REQUEST, self.session_id))
+        response = acknowledgement(await self.session.send_chat(STOP_REQUEST, self.session_id))
         self._stop_sent_at = time.monotonic()
         self._replay_scope.retire_request(response)
         log.info("Reachy dropped a Muse request and asked Muse to stop working on it")
 
     async def _add_detail(self, job: MuseJob, text: str) -> None:
         job.turn.expect_follow_up()
-        response = _accepted(await self.session.send_chat(text, self.session_id))
+        response = acknowledgement(await self.session.send_chat(text, self.session_id))
         await self._queue_replies(job.reader.read(job.turn.acknowledge(response, follow_up=True)), job)
         log.info("Reachy sent Muse more detail for the running request")
 
@@ -1686,15 +1686,6 @@ class VoiceConversation:
             log.info("Muse expressed %s through Reachy", expression)
         else:
             log.warning("Reachy rejected Muse expression %s: %s", expression, result.get("error"))
-
-
-def _accepted(ack: dict) -> dict:
-    if not ack.get("ok"):
-        raise ConnectionError(f"Muse rejected conversation request: HTTP {ack.get('status')}")
-    response = ack.get("response")
-    if not isinstance(response, dict):
-        raise ValueError("Muse did not acknowledge the voice note")
-    return response
 
 
 _SETUP_REQUEST = {
