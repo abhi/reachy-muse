@@ -7,7 +7,7 @@ import asyncio
 
 import pytest
 
-from musegadget import reachy_voice
+from musegadget import muse_turn, reachy_voice
 from musegadget.reachy_capabilities import Mode
 from musegadget.reachy_local_backends import backends_for
 from musegadget.reachy_voice import TurnOutcome, VoiceConversation
@@ -25,7 +25,7 @@ class Session:
     async def send_chat(self, text, session_id, **options):
         self.sent.append((text, session_id, options))
         for status in ("running", "completed"):
-            self.conversation.job.tracker.event({
+            self.conversation.job.turn.feed({
                 "type": "event",
                 "event": "task.status",
                 "payload": {
@@ -78,14 +78,14 @@ async def owned_turn(text):
 
 
 def test_owned_chat_sends_only_the_recognized_user_transcript(monkeypatch):
-    monkeypatch.setattr(reachy_voice, "EMPTY_REPLY_GRACE_S", 0)
+    monkeypatch.setattr(muse_turn, "EMPTY_REPLY_GRACE_S", 0)
     outcome, sent = asyncio.run(owned_turn("What should I cook for lunch?"))
     assert outcome is TurnOutcome.ACCEPTED
     assert sent == [("What should I cook for lunch?", "owned-chat", {})]
 
 
 def test_new_owned_conversation_cannot_reinject_context_after_reconnect(monkeypatch):
-    monkeypatch.setattr(reachy_voice, "EMPTY_REPLY_GRACE_S", 0)
+    monkeypatch.setattr(muse_turn, "EMPTY_REPLY_GRACE_S", 0)
 
     async def check():
         first = await owned_turn("First request")

@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from musegadget import reachy_voice
+from musegadget import muse_turn, reachy_voice
 from musegadget.reachy_capabilities import Mode
 from musegadget.reachy_local_backends import backends_for
 from musegadget.reachy_voice import VoiceConversation, _SpeechJob
@@ -46,7 +46,7 @@ async def _deliver_reply(session, number, text, expression):
 
 
 def test_paused_old_answer_does_not_block_next_request_and_jobs_keep_turn_scope(monkeypatch):
-    monkeypatch.setattr(reachy_voice, "REPLY_QUIET_S", 0)
+    monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
     monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
 
     async def scenario():
@@ -128,7 +128,7 @@ def test_cancelling_global_speaker_closes_current_stream_and_drops_queued_tail()
 
 
 def test_final_revision_while_output_is_held_drops_every_draft_job(monkeypatch):
-    monkeypatch.setattr(reachy_voice, "REPLY_QUIET_S", 0)
+    monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
 
     async def scenario():
         hardware = FakeHardware()

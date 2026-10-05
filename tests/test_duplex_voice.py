@@ -7,7 +7,7 @@ import wave
 
 import pytest
 
-from musegadget import reachy_voice, voice_audio
+from musegadget import muse_turn, reachy_voice, voice_audio
 from musegadget.reachy_capabilities import Mode, ReplyStyle
 from musegadget.reachy_local_backends import LocalHearing, backends_for
 from musegadget.reachy_voice import TurnOutcome, VoiceConversation
@@ -20,7 +20,7 @@ def duplex(monkeypatch):
     np = pytest.importorskip("numpy")
     pytest.importorskip("av")
     monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
-    monkeypatch.setattr(reachy_voice, "REPLY_QUIET_S", .01)
+    monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", .01)
 
     class Vad:
         def is_speech(self, pcm, rate):

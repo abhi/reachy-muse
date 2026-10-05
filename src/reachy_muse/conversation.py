@@ -20,8 +20,8 @@ from typing import Awaitable, Callable
 from musegadget import __version__
 from musegadget import reachy_expression_plan as plan
 from musegadget.link_client import DeviceDescription, LinkSession, Outcome
+from musegadget.muse_turn import AgentStatus, MuseTurn, ReplayScope, Reply, TaskFinished, TurnEvent
 from musegadget.reachy_capabilities import WAKE_CUE, Backends, EndedTurn, Endpoint, Expression, ReplyStyle, SpokenLine
-from musegadget.reachy_expression import transcript_text
 from musegadget.reachy_follow_up import FollowUp, classify_follow_up, is_small_talk, request_topic
 from musegadget.reachy_progress import BackendStatus, ProgressPlan, ProgressUpdate, backend_status_from_event
 from musegadget.service import DEFAULT_NOISE_HOST, Service
@@ -30,10 +30,6 @@ from musegadget.speech_playback import PCMPlayer, SpeechPlayback
 log = logging.getLogger(__name__)
 REPLY_TIMEOUT_S = 180.0
 SPEECH_TIMEOUT_S = 180.0
-REPLY_QUIET_S = 3.0
-# Muse may fold added detail into its answer to the original without a separate reply.
-DETAIL_REPLY_QUIET_S = 30.0
-EMPTY_REPLY_GRACE_S = 1.0
 # An acknowledgement starts only if Muse has sent no reply text this long after dispatch.
 ACK_GRACE_S = 1.0
 ECHO_TAIL_S = 0.35
@@ -65,9 +61,6 @@ def question_after_wake(text: str, phrase: str) -> str | None:
     prefix = r"[\s,!.?:;-]*".join(re.escape(token) for token in phrase.split())
     match = re.search(r"\b" + prefix + r"\b[\s,!.?:;-]*", text, flags=re.IGNORECASE)
     return text[match.end():].strip() if match is not None else None
-_ACTIVITY_CODES = frozenset(("working", "responding", "idle", "online", "thinking", "researching",
-                             "planning", "listening", "speaking", "processing", "generating", "executing"))
-_TERMINAL_TASK_STATUSES = frozenset(("completed", "failed", "errored", "cancelled", "canceled"))
 
 
 @dataclass(frozen=True)
@@ -87,11 +80,6 @@ class ProgressSegment:
 @dataclass(frozen=True)
 class BackendStatusSegment:
     status: BackendStatus
-
-
-@dataclass(frozen=True)
-class TaskFinished:
-    """Muse reported the turn's task terminal; the waiting turn rechecks completion now."""
 
 
 class TurnOutcome(Enum):
@@ -223,336 +211,113 @@ class _CaptureBuffer:
         return result
 
 
-class ReplayScope:
-    """Remember a bounded set of retired IDs across this connection's turns."""
-
-    def __init__(self, limit: int = 2048):
-        self.limit = limit
-        self.ids: set[tuple[str, str]] = set()
-        self.order: deque[tuple[str, str]] = deque()
-
-    @staticmethod
-    def event_ids(event: dict, *, include_parents: bool = True) -> set[tuple[str, str]]:
-        payload = event.get("payload")
-        if not isinstance(payload, dict):
-            return set()
-        result = set()
-        keys = ("message_id", "id", "task_id")
-        if include_parents:
-            keys += ("reply_to_message_id", "parent_message_id")
-        for key in keys:
-            value = payload.get(key)
-            if isinstance(value, str) and value:
-                if len(value) > 512:
-                    raise ValueError("Muse returned an oversized chat identifier")
-                result.add(("task" if key == "task_id" else "message", value))
-        value = event.get("message_id")
-        if isinstance(value, str) and value:
-            if len(value) > 512:
-                raise ValueError("Muse returned an oversized chat identifier")
-            result.add(("message", value))
-        return result
-
-    def retire(self, ids) -> None:
-        for identifier in ids:
-            if identifier not in self.ids:
-                self.ids.add(identifier)
-                self.order.append(identifier)
-        while len(self.order) > self.limit:
-            self.ids.discard(self.order.popleft())
-
-    def observe_idle(self, event: dict, session_id: str | None) -> None:
-        payload = event.get("payload")
-        if (event.get("type") == "event" and isinstance(payload, dict) and session_id
-                and (payload.get("session_id") or event.get("session_id")) == session_id
-                and event.get("event") in ("agent.status", "task.status", "delta.message_start",
-                                           "delta.text_append", "delta.message_done", "message.assistant")):
-            self.retire(self.event_ids(event))
-
-
-def acknowledged_message_ids(response: dict) -> set[str]:
-    result = response.get("result", response)
-    if not isinstance(result, dict):
-        raise ValueError("Muse returned an invalid chat acknowledgement")
-    user_ids = {result[k] for k in ("message_id", "reply_to_message_id")
-                if isinstance(result.get(k), str) and result[k]}
-    if not user_ids:
-        raise ValueError("Muse chat acknowledgement omitted the user message ID")
-    return user_ids
-
-
 @dataclass
-class ReplyTracker:
-    """Bind assistant messages to one acknowledged microphone turn."""
+class _ReplyStream:
+    """Reachy's reading of one Muse reply: its latest text and, for expressive JSON, the sentences decoded so far."""
 
-    session_id: str | None = None
-    user_ids: set[str] = field(default_factory=set)
-    messages: dict[str, dict] = field(default_factory=dict)
-    acknowledged: bool = False
-    busy: bool = False
-    task_finished: bool = False
-    last_activity: float = field(default_factory=time.monotonic)
-    pending: list[dict] = field(default_factory=list)
-    style: ReplyStyle = ReplyStyle.MARKER
-    activity_code: str | None = None
-    pending_text_bytes: int = 0
-    owns_chat: bool = False
-    replay_scope: ReplayScope | None = None
-    observed_ids: set[tuple[str, str]] = field(default_factory=set)
-    running_task_ids: set[str] = field(default_factory=set)
-    unanswered_follow_up_ids: set[str] = field(default_factory=set)
-    follow_up_task_ids: set[str] = field(default_factory=set)
-    parentless_until: float = 0.0
-    ignored_messages: set[str] = field(default_factory=set)
+    reply: Reply
+    decoder: object = None
+    fed: int = 0
+    closed: bool = False
+    index: int = 0
+    spoken: int = 0
+    revised: bool = False
+    skip_before: int = 0
+    queued: bool = False
 
-    def retire(self) -> None:
-        if self.owns_chat and self.replay_scope is not None:
-            self.replay_scope.retire(self.observed_ids)
-            self.replay_scope.retire(("message", value) for value in self.user_ids)
-            for event in self.pending:
-                self.replay_scope.retire(ReplayScope.event_ids(event))
 
-    def expect_follow_up(self) -> None:
-        """Hold events until Muse acknowledges one more user message for this request."""
-        self.acknowledged = False
+class ReplyReader:
+    """Read one Muse turn's events in Reachy's reply style.
 
-    def acknowledge(self, response: dict, *, follow_up: bool = False) -> list[
+    Status becomes a ``BackendStatusSegment``. A marker or plain reply becomes its
+    message ID once it is done; an expressive JSON reply becomes its sentence and
+    progress frames as they stream, one message at a time.
+    """
+
+    def __init__(self, turn: MuseTurn, style: ReplyStyle):
+        self.turn = turn
+        self.style = style
+        self.streams: dict[str, _ReplyStream] = {}
+
+    def read(self, events: list[TurnEvent]) -> list[
             str | SpeechSegment | ProgressSegment | BackendStatusSegment | TaskFinished]:
-        """Bind replies to the acknowledged user message; a follow-up adds its message to the earlier ones."""
-        user_ids = acknowledged_message_ids(response)
-        if self.owns_chat and any(len(value) > 512 for value in user_ids):
-            raise ValueError("Muse returned an oversized chat identifier")
-        result = response.get("result", response)
-        if follow_up:
-            self.user_ids = self.user_ids | user_ids
-            self.unanswered_follow_up_ids |= user_ids
-            self.task_finished = False
-            self.last_activity = time.monotonic()
-        else:
-            self.user_ids = user_ids
-        acknowledged_session = result.get("session_id")
-        if self.owns_chat and (not self.session_id or acknowledged_session != self.session_id
-                               or result.get("is_thread") is not True):
-            raise ValueError("Muse did not acknowledge Reachy's dedicated side chat")
-        if self.session_id is None and isinstance(acknowledged_session, str):
-            self.session_id = acknowledged_session
-        self.acknowledged = True
         queued = []
-        pending, self.pending = self.pending, []
-        self.pending_text_bytes = 0
-        for event in pending:
-            queued.extend(self.event(event))
-        return queued
-
-    def event(self, event: dict) -> list[
-            str | SpeechSegment | ProgressSegment | BackendStatusSegment | TaskFinished]:
-        if event.get("type") != "event":
-            return []
-        payload = event.get("payload")
-        if not isinstance(payload, dict):
-            return []
-        event_session = payload.get("session_id") or event.get("session_id")
-        if self.owns_chat:
-            if not self.session_id or event_session != self.session_id:
-                return []
-            identifiers = ReplayScope.event_ids(event)
-            if self.replay_scope is not None:
-                own_ids = ReplayScope.event_ids(event, include_parents=False)
-                if own_ids & self.replay_scope.ids:
-                    return []
-                parents = identifiers - own_ids
-                authorized_parents = {("message", value) for value in self.user_ids}
-                if self.acknowledged and (parents - authorized_parents) & self.replay_scope.ids:
-                    return []
-            self.observed_ids.update(identifiers)
-            if len(self.observed_ids) > 256:
-                raise ValueError("Muse returned too many activity identifiers for one turn")
-        if event_session and self.session_id and event_session != self.session_id:
-            return []
-        if not self.acknowledged:
-            if len(self.pending) >= 64:
-                raise ValueError("too many chat events before Muse acknowledged the turn")
-            self.pending_text_bytes += sum(len(payload[key].encode("utf-8")) for key in
-                                           ("text", "display_text", "content", "transcript")
-                                           if isinstance(payload.get(key), str))
-            if self.pending_text_bytes > 64 * 1024:
-                raise ValueError("Muse returned more than 64 KiB of pending reply text")
-            self.pending.append(event)
-            return []
-        scoped = bool(self.owns_chat and self.session_id and event_session == self.session_id)
-        name = event.get("event")
-        if name in ("agent.status", "task.status"):
-            activity = payload.get("activity_code")
-            status = payload.get("status")
-            parent = payload.get("reply_to_message_id") or payload.get("parent_message_id")
-            message_id = payload.get("message_id")
-            explicitly_linked = (parent in self.user_ids
-                                 or self.messages.get(message_id, {}).get("progress_linked", False))
-            terminal = isinstance(status, str) and status in _TERMINAL_TASK_STATUSES
-            was_finished = self.task_finished
-            task_id = payload.get("task_id")
-            if not isinstance(task_id, str):
-                task_id = None
-            if self.owns_chat and name == "task.status":
-                if terminal and task_id not in self.running_task_ids and not explicitly_linked:
-                    return []
-                if status == "running" and isinstance(task_id, str) and task_id:
-                    if self.unanswered_follow_up_ids and task_id not in self.running_task_ids:
-                        self.follow_up_task_ids.add(task_id)
-                    self.running_task_ids.add(task_id)
-                if terminal:
-                    self.running_task_ids.discard(task_id)
-            if terminal and (parent in self.unanswered_follow_up_ids or task_id in self.follow_up_task_ids):
-                self.unanswered_follow_up_ids.discard(parent)
-                if task_id in self.follow_up_task_ids:
-                    self.unanswered_follow_up_ids.clear()
-            if name == "task.status" and isinstance(status, str):
-                self.task_finished = terminal and not (self.owns_chat and self.running_task_ids)
-            if isinstance(activity, str):
-                self.busy = activity not in ("", "online", "idle") and activity not in _TERMINAL_TASK_STATUSES
-                if name == "agent.status":
-                    self.activity_code = activity if activity in _ACTIVITY_CODES else "other"
-            elif isinstance(status, str):
-                self.busy = status not in ("", "idle") and not terminal
-            if self.owns_chat and self.running_task_ids:
-                self.task_finished = False
-                self.busy = True
-            elif name == "task.status" and self.task_finished:
-                self.busy = False
-            self.last_activity = time.monotonic()
-            linked = scoped or explicitly_linked
-            if name == "agent.status" and linked and not self.task_finished:
-                return [BackendStatusSegment(backend_status_from_event(activity, payload.get("activity_text")))]
-            return [TaskFinished()] if self.task_finished and not was_finished else []
-        if name not in ("delta.message_start", "delta.text_append",
-                        "delta.message_done", "message.assistant"):
-            return []
-        message_id = payload.get("message_id") or event.get("message_id") or payload.get("id")
-        if not isinstance(message_id, str) or not message_id or payload.get("role") == "user":
-            return []
-        parent = payload.get("reply_to_message_id") or payload.get("parent_message_id")
-        if (parent and parent not in self.user_ids and parent not in self.messages
-                and not (scoped and parent == message_id)):
-            return []
-        if message_id not in self.messages and (
-                message_id in self.ignored_messages or (not parent and time.monotonic() < self.parentless_until)):
-            if len(self.ignored_messages) < 32:
-                self.ignored_messages.add(message_id)
-            return []
-        if message_id not in self.messages:
-            if len(self.messages) >= 32:
-                raise ValueError("Muse returned too many messages for one voice turn")
-            self.messages[message_id] = {"text": "", "done": False, "queued": False,
-                                         "progress_linked": False}
-            if self.style is ReplyStyle.EXPRESSIVE_JSON:
-                from musegadget.reachy_expression import SentenceStream
-                self.messages[message_id].update(stream=SentenceStream(), delta_text="", stream_fed=0,
-                                                 stream_closed=False, stream_index=0, stream_spoken=0,
-                                                 stream_revised=False, stream_skip_before=0, linked=not parent)
-        message = self.messages[message_id]
-        if scoped:
-            message["progress_linked"] = True
-        if parent:
-            message["progress_linked"] = (scoped or parent in self.user_ids
-                                          or self.messages.get(parent, {}).get("progress_linked", False))
-        if self.style is ReplyStyle.EXPRESSIVE_JSON and parent:
-            message["linked"] = (scoped or parent in self.user_ids
-                                 or self.messages.get(parent, {}).get("linked", False))
-        self.last_activity = time.monotonic()
-        if name == "delta.text_append" and payload.get("text") and not message["done"]:
-            if isinstance(payload["text"], str):
-                message["text"] += payload["text"]
-                if self.style is ReplyStyle.EXPRESSIVE_JSON:
-                    message["delta_text"] += payload["text"]
-        if name in ("delta.message_done", "message.assistant"):
-            completed_text = payload.get("display_text")
-            if not isinstance(completed_text, str):
-                transcript = payload.get("transcript")
-                completed_text = transcript if isinstance(transcript, str) else transcript_text(transcript, message_id)
-                if not completed_text and not isinstance(transcript, str):
-                    completed_text = payload.get("content")
-            if isinstance(completed_text, str):
-                message["text"] = completed_text
-            if name == "delta.message_done" or payload.get("display_text_ready") is not False:
-                message["done"] = True
-                self.unanswered_follow_up_ids.discard(parent)
-        if len(message["text"].encode("utf-8")) > 64 * 1024 or (
-            self.style is ReplyStyle.EXPRESSIVE_JSON and len(message["delta_text"].encode("utf-8")) > 64 * 1024
-        ):
-            raise ValueError("Muse returned more than 64 KiB of reply text")
-        if self.style is ReplyStyle.EXPRESSIVE_JSON:
-            return self._stream_segments()
-        if message["done"] and message["text"].strip() and not message["queued"]:
-            message["queued"] = True
-            return [message_id]
-        return []
-
-    def _stream_segments(self) -> list[SpeechSegment | ProgressSegment]:
-        from musegadget.reachy_expression import ReplyProtocolError, ReplyRevisionError
-
-        queued = []
-        for message_id, message in self.messages.items():
-            if message["stream_closed"]:
-                continue
-            if not message["done"] and not message["linked"]:
-                continue
-            decoder = message["stream"]
-            try:
-                if message["done"]:
-                    try:
-                        sentences = decoder.finish(message["text"])
-                    except ReplyRevisionError:
-                        if message["stream_spoken"]:
-                            log.warning("Muse revised a spoken reply; remaining speech for that message skipped")
-                            message["stream_revised"] = True
-                            sentences = []
-                        else:
-                            from musegadget.reachy_expression import SentenceStream
-                            message["stream_skip_before"] = message["stream_index"]
-                            message["stream"] = SentenceStream()
-                            sentences = message["stream"].finish(message["text"])
-                    message["stream_closed"] = True
-                else:
-                    sentences = decoder.feed(message["delta_text"][message["stream_fed"]:])
-                    message["stream_fed"] = len(message["delta_text"])
-            except ReplyProtocolError:
-                log.warning("Muse returned an invalid sentence frame; speech for that message stopped")
-                message.update(stream_closed=True, stream_revised=True, done=True,
-                               queued=bool(message["stream_spoken"]))
-                sentences = []
-            for sentence in sentences:
-                if sentence.kind == "progress":
-                    if message["progress_linked"] and not message["done"]:
-                        queued.append(ProgressSegment(sentence.text))
-                    continue
-                index = message["stream_index"]
-                message["stream_index"] += 1
-                if sentence.text.strip() or sentence.expression:
-                    queued.append(SpeechSegment(message_id, index, sentence.text, sentence.expression))
-                    message["queued"] = True
-            if len(queued) > 32:
-                raise ValueError("Muse returned too many queued speech segments")
-            if not message["done"]:
-                break
+        for event in events:
+            if isinstance(event, AgentStatus):
+                queued.append(BackendStatusSegment(
+                    backend_status_from_event(event.activity_code, event.activity_text)))
+            elif isinstance(event, TaskFinished):
+                queued.append(event)
+            else:
+                queued.extend(self._reply(event))
         return queued
 
     def has_reply_text(self) -> bool:
         """Muse has started its answer: words of a reply, not a progress frame."""
-        return any(message["queued"] or (self.style is not ReplyStyle.EXPRESSIVE_JSON and message["text"].strip())
-                   for message in self.messages.values())
+        return any(stream.queued or (self.style is not ReplyStyle.EXPRESSIVE_JSON and stream.reply.text.strip())
+                   for stream in self.streams.values())
 
-    def complete(self, now: float, played: bool) -> bool:
-        return (played and not self.busy
-                and (not self.unanswered_follow_up_ids or now - self.last_activity >= DETAIL_REPLY_QUIET_S)
-                and all(m["done"] for m in self.messages.values())
-                and (self.task_finished or now - self.last_activity >= REPLY_QUIET_S))
+    def _reply(self, reply: Reply) -> list[str | SpeechSegment | ProgressSegment]:
+        stream = self.streams.get(reply.message_id)
+        if stream is None:
+            stream = self.streams[reply.message_id] = _ReplyStream(reply)
+            if self.style is ReplyStyle.EXPRESSIVE_JSON:
+                from musegadget.reachy_expression import SentenceStream
+                stream.decoder = SentenceStream()
+        stream.reply = reply
+        if self.style is ReplyStyle.EXPRESSIVE_JSON:
+            return self._stream_segments()
+        if reply.done and reply.text.strip() and not stream.queued:
+            stream.queued = True
+            return [reply.message_id]
+        return []
 
-    def finished_without_text(self, now: float) -> bool:
-        return (self.task_finished and not self.busy and not self.unanswered_follow_up_ids
-                and all(m["done"] for m in self.messages.values())
-                and not any(m["queued"] for m in self.messages.values())
-                and now - self.last_activity >= (EMPTY_REPLY_GRACE_S if self.messages else REPLY_QUIET_S))
+    def _stream_segments(self) -> list[SpeechSegment | ProgressSegment]:
+        from musegadget.reachy_expression import ReplyProtocolError, ReplyRevisionError, SentenceStream
 
+        queued = []
+        for message_id, stream in self.streams.items():
+            if stream.closed:
+                continue
+            try:
+                if stream.reply.done:
+                    try:
+                        sentences = stream.decoder.finish(stream.reply.text)
+                    except ReplyRevisionError:
+                        if stream.spoken:
+                            log.warning("Muse revised a spoken reply; remaining speech for that message skipped")
+                            stream.revised = True
+                            sentences = []
+                        else:
+                            stream.skip_before = stream.index
+                            stream.decoder = SentenceStream()
+                            sentences = stream.decoder.finish(stream.reply.text)
+                    stream.closed = True
+                else:
+                    sentences = stream.decoder.feed(stream.reply.streamed[stream.fed:])
+                    stream.fed = len(stream.reply.streamed)
+            except ReplyProtocolError:
+                log.warning("Muse returned an invalid sentence frame; speech for that message stopped")
+                self.turn.abandon_reply(message_id)
+                stream.reply = self.turn.replies[message_id]
+                stream.closed = stream.revised = True
+                stream.queued = bool(stream.spoken)
+                sentences = []
+            for sentence in sentences:
+                if sentence.kind == "progress":
+                    if stream.reply.bound and not stream.reply.done:
+                        queued.append(ProgressSegment(sentence.text))
+                    continue
+                index = stream.index
+                stream.index += 1
+                if sentence.text.strip() or sentence.expression:
+                    queued.append(SpeechSegment(message_id, index, sentence.text, sentence.expression))
+                    stream.queued = True
+            if len(queued) > 32:
+                raise ValueError("Muse returned too many queued speech segments")
+            if not stream.reply.done:
+                break
+        return queued
 
 @dataclass(eq=False)
 class MuseJob:
@@ -560,7 +325,7 @@ class MuseJob:
 
     request: str | None            # the words Muse was sent; "" for audio only, None for Reachy's setup message
     style: ReplyStyle              # the reply style it was sent with, which picks its parser
-    tracker: ReplyTracker
+    turn: MuseTurn
     started: float                 # when the voice turn that asked it began
     defer_playback: bool           # answers go through the speaker queue instead of being spoken inline
     dispatched_at: float = field(default_factory=time.monotonic)
@@ -571,6 +336,10 @@ class MuseJob:
     answered: bool = False
     dropped: bool = False          # the user cancelled it; nothing more of it is spoken
     turned_away: bool = False      # Reachy already told the user a further request must wait
+    reader: ReplyReader = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.reader = ReplyReader(self.turn, self.style)
 
 
 @dataclass(frozen=True)
@@ -775,20 +544,20 @@ class VoiceConversation:
                         self._seen_sequences.discard(self._sequence_order.popleft())
                 job = self.job
                 if job is not None:
-                    tracker = job.tracker
-                    had_message = bool(tracker.messages)
-                    had_text = any(message["text"].strip() for message in tracker.messages.values())
-                    completed_before = {message_id for message_id, message in tracker.messages.items() if message["done"]}
-                    await self._queue_replies(tracker.event(event), job)
+                    replies = job.turn.replies
+                    had_message = bool(replies)
+                    had_text = any(reply.text.strip() for reply in replies.values())
+                    completed_before = {message_id for message_id, reply in replies.items() if reply.done}
+                    await self._queue_replies(job.reader.read(job.turn.feed(event)), job)
                     self._log_backend_activity()
                     if self._turn_started is not None:
                         elapsed = time.monotonic() - self._turn_started
-                        for message_id, message in tracker.messages.items():
-                            if message["done"] and message_id not in completed_before:
+                        for message_id, reply in replies.items():
+                            if reply.done and message_id not in completed_before:
                                 log.info("Muse completed a reply message %.1fs after the voice turn", elapsed)
-                        if not had_message and tracker.messages:
+                        if not had_message and replies:
                             log.info("Muse first assistant event arrived %.1fs after the voice turn", elapsed)
-                        if not had_text and any(message["text"].strip() for message in tracker.messages.values()):
+                        if not had_text and any(reply.text.strip() for reply in replies.values()):
                             log.info("Muse first reply text arrived %.1fs after the voice turn", elapsed)
                 elif self.owns_chat:
                     self._replay_scope.observe_idle(event, self.session_id)
@@ -796,7 +565,7 @@ class VoiceConversation:
             await subscription.aclose()
 
     def _log_backend_activity(self) -> None:
-        code = self.job.tracker.activity_code if self.job is not None else None
+        code = self.job.turn.activity_code if self.job is not None else None
         if code is not None and code != self._logged_activity:
             self._logged_activity = code
             if self._activity_log_count < 32:
@@ -837,8 +606,8 @@ class VoiceConversation:
                     job.progress.offer(reply.text, time.monotonic(), source=reply.source)
                 continue
             if isinstance(reply, SpeechSegment):
-                message = job.tracker.messages[reply.message_id]
-                if message["stream_revised"] or reply.index < message["stream_skip_before"]:
+                stream = job.reader.streams[reply.message_id]
+                if stream.revised or reply.index < stream.skip_before:
                     self._discard_prepared((reply.message_id, reply.index))
                     continue
             if job.progress is not None:
@@ -1118,7 +887,7 @@ class VoiceConversation:
                             turns_awaiting_transcript.discard(request.ended)
                     turn_task = asyncio.create_task(process())
                 if (turn_task is not None and follow_up_task is None and pending_turns
-                        and self.job is not None and self.job.tracker.acknowledged):
+                        and self.job is not None and self.job.turn.acknowledged):
                     follow_up_task = asyncio.create_task(follow_up(pending_turns.popleft(), held))
                 if not ready and turn_task is None:
                     log.info("Reachy speech yield ready: microphone priority, ordered background replies")
@@ -1345,7 +1114,7 @@ class VoiceConversation:
                 await asyncio.gather(*self._closing_speech, return_exceptions=True)
                 self._closing_speech.clear()
                 if job is not None:
-                    job.tracker.retire()
+                    job.turn.retire()
                 self.job = None
                 try:
                     # Deferred output owns its cleanup; backend failures cannot
@@ -1406,9 +1175,9 @@ class VoiceConversation:
         style = self.backends.reply_style()
         job = self.job = MuseJob(
             None if wav is None else text or "", style,
-            ReplyTracker(self.session_id, style=style, owns_chat=self.owns_chat, replay_scope=self._replay_scope,
-                         parentless_until=(0.0 if self._stop_sent_at is None
-                                           else self._stop_sent_at + STOP_REPLY_WINDOW_S)),
+            MuseTurn(self.session_id, owns_chat=self.owns_chat, replay_scope=self._replay_scope,
+                     ignore_parentless_until=(0.0 if self._stop_sent_at is None
+                                              else self._stop_sent_at + STOP_REPLY_WINDOW_S)),
             started, defer_playback)
         self._logged_activity = None
         self._activity_log_count = 0
@@ -1433,7 +1202,7 @@ class VoiceConversation:
             self._muse_style = style
         if wav is not None and self.backends.progress_voice is not None:
             job.progress = self.backends.narrator.progress(job.request, time.monotonic())
-        await self._queue_replies(job.tracker.acknowledge(response), job)
+        await self._queue_replies(job.reader.read(job.turn.acknowledge(response)), job)
         self._log_backend_activity()
         if wav is None:
             log.info("Muse accepted Reachy's expression setup")
@@ -1464,7 +1233,7 @@ class VoiceConversation:
 
     async def _deliver(self, job: MuseJob) -> TurnOutcome:
         """Relay Muse's progress and answer for ``job`` until Muse is done with it."""
-        tracker = job.tracker
+        turn = job.turn
         started = job.started
         request_text = job.request or ""
         response_deadline = job.dispatched_at + self.reply_timeout_s
@@ -1475,11 +1244,12 @@ class VoiceConversation:
                 log.info("Reachy stopped relaying a cancelled Muse request")
                 return TurnOutcome.ACCEPTED
             now = time.monotonic()
-            if tracker.task_finished:
+            if turn.task_finished:
                 await self._end_asides(job, let_playing_finish=True)
-            if tracker.complete(now, job.answered) and job.replies.empty():
+            if job.answered and turn.complete(now) and job.replies.empty():
                 return TurnOutcome.ACCEPTED
-            if not job.answered and job.replies.empty() and tracker.finished_without_text(now):
+            if (not job.answered and job.replies.empty() and turn.settled(now)
+                    and not job.reader.has_reply_text()):
                 await self._end_asides(job, let_playing_finish=True)
                 log.warning("Muse finished without reply text; returning to listening")
                 if self.backends.voice.speaks_text:
@@ -1528,21 +1298,21 @@ class VoiceConversation:
             log.info("%s next Muse reply %.1fs after the voice turn",
                      "Queueing" if job.defer_playback else "Playing", now - started)
             if isinstance(reply, SpeechSegment):
-                message = tracker.messages[reply.message_id]
-                if message["stream_revised"] or reply.index < message["stream_skip_before"]:
+                stream = job.reader.streams[reply.message_id]
+                if stream.revised or reply.index < stream.skip_before:
                     self._discard_prepared((reply.message_id, reply.index))
                     continue
                 await self._end_asides(job, let_playing_finish=True)
-                def is_current(message=message, reply=reply):
-                    return (not job.dropped and not message["stream_revised"]
-                            and reply.index >= message["stream_skip_before"])
+                def is_current(stream=stream, reply=reply):
+                    return (not job.dropped and not stream.revised
+                            and reply.index >= stream.skip_before)
                 if not is_current():
                     self._discard_prepared((reply.message_id, reply.index))
                     continue
                 if not job.answered and job.request is not None:
                     await self._answer_begins(job)
-                def mark_spoken(message=message):
-                    message["stream_spoken"] += 1
+                def mark_spoken(stream=stream):
+                    stream.spoken += 1
                 prepared = self._prepared_speech.get((reply.message_id, reply.index))
                 if job.defer_playback:
                     self._prepared_speech.pop((reply.message_id, reply.index), None)
@@ -1563,7 +1333,7 @@ class VoiceConversation:
                 if not job.answered and job.request is not None:
                     await self._answer_begins(job)
                 lines = await self.backends.narrator.lines(
-                    request_text, tracker.messages[reply]["text"], job.style, message_id=reply)
+                    request_text, turn.replies[reply].text, job.style, message_id=reply)
                 if job.defer_playback:
                     queued_at = time.monotonic()
                     for line in lines:
@@ -1673,13 +1443,13 @@ class VoiceConversation:
             return
         response = _accepted(await self.session.send_chat(STOP_REQUEST, self.session_id))
         self._stop_sent_at = time.monotonic()
-        self._replay_scope.retire(("message", value) for value in acknowledged_message_ids(response))
+        self._replay_scope.retire_request(response)
         log.info("Reachy dropped a Muse request and asked Muse to stop working on it")
 
     async def _add_detail(self, job: MuseJob, text: str) -> None:
-        job.tracker.expect_follow_up()
+        job.turn.expect_follow_up()
         response = _accepted(await self.session.send_chat(text, self.session_id))
-        await self._queue_replies(job.tracker.acknowledge(response, follow_up=True), job)
+        await self._queue_replies(job.reader.read(job.turn.acknowledge(response, follow_up=True)), job)
         log.info("Reachy sent Muse more detail for the running request")
 
     async def _acknowledge(self, job: MuseJob) -> None:
@@ -1692,7 +1462,7 @@ class VoiceConversation:
             job.aside_audible = True
         try:
             await asyncio.sleep(job.dispatched_at + ACK_GRACE_S - time.monotonic())
-            if job.tracker.has_reply_text() or not job.replies.empty():
+            if job.reader.has_reply_text() or not job.replies.empty():
                 log.info("Reachy skipped its acknowledgement; Muse's answer began within %.1fs", ACK_GRACE_S)
                 return
             log.info("Reachy selected a question acknowledgement %.1fs after the voice turn",

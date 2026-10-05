@@ -13,12 +13,13 @@ import wave
 
 import pytest
 
-from musegadget import reachy_local_backends, reachy_voice
+from musegadget import muse_turn, reachy_local_backends, reachy_voice
 from musegadget.reachy_capabilities import Mode, ReplyStyle
 from musegadget.reachy_local_backends import backends_for
+from musegadget.muse_turn import MuseTurn, ReplayScope, TaskFinished
 from musegadget.reachy_progress import BackendActivity, BackendStatus
 from musegadget.reachy_voice import (
-    BackendStatusSegment, MuseJob, ProgressSegment, ReplayScope, ReplyTracker, SpeechSegment, TaskFinished,
+    BackendStatusSegment, MuseJob, ProgressSegment, SpeechSegment,
     TurnOutcome, VoiceConversation,
 )
 
@@ -35,25 +36,38 @@ def status_segment(activity=None, phase="working"):
     return BackendStatusSegment(BackendStatus(phase, activity))
 
 
-def muse_job(tracker, **fields):
-    return MuseJob("", tracker.style, tracker, 0.0, False, **fields)
+def reply_job(session_id=None, *, style=ReplyStyle.MARKER, owns_chat=False, replay_scope=None, **fields):
+    return MuseJob("", style, MuseTurn(session_id, owns_chat=owns_chat, replay_scope=replay_scope),
+                   0.0, False, **fields)
 
 
-def owned_tracker(scope=None, user_id="user-1"):
-    tracker = ReplyTracker("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON, owns_chat=True, replay_scope=scope)
-    tracker.acknowledge({"message_id": user_id, "session_id": "robot-chat", "is_thread": True})
-    return tracker
+def feed(job, event):
+    return job.reader.read(job.turn.feed(event))
+
+
+def acknowledge(job, response, **options):
+    return job.reader.read(job.turn.acknowledge(response, **options))
+
+
+def finished_without_text(job, now):
+    return job.turn.settled(now) and not job.reader.has_reply_text()
+
+
+def owned_job(scope=None, user_id="user-1", **fields):
+    job = reply_job("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON, owns_chat=True, replay_scope=scope, **fields)
+    acknowledge(job, {"message_id": user_id, "session_id": "robot-chat", "is_thread": True})
+    return job
 
 
 def test_retired_turn_ids_reject_late_status_frames_and_terminals_before_ack():
     scope = ReplayScope()
-    old = owned_tracker(scope)
-    old.event(chat_event("task.status", parent=None, task_id="old-task", status="running"))
-    old.event(chat_event("agent.status", "old-worker", parent=None,
+    old = owned_job(scope)
+    feed(old, chat_event("task.status", parent=None, task_id="old-task", status="running"))
+    feed(old, chat_event("agent.status", "old-worker", parent=None,
                          activity_code="working", activity_text="Searching web"))
-    old.event(chat_event("delta.text_append", "old-answer", parent=None, text=progress_frame()))
-    old.retire()
-    current = ReplyTracker("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON, owns_chat=True, replay_scope=scope)
+    feed(old, chat_event("delta.text_append", "old-answer", parent=None, text=progress_frame()))
+    old.turn.retire()
+    current = reply_job("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON, owns_chat=True, replay_scope=scope)
     events = [
         chat_event("agent.status", "old-worker", parent=None,
                    activity_code="working", activity_text="Searching web"),
@@ -62,92 +76,95 @@ def test_retired_turn_ids_reject_late_status_frames_and_terminals_before_ack():
         chat_event("task.status", parent=None, task_id="old-task", status="completed"),
     ]
     for event in events:
-        assert current.event(event) == []
+        assert feed(current, event) == []
     # An unknown message's parent may be authorized by the still-pending ACK.
-    assert current.pending == [events[2]]
-    assert current.acknowledge({"message_id": "user-2", "session_id": "robot-chat", "is_thread": True}) == []
+    assert acknowledge(current, {"message_id": "user-2", "session_id": "robot-chat", "is_thread": True}) == []
     for event in events:
-        assert current.event(event) == []
-    assert current.messages == {} and not current.busy and not current.task_finished
+        assert feed(current, event) == []
+    assert current.turn.replies == {} and not current.turn.busy and not current.turn.task_finished
+    current.turn.retire()
+    assert ("message", "previously-unseen-answer") in scope.ids
 
 
 @pytest.mark.parametrize("session_id", [None, "main", "another-side"])
 @pytest.mark.parametrize("acknowledged", [False, True])
 def test_owned_status_cannot_mutate_or_buffer_without_exact_chat(session_id, acknowledged):
-    tracker = owned_tracker() if acknowledged else ReplyTracker("robot-chat", owns_chat=True)
+    scope = ReplayScope()
+    job = owned_job(scope) if acknowledged else reply_job("robot-chat", owns_chat=True, replay_scope=scope)
     for name, details in [
         ("task.status", {"task_id": "other-task", "status": "completed"}),
         ("agent.status", {"activity_code": "working", "activity_text": "Searching web"}),
     ]:
-        assert tracker.event(chat_event(name, session_id=session_id, **details)) == []
-    assert not tracker.busy and not tracker.task_finished and tracker.pending == []
-    assert tracker.observed_ids == set()
+        assert feed(job, chat_event(name, session_id=session_id, **details)) == []
+    if not acknowledged:
+        assert acknowledge(job, {"message_id": "user-1", "session_id": "robot-chat", "is_thread": True}) == []
+    assert not job.turn.busy and not job.turn.task_finished
+    job.turn.retire()
+    assert scope.ids == {("message", "user-1")}
 
 
 def test_unseen_terminal_snapshot_is_ignored_and_retired_but_running_task_finishes():
     scope = ReplayScope()
-    tracker = owned_tracker(scope)
-    assert tracker.event(chat_event("task.status", parent=None, task_id="startup-task", status="completed")) == []
-    assert not tracker.task_finished and not tracker.finished_without_text(time.monotonic() + 10)
-    tracker.event(chat_event("task.status", parent=None, task_id="current-task", status="running"))
-    assert tracker.busy
-    tracker.event(chat_event("task.status", parent=None, task_id="current-task", status="completed"))
-    assert tracker.task_finished and not tracker.busy
-    tracker.retire()
+    job = owned_job(scope)
+    assert feed(job, chat_event("task.status", parent=None, task_id="startup-task", status="completed")) == []
+    assert not job.turn.task_finished and not finished_without_text(job, time.monotonic() + 10)
+    feed(job, chat_event("task.status", parent=None, task_id="current-task", status="running"))
+    assert job.turn.busy
+    feed(job, chat_event("task.status", parent=None, task_id="current-task", status="completed"))
+    assert job.turn.task_finished and not job.turn.busy
+    job.turn.retire()
     assert {("task", "startup-task"), ("task", "current-task")} <= scope.ids
 
 
 def test_explicit_current_ancestry_allows_terminal_without_running_event():
-    tracker = owned_tracker()
-    tracker.event(chat_event("task.status", task_id="current-task", status="errored"))
-    assert tracker.task_finished and not tracker.busy
+    job = owned_job()
+    feed(job, chat_event("task.status", task_id="current-task", status="errored"))
+    assert job.turn.task_finished and not job.turn.busy
 
 
 @pytest.mark.parametrize("first_status", ["completed", "failed", "errored", "cancelled", "canceled"])
 def test_owned_turn_remains_active_until_all_running_tasks_finish(first_status):
-    tracker = owned_tracker(ReplayScope())
-    tracker.event(chat_event("task.status", parent=None, task_id="root-task", status="running"))
-    tracker.event(chat_event("task.status", parent=None, task_id="sub-task", status="running"))
-    tracker.event(chat_event("task.status", parent=None, task_id="sub-task", status=first_status))
-    assert tracker.running_task_ids == {"root-task"}
-    assert tracker.busy and not tracker.task_finished
-    assert not tracker.finished_without_text(time.monotonic() + 10)
-    tracker.event(chat_event("agent.status", "root-worker", parent=None, activity_code="idle"))
-    assert tracker.busy and not tracker.task_finished
-    assert tracker.event(chat_event("agent.status", "root-worker", parent=None,
+    job = owned_job(ReplayScope())
+    feed(job, chat_event("task.status", parent=None, task_id="root-task", status="running"))
+    feed(job, chat_event("task.status", parent=None, task_id="sub-task", status="running"))
+    feed(job, chat_event("task.status", parent=None, task_id="sub-task", status=first_status))
+    assert job.turn.busy and not job.turn.task_finished
+    assert not finished_without_text(job, time.monotonic() + 10)
+    feed(job, chat_event("agent.status", "root-worker", parent=None, activity_code="idle"))
+    assert job.turn.busy and not job.turn.task_finished
+    assert feed(job, chat_event("agent.status", "root-worker", parent=None,
                                     activity_code="working", activity_text="Searching web")) == [
         status_segment(BackendActivity("Searching the web now.",
                                                "Muse's last reported step was searching the web."))]
-    tracker.event(chat_event("task.status", parent=None, task_id="root-task", status="completed"))
-    assert tracker.running_task_ids == set()
-    assert tracker.task_finished and not tracker.busy
-    assert tracker.finished_without_text(time.monotonic() + 10)
+    feed(job, chat_event("task.status", parent=None, task_id="root-task", status="completed"))
+    assert job.turn.task_finished and not job.turn.busy
+    assert finished_without_text(job, time.monotonic() + 10)
 
 
 @pytest.mark.parametrize("spelling", ["canceled", "cancelled"])
 @pytest.mark.parametrize("owned", [False, True])
 def test_both_task_cancellation_spellings_are_terminal(spelling, owned):
-    tracker = owned_tracker() if owned else ReplyTracker("robot-chat")
+    job = owned_job() if owned else reply_job("robot-chat")
     if not owned:
-        tracker.acknowledge({"message_id": "user-1"})
-    tracker.event(chat_event("task.status", parent=None, task_id="current-task", status="running"))
-    tracker.event(chat_event("task.status", parent=None, task_id="current-task", status=spelling))
-    assert tracker.task_finished and not tracker.busy and tracker.running_task_ids == set()
+        acknowledge(job, {"message_id": "user-1"})
+    feed(job, chat_event("task.status", parent=None, task_id="current-task", status="running"))
+    feed(job, chat_event("task.status", parent=None, task_id="current-task", status=spelling))
+    assert job.turn.task_finished and not job.turn.busy
 
 
 @pytest.mark.parametrize("spelling", ["canceled", "cancelled"])
 def test_agent_cancellation_code_does_not_keep_a_shared_turn_busy(spelling):
-    tracker = ReplyTracker("robot-chat")
-    tracker.acknowledge({"message_id": "user-1"})
-    tracker.event(chat_event("agent.status", activity_code=spelling))
-    assert not tracker.busy
+    job = reply_job("robot-chat")
+    acknowledge(job, {"message_id": "user-1"})
+    feed(job, chat_event("agent.status", activity_code=spelling))
+    assert not job.turn.busy
 
 
 def test_current_worker_id_can_report_repeated_stages_within_a_turn():
-    tracker = owned_tracker(ReplayScope())
-    first = tracker.event(chat_event("agent.status", "worker-1", parent=None,
+    job = owned_job(ReplayScope())
+    first = feed(job, chat_event("agent.status", "worker-1", parent=None,
                                      activity_code="working", activity_text="Searching web"))
-    second = tracker.event(chat_event("agent.status", "worker-1", parent=None,
+    second = feed(job, chat_event("agent.status", "worker-1", parent=None,
                                       activity_code="working", activity_text="Searching sources"))
     assert first == [status_segment(BackendActivity(
         "Searching the web now.", "Muse's last reported step was searching the web."))]
@@ -165,10 +182,10 @@ def test_retired_id_memory_is_bounded():
 
 
 def test_owned_active_id_memory_is_bounded():
-    tracker = owned_tracker()
+    job = owned_job()
     with pytest.raises(ValueError, match="too many activity identifiers"):
         for index in range(257):
-            tracker.event(chat_event("agent.status", str(index), parent=None,
+            feed(job, chat_event("agent.status", str(index), parent=None,
                                      activity_code="working", activity_text="is working"))
 
 
@@ -176,24 +193,24 @@ def test_owned_active_id_memory_is_bounded():
 def test_current_ack_can_authorize_a_retired_parent_without_unretiring_old_messages(before_ack):
     scope = ReplayScope()
     scope.retire([("message", "acknowledged-root")])
-    tracker = ReplyTracker("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON, owns_chat=True, replay_scope=scope)
+    job = reply_job("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON, owns_chat=True, replay_scope=scope)
     event = chat_event("delta.text_append", "current-reply", parent="acknowledged-root", text=progress_frame())
     ack = {"message_id": "user-2", "reply_to_message_id": "acknowledged-root",
            "session_id": "robot-chat", "is_thread": True}
     if before_ack:
-        assert tracker.event(event) == []
-        assert tracker.acknowledge(ack) == [ProgressSegment("Looking at flights now.")]
+        assert feed(job, event) == []
+        assert acknowledge(job, ack) == [ProgressSegment("Looking at flights now.")]
     else:
-        tracker.acknowledge(ack)
-        assert tracker.event(event) == [ProgressSegment("Looking at flights now.")]
-    assert tracker.event(chat_event("delta.text_append", "acknowledged-root", parent="user-2",
+        acknowledge(job, ack)
+        assert feed(job, event) == [ProgressSegment("Looking at flights now.")]
+    assert feed(job, chat_event("delta.text_append", "acknowledged-root", parent="user-2",
                                     text=progress_frame())) == []
 
 
 def test_owned_ack_identifiers_obey_retirement_memory_limit():
-    tracker = ReplyTracker("robot-chat", owns_chat=True)
+    job = reply_job("robot-chat", owns_chat=True)
     with pytest.raises(ValueError, match="oversized chat identifier"):
-        tracker.acknowledge({"message_id": "x" * 513, "session_id": "robot-chat", "is_thread": True})
+        acknowledge(job, {"message_id": "x" * 513, "session_id": "robot-chat", "is_thread": True})
 
 
 def test_idle_subscription_snapshots_are_retired_before_the_next_ack():
@@ -209,14 +226,13 @@ def test_idle_subscription_snapshots_are_retired_before_the_next_ack():
             await session.events.put(chat_event("agent.status", "idle-worker", parent=None, seq=2,
                                                 activity_code="working", activity_text="Searching web"))
             await session.delivered.get()
-            tracker = owned_tracker(conversation._replay_scope)
-            conversation.job = muse_job(tracker)
+            job = conversation.job = owned_job(conversation._replay_scope)
             await session.events.put(chat_event("task.status", parent=None, task_id="idle-task", status="running", seq=3))
             await session.delivered.get()
             await session.events.put(chat_event("agent.status", "idle-worker", parent=None, seq=4,
                                                 activity_code="working", activity_text="Searching sources"))
             await session.delivered.get()
-            assert not tracker.busy and tracker.messages == {}
+            assert not job.turn.busy and job.turn.replies == {}
         finally:
             await cancel_task(subscriber)
     asyncio.run(bounded(scenario()))
@@ -236,9 +252,9 @@ def test_cancelled_unacknowledged_owned_turn_retires_pending_ids(monkeypatch):
                                          session_id="robot-chat", owns_chat=True)
         turn = asyncio.create_task(conversation.turn(b"wav"))
         await started.wait()
-        tracker = conversation.job.tracker
-        tracker.event(chat_event("task.status", parent=None, task_id="cancelled-task", status="running"))
-        tracker.event(chat_event("delta.message_start", "cancelled-message", parent=None))
+        job = conversation.job
+        feed(job, chat_event("task.status", parent=None, task_id="cancelled-task", status="running"))
+        feed(job, chat_event("delta.message_start", "cancelled-message", parent=None))
         await cancel_task(turn)
         assert conversation.job is None
         assert {("task", "cancelled-task"), ("message", "cancelled-message")} <= conversation._replay_scope.ids
@@ -246,68 +262,68 @@ def test_cancelled_unacknowledged_owned_turn_retires_pending_ids(monkeypatch):
 
 
 def test_progress_is_ephemeral_and_never_counts_as_an_answer():
-    tracker = ReplyTracker("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
-    tracker.acknowledge({"message_id": "user-1"})
+    job = reply_job("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
+    acknowledge(job, {"message_id": "user-1"})
     progress = progress_frame()
-    assert tracker.event(chat_event("delta.text_append", "reply-1", text=progress)) == [
+    assert feed(job, chat_event("delta.text_append", "reply-1", text=progress)) == [
         ProgressSegment("Looking at flights now.")]
-    message = tracker.messages["reply-1"]
-    assert not message["queued"] and message["stream_index"] == 0
+    stream = job.reader.streams["reply-1"]
+    assert not stream.queued and stream.index == 0
     answer = sentence_frame("Here are your options.", "happy")
-    assert tracker.event(chat_event("delta.text_append", "reply-1", text=answer)) == [
+    assert feed(job, chat_event("delta.text_append", "reply-1", text=answer)) == [
         SpeechSegment("reply-1", 0, "Here are your options.", "happy")]
-    assert tracker.event(chat_event("delta.message_done", "reply-1", content=answer)) == []
+    assert feed(job, chat_event("delta.message_done", "reply-1", content=answer)) == []
 
 
 @pytest.mark.parametrize("parent", [None, "reply-1"])
 def test_parentless_or_self_parent_progress_is_not_current_turn_proof(parent):
-    tracker = ReplyTracker("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
-    tracker.acknowledge({"message_id": "user-1"})
-    tracker.event(chat_event("delta.message_start", "reply-1", parent=None))
-    assert tracker.event(chat_event("delta.text_append", "reply-1", parent=parent,
+    job = reply_job("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
+    acknowledge(job, {"message_id": "user-1"})
+    feed(job, chat_event("delta.message_start", "reply-1", parent=None))
+    assert feed(job, chat_event("delta.text_append", "reply-1", parent=parent,
                                     text=progress_frame())) == []
-    assert not tracker.messages["reply-1"]["progress_linked"]
+    assert not job.turn.replies["reply-1"].bound
 
 
 def test_only_explicitly_linked_public_status_can_offer_a_stage():
-    tracker = ReplyTracker("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
-    tracker.acknowledge({"message_id": "user-1"})
-    assert tracker.event(chat_event("agent.status", parent=None,
+    job = reply_job("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
+    acknowledge(job, {"message_id": "user-1"})
+    assert feed(job, chat_event("agent.status", parent=None,
                                     activity_text="Searching flights", activity_code="working")) == []
-    assert tracker.event(chat_event("agent.status", parent="user-1",
+    assert feed(job, chat_event("agent.status", parent="user-1",
                                     activity_text="Searching flights", activity_code="working")) == [
         status_segment(BackendActivity("Looking at flights now.",
                                                "Muse's last reported step was looking at flights."))]
-    assert tracker.event(chat_event("agent.status", parent="user-1",
+    assert feed(job, chat_event("agent.status", parent="user-1",
                                     activity_text="is working", activity_code="working")) == [status_segment(None)]
-    assert tracker.event(chat_event("agent.status", parent="user-1",
+    assert feed(job, chat_event("agent.status", parent="user-1",
                                     activity_text="Checking fares https://private.test",
                                     activity_code="working")) == [status_segment(None)]
 
 
 @pytest.mark.parametrize("parent", [None, "reply-1"])
 def test_dedicated_side_chat_attributes_exact_session_progress_without_parent_ancestry(parent):
-    tracker = ReplyTracker("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON, owns_chat=True)
-    tracker.acknowledge({"message_id": "user-1", "session_id": "robot-chat", "is_thread": True})
-    assert tracker.event(chat_event("delta.text_append", "reply-1", parent=parent,
+    job = reply_job("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON, owns_chat=True)
+    acknowledge(job, {"message_id": "user-1", "session_id": "robot-chat", "is_thread": True})
+    assert feed(job, chat_event("delta.text_append", "reply-1", parent=parent,
                                     text=progress_frame())) == [ProgressSegment("Looking at flights now.")]
-    assert not tracker.messages["reply-1"]["queued"]
-    assert tracker.event(chat_event("agent.status", parent=None,
+    assert not job.reader.streams["reply-1"].queued
+    assert feed(job, chat_event("agent.status", parent=None,
                                     activity_text="Searching web", activity_code="working")) == [
         status_segment(BackendActivity("Searching the web now.",
                                                "Muse's last reported step was searching the web."))]
-    assert tracker.event(chat_event("agent.status", parent=None,
+    assert feed(job, chat_event("agent.status", parent=None,
                                     activity_text="is responding", activity_code="responding")) == [
         status_segment(None, "responding")]
 
 
 @pytest.mark.parametrize("session_id", [None, "main", "other-device-chat"])
 def test_dedicated_side_chat_never_attributes_other_or_missing_session_progress(session_id):
-    tracker = ReplyTracker("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON, owns_chat=True)
-    tracker.acknowledge({"message_id": "user-1", "session_id": "robot-chat", "is_thread": True})
-    assert tracker.event(chat_event("agent.status", parent=None, session_id=session_id,
+    job = reply_job("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON, owns_chat=True)
+    acknowledge(job, {"message_id": "user-1", "session_id": "robot-chat", "is_thread": True})
+    assert feed(job, chat_event("agent.status", parent=None, session_id=session_id,
                                     activity_text="Searching web", activity_code="working")) == []
-    assert tracker.event(chat_event("delta.text_append", "reply-1", parent=None, session_id=session_id,
+    assert feed(job, chat_event("delta.text_append", "reply-1", parent=None, session_id=session_id,
                                     text=progress_frame())) == []
 
 
@@ -318,9 +334,9 @@ def test_dedicated_side_chat_never_attributes_other_or_missing_session_progress(
     {"is_thread": True},
 ])
 def test_dedicated_chat_ack_must_confirm_the_selected_thread(ack):
-    tracker = ReplyTracker("robot-chat", owns_chat=True)
+    job = reply_job("robot-chat", owns_chat=True)
     with pytest.raises(ValueError, match="dedicated side chat"):
-        tracker.acknowledge({"message_id": "user-1", **ack})
+        acknowledge(job, {"message_id": "user-1", **ack})
 
 
 def test_owned_chat_backend_stages_are_spoken_once_and_answer_stops_them(monkeypatch):
@@ -331,25 +347,24 @@ def test_owned_chat_backend_stages_are_spoken_once_and_answer_stops_them(monkeyp
     conversation = VoiceConversation(session, FakeHardware(),
                                      backends=backends_for(Mode.MUSE_VOICE, session),
                                      session_id="robot-chat", owns_chat=True)
-    tracker = ReplyTracker("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON, owns_chat=True)
-    tracker.acknowledge({"message_id": "user-1", "session_id": "robot-chat", "is_thread": True})
-    job = muse_job(tracker, progress=ProgressPlan("Look up the documentation.", 0, first_delay_s=20, interval_s=20))
+    job = owned_job(
+        progress=ProgressPlan("Look up the documentation.", 0, first_delay_s=20, interval_s=20))
     clock = 8.153
-    asyncio.run(conversation._queue_replies(tracker.event(chat_event("agent.status", parent=None,
+    asyncio.run(conversation._queue_replies(feed(job, chat_event("agent.status", parent=None,
                                                         activity_text="Searching web")), job))
     assert job.progress.take(20).text == "Muse's last reported step was searching the web."
     clock = 22.183
-    asyncio.run(conversation._queue_replies(tracker.event(chat_event("agent.status", parent=None,
+    asyncio.run(conversation._queue_replies(feed(job, chat_event("agent.status", parent=None,
                                                         activity_text="Searching sources")), job))
     assert job.progress.take(40).text == "Muse's last reported step was searching sources."
     assert job.progress.take(60).text == "Still on it."
     clock = 61
-    asyncio.run(conversation._queue_replies(tracker.event(chat_event("agent.status", parent=None,
+    asyncio.run(conversation._queue_replies(feed(job, chat_event("agent.status", parent=None,
                                                         activity_text="is responding")), job))
     assert job.progress.take(80).text == "Working on that for you."
     assert job.replies.empty()
     clock = 81
-    asyncio.run(conversation._queue_replies(tracker.event(chat_event("delta.text_append", "answer", parent=None,
+    asyncio.run(conversation._queue_replies(feed(job, chat_event("delta.text_append", "answer", parent=None,
                                                         text=sentence_frame("Here is the documentation."))), job))
     assert job.progress.take(100) is None
     assert job.replies.get_nowait() == SpeechSegment("answer", 0, "Here is the documentation.", "neutral")
@@ -363,18 +378,17 @@ def test_lunch_request_reports_working_phase_before_delayed_answer(monkeypatch):
     conversation = VoiceConversation(session, FakeHardware(),
                                      backends=backends_for(Mode.MUSE_VOICE, session),
                                      session_id="robot-chat", owns_chat=True)
-    tracker = owned_tracker()
-    job = muse_job(tracker, progress=ProgressPlan("What should I cook for lunch?", 0))
+    job = owned_job(progress=ProgressPlan("What should I cook for lunch?", 0))
     clock = 2
-    asyncio.run(conversation._queue_replies(tracker.event(chat_event(
+    asyncio.run(conversation._queue_replies(feed(job, chat_event(
         "agent.status", parent=None, activity_code="working", activity_text="is working")), job))
     update = job.progress.take(20)
     assert update.source == "backend"
     assert update.text == "Muse's latest status is that it's working on your request."
     clock = 27
-    asyncio.run(conversation._queue_replies(tracker.event(chat_event(
+    asyncio.run(conversation._queue_replies(feed(job, chat_event(
         "agent.status", parent=None, activity_code="responding", activity_text="is responding")), job))
-    asyncio.run(conversation._queue_replies(tracker.event(chat_event(
+    asyncio.run(conversation._queue_replies(feed(job, chat_event(
         "delta.text_append", "lunch-answer", parent=None,
         text=sentence_frame("Try a quick vegetable omelette.", "happy"))), job))
     assert job.progress.take(40) is None
@@ -390,26 +404,25 @@ def test_early_public_milestone_survives_the_first_twenty_second_cue(monkeypatch
     conversation = VoiceConversation(session, FakeHardware(),
                                      backends=backends_for(Mode.MUSE_VOICE, session),
                                      session_id="robot-chat", owns_chat=True)
-    tracker = owned_tracker()
-    job = muse_job(tracker, progress=ProgressPlan("Find a recipe.", 0))
+    job = owned_job(progress=ProgressPlan("Find a recipe.", 0))
     clock = 1
-    asyncio.run(conversation._queue_replies(tracker.event(chat_event(
+    asyncio.run(conversation._queue_replies(feed(job, chat_event(
         "delta.text_append", "recipe-progress", parent=None,
         text=progress_frame("I found three recipes that match your ingredients."))), job))
     assert job.progress.take(20).text == (
         "Earlier from Muse: I found three recipes that match your ingredients.")
     assert job.replies.empty()
-    assert not tracker.complete(20, False)
+    assert not job.turn.complete(20)
 
 
 def test_progress_only_final_does_not_mark_reply_played_or_complete():
-    tracker = ReplyTracker("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
-    tracker.acknowledge({"message_id": "user-1"})
-    tracker.event(chat_event("delta.text_append", "reply-1", text=progress_frame()))
-    assert tracker.event(chat_event("delta.message_done", "reply-1", content=progress_frame())) == []
-    tracker.event(chat_event("task.status", status="completed"))
-    assert not tracker.complete(time.monotonic() + 4, False)
-    assert tracker.finished_without_text(time.monotonic() + 4)
+    job = reply_job("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
+    acknowledge(job, {"message_id": "user-1"})
+    feed(job, chat_event("delta.text_append", "reply-1", text=progress_frame()))
+    assert feed(job, chat_event("delta.message_done", "reply-1", content=progress_frame())) == []
+    feed(job, chat_event("task.status", status="completed"))
+    assert not job.reader.has_reply_text()
+    assert finished_without_text(job, time.monotonic() + 4)
 
 
 @pytest.mark.parametrize("ending", ["answer", "cancel", "timeout", "terminal"])
@@ -454,7 +467,7 @@ def test_progress_playback_is_preempted_and_closed_before_answer_or_turn_cleanup
             while not hardware.played:
                 await asyncio.sleep(.001)
             assert ("thinking", None) in hardware.state_expressions
-            assert conversation.job.tracker.messages == {}
+            assert conversation.job.turn.replies == {}
             if ending == "cancel":
                 await cancel_task(turn)
             elif ending == "timeout":
@@ -871,8 +884,8 @@ def test_standard_progress_audio_is_cached_without_playback_or_answer_synthesis(
 @pytest.fixture
 def streaming_speech(monkeypatch):
     np = pytest.importorskip("numpy")
-    monkeypatch.setattr(reachy_voice, "REPLY_QUIET_S", 0)
-    monkeypatch.setattr(reachy_voice, "EMPTY_REPLY_GRACE_S", 0)
+    monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
+    monkeypatch.setattr(muse_turn, "EMPTY_REPLY_GRACE_S", 0)
     monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
 
     class Speech:
@@ -939,46 +952,46 @@ async def streaming_turn(script, speech, hardware, *, before_ack=False):
 
 
 def test_protocol_segments_are_immutable_indexed_and_final_prefix_does_not_repeat():
-    tracker = ReplyTracker("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
-    tracker.acknowledge({"message_id": "user-1"})
+    job = reply_job("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
+    acknowledge(job, {"message_id": "user-1"})
     first = sentence_frame("Hello!", "happy")
-    assert tracker.event(chat_event("delta.text_append", "reply-1", text=first)) == [
+    assert feed(job, chat_event("delta.text_append", "reply-1", text=first)) == [
         SpeechSegment("reply-1", 0, "Hello!", "happy")]
     final = first + sentence_frame("Yes.", "nod")
-    assert tracker.event(chat_event("delta.message_done", "reply-1", content=final)) == [
+    assert feed(job, chat_event("delta.message_done", "reply-1", content=final)) == [
         SpeechSegment("reply-1", 1, "Yes.", "nod")]
-    assert tracker.event(chat_event("delta.message_done", "reply-1", content=final)) == []
+    assert feed(job, chat_event("delta.message_done", "reply-1", content=final)) == []
 
 
 def test_parentless_streaming_preserves_session_and_explicit_parent_filters():
-    tracker = ReplyTracker("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
-    tracker.acknowledge({"message_id": "user-1"})
+    job = reply_job("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
+    acknowledge(job, {"message_id": "user-1"})
     text = sentence_frame("Hello.")
-    assert tracker.event(chat_event("delta.text_append", "wrong-session", parent=None,
+    assert feed(job, chat_event("delta.text_append", "wrong-session", parent=None,
                                     session_id="phone-chat", text=text)) == []
-    assert tracker.event(chat_event("delta.text_append", "wrong-parent", parent="another-user", text=text)) == []
-    assert tracker.event(chat_event("delta.text_append", "reply-1", parent=None, text=text)) == [
+    assert feed(job, chat_event("delta.text_append", "wrong-parent", parent="another-user", text=text)) == []
+    assert feed(job, chat_event("delta.text_append", "reply-1", parent=None, text=text)) == [
         SpeechSegment("reply-1", 0, "Hello.", "neutral")]
-    assert tracker.event(chat_event("delta.text_append", "reply-1", parent="another-user", text=text)) == []
+    assert feed(job, chat_event("delta.text_append", "reply-1", parent="another-user", text=text)) == []
 
 
 def test_streaming_holds_later_messages_until_earlier_message_finishes():
-    tracker = ReplyTracker("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
-    tracker.acknowledge({"message_id": "user-1"})
+    job = reply_job("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
+    acknowledge(job, {"message_id": "user-1"})
     first = sentence_frame("First.")
     second = sentence_frame("Second.", "curious")
-    assert tracker.event(chat_event("delta.text_append", "first", text=first))[0].text == "First."
-    assert tracker.event(chat_event("delta.message_done", "second", parent="first", content=second)) == []
-    result = tracker.event(chat_event("delta.message_done", "first", content=first))
+    assert feed(job, chat_event("delta.text_append", "first", text=first))[0].text == "First."
+    assert feed(job, chat_event("delta.message_done", "second", parent="first", content=second)) == []
+    result = feed(job, chat_event("delta.message_done", "first", content=first))
     assert result == [SpeechSegment("second", 0, "Second.", "curious")]
 
 
 @pytest.mark.parametrize("text", ["é" * 33000, sentence_frame("Hi.") * 33])
 def test_streaming_text_and_segment_batches_are_bounded(text):
-    tracker = ReplyTracker("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
-    tracker.acknowledge({"message_id": "user-1"})
+    job = reply_job("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
+    acknowledge(job, {"message_id": "user-1"})
     with pytest.raises(ValueError, match="64 KiB|too many queued"):
-        tracker.event(chat_event("delta.text_append", "reply-1", text=text))
+        feed(job, chat_event("delta.text_append", "reply-1", text=text))
 
 
 @pytest.mark.parametrize("gesture", ["nod", "shake"])
@@ -992,7 +1005,7 @@ def test_streaming_first_frame_plays_before_done_and_expressions_match_playback(
         async def heard_before_done(conversation):
             while not hardware.played:
                 await asyncio.sleep(.001)
-            assert not conversation.job.tracker.messages["reply-1"]["done"]
+            assert not conversation.job.turn.replies["reply-1"].done
             assert speech.requests == ["Wow!"]
 
         await streaming_turn([
@@ -1350,37 +1363,38 @@ def chat_event(name, message_id=None, *, seq=1, parent="user-1", session_id="rob
 
 
 def test_events_before_ack_bind_only_after_the_user_message_is_known():
-    tracker = ReplyTracker("robot-chat")
-    assert tracker.event(chat_event("delta.message_done", "other", parent="other-user", content="other")) == []
-    assert tracker.event(chat_event("delta.message_start", "reply-1", seq=2)) == []
-    assert tracker.event(chat_event("delta.text_append", "reply-1", seq=3, text="Hello")) == []
-    assert tracker.event(chat_event("delta.message_done", "reply-1", seq=4)) == []
-    assert tracker.acknowledge({"result": {"message_id": "user-1"}}) == ["reply-1"]
-    assert set(tracker.messages) == {"reply-1"}
-    assert tracker.pending == []
+    job = reply_job("robot-chat")
+    assert feed(job, chat_event("delta.message_done", "other", parent="other-user", content="other")) == []
+    assert feed(job, chat_event("delta.message_start", "reply-1", seq=2)) == []
+    assert feed(job, chat_event("delta.text_append", "reply-1", seq=3, text="Hello")) == []
+    assert feed(job, chat_event("delta.message_done", "reply-1", seq=4)) == []
+    assert acknowledge(job, {"result": {"message_id": "user-1"}}) == ["reply-1"]
+    assert set(job.turn.replies) == {"reply-1"}
+    job.turn.expect_follow_up()
+    assert acknowledge(job, {"message_id": "user-2"}, follow_up=True) == []
 
 
 def test_multi_message_replies_queue_once_and_can_parent_the_previous_reply():
-    tracker = ReplyTracker("robot-chat")
-    tracker.acknowledge({"message_id": "user-1"})
-    assert tracker.event(chat_event("message.assistant", "reply-1", content="First.")) == ["reply-1"]
-    assert tracker.event(chat_event("delta.message_done", "reply-1", seq=2, content="First.")) == []
-    assert tracker.event(chat_event("delta.message_done", "reply-2", seq=3,
+    job = reply_job("robot-chat")
+    acknowledge(job, {"message_id": "user-1"})
+    assert feed(job, chat_event("message.assistant", "reply-1", content="First.")) == ["reply-1"]
+    assert feed(job, chat_event("delta.message_done", "reply-1", seq=2, content="First.")) == []
+    assert feed(job, chat_event("delta.message_done", "reply-2", seq=3,
                                     parent="reply-1", display_text="Second.")) == ["reply-2"]
-    assert len(tracker.messages) == 2
+    assert len(job.turn.replies) == 2
 
 
 def test_assistant_display_text_waits_for_readiness_before_tts():
-    tracker = ReplyTracker("robot-chat")
-    tracker.acknowledge({"reply_to_message_id": "user-1"})
-    assert tracker.event(chat_event("message.assistant", "reply-1", content="Draft", display_text_ready=False)) == []
-    assert tracker.event(chat_event("message.assistant", "reply-1", seq=2,
+    job = reply_job("robot-chat")
+    acknowledge(job, {"reply_to_message_id": "user-1"})
+    assert feed(job, chat_event("message.assistant", "reply-1", content="Draft", display_text_ready=False)) == []
+    assert feed(job, chat_event("message.assistant", "reply-1", seq=2,
                                     display_text="Finished", display_text_ready=True)) == ["reply-1"]
 
 
 def test_unrelated_chat_user_messages_and_unknown_events_do_not_bind():
-    tracker = ReplyTracker("robot-chat")
-    tracker.acknowledge({"message_id": "user-1"})
+    job = reply_job("robot-chat")
+    acknowledge(job, {"message_id": "user-1"})
     events = [
         chat_event("message.assistant", "other-session", session_id="phone-chat", content="Other"),
         chat_event("message.assistant", "other-parent", parent="unrelated-user", content="Other"),
@@ -1389,94 +1403,93 @@ def test_unrelated_chat_user_messages_and_unknown_events_do_not_bind():
         {"type": "ack", "payload": {}},
         {"type": "event", "event": "delta.message_done", "payload": None},
     ]
-    assert [tracker.event(event) for event in events] == [[]] * len(events)
-    assert tracker.messages == {}
+    assert [feed(job, event) for event in events] == [[]] * len(events)
+    assert job.turn.replies == {}
 
 
 def test_turn_completion_waits_for_speech_message_completion_and_agent_idle():
-    tracker = ReplyTracker("robot-chat")
-    tracker.acknowledge({"message_id": "user-1"})
-    tracker.event(chat_event("delta.message_start", "reply-1"))
+    job = reply_job("robot-chat")
+    acknowledge(job, {"message_id": "user-1"})
+    feed(job, chat_event("delta.message_start", "reply-1"))
     now = time.monotonic() + 10
-    assert not tracker.complete(now, played=True)
-    tracker.event(chat_event("delta.message_done", "reply-1", content="Answer"))
-    assert not tracker.complete(now, played=False)
-    tracker.event(chat_event("agent.status", activity_code="researching"))
-    assert not tracker.complete(now, played=True)
-    tracker.event(chat_event("agent.status", activity_code="idle"))
-    assert tracker.complete(now, played=True)
-    assert not tracker.complete(time.monotonic(), played=True)
+    assert not job.turn.complete(now)
+    feed(job, chat_event("delta.message_done", "reply-1", content="Answer"))
+    feed(job, chat_event("agent.status", activity_code="researching"))
+    assert not job.turn.complete(now)
+    feed(job, chat_event("agent.status", activity_code="idle"))
+    assert job.turn.complete(now)
+    assert not job.turn.complete(time.monotonic())
 
 
 def test_errored_task_is_terminal_and_does_not_hold_a_spoken_reply_open():
-    tracker = ReplyTracker()
-    tracker.acknowledge({"message_id": "user-1"})
-    tracker.event({"type": "event", "seq": 17979, "event": "task.status",
+    job = reply_job()
+    acknowledge(job, {"message_id": "user-1"})
+    feed(job, {"type": "event", "seq": 17979, "event": "task.status",
                    "payload": {"task_id": "task-1", "status": "running"}})
-    assert tracker.busy
-    assert tracker.event({
+    assert job.turn.busy
+    assert feed(job, {
         "type": "event", "seq": 17984, "event": "delta.message_done",
         "payload": {"message_id": "reply-1", "reply_to_message_id": "user-1",
                     "status": "completed", "content": "Test response"},
     }) == ["reply-1"]
-    tracker.event({"type": "event", "seq": 17985, "event": "task.status",
+    feed(job, {"type": "event", "seq": 17985, "event": "task.status",
                    "payload": {"task_id": "task-1", "status": "errored"}})
-    assert not tracker.busy
-    assert tracker.complete(time.monotonic() + 10, played=True)
+    assert not job.turn.busy
+    assert job.turn.complete(time.monotonic() + 10)
 
 
 def test_terminal_task_returns_to_listening_without_an_extra_quiet_period():
-    tracker = ReplyTracker()
-    tracker.acknowledge({"message_id": "user-1"})
-    tracker.event(chat_event("delta.message_done", "reply-1", content="Hello"))
-    tracker.event(chat_event("task.status", status="completed"))
-    assert tracker.complete(time.monotonic(), played=True)
+    job = reply_job()
+    acknowledge(job, {"message_id": "user-1"})
+    feed(job, chat_event("delta.message_done", "reply-1", content="Hello"))
+    feed(job, chat_event("task.status", status="completed"))
+    assert job.turn.complete(time.monotonic())
 
 
 def test_terminal_status_with_activity_does_not_keep_the_turn_busy():
-    tracker = ReplyTracker()
-    tracker.acknowledge({"message_id": "user-1"})
-    tracker.event(chat_event("delta.message_done", "reply-1", content="Hello"))
-    tracker.event(chat_event("task.status", status="completed", activity_code="thinking"))
-    assert tracker.complete(time.monotonic(), played=True)
+    job = reply_job()
+    acknowledge(job, {"message_id": "user-1"})
+    feed(job, chat_event("delta.message_done", "reply-1", content="Hello"))
+    feed(job, chat_event("task.status", status="completed", activity_code="thinking"))
+    assert job.turn.complete(time.monotonic())
 
 
 @pytest.mark.parametrize("order", [("blank", "terminal"), ("terminal", "blank"), ("terminal",)])
 def test_empty_finished_reply_waits_for_reordered_text_but_not_the_full_timeout(order):
-    tracker = ReplyTracker()
-    tracker.acknowledge({"message_id": "user-1"})
+    job = reply_job()
+    acknowledge(job, {"message_id": "user-1"})
     for item in order:
         event = (chat_event("task.status", status="completed") if item == "terminal" else
                  chat_event("delta.message_done", "reply-1", content="  "))
-        assert tracker.event(event) == ([TaskFinished()] if item == "terminal" else [])
+        assert feed(job, event) == ([TaskFinished()] if item == "terminal" else [])
     grace = 1 if "blank" in order else 3
-    assert not tracker.finished_without_text(tracker.last_activity + grace - 0.01)
-    assert tracker.finished_without_text(tracker.last_activity + grace + 0.01)
-    assert tracker.event(chat_event("delta.message_done", "reply-1", content="Late answer")) == ["reply-1"]
-    assert not tracker.finished_without_text(tracker.last_activity + 10)
+    assert not finished_without_text(job, job.turn.last_activity + grace - 0.01)
+    assert finished_without_text(job, job.turn.last_activity + grace + 0.01)
+    assert feed(job, chat_event("delta.message_done", "reply-1", content="Late answer")) == ["reply-1"]
+    assert not finished_without_text(job, job.turn.last_activity + 10)
 
 
 def test_nonterminal_empty_reply_does_not_end_the_turn():
-    tracker = ReplyTracker()
-    tracker.acknowledge({"message_id": "user-1"})
-    tracker.event(chat_event("delta.message_done", "reply-1", content=""))
-    assert not tracker.finished_without_text(tracker.last_activity + 200)
+    job = reply_job()
+    acknowledge(job, {"message_id": "user-1"})
+    feed(job, chat_event("delta.message_done", "reply-1", content=""))
+    assert not finished_without_text(job, job.turn.last_activity + 200)
 
 
 def test_transcript_only_completed_message_queues_tts_without_text_deltas():
-    tracker = ReplyTracker()
-    tracker.acknowledge({"result": {"message_id": "user-1"}})
-    assert tracker.event({
+    job = reply_job()
+    acknowledge(job, {"result": {"message_id": "user-1"}})
+    assert feed(job, {
         "type": "event", "seq": 17984, "event": "delta.message_done",
         "payload": {"message_id": "reply-1", "reply_to_message_id": "user-1",
                     "status": "completed", "transcript": "Test response"},
     }) == ["reply-1"]
-    assert tracker.complete(time.monotonic() + 10, played=True)
+    assert job.turn.complete(time.monotonic() + 10)
 
 
 def test_local_voice_speaks_muse_text_and_executes_its_expression(monkeypatch):
     np = pytest.importorskip("numpy")
-    monkeypatch.setattr(reachy_voice, "REPLY_QUIET_S", 0)
+    monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
     monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
 
     class LocalSpeech:
@@ -1519,7 +1532,7 @@ def test_local_voice_speaks_muse_text_and_executes_its_expression(monkeypatch):
 
 def test_expression_setup_uses_a_separate_text_turn_and_speaks_readiness(monkeypatch):
     np = pytest.importorskip("numpy")
-    monkeypatch.setattr(reachy_voice, "REPLY_QUIET_S", 0)
+    monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
     monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
     spoken = []
 
@@ -1554,7 +1567,7 @@ def test_expression_setup_uses_a_separate_text_turn_and_speaks_readiness(monkeyp
 @pytest.mark.parametrize("recognized", ["Please say pineapple sunshine and nod.", ""])
 def test_local_recognition_sends_words_to_muse_and_ignores_empty_speech(monkeypatch, recognized):
     np = pytest.importorskip("numpy")
-    monkeypatch.setattr(reachy_voice, "REPLY_QUIET_S", 0)
+    monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
     monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
     recordings = []
 
@@ -1597,7 +1610,7 @@ def test_local_recognition_sends_words_to_muse_and_ignores_empty_speech(monkeypa
 @pytest.mark.parametrize("speech_fails", [False, True])
 def test_empty_muse_reply_announces_the_problem_and_resumes_without_reconnecting(monkeypatch, speech_fails):
     np = pytest.importorskip("numpy")
-    monkeypatch.setattr(reachy_voice, "EMPTY_REPLY_GRACE_S", 0)
+    monkeypatch.setattr(muse_turn, "EMPTY_REPLY_GRACE_S", 0)
     monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
     spoken = []
 
@@ -1663,7 +1676,7 @@ def test_reply_emotion_is_present_during_speech_without_a_delayed_extra_move(mon
 def test_contextual_acknowledgement_waits_for_words_and_skips_unmatched_input(monkeypatch, recognized, expected_ack):
     np = pytest.importorskip("numpy")
     monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
-    monkeypatch.setattr(reachy_voice, "REPLY_QUIET_S", 0)
+    monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
     synthesized = []
     hardware = FakeHardware()
 
@@ -1882,7 +1895,7 @@ def test_wake_and_contextual_cues_are_cached_without_overlapping_synthesis(monke
 def test_wake_only_or_unconfirmed_boundary_is_local_then_clean_followup_gets_context_once(monkeypatch, recognized):
     np = pytest.importorskip("numpy")
     monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
-    monkeypatch.setattr(reachy_voice, "REPLY_QUIET_S", 0)
+    monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
     class Wake:
         phrase = "hey muse"
     class Recognition:
@@ -1928,7 +1941,7 @@ def test_wake_only_or_unconfirmed_boundary_is_local_then_clean_followup_gets_con
 def test_same_breath_wake_question_strips_pre_wake_words_and_sends_one_request(monkeypatch):
     np = pytest.importorskip("numpy")
     monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
-    monkeypatch.setattr(reachy_voice, "REPLY_QUIET_S", 0)
+    monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
     class Wake:
         phrase = "hey muse"
     class Recognition:
@@ -2773,15 +2786,15 @@ def test_marker_only_response_moves_silently_or_fails_without_motion(marker, exp
 @pytest.mark.parametrize("response", [{}, {"result": []}, {"message_id": ""}, {"message_id": 10}])
 def test_acknowledgement_requires_a_user_message_id(response):
     with pytest.raises(ValueError, match="acknowledgement"):
-        ReplyTracker("robot-chat").acknowledge(response)
+        reply_job("robot-chat").turn.acknowledge(response)
 
 
 def test_events_waiting_for_acknowledgement_are_bounded():
-    tracker = ReplyTracker("robot-chat")
+    job = reply_job("robot-chat")
     for seq in range(64):
-        tracker.event(chat_event("delta.text_append", "reply-1", seq=seq + 1, text="word"))
+        feed(job, chat_event("delta.text_append", "reply-1", seq=seq + 1, text="word"))
     with pytest.raises(ValueError, match="too many chat events"):
-        tracker.event(chat_event("delta.message_done", "reply-1", seq=65))
+        feed(job, chat_event("delta.message_done", "reply-1", seq=65))
 
 
 class FakeHardware:
@@ -2919,7 +2932,7 @@ async def cancel_task(task):
 
 def test_ack_race_and_multiple_messages_play_real_mp3_once_each(mp3_tone, monkeypatch, caplog):
     np = pytest.importorskip("numpy")
-    monkeypatch.setattr(reachy_voice, "REPLY_QUIET_S", 0.01)
+    monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0.01)
     monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
 
     async def before_ack(session):
@@ -2975,8 +2988,8 @@ def test_replayed_subscription_events_do_not_queue_old_replies():
         await session.chat_subscribed.wait()
         await session.events.put(chat_event("delta.message_done", "old", seq=10, content="old"))
         await session.delivered.get()
-        conversation.job = muse_job(ReplyTracker("robot-chat"))
-        conversation.job.tracker.acknowledge({"message_id": "user-1"})
+        conversation.job = reply_job("robot-chat")
+        acknowledge(conversation.job, {"message_id": "user-1"})
         for event in [
             chat_event("delta.message_done", "old", seq=10, content="old"),
             chat_event("delta.message_done", "unrelated", seq=9, parent="other-user", content="old"),
@@ -3235,7 +3248,7 @@ def test_real_noise_voice_note_gets_text_completion_and_paced_tts_burst(mp3_tone
     from test_link_client import registered_session
     from musegadget.noise import ApplicationResponse, BodyChunk, ServiceFrame
 
-    monkeypatch.setattr(reachy_voice, "REPLY_QUIET_S", 0.01)
+    monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0.01)
     monkeypatch.setattr(reachy_voice, "ECHO_TAIL_S", 0)
 
     async def scenario():
@@ -3492,17 +3505,17 @@ def test_partial_transcripts_leave_out_the_wake_phrase(strip_required, text, exp
 
 
 def test_added_detail_keeps_the_request_open_until_a_task_started_after_it_finishes():
-    tracker = ReplyTracker("robot-chat", owns_chat=True)
+    job = reply_job("robot-chat", owns_chat=True)
     ack = {"session_id": "robot-chat", "is_thread": True}
-    tracker.acknowledge({**ack, "message_id": "user-1"})
-    tracker.event(chat_event("task.status", task_id="task-1", status="running"))
-    tracker.expect_follow_up()
-    tracker.acknowledge({**ack, "message_id": "user-2"}, follow_up=True)
-    assert tracker.event(chat_event("delta.message_done", "reply-1", seq=2, content="Try primavera.")) == ["reply-1"]
-    tracker.event(chat_event("task.status", task_id="task-1", seq=3, status="completed"))
-    assert tracker.complete(time.monotonic() + 20, played=True) is False
-    assert tracker.complete(time.monotonic() + 31, played=True) is True
-    tracker.event(chat_event("task.status", parent=None, task_id="task-2", seq=4, status="running"))
-    assert tracker.complete(time.monotonic() + 60, played=True) is False
-    tracker.event(chat_event("task.status", parent=None, task_id="task-2", seq=5, status="completed"))
-    assert tracker.complete(time.monotonic(), played=True) is True
+    acknowledge(job, {**ack, "message_id": "user-1"})
+    feed(job, chat_event("task.status", task_id="task-1", status="running"))
+    job.turn.expect_follow_up()
+    acknowledge(job, {**ack, "message_id": "user-2"}, follow_up=True)
+    assert feed(job, chat_event("delta.message_done", "reply-1", seq=2, content="Try primavera.")) == ["reply-1"]
+    feed(job, chat_event("task.status", task_id="task-1", seq=3, status="completed"))
+    assert job.turn.complete(time.monotonic() + 20) is False
+    assert job.turn.complete(time.monotonic() + 31) is True
+    feed(job, chat_event("task.status", parent=None, task_id="task-2", seq=4, status="running"))
+    assert job.turn.complete(time.monotonic() + 60) is False
+    feed(job, chat_event("task.status", parent=None, task_id="task-2", seq=5, status="completed"))
+    assert job.turn.complete(time.monotonic()) is True
