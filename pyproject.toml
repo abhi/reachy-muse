@@ -11,7 +11,7 @@ license = "Apache-2.0"
 requires-python = ">=3.10"
 # For a local SDK checkout, install it first: pip install -e ../muse-gadget-sdk/linux
 dependencies = [
-    "musegadget @ git+https://github.com/abhi/muse-gadget-sdk@sdk/reachy-gadget-api#subdirectory=linux",
+    "musegadget @ git+https://github.com/abhi/muse-gadget-sdk@sdk/07-reachy-replies#subdirectory=linux",
 ]
 
 [project.scripts]

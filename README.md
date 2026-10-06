@@ -50,7 +50,7 @@ The [Muse Gadget SDK](https://github.com/abhi/muse-gadget-sdk) (`musegadget`) do
 It pairs the robot with the Muse app, keeps the encrypted link to Muse open, sends each spoken request and follows Muse's answer.
 Its `musegadget.reachy` package holds what Muse and the robot agree on: the robot commands, the expressions, the prompts and the reply formats.
 
-reachy-muse uses only the parts of the SDK that its `docs/gadget-api.md` lists.
+reachy-muse uses only the parts of the SDK that the "Building a gadget" section of its [`linux/AGENTS.md`](https://github.com/abhi/muse-gadget-sdk/blob/sdk/07-reachy-replies/linux/AGENTS.md#building-a-gadget) lists.
 Everything else here is the robot app: audio, wake words, speech models, motors, face tracking and the companion.
 
 ## Test
