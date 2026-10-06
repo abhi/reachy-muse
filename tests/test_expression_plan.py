@@ -1,6 +1,6 @@
 import pytest
 
-from musegadget.reachy.expressions import Expression
+from reachy_muse.contract.expressions import Expression
 from reachy_muse.capabilities import Partial
 from reachy_muse.expression_plan import (
     AnswerArrived, CaptureGap, ExpressionPlanner, Gesture, Heard, MuseStatus, OutputIdle, Recording, RequestHeld,

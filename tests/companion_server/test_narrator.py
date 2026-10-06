@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from musegadget.reachy.expressions import Expression
+from reachy_muse.contract.expressions import Expression
 from reachy_muse.protocol import NarratedLine, NarrateOp
 from reachy_muse.companion_server.narrator_mlx import Ask, MlxNarrator, fallback, parse
 

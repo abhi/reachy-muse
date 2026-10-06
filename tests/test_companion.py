@@ -9,7 +9,7 @@ import pytest
 from fake_companion import TOKEN, FakeCompanion
 import reachy_muse.conversation
 from musegadget.identity import Identity
-from musegadget.reachy.expressions import Expression
+from reachy_muse.contract.expressions import Expression
 from reachy_muse.capabilities import COMPANION_NOTICE, Mode
 from reachy_muse.companion_client import CompanionLink, LinkState
 from reachy_muse.protocol import HearOpen, Narrate, Sender, SpeakStart, decode

@@ -15,8 +15,8 @@ from musegadget import config
 import reachy_muse.cli
 from musegadget.link_client import HttpStreamError, SideChat
 from reachy_muse.speaker_eq import COMPANION_SPEAKER_EQ_GAINS, SPEAKER_EQ_GAINS
-from musegadget.reachy.prompts import CHAT_SETUP_MESSAGE
-from musegadget.reachy.replies import ReplyStyle
+from reachy_muse.contract.prompts import CHAT_SETUP_MESSAGE
+from reachy_muse.contract.replies import ReplyStyle
 
 
 SETUP_NONCE = "a" * 32

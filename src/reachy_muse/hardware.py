@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from musegadget.reachy.commands import POSE_LIMITS, parse_command
+from reachy_muse.contract.commands import POSE_LIMITS, parse_command
 
 if TYPE_CHECKING:
     import numpy as np

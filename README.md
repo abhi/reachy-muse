@@ -21,7 +21,8 @@ The repository has two programs:
 
 reachy-muse needs Python 3.10 or later. The robot's own environment uses Python 3.12.
 
-Copy this repository to `~/reachy-muse` and the Muse Gadget SDK to `~/muse-gadget-sdk` on the robot.
+Copy this repository to `~/reachy-muse` on the robot.
+Copy the Muse Gadget SDK to `~/muse-gadget-sdk`, checked out at the commit that `pyproject.toml` pins.
 Then follow [Install on a Wireless robot](docs/reachy-mini.md#install-on-a-wireless-robot) in the Reachy Mini guide.
 It creates `~/muse-reachy-venv` next to Reachy's own environment and installs both checkouts into it.
 The same guide covers the speech models, pairing with the Muse app, wake words and startup at boot.
@@ -29,17 +30,22 @@ The same guide covers the speech models, pairing with the Muse app, wake words a
 ## Install the companion on a Mac
 
 The companion needs a Mac with Apple Silicon, Python 3.10 or later and about 15 GB of free memory.
-Put the Muse Gadget SDK checkout next to this repository, then run these commands in this repository:
+Run these commands in this repository:
 
 ```sh
 uv venv --python 3.13
-uv pip install -e '.[companion-server,test]' --override <(echo "musegadget @ file://$PWD/../muse-gadget-sdk/linux")
-uv pip install -e ../muse-gadget-sdk/linux
+uv pip install -e '.[companion-server,test]'
 reachy-companion pair
 reachy-companion serve
 ```
 
-`pyproject.toml` names the SDK by its Git URL. The `--override` makes uv take it from the local checkout instead, and the last install makes that checkout editable.
+`pyproject.toml` pins the SDK to one commit of its Git repository, and uv installs it from there.
+To work on the SDK at the same time, put its checkout next to this repository and install it in place of the pin:
+
+```sh
+uv pip install -e '.[companion-server,test]' --override <(echo "musegadget @ file://$PWD/../muse-gadget-sdk/linux")
+uv pip install -e ../muse-gadget-sdk/linux
+```
 
 `pair` prints the address, certificate pin and token. Add them on the robot with `muse-reachy companion add`.
 The [companion server guide](docs/companion-server.md) explains each step and the models it loads.
@@ -48,10 +54,11 @@ The [companion server guide](docs/companion-server.md) explains each step and th
 
 The [Muse Gadget SDK](https://github.com/abhi/muse-gadget-sdk) (`musegadget`) does everything that talks to Muse.
 It pairs the robot with the Muse app, keeps the encrypted link to Muse open, sends each spoken request and follows Muse's answer.
-Its `musegadget.reachy` package holds what Muse and the robot agree on: the robot commands, the expressions, the prompts and the reply formats.
-
-reachy-muse uses only the parts of the SDK that the "Building a gadget" section of its [`linux/AGENTS.md`](https://github.com/abhi/muse-gadget-sdk/blob/sdk/07-reachy-replies/linux/AGENTS.md#building-a-gadget) lists.
+reachy-muse uses only the parts of the SDK that the "Building a gadget" section of its [`linux/AGENTS.md`](https://github.com/abhi/muse-gadget-sdk/blob/f76b2d0507ea641d18c1b72577227fcaccae1596/linux/AGENTS.md#building-a-gadget) lists.
 Everything else here is the robot app: audio, wake words, speech models, motors, face tracking and the companion.
+
+What Muse and the robot agree on lives here, in `reachy_muse.contract`: the robot commands, the expressions, the prompts and the reply formats.
+[The Reachy Mini contract with Muse](docs/contract.md) lists them.
 
 ## Test
 

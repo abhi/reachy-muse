@@ -9,8 +9,8 @@ import re
 import time
 from typing import Awaitable, Callable, Optional, Tuple
 
-from musegadget.reachy.expressions import Expression
-from musegadget.reachy.replies import ReplyStyle, spoken_reply
+from reachy_muse.contract.expressions import Expression
+from reachy_muse.contract.replies import ReplyStyle, spoken_reply
 from reachy_muse.capabilities import WAKE_CUE, Backends, Endpoint, HeardAudio, Mode, Partial, SpokenLine
 from reachy_muse.progress import PUBLIC_PROGRESS_PHRASES, ProgressPlan
 

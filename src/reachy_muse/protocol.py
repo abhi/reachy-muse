@@ -11,7 +11,7 @@ from dataclasses import MISSING, dataclass, field, fields
 from enum import Enum, IntEnum
 from typing import Any, Callable, Dict, Optional, Tuple, Type, Union
 
-from musegadget.reachy.expressions import Expression
+from reachy_muse.contract.expressions import Expression
 
 VERSION = 1
 

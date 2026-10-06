@@ -18,7 +18,8 @@ other robot app before starting this integration.
 
 Copy this repository to `/home/pollen/reachy-muse` and the
 [Muse Gadget SDK](https://github.com/abhi/muse-gadget-sdk) to
-`/home/pollen/muse-gadget-sdk`. To keep the existing Reachy apps environment
+`/home/pollen/muse-gadget-sdk`. Check out the SDK at the commit that
+`pyproject.toml` pins. To keep the existing Reachy apps environment
 intact, create a separate environment that can use its installed SDK and media
 dependencies:
 

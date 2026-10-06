@@ -21,10 +21,10 @@ from reachy_muse import __version__
 from reachy_muse import expression_plan as plan
 from musegadget.link_client import DeviceDescription, LinkSession, Outcome, acknowledgement
 from musegadget.muse_turn import AgentStatus, MuseTurn, ReplayScope, Reply, TaskFinished, TurnEvent
-from musegadget.reachy.commands import COMMAND_SPECS
-from musegadget.reachy.expressions import Expression
-from musegadget.reachy.prompts import SETUP_REQUEST, STOP_REQUEST, spoken_request, voice_context
-from musegadget.reachy.replies import ReplyProtocolError, ReplyRevisionError, ReplyStyle, SentenceStream
+from reachy_muse.contract.commands import COMMAND_SPECS
+from reachy_muse.contract.expressions import Expression
+from reachy_muse.contract.prompts import SETUP_REQUEST, STOP_REQUEST, spoken_request, voice_context
+from reachy_muse.contract.replies import ReplyProtocolError, ReplyRevisionError, ReplyStyle, SentenceStream
 from reachy_muse.capabilities import WAKE_CUE, Backends, EndedTurn, Endpoint, SpokenLine
 from reachy_muse.follow_up import FollowUp, classify_follow_up, is_small_talk, request_topic
 from reachy_muse.progress import BackendStatus, ProgressPlan, ProgressUpdate, backend_status_from_event

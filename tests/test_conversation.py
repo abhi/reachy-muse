@@ -16,7 +16,7 @@ import pytest
 from musegadget import muse_turn
 import reachy_muse.local_backends
 import reachy_muse.conversation
-from musegadget.reachy.replies import ReplyStyle
+from reachy_muse.contract.replies import ReplyStyle
 from reachy_muse.capabilities import Mode
 from reachy_muse.local_backends import backends_for
 from musegadget.muse_turn import MuseTurn, ReplayScope, TaskFinished

@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from musegadget.reachy.expressions import Expression
+from reachy_muse.contract.expressions import Expression
 from reachy_muse.protocol import MAX_LINE_BYTES, NarratedLine, NarrateOp
 
 from reachy_muse.companion_server.grounding import ROBOT_REJECTS, ungrounded

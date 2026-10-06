@@ -22,9 +22,9 @@ import time
 import uuid
 
 from musegadget import config, identity
-from musegadget.reachy.prompts import (CHAT_SETUP_MESSAGE, CHAT_SETUP_PREFIX, CHAT_SETUP_SUFFIX, setup_challenge_reply,
+from reachy_muse.contract.prompts import (CHAT_SETUP_MESSAGE, CHAT_SETUP_PREFIX, CHAT_SETUP_SUFFIX, setup_challenge_reply,
                                       voice_context, with_setup_challenge)
-from musegadget.reachy.replies import ReplyStyle
+from reachy_muse.contract.replies import ReplyStyle
 from reachy_muse.capabilities import Mode
 
 

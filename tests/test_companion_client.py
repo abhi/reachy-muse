@@ -9,7 +9,7 @@ import ssl
 import pytest
 
 from fake_companion import TOKEN, FakeCompanion
-from musegadget.reachy.replies import ReplyStyle
+from reachy_muse.contract.replies import ReplyStyle
 from reachy_muse.capabilities import CapabilityUnavailable
 from reachy_muse.companion_client import CompanionLink, CompanionNarrator, LinkState, parse_pin, parse_url
 from reachy_muse.protocol import Narrate, Sender, decode

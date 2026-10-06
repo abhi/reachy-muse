@@ -10,7 +10,7 @@ import pytest
 from musegadget import muse_turn
 from reachy_muse import voice_audio
 import reachy_muse.conversation
-from musegadget.reachy.replies import ReplyStyle
+from reachy_muse.contract.replies import ReplyStyle
 from reachy_muse.capabilities import Mode
 from reachy_muse.local_backends import LocalHearing, backends_for
 from reachy_muse.conversation import TurnOutcome, VoiceConversation

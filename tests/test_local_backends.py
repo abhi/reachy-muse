@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from musegadget.reachy.expressions import Expression
-from musegadget.reachy.replies import ReplyStyle
+from reachy_muse.contract.expressions import Expression
+from reachy_muse.contract.replies import ReplyStyle
 from reachy_muse.capabilities import HeardAudio, Mode, Partial, SpokenLine
 from reachy_muse.local_backends import LocalHearing, LocalVoice, MuseVoice, RuleNarrator, backends_for
 from reachy_muse.streaming_transcription import StreamingTranscriptionError

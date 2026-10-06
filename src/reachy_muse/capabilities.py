@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, AsyncIterator, Optional, Protocol, Tuple
 
-from musegadget.reachy.expressions import Expression
-from musegadget.reachy.replies import ReplyStyle
+from reachy_muse.contract.expressions import Expression
+from reachy_muse.contract.replies import ReplyStyle
 
 if TYPE_CHECKING:
     from typing import Literal

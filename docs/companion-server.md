@@ -22,10 +22,16 @@ A speech benchmark on the Mac, mac-speech-bench-2, chose the speech models. `eva
 
 ## Install
 
-Use Python 3.10 or later. To develop against a local checkout of the Muse Gadget SDK, put it next to this repository:
+Use Python 3.10 or later:
 
 ```sh
 uv venv --python 3.13
+uv pip install -e '.[companion-server,test]'
+```
+
+To develop against a local checkout of the Muse Gadget SDK instead of the commit that `pyproject.toml` pins, put the checkout next to this repository:
+
+```sh
 uv pip install -e '.[companion-server,test]' --override <(echo "musegadget @ file://$PWD/../muse-gadget-sdk/linux")
 uv pip install -e ../muse-gadget-sdk/linux
 ```
@@ -117,12 +123,12 @@ The robot asks for three kinds of line:
 - `acknowledge` restates the request right after the user stops talking. It never claims a result.
   A greeting, a thank-you, other small talk, or a request under three words gets no line. A fixed rule decides this before the model runs, because Qwen3-4B restated "how are you" as "Okay, checking how you are." even when the prompt told it to stay silent.
 - `progress` says what is happening, based only on Muse's public status label.
-- `lines` condenses Muse's reply into one to three sentences, each with an expression from the SDK's vocabulary, `musegadget.reachy.expressions.Expression`.
+- `lines` condenses Muse's reply into one to three sentences, each with an expression from the robot's vocabulary, `reachy_muse.contract.expressions.Expression`.
 
 The model answers in JSON. The narrator parses that answer and checks every line before it sends it:
 
 - at most one line for `acknowledge` and `progress`, at most three for `lines`, each at most 240 bytes, with no markup;
-- an expression from the SDK's `Expression`;
+- an expression from the contract's `Expression`;
 - no result claimed in an acknowledgement, and no repeat of a progress line already said;
 - no fact that the request, status or reply does not state. `src/reachy_muse/companion_server/grounding.py` checks numbers, number words, ordinals, decimals, times, amounts, date words and names. It also runs the robot's `grounded()` from `reachy_muse.capabilities`, so the robot accepts every line it passes.
 

@@ -11,7 +11,7 @@ import time
 from collections import deque
 from typing import Optional, Tuple
 
-from musegadget.reachy.replies import ReplyStyle
+from reachy_muse.contract.replies import ReplyStyle
 from reachy_muse.capabilities import Backends, CapabilityUnavailable, HeardAudio, SpokenLine, grounded
 from reachy_muse.protocol import MAX_REPLY_BYTES
 from reachy_muse.progress import ProgressPlan

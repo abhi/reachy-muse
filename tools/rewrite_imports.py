@@ -6,6 +6,7 @@ One table drives both steps of the split:
   python tools/rewrite_imports.py paths companion  # the same for reachy-companion
   python tools/rewrite_imports.py rewrite [ROOT]   # rewrite imports in a reachy-muse checkout
   python tools/rewrite_imports.py fake-vm SDK/linux/tests/test_link_client.py > tests/fake_muse_vm.py
+  python tools/rewrite_imports.py contract SDK REF [ROOT]  # copy the SDK's Reachy contract into reachy_muse.contract
 
 The rewrite is idempotent: running it on its own output changes nothing.
 """
@@ -91,6 +92,14 @@ SDK_PATHS = {
     "linux/examples/muse-reachy.service": "examples/muse-reachy.service",
 }
 
+# The Reachy contract stayed in the SDK as musegadget.reachy until reachy-muse took it over.
+CONTRACT_PATHS = {
+    **{f"{SDK_SRC}reachy/{name}.py": f"src/reachy_muse/contract/{name}.py"
+       for name in ["__init__", "commands", "expressions", "prompts", "replies"]},
+    **{f"{SDK_TESTS}test_reachy_{name}.py": f"tests/test_contract_{name}.py"
+       for name in ["commands", "expressions", "prompts", "replies"]},
+}
+
 COMPANION_PATHS = {
     "reachy_companion/": "src/reachy_muse/companion_server/",
     "tests/": "tests/companion_server/",
@@ -107,7 +116,8 @@ MOVED = "|".join(sorted(MODULES, key=len, reverse=True))
 LINE_RULES = [
     # The companion took Expression from reachy_capabilities, which only re-imported it from the contract.
     (re.compile(r"^from musegadget\.reachy_capabilities import Expression$", re.M),
-     "from musegadget.reachy.expressions import Expression"),
+     "from reachy_muse.contract.expressions import Expression"),
+    (re.compile(r"\bmusegadget\.reachy\b(?![\w-])"), "reachy_muse.contract"),
     (re.compile(r"\bmusegadget\.(%s)\b" % MOVED), lambda m: "reachy_muse." + MODULES[m.group(1)]),
     (re.compile(r'files\("musegadget"\) / "data"'), 'files("reachy_muse") / "data"'),
     (re.compile(r"""(["'])musegadget\[reachy\]\1"""), r"\1reachy-muse[robot]\1"),
@@ -209,6 +219,18 @@ def fake_vm(sdk_test_link_client: Path) -> str:
     return header + "\n".join(imports) + "\n\n\n" + "\n\n\n".join(bodies) + "\n"
 
 
+def copy_contract(sdk: Path, ref: str, root: Path) -> list:
+    """Write the contract files from SDK at REF into ROOT, with their imports rewritten."""
+    import subprocess
+    for old, new in CONTRACT_PATHS.items():
+        source = subprocess.run(["git", "-C", str(sdk), "show", f"{ref}:{old}"],
+                                check=True, capture_output=True, text=True).stdout
+        target = root / new
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(rewrite_text(source))
+    return list(CONTRACT_PATHS.values())
+
+
 def paths_file(mapping: dict) -> str:
     """Keep each old path, then rename it. filter-repo keeps everything when the file has only renames."""
     return "".join(f"{old}\n{old}==>{new}\n" for old, new in mapping.items())
@@ -219,6 +241,10 @@ if __name__ == "__main__":
         sys.stdout.write(paths_file({"sdk": SDK_PATHS, "companion": COMPANION_PATHS}[sys.argv[2]]))
     elif sys.argv[1:2] == ["fake-vm"]:
         sys.stdout.write(fake_vm(Path(sys.argv[2])))
+    elif sys.argv[1:2] == ["contract"]:
+        root = Path(sys.argv[4] if len(sys.argv) > 4 else ".").resolve()
+        for name in copy_contract(Path(sys.argv[2]), sys.argv[3], root):
+            print(name)
     elif sys.argv[1:2] == ["rewrite"]:
         root = Path(sys.argv[2] if len(sys.argv) > 2 else ".").resolve()
         for name in rewrite_tree(root):
