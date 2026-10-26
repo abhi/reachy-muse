@@ -1,0 +1,30 @@
+{
+  "opener_delay_200_ms": {
+    "transcript_to_send": {
+      "n": 7,
+      "p50_ms": 0.256,
+      "p95_ms": 0.404
+    },
+    "speech_end_to_first_answer": {
+      "n": 7,
+      "p50_ms": 33.086,
+      "p95_ms": 33.762
+    },
+    "requests_per_turn": 1,
+    "request_bytes": 28
+  },
+  "opener_delay_0_ms": {
+    "transcript_to_send": {
+      "n": 7,
+      "p50_ms": 0.244,
+      "p95_ms": 0.259
+    },
+    "speech_end_to_first_answer": {
+      "n": 7,
+      "p50_ms": 33.093,
+      "p95_ms": 33.683
+    },
+    "requests_per_turn": 1,
+    "request_bytes": 28
+  }
+}

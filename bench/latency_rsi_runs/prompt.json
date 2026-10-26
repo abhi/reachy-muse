@@ -1,0 +1,30 @@
+{
+  "requests": 5,
+  "turns": [
+    {
+      "style": "marker",
+      "payload_bytes": 28,
+      "context_included": false
+    },
+    {
+      "style": "marker",
+      "payload_bytes": 28,
+      "context_included": false
+    },
+    {
+      "style": "plain",
+      "payload_bytes": 2211,
+      "context_included": true
+    },
+    {
+      "style": "plain",
+      "payload_bytes": 28,
+      "context_included": false
+    },
+    {
+      "style": "marker",
+      "payload_bytes": 2231,
+      "context_included": true
+    }
+  ]
+}

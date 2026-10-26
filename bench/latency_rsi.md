@@ -67,11 +67,11 @@ so elapsed time starts at the first timestamped application line, a lower bound 
 | 13:31:48.716 | Reachy ready | 177.316 | 133.443 |
 
 Across 124 complete registration/ready pairs, registration-to-ready is
-81.027 seconds p50, 122.172 seconds p95, and 10,413.732 seconds in total.
+81.026 seconds p50, 122.172 seconds p95, and 10,413.732 seconds in total.
 These pairs mostly describe reconnections, not full process starts. The initial ready line lacks
 its preceding registration. A second complete application startup takes 170.246 seconds,
 07:05:11.776 to 07:08:02.022. Across the two application starts, p50 is 173.781 seconds and
-p95 is 176.962 seconds. Setup and warm-up policies changed during this journal, so these are historical observations.
+p95 is 176.963 seconds. Setup and warm-up policies changed during this journal, so these are historical observations.
 
 The silent gap is in `VoiceConversation.run()` before microphone capture. It awaits
 `warm_up()`, which awaits the main `LocalVoice.warm()` and then the progress voice.
@@ -106,6 +106,8 @@ This should remove all repeated synthesis without changing phrase text, audio, o
 subscription handling, and the ready log. Its fake Piper inference costs 10 ms per phrase.
 It checks the SHA256 of all replayed PCM across the first connection and the reconnect.
 Its session is an in-memory queue and its microphone returns no samples. It cannot send to Muse.
+The replay clock begins at `VoiceConversation.run()`, after registration/setup. "Cold" means
+an empty phrase cache. These measurements exclude CLI/hardware startup and actual model loading.
 
 ```sh
 PYTHONPATH=src python -m bench.latency_replay --runs 7
@@ -167,3 +169,140 @@ All 64 focused tests passed. The new lifecycle tests verify subscription overlap
 during warm-up, and closing the subscription on warm-up failure or cancellation.
 The initial full-suite run also passed: 1,968 passed, two skipped, six real-model tests deselected.
 The suite is repeated after the final production changes.
+
+Experiment 4 hypothesis: an acknowledgement delays a Muse-bound question's dispatch and
+first answer. Replay a 200 ms acknowledgement versus a zero-delay acknowledgement, with
+the same 20 ms fake Muse response and 10 ms voice inference. Exercise `turn()`, `_dispatch()`,
+the real subscription reader, narrator, and playback callback. Assert exactly one outgoing
+request with the original 28-byte text on every turn. No production edit is made before measurement.
+
+```sh
+PYTHONPATH=src:tests python -m bench.latency_turn_replay dispatch --runs 7
+```
+
+Experiment 4 rejected. Dispatch p50 is 0.256 ms with the slow acknowledgement and 0.244 ms
+with the immediate one. First-answer p50 is 33.086 versus 33.093 ms, so removing the 200 ms
+opener delay produces no first-answer gain. Question acknowledgements already run in parallel
+and are cancelled when the answer arrives. Small talk intentionally waits for classification
+to avoid sending a locally answered turn to Muse. Raw results: `latency_rsi_runs/dispatch.json`.
+
+Experiment 5 hypothesis: Reachy sends its full instructions on every spoken request, inflating
+Muse's input. Replay the real `_dispatch()` through two steady marker requests, a switch to
+plain replies, another plain request, and a switch back. Count payload bytes and requests,
+without using a model or changing the prompt.
+
+Experiment 5 rejected as a steady-turn optimization. The five requests carry 28, 28,
+2,211, 28, and 2,231 bytes, respectively. There is exactly one send per turn; formatting
+instructions only return when the reply style changes. Local-chat history is separately
+capped at 300 bytes. No redundant steady-turn setup request exists to remove. A shorter
+style-switch reminder might reduce prompt processing, but this replay cannot prove its
+formatting and persona behavior or Muse TTFT. It is left for a live experiment.
+Raw results: `latency_rsi_runs/prompt.json`; reproduce with the `prompt` experiment.
+
+Experiment 6 hypothesis: reducing the companion/fallback silence threshold from 2.0 to
+0.8 seconds saves 1.2 seconds without changing turn boundaries. Replay the repository's
+recorded reminder, including its correction "not at nine", then insert a one-second
+hesitation at its existing comma. Keep the existing 1.2-second short-utterance allowance.
+
+Experiment 6 rejected for changed behavior. The unmodified recording endpoints move from
+5.00 to 3.80 seconds, a 1.20-second gain. With the hesitation, the baseline yields one turn
+ending at 6.00 seconds; the candidate yields two turns ending at 2.78 and 4.80 seconds.
+It separates the correction from the request. This is recorded audio with an inserted pause,
+using the supported WebRTC gate, not a claim about the live Silero/companion recognizer.
+Raw results: `latency_rsi_runs/endpoint.json`; reproduce with the `endpoint` experiment.
+
+Experiment 7 hypothesis: interrupting queued output can remove the post-narration wait
+without losing speech. Queue a 600 ms synthetic briefing line, then a new answer. Compare
+normal ordering with calling the existing hush operation before enqueueing the answer.
+Count every prior-line sample delivered, as well as answer latency. The journal's largest
+outlier overlaps a briefing and a 4.2-second fallback notice; it cannot be labelled pure TTS cost.
+
+Experiment 7 rejected for lost speech. Interrupting the previous line reduces answer p50
+from 651.229 to 40.634 ms, but delivers only 0.080 of its 0.600 seconds. Normal ordering
+delivers all 0.600 seconds on every replay. That apparent gain discards 0.520 seconds of
+already accepted speech. No queue priority or interruption policy was changed.
+Raw results: `latency_rsi_runs/queue.json`; reproduce with `queue --runs 7`.
+
+Experiment 8 hypothesis: starting batch transcription before the earlier turn drains
+removes a queue-dependent recognition delay. The source already calls `ended.start()`
+in `queue_turn()` at admission, before the request waits. Replay a 20 ms fake recognizer
+behind a 60 ms earlier turn, then try an additional early start. Measure the remaining
+wait at `endpoint()` and verify that recognition happens only once.
+
+Experiment 8 rejected. Remaining recognition wait is 0.016 ms p50 in both variants.
+Total queue-plus-recognition p50 is 61.466 versus 61.821 ms. Both perform exactly one
+recognition. Scheduling it early is already implemented, so no further gain is established.
+Results: `latency_rsi_runs/asr.json`; reproduce with `asr --runs 7`.
+
+Changing recognizer models, decoding limits, or cropping audio is deferred. The journal contains
+no user recordings for the slow recognition cases, and the local environment has no robot
+recognizer loaded. Fake inference timing cannot establish word accuracy or a Pi inference gain.
+The baseline already uses a short-context Whisper path for suitable turns and supports streaming
+recognition. Removing uncertainty checks would trade correctness for speed.
+
+Experiment 9 hypothesis: a two-sentence Muse answer waits on an avoidable companion narration
+round trip. Replay `FailoverNarrator.lines()` with a 200 ms companion operation and with an
+immediate one, keeping the exact two spoken sentences. Count companion calls.
+
+Experiment 9 rejected. Both variants take 0.005 ms p50 and make zero companion requests.
+The existing short-plain-reply path already removes this round trip. The observed 0.065 seconds
+of narration across three answers provides little remaining opportunity.
+Results: `latency_rsi_runs/narration.json`; reproduce with `narration --runs 7`.
+
+Three changes were accepted, each in its own commit:
+
+| Commit | Change | Offline p50 before/after, ms | Offline p95 before/after, ms |
+|---|---|---:|---:|
+| `1e67ac4` | Reuse fixed PCM on reconnect | 567.643 / 0.599 | 572.069 / 0.805 |
+| `5fc5774` | Warm independent voices concurrently | 548.562 / 393.762 | 655.199 / 493.261 |
+| `1e954d5` | Overlap subscription acknowledgement with warm-up | 530.848 / 405.139 | 634.970 / 503.582 |
+
+The rows are sequential experiments with different workloads, not additive robot savings.
+No accepted change claims a measured improvement in live wake-to-answer or speech-end-to-answer latency.
+All rejected variants remain confined to the offline experiments.
+For before/after reproduction, run the current replay scripts with `PYTHONPATH` pointing first
+to the `src` directory of the desired checkout. Experiment 1 starts at `06fd273`, experiment 2
+at `1e67ac4`, and experiment 3 at `5fc5774`. Keep the same interpreter, fake delays, and run count.
+For turn experiments also include the current `tests` directory in `PYTHONPATH`.
+
+The next experiments require the live robot and were not run:
+
+1. Compare process startup and reconnect separately with the same build and voice models.
+   Record both warm-up spans, synthesis counts, subscription start/acknowledgement, hearing start,
+   and the ready event. Confirm zero synthesis calls on reconnect and measure cold parallel warm-up
+   under normal camera/VAD load. Compare PCM and monitor CPU contention before accepting a live gain.
+2. Collect at least 30 turns per requested kind, with wake, actual speech end, first synthesized
+   sample, queue admission, speaker ownership, and actual output onset. Add answer-audio marks to
+   device-command acknowledgements and briefing playback; their current timelines cannot supply
+   those metrics. For briefings, keep prefetch time separate from arrival-to-playback time.
+3. Reproduce the fallback case with the same recorded utterances and the robot's current recognizer.
+   Separate recognizer queue time from inference. Compare existing streaming and short-context
+   paths on exact transcript/correction preservation before changing endpoint or decoder settings.
+4. Reproduce the October 23 briefing overlap and companion outage. Measure time in prior audio,
+   fallback notice audio, companion first-chunk timeout, Piper inference, and hardware writes.
+   Keep all speech and ordering while testing more preparation ahead of playback. The 26.305-second
+   stage currently combines these causes, so a timeout reduction alone is not justified.
+5. Measure a shorter format reminder only on an actual reply-style switch. Compare TTFT and
+   exact speech-format/persona compliance while keeping the chat model and registration unchanged.
+   Steady requests already omit the full instructions. This experiment would contact Muse and
+   therefore remains outside this offline run.
+
+The prescribed suite is invoked below with `REACHY_PYTHON` pointing to the existing project
+interpreter. Only `UV_CACHE_DIR` was redirected to writable scratch because the default cache
+was sandbox-restricted. The repository's default selection excludes its six real-model tests.
+
+```sh
+uv run -q --no-project --python "$REACHY_PYTHON" \
+  --with pytest --with pytest-timeout --with 'av>=12' --with 'webrtcvad-wheels>=2.0.14' \
+  env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD/src" \
+  python -m pytest -q -p no:cacheprovider --timeout 120 .
+```
+
+Final full-suite result: **1,978 passed, two skipped, six deselected in 682.94 seconds**.
+The initial full run had 1,968 passes in 690.94 seconds. The ten added tests cover cache reuse,
+audio equality, rates, cancellation, concurrent warm-up, and subscription lifetime. A final
+focused run of those tests plus repository hygiene passed all 11 checks after staging every artifact.
+All six rejected-turn replay commands completed with their behavior assertions intact.
+All 12 result files parse as JSON, and every warm-up replay has the same PCM digest.
+The journal hash is unchanged. `git diff --check` passes. Only `conversation.py`,
+`local_backends.py`, and `local_speech.py` changed in production source.

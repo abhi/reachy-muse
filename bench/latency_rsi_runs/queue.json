@@ -1,0 +1,34 @@
+{
+  "ordered": {
+    "queued_answer_to_first_audio": {
+      "n": 7,
+      "p50_ms": 651.229,
+      "p95_ms": 651.458
+    },
+    "prior_speech_seconds_delivered": [
+      0.6,
+      0.6,
+      0.6,
+      0.6,
+      0.6,
+      0.6,
+      0.6
+    ]
+  },
+  "interrupt": {
+    "queued_answer_to_first_audio": {
+      "n": 7,
+      "p50_ms": 40.634,
+      "p95_ms": 41.486
+    },
+    "prior_speech_seconds_delivered": [
+      0.08,
+      0.08,
+      0.08,
+      0.08,
+      0.08,
+      0.08,
+      0.08
+    ]
+  }
+}

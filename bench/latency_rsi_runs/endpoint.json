@@ -1,0 +1,37 @@
+{
+  "units": "each pair is endpoint audio time and retained WAV duration, in seconds",
+  "clips": {
+    "unmodified": {
+      "2.0": [
+        [
+          5.0,
+          4.88
+        ]
+      ],
+      "0.8": [
+        [
+          3.8,
+          3.68
+        ]
+      ]
+    },
+    "one_second_hesitation": {
+      "2.0": [
+        [
+          6.0,
+          5.88
+        ]
+      ],
+      "0.8": [
+        [
+          2.78,
+          2.66
+        ],
+        [
+          4.8,
+          1.82
+        ]
+      ]
+    }
+  }
+}

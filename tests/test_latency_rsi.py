@@ -6,14 +6,14 @@ from types import SimpleNamespace
 
 import pytest
 
+pytest.importorskip("numpy")
+pytest.importorskip("av")
+
 from bench.latency_replay import OfflineSession, ReplaySpeech, SilentHardware, startup
 from reachy_muse.capabilities import Backends, Mode, SpokenLine
 from reachy_muse.contract.replies import ReplyStyle
 from reachy_muse.conversation import VoiceConversation
 from reachy_muse.local_backends import LocalVoice, backends_for
-
-np = pytest.importorskip("numpy")
-pytest.importorskip("av")
 
 
 @pytest.fixture

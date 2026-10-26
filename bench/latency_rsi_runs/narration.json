@@ -1,0 +1,18 @@
+{
+  "companion_delay_200_ms": {
+    "narration": {
+      "n": 7,
+      "p50_ms": 0.005,
+      "p95_ms": 0.07
+    },
+    "companion_requests": 0
+  },
+  "companion_delay_0_ms": {
+    "narration": {
+      "n": 7,
+      "p50_ms": 0.005,
+      "p95_ms": 0.006
+    },
+    "companion_requests": 0
+  }
+}
