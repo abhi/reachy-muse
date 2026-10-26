@@ -133,3 +133,17 @@ Raw results: `latency_rsi_runs/warm-before.json` and `latency_rsi_runs/warm-afte
 Validation: 58 focused tests passed, including actual ready-log startup, PCM equality,
 companion failover reuse, separate voice/rate caches, and interrupted warm-up recovery.
 This cache is in memory. A process restart still performs the first synthesis.
+
+Experiment 2 hypothesis: the main and progress voices have independent Piper workers,
+so their cold warm-ups can overlap. Keep capture blocked until both phrase banks are complete.
+Measure the same 49-phrase replay before and after, and verify that errors or cancellation
+join both workers' warm-up tasks. This tests scheduling, not Raspberry Pi CPU throughput.
+
+Experiment 2 accepted. Warm both phrase banks concurrently and join both tasks on success,
+failure, or cancellation. All 49 phrases still finish before capture. The theoretical replay
+critical path is 35 rather than 49 inference delays. Seven measured cold starts improved
+from 548.562 to 393.762 ms p50 and 655.199 to 493.261 ms p95. The PCM digest is unchanged.
+Raw results: `latency_rsi_runs/parallel-before.json` and `latency_rsi_runs/parallel-after.json`.
+All 62 focused tests passed, including simultaneous start, waiting for the slower bank,
+and cancelling either bank when its sibling fails. Actual cold-start savings depend on
+CPU contention on the robot and must be measured there.

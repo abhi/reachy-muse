@@ -573,9 +573,15 @@ class VoiceConversation:
 
     async def warm_up(self) -> None:
         rate = self.hardware.output_sample_rate
-        await self.backends.voice.warm(rate)
+        warming = [asyncio.create_task(self.backends.voice.warm(rate))]
         if self.backends.progress_voice is not None:
-            await self.backends.progress_voice.warm(rate)
+            warming.append(asyncio.create_task(self.backends.progress_voice.warm(rate)))
+        try:
+            await asyncio.gather(*warming)
+        finally:
+            for task in warming:
+                task.cancel()
+            await asyncio.gather(*warming, return_exceptions=True)
 
     async def _subscribe(self) -> None:
         subscription = self.session.subscribe_chat(self.session_id)
