@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-pytest.importorskip("numpy")
+np = pytest.importorskip("numpy")
 pytest.importorskip("av")
 
 from bench.latency_replay import OfflineSession, ReplaySpeech, SilentHardware, startup
@@ -18,6 +18,11 @@ from reachy_muse.local_speech import PiperSpeech
 from test_local_speech import worker  # noqa: F401
 
 
+# Playback digests from 06fd273, before fixed-phrase caching.
+REPLAY_PCM_SHA256 = "604e5162d4d9936bd0d096bbf4c55348ad89947006ff966efd7578d2a298968f"
+PIPER_PCM_SHA256 = "e6b58ee72dcfafbd99241948aed0cb6a2d8439bd2310e1140ef0a005aaba0f36"
+
+
 @pytest.fixture
 def model(tmp_path):
     path = tmp_path / "fake.onnx"
@@ -26,13 +31,14 @@ def model(tmp_path):
     return path
 
 
-def test_reconnection_reaches_ready_with_identical_audio_and_no_new_synthesis(model):
+def test_reconnection_reaches_ready_with_baseline_audio_and_no_new_synthesis(model):
     async def scenario():
         speech, progress = ReplaySpeech(model, 0), ReplaySpeech(model, 0)
         _, before = await startup(speech, progress)
+        assert before == REPLAY_PCM_SHA256
         assert (len(speech.requests), len(progress.requests)) == (14, 35)
         _, after = await startup(speech, progress)
-        assert after == before
+        assert after == REPLAY_PCM_SHA256
         assert (len(speech.requests), len(progress.requests)) == (14, 35)
     asyncio.run(scenario())
 
@@ -43,6 +49,7 @@ def test_cancelled_speech_restarts_worker_before_reconnect_is_ready(model, worke
         stream = None
         try:
             _, before = await startup(speech, progress)
+            assert before == PIPER_PCM_SHA256
             assert len(worker[1]) == 2
             process = speech._process
             stream = speech.stream("Cancelled reply.", 48000)
@@ -53,7 +60,7 @@ def test_cancelled_speech_restarts_worker_before_reconnect_is_ready(model, worke
             assert len(worker[1]) == 3
             assert worker[1][-1].returncode is None
             assert worker[2].read_text() == "Cancelled reply."
-            assert after == before
+            assert after == PIPER_PCM_SHA256
             stream = speech.stream("An uncached answer.", 48000)
             samples = [chunk async for chunk in stream]
             assert sum(len(chunk) for chunk in samples) == 4800
@@ -77,17 +84,20 @@ def test_companion_fallback_reuses_recordings_but_not_route_or_narrator_state(mo
         assert first.companion is not second.companion
         assert first.narrator.local is not second.narrator.local
         assert second.voice.is_presynthesized("Yes?")
+        for voice in (first.voice, second.voice):
+            samples = [chunk async for chunk in voice.stream(SpokenLine("Yes?", None, "notice"), 16000)]
+            np.testing.assert_array_equal(np.concatenate(samples), np.full(160, 0.71875, dtype=np.float32))
     asyncio.run(scenario())
 
 
 def test_recordings_are_scoped_to_the_voice_and_output_rate(model):
     async def scenario():
         speech = ReplaySpeech(model, 0)
-        for rate in (16000, 48000, 16000):
+        for rate, count in ((16000, 160), (48000, 480), (16000, 160)):
             voice = LocalVoice(speech, ("Yes?",))
             await voice.warm(rate)
             samples = [chunk async for chunk in voice.stream(SpokenLine("Yes?", None, "notice"), rate)]
-            assert sum(len(chunk) for chunk in samples) == rate // 100
+            np.testing.assert_array_equal(np.concatenate(samples), np.full(count, 0.71875, dtype=np.float32))
         assert speech.requests == [("Yes?", 16000), ("Yes?", 48000)]
         other = ReplaySpeech(model, 0)
         await LocalVoice(other, ("Yes?",)).warm(16000)
@@ -122,6 +132,9 @@ def test_cancelled_warmup_keeps_completed_phrases_and_retries_incomplete_audio(m
         await voice.warm(16000)
         assert speech.requests == [("Yes?", 16000), ("On it.", 16000), ("On it.", 16000)]
         assert set(voice.phrases) == {"Yes?", "On it."}
+        for text, value in (("Yes?", 0.71875), ("On it.", 0.23828125)):
+            samples = [chunk async for chunk in voice.stream(SpokenLine(text, None, "notice"), 16000)]
+            np.testing.assert_array_equal(np.concatenate(samples), np.full(160, value, dtype=np.float32))
     asyncio.run(scenario())
 
 
@@ -181,6 +194,66 @@ def test_failed_or_cancelled_startup_joins_every_warmup(failure):
         with pytest.raises(asyncio.CancelledError if failure == "cancel" else ValueError):
             await warming
         assert voice.closed.is_set() and progress.closed.is_set()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("piper_voice", ["main", "progress"])
+def test_cancelled_warmup_reaps_worker_spawned_during_sibling_cleanup(model, worker, monkeypatch, piper_voice):
+    async def scenario():
+        spawn_started, start_spawn = asyncio.Event(), asyncio.Event()
+        process_created, closing, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original = asyncio.create_subprocess_exec
+
+        async def delayed(*args, **kwargs):
+            spawn_started.set()
+            await start_spawn.wait()
+            process = await original(*args, **kwargs)
+            process_created.set()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            return process
+
+        class ClosingVoice:
+            async def warm(self, rate):
+                try:
+                    await asyncio.Future()
+                finally:
+                    closing.set()
+                    await process_created.wait()
+                    closed.set()
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", delayed)
+        speech = PiperSpeech(model)
+        voice, progress = LocalVoice(speech), ClosingVoice()
+        if piper_voice == "progress":
+            voice, progress = progress, voice
+        backends = Backends(hearing=None, voice=voice, narrator=None, progress_voice=progress,
+                            local_style=ReplyStyle.MARKER)
+        conversation = VoiceConversation(None, SimpleNamespace(output_sample_rate=16000), backends=backends)
+        warming = asyncio.create_task(conversation.warm_up())
+        try:
+            await asyncio.wait_for(spawn_started.wait(), 3)
+            warming.cancel()
+            await asyncio.wait_for(closing.wait(), 3)
+            assert not warming.done()
+            start_spawn.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(warming, 3)
+            assert closed.is_set()
+            assert len(worker[1]) == 1
+            assert worker[1][0].returncode == -9
+            assert speech._process is None
+        finally:
+            start_spawn.set()
+            process_created.set()
+            if not warming.done():
+                warming.cancel()
+            await asyncio.gather(warming, return_exceptions=True)
+            await speech.close()
+            for process in worker[1]:
+                if process.returncode is None:
+                    process.kill()
+                await process.communicate()
     asyncio.run(scenario())
 
 
