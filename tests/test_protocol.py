@@ -152,7 +152,7 @@ def test_fake_companion_happy_turn():
             {"text": "It is 14 degrees.", "expression": None},
             {"text": "Sunny all day.", "expression": None},
             {"text": "Wind is calm.", "expression": None},
-        ]},
+        ], "intent": None},
     ]
 
 
@@ -186,7 +186,8 @@ def test_fake_companion_gap_and_fabricate_faults():
         check.accept(spoken[1])
     assert ([frame.seq for frame in spoken[:2]], caught.value.code) == ([0, 2], ErrorCode.GAP)
     assert plain(spoken[2]) == {"stream": 2, "frames": 2}
-    assert plain(narrated[0]) == {"id": 1, "lines": [{"text": "It is sunny. It took 17 minutes.", "expression": None}]}
+    assert plain(narrated[0]) == {"id": 1, "lines": [{"text": "It is sunny. It took 17 minutes.", "expression": None}],
+                                  "intent": None}
 
 
 def test_fake_companion_abort_after_frames_closes_without_a_close_frame():
@@ -215,3 +216,14 @@ def test_hostile_text_frames_raise_protocol_errors(frame, reasons):
         decode(frame, sender=Sender.ROBOT)
     assert caught.value.code == ErrorCode.BAD_REQUEST
     assert caught.value.reason in reasons
+
+
+def test_animation_frames_round_to_the_nearest_tenth_and_refuse_values_that_are_not_finite():
+    from reachy_muse.protocol import AnimateResult
+
+    sent = AnimateResult(1, 25, ((0.35, -0.35, 0.04, 0, 0, 0, 0, 0, 3276.7),))
+    assert decode(encode(sent), sender=Sender.COMPANION).frames == ((0.4, -0.4, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 3276.7),)
+    for bad in (float("nan"), float("inf"), 3276.8):
+        with pytest.raises(ProtocolError) as caught:
+            encode(AnimateResult(1, 25, ((bad, 0, 0, 0, 0, 0, 0, 0, 0),)))
+        assert caught.value.reason is Reason.OUT_OF_RANGE

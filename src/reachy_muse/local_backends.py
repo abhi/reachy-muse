@@ -7,40 +7,17 @@ import asyncio
 import logging
 import re
 import time
+from itertools import chain
 from typing import Awaitable, Callable, Optional, Tuple
 
 from reachy_muse.contract.expressions import Expression
+from reachy_muse.contract.intent import FALLBACK_OPENERS, Intent, guess_intent, pick
 from reachy_muse.contract.replies import ReplyStyle, spoken_reply
-from reachy_muse.capabilities import WAKE_CUE, Backends, Endpoint, HeardAudio, Mode, Partial, SpokenLine
+from reachy_muse.capabilities import WAKE_CUE, Backends, Endpoint, Heard, HeardAudio, Hold, Mode, Opener, Partial, SpokenLine
 from reachy_muse.progress import PUBLIC_PROGRESS_PHRASES, ProgressPlan
 
 log = logging.getLogger(__name__)
-ACKNOWLEDGEMENTS = (
-    "Let me check the weather.", "Let me look that up.", "Let me explain that.",
-    "Let me work out a plan.", "Let me work that out.", "Let me look into that trip.",
-)
-
-
-def contextual_acknowledgement(text: str) -> str | None:
-    words = text.casefold().strip()
-    request = re.search(r"\b(?:what|why|how|when|where|who|which|can|could|would|please|"
-                        r"find|search|look|check|tell|explain|plan|calculate|solve|help)\b", words)
-    if not request:
-        return None
-    if re.search(r"\b(?:weather|forecast|temperature|rain|snow)\b", words):
-        return ACKNOWLEDGEMENTS[0]
-    if re.search(r"\b(?:calculate|solve|multiply|divide)\b|\d\s*[+*/=]\s*\d", words):
-        return ACKNOWLEDGEMENTS[4]
-    if re.search(r"\b(?:trip|travel|flight|flights|hotel|hotels|itinerary)\b", words):
-        return ACKNOWLEDGEMENTS[5]
-    if re.search(r"\b(?:plan|planning|schedule)\b", words):
-        return ACKNOWLEDGEMENTS[3]
-    if re.search(r"\b(?:explain|why)\b|\bhow (?:does|do|is|are)\b", words):
-        return ACKNOWLEDGEMENTS[2]
-    if re.search(r"\b(?:search|find|latest|current|news)\b|\blook (?:up|for)\b", words):
-        return ACKNOWLEDGEMENTS[1]
-    return None
-
+ACKNOWLEDGEMENTS = tuple(dict.fromkeys(chain.from_iterable(FALLBACK_OPENERS.values())))
 
 class _LocalEndedTurn:
     """A turn Silero or WebRTC ended, recognized by the streaming or the batch transcriber."""
@@ -97,6 +74,10 @@ class LocalHearingTurn:
     @property
     def speech_active(self) -> bool:
         return getattr(self._recorder, "speech_active", self._recorder.active)
+
+    @property
+    def quiet_s(self) -> float:
+        return getattr(self._recorder, "quiet_s", 0.0)
 
     @property
     def partial(self) -> Optional[Partial]:
@@ -289,15 +270,21 @@ class MuseVoice:
 class RuleNarrator:
     def __init__(self, *, presynthesized: Optional[Callable[[str], bool]] = None):
         self._presynthesized = presynthesized
+        self._turns = dict.fromkeys(Intent, 0)
 
-    async def acknowledge(self, request: str) -> Optional[SpokenLine]:
-        phrase = contextual_acknowledgement(request)
+    def hold(self, intent: Intent, heard: Heard) -> Hold:
+        turn = self._turns[intent]
+        self._turns[intent] += 1
+        phrase = pick(FALLBACK_OPENERS[intent], turn, heard.recently_said)
         if phrase is None or self._presynthesized is None or not self._presynthesized(phrase):
-            return None
-        return SpokenLine(phrase, None, "ack")
+            return Hold(intent, None)
+        return Hold(intent, SpokenLine(phrase, None, "ack"))
 
-    def progress(self, request: str, started: float) -> ProgressPlan:
-        return ProgressPlan(request, started)
+    async def acknowledge(self, heard: Heard) -> Opener:
+        return self.hold(guess_intent(heard.text, heard.previous), heard)
+
+    def progress(self, request: str, started: float, intent: Intent = Intent.QUESTION) -> ProgressPlan:
+        return ProgressPlan(request, started, intent=intent)
 
     async def say_progress(self, request: str, status: str,
                            already_said: Tuple[str, ...]) -> Optional[SpokenLine]:

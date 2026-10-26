@@ -86,7 +86,7 @@ def score(manifest: Dict, recordings: Path) -> Dict:
                       "errors": word_errors(words(sentence["text"]), words(heard)),
                       "critical": intact(heard, sentence["critical"]), "clarity": round(clarity(samples, rate), 4)})
         print(f"{entry['file']:<18} {files[-1]['errors']} errors  {heard}", file=sys.stderr)
-    return {"recordings": str(recordings), "voices": [summarize(voice, [f for f in files if f["voice"] == voice]) for voice in manifest["voices"]],
+    return {"recordings": recordings.name, "voices": [summarize(voice, [f for f in files if f["voice"] == voice]) for voice in manifest["voices"]],
             "files": files}
 
 

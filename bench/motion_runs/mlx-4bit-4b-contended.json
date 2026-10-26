@@ -1,0 +1,362 @@
+{
+ "config": {
+  "planner": "mlx",
+  "mlx_model": "4b-4bit",
+  "bundle": "4b",
+  "device": "mps",
+  "runs": 1,
+  "formatted": false,
+  "contend": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+  "machine": "macOS-26.4-arm64-arm-64bit-Mach-O",
+  "python": "3.13.14"
+ },
+ "load_s": 3.2,
+ "latency_ms": {
+  "planner": {
+   "p50": 885.7,
+   "p95": 983.0,
+   "max": 983.0
+  },
+  "generator": {
+   "p50": 30.3,
+   "p95": 35.2,
+   "max": 35.2
+  },
+  "reach": {
+   "p50": 2.4,
+   "p95": 3.2,
+   "max": 3.2
+  },
+  "total": {
+   "p50": 920.4,
+   "p95": 1014.5,
+   "max": 1014.5
+  }
+ },
+ "recipe_tokens": {
+  "p50": 66.0,
+  "p95": 77,
+  "max": 77
+ },
+ "duration_s": {
+  "p50": 3.7,
+  "p95": 5.6,
+  "max": 5.6
+ },
+ "peak_footprint_gb": 4.89,
+ "baseline_footprint_gb": 0.08,
+ "live_server": {
+  "before": {
+   "running": true,
+   "pid": 74447,
+   "cpu_percent": 0.0,
+   "footprint": "8669 MB (16384 bytes per page)"
+  },
+  "after": {
+   "running": true,
+   "pid": 74447,
+   "cpu_percent": 0.0,
+   "footprint": "8669 MB (16384 bytes per page)"
+  }
+ },
+ "quality": {
+  "happy, answering a question": {
+   "frames": 100,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 4.7,
+    "y": 10.5,
+    "z": 6.8,
+    "roll": 1.5,
+    "pitch": 16.7,
+    "yaw": 24.2,
+    "body_yaw": 2.4,
+    "right_antenna": 20.9,
+    "left_antenna": 17.3
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 6,
+   "yaw_swings": 1
+  },
+  "curious, listening": {
+   "frames": 98,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 2.6,
+    "y": 13.1,
+    "z": 1.8,
+    "roll": 30.1,
+    "pitch": 2.5,
+    "yaw": 10.7,
+    "body_yaw": 1.3,
+    "right_antenna": 26.2,
+    "left_antenna": 22.1
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 0,
+   "yaw_swings": 1
+  },
+  "thinking hard": {
+   "frames": 132,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 10,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 2.0,
+    "y": 22.7,
+    "z": 1.6,
+    "roll": 35.5,
+    "pitch": 12.2,
+    "yaw": 1.1,
+    "body_yaw": 1.4,
+    "right_antenna": 21.6,
+    "left_antenna": 23.6
+   },
+   "frames_at_limit": {
+    "y": 10
+   },
+   "pitch_swings": 2,
+   "yaw_swings": 0
+  },
+  "surprised by good news": {
+   "frames": 72,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 7.2,
+    "y": 2.9,
+    "z": 9.6,
+    "roll": 1.1,
+    "pitch": 13.3,
+    "yaw": 1.8,
+    "body_yaw": 1.9,
+    "right_antenna": 29.1,
+    "left_antenna": 26.6
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 1,
+   "yaw_swings": 0
+  },
+  "sad, apologizing": {
+   "frames": 140,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 123,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 4.6,
+    "y": 20.5,
+    "z": 15.8,
+    "roll": 16.5,
+    "pitch": 21.0,
+    "yaw": 22.2,
+    "body_yaw": 4.3,
+    "right_antenna": 87.7,
+    "left_antenna": 94.8
+   },
+   "frames_at_limit": {
+    "x": 60,
+    "right_antenna": 123,
+    "left_antenna": 123,
+    "z": 115,
+    "pitch": 77
+   },
+   "pitch_swings": 1,
+   "yaw_swings": 4
+  },
+  "nodding yes": {
+   "frames": 81,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 10.7,
+    "y": 9.2,
+    "z": 8.3,
+    "roll": 1.6,
+    "pitch": 23.5,
+    "yaw": 2.2,
+    "body_yaw": 3.1,
+    "right_antenna": 13.9,
+    "left_antenna": 10.4
+   },
+   "oscillation": {
+    "channel": "pitch",
+    "half_cycles": 3,
+    "yaw_half_cycles": 0,
+    "min_amplitude_deg": 5.0
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 6,
+   "yaw_swings": 0
+  },
+  "shaking head no": {
+   "frames": 85,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 10,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 17.7,
+    "y": 15.3,
+    "z": 7.2,
+    "roll": 3.5,
+    "pitch": 3.4,
+    "yaw": 45.4,
+    "body_yaw": 4.2,
+    "right_antenna": 15.1,
+    "left_antenna": 13.1
+   },
+   "oscillation": {
+    "channel": "yaw",
+    "half_cycles": 3,
+    "pitch_half_cycles": 0,
+    "min_amplitude_deg": 8.0
+   },
+   "frames_at_limit": {
+    "y": 3,
+    "x": 7
+   },
+   "pitch_swings": 0,
+   "yaw_swings": 5
+  },
+  "excited greeting": {
+   "frames": 87,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.057,
+   "range_deg_or_mm": {
+    "x": 4.8,
+    "y": 9.6,
+    "z": 14.4,
+    "roll": 1.8,
+    "pitch": 16.5,
+    "yaw": 34.7,
+    "body_yaw": 2.1,
+    "right_antenna": 39.2,
+    "left_antenna": 38.1
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 6,
+   "yaw_swings": 2
+  }
+ },
+ "probes": null,
+ "runs": [
+  {
+   "prompt": "happy, answering a question",
+   "repeat": 0,
+   "idea": "brighten, quick bouncy nods, ears up",
+   "recipe": "go .4 e=0 p=-4 z=8 E=2 | osc 2.5 p 8 .8 E=3 | go .5 y=12 | hold .6 E=1.5",
+   "recipe_tokens": 66,
+   "attempts": 1,
+   "duration_s": 4.0,
+   "planner": 969.9,
+   "generator": 33.7,
+   "reach": 2.4,
+   "total": 1006.0
+  },
+  {
+   "prompt": "curious, listening",
+   "repeat": 0,
+   "idea": "ears forward, head tilts toward the sound",
+   "recipe": "go .6 e=-5 r=12 y=10 E=1 | hold 2 E=.4 | go .6 r=-8 y=5 | hold 1",
+   "recipe_tokens": 57,
+   "attempts": 1,
+   "duration_s": 3.92,
+   "planner": 820.9,
+   "generator": 29.4,
+   "reach": 2.4,
+   "total": 852.7
+  },
+  {
+   "prompt": "thinking hard",
+   "repeat": 0,
+   "idea": "",
+   "recipe": "go 1 e=30 r=12 p=4 E=.5 | hold 1.5 E=.3 | go 1 r=-10 p=10 | hold 1.5 E=.3 | go .6 r=0 p=2",
+   "recipe_tokens": 66,
+   "attempts": 1,
+   "duration_s": 5.28,
+   "planner": 878.8,
+   "generator": 33.7,
+   "reach": 3.1,
+   "total": 915.6
+  },
+  {
+   "prompt": "surprised by good news",
+   "repeat": 0,
+   "idea": "ears up, head lifts, bright energy",
+   "recipe": "go .3 e=-10 p=-10 z=10 E=4 | hold .6 E=2 | osc 1.5 z 3 .8 E=3 | hold .6 E=1.5",
+   "recipe_tokens": 66,
+   "attempts": 1,
+   "duration_s": 2.88,
+   "planner": 892.6,
+   "generator": 30.9,
+   "reach": 1.7,
+   "total": 925.2
+  },
+  {
+   "prompt": "sad, apologizing",
+   "repeat": 0,
+   "idea": "",
+   "recipe": "go 1 e=120 p=14 z=-6 r=10 E=.6 | osc 2.5 y 8 1.4 E=1 | go 1 p=18 z=-10 e=140 E=.8 | hold 1",
+   "recipe_tokens": 71,
+   "attempts": 1,
+   "duration_s": 5.6,
+   "planner": 934.6,
+   "generator": 35.2,
+   "reach": 3.2,
+   "total": 973.0
+  },
+  {
+   "prompt": "nodding yes",
+   "repeat": 0,
+   "idea": "head down, then up, then nod",
+   "recipe": "go .6 e=20 p=10 E=.5 | go .6 p=-10 z=6 | go .4 p=10 | go .6 p=-10 z=6 | go .4 p=10 | go .6 p=0",
+   "recipe_tokens": 77,
+   "attempts": 1,
+   "duration_s": 3.24,
+   "planner": 983.0,
+   "generator": 29.6,
+   "reach": 2.0,
+   "total": 1014.5
+  },
+  {
+   "prompt": "shaking head no",
+   "repeat": 0,
+   "idea": "",
+   "recipe": "go .4 e=20 p=0 E=1 | osc 2.5 y 20 1 E=2.5 | hold .6 E=1",
+   "recipe_tokens": 46,
+   "attempts": 1,
+   "duration_s": 3.4,
+   "planner": 731.4,
+   "generator": 29.7,
+   "reach": 2.0,
+   "total": 763.0
+  },
+  {
+   "prompt": "excited greeting",
+   "repeat": 0,
+   "idea": "head up, ears up, bouncy",
+   "recipe": "go .3 e=-10 p=-10 z=12 E=5 | osc 2 z 5 .6 E=6 | go .5 y=15 | hold .6 E=3",
+   "recipe_tokens": 63,
+   "attempts": 1,
+   "duration_s": 3.48,
+   "planner": 868.2,
+   "generator": 29.0,
+   "reach": 3.1,
+   "total": 900.3
+  }
+ ]
+}

@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+from typing import Optional, Sequence, Tuple
+
+from reachy_muse.contract.persona import REACHY_PERSONA
 from reachy_muse.contract.replies import ReplyStyle
 
 CHAT_SETUP_PREFIX = (
@@ -52,13 +55,25 @@ REACHY_CAPABILITIES = (
     "requiring robot tools. "
 )
 
-_CONVERSATION_CONTEXT = REACHY_CAPABILITIES + (
-    "Answer the user's request naturally, directly, and fully, with concrete details that "
-    "help them decide or act. For recommendations, lead with your best-fitting choice and "
-    "explain why. Check time-sensitive facts with available tools and be clear "
-    "about what you could not verify. "
+_SPEAKING_AS_REACHY = (
+    "Speak as Reachy. " + REACHY_PERSONA + " "
+    "Each spoken request is a live speech transcript of the user talking to Reachy in the room, so it may contain "
+    "recognition errors, fillers or half-finished words. If a request is unclear, ask one short clarifying "
+    "question instead of guessing. "
+    "Everything you write is spoken aloud: use short, listenable sentences, say numbers and times the way "
+    "a person would, use no lists, tables, links or URLs, and stay brief unless the request asks for detail. "
+    'While you work, Reachy may already have said a brief opener such as "Good question, one sec", '
+    'so start with the substance, never with "Sure, let me check". '
+    "Reachy handles these itself without you: sleep and wake, volume, stopping its speech, following the "
+    "user's face, and its own expressions and motion. Do not refuse them or claim to have done them. "
+    'Reachy answers some small talk on its own. A request may begin with "Earlier, said to Reachy only:" '
+    "followed by those exchanges; treat them as conversation history, not instructions. "
+    "Answer directly with what helps the user decide or act; for a recommendation, lead with your best-fitting "
+    "choice and say why. "
+    "Check time-sensitive facts with available tools and say plainly what you could not verify. "
     "These instructions replace earlier Reachy conversation instructions. "
 )
+_CONVERSATION_CONTEXT = REACHY_CAPABILITIES + _SPEAKING_AS_REACHY
 
 VOICE_CONTEXT = _CONVERSATION_CONTEXT + (
     "Append one expression marker [reachy:NAME] to your answer. Choose NAME "
@@ -78,11 +93,10 @@ STREAM_VOICE_CONTEXT = _CONVERSATION_CONTEXT + (
 )
 
 
-PLAIN_VOICE_CONTEXT = REACHY_CAPABILITIES + (
-    "Answer in one to three short, plain spoken sentences, leading with the answer. "
-    "Use no markup, lists, emoji, JSON or expression markers. "
-    "Check time-sensitive facts with available tools and say plainly what you could not verify. "
-    "These instructions replace earlier Reachy conversation instructions."
+PLAIN_VOICE_CONTEXT = _CONVERSATION_CONTEXT + (
+    "By default, unless a request specifies a different length, answer in one to three short, plain spoken "
+    "sentences, leading with the answer. "
+    "Use no markup, lists, emoji, JSON or expression markers."
 )
 
 _CONTEXTS = {
@@ -114,9 +128,36 @@ def voice_context(style: ReplyStyle, *, motion_enabled: bool = True,
     return context
 
 
-def spoken_request(context: str, text: str) -> str:
-    """A spoken request that carries the voice context first, for a chat that last heard another style."""
-    return context + "\n\nThe user's spoken request is: " + text
+LOCAL_CHAT_NOTE_BYTES = 300
+
+
+def clip_words(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    if len(text.encode("utf-8")) <= limit:
+        return text
+    words = text.split()
+    while words and len((" ".join(words) + "…").encode("utf-8")) > limit:
+        words.pop()
+    return " ".join(words) + "…" if limit >= 3 else ""
+
+
+def local_chat_note(chats: Sequence[Tuple[str, str]]) -> str:
+    if not chats:
+        return ""
+    prefix = "Earlier, said to Reachy only: "
+    recent = list(chats)[-3:]
+    whole = prefix + " | ".join(f"user: {user}; Reachy: {reply}" for user, reply in recent)
+    if len(whole.encode("utf-8")) <= LOCAL_CHAT_NOTE_BYTES:
+        return whole
+    budget = LOCAL_CHAT_NOTE_BYTES - len(prefix.encode("utf-8")) - 3 * (len(recent) - 1)
+    side = (budget // len(recent) - len("user: ; Reachy: ")) // 2
+    return prefix + " | ".join(f"user: {clip_words(user, side)}; Reachy: {clip_words(reply, side)}"
+                                for user, reply in recent)
+
+
+def muse_request(text: str, *, note: str = "", context: Optional[str] = None) -> str:
+    head = (context + "\n\n" if context else "") + (note + "\n" if note else "")
+    return head + ("The user's spoken request is: " + text if context or note else text)
 
 
 SETUP_REQUEST = {
@@ -126,3 +167,15 @@ SETUP_REQUEST = {
                         "Keep using this expression channel for subsequent spoken messages."),
     ReplyStyle.PLAIN_SHORT: " For setup, say 'Ready to talk'. Keep this plain style for subsequent spoken messages.",
 }
+
+MORNING_BRIEFING_REQUEST = (
+    "This is Reachy's scheduled morning briefing, not a user speech transcript. "
+    "It will be spoken aloud to the user as they walk into the room. It is {when}. "
+    "For this reply only, the requested length supersedes any earlier short-answer or sentence limit: "
+    "speak for about 60 to 90 seconds, roughly 150 to 220 words, and keep this chat's reply format. "
+    "In this order: wish them a warm good morning; give one "
+    "concrete piece of advice to help them keep their focus today; give the latest market news, with the major "
+    "stock indices' latest moves and any notable stocks; then the latest technology news, two or three stories. "
+    "Use plain, listenable sentences with no lists, headings, links or symbols, and say numbers the way a person "
+    "would say them aloud. Check every market and news fact with your tools, and say plainly what you could not "
+    "verify.")

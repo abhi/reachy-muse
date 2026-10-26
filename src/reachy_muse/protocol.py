@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import struct
 from dataclasses import MISSING, dataclass, field, fields
@@ -12,6 +14,8 @@ from enum import Enum, IntEnum
 from typing import Any, Callable, Dict, Optional, Tuple, Type, Union
 
 from reachy_muse.contract.expressions import Expression
+from reachy_muse.contract.intent import Intent
+from reachy_muse.device_command import COMMANDS, DeviceCommand
 
 VERSION = 1
 
@@ -26,6 +30,17 @@ MAX_ALREADY_SAID = 8
 MAX_ERROR_MESSAGE_BYTES = 500
 MAX_PRE_ROLL_FRAMES = 150
 MAX_OUTSTANDING_NARRATIONS = 4
+MAX_COMMAND_TEXT_BYTES = 512
+MAX_INTENT_BYTES = 200
+MAX_OUTSTANDING_ANIMATIONS = 2
+MIN_ANIMATION_MS = 500
+MAX_ANIMATION_MS = 15000
+MAX_ANIMATION_FPS = 50
+MAX_ANIMATION_FRAMES = 375
+# A generated pose in wire order: millimetres for x, y, z, then degrees.
+ANIMATION_CHANNELS = ("x", "y", "z", "roll", "pitch", "yaw", "right_antenna", "left_antenna", "body_yaw")
+ANIMATION_FRAME = struct.Struct("<9h")
+ANIMATION_TENTHS = 10
 MIN_OUT_RATE = 8000
 MAX_OUT_RATE = 48000
 U16_MAX = 0xFFFF
@@ -90,6 +105,8 @@ class Op(str, Enum):
     HEAR = "hear"
     SPEAK = "speak"
     NARRATE = "narrate"
+    CLASSIFY = "classify"
+    ANIMATE = "animate"
 
 
 class CloseHow(str, Enum):
@@ -189,6 +206,15 @@ def _enum(kind: Type[Enum]) -> _Codec:
     return _Codec(parse, lambda value: value.value)
 
 
+def _intent() -> _Codec:
+    def parse(name: str, raw: Any) -> Optional[Intent]:
+        if not isinstance(raw, str):
+            raise _bad(Reason.WRONG_TYPE, f"{name} must be a string")
+        return Intent.parse(raw)
+
+    return _Codec(parse, lambda value: value.value)
+
+
 def _list(item: _Codec, max_items: int, *, min_items: int = 0, drop_unknown: bool = False) -> _Codec:
     def parse(name: str, raw: Any) -> tuple:
         if not isinstance(raw, list):
@@ -249,6 +275,48 @@ def _narrated_line() -> _Codec:
     return _Codec(parse, lambda line: [line.text, None if line.expression is None else line.expression.value])
 
 
+def _model_command() -> _Codec:
+    command = _enum(DeviceCommand)
+
+    def parse(name: str, raw: Any) -> DeviceCommand:
+        value = command.parse(name, raw)
+        if not COMMANDS[value].evidence:
+            raise _bad(Reason.BAD_ENUM, f"{name} {raw!r} is not a command a model may name")
+        return value
+
+    return _Codec(parse, command.dump)
+
+
+Frames = Tuple[Tuple[float, ...], ...]
+
+
+def _frames() -> _Codec:
+    """Poses as base64 of little-endian int16 tenths, nine per frame in ANIMATION_CHANNELS order."""
+
+    def parse(name: str, raw: Any) -> Frames:
+        if not isinstance(raw, str):
+            raise _bad(Reason.WRONG_TYPE, f"{name} must be a base64 string")
+        try:
+            packed = base64.b64decode(raw, validate=True)
+        except (binascii.Error, ValueError):
+            raise _bad(Reason.WRONG_TYPE, f"{name} is not base64") from None
+        if len(packed) % ANIMATION_FRAME.size:
+            raise _bad(Reason.WRONG_TYPE, f"{name} must hold whole frames of {ANIMATION_FRAME.size} bytes")
+        if len(packed) > MAX_ANIMATION_FRAMES * ANIMATION_FRAME.size:
+            raise _bad(Reason.TOO_MANY, f"{name} has more than {MAX_ANIMATION_FRAMES} frames")
+        return tuple(tuple(value / ANIMATION_TENTHS for value in frame)
+                     for frame in ANIMATION_FRAME.iter_unpack(packed))
+
+    def dump(frames: Frames) -> str:
+        try:
+            packed = b"".join(ANIMATION_FRAME.pack(*(round(value * ANIMATION_TENTHS) for value in frame)) for frame in frames)
+        except (struct.error, ValueError, OverflowError):
+            raise _bad(Reason.OUT_OF_RANGE, "a frame needs nine finite values within int16 tenths") from None
+        return base64.b64encode(packed).decode("ascii")
+
+    return _Codec(parse, dump)
+
+
 def _wire(codec: _Codec, **kwargs: Any) -> Any:
     return field(metadata={"codec": codec}, **kwargs)
 
@@ -299,6 +367,22 @@ class Narrate:
     status: Optional[str] = _wire(_optional(_text(MAX_STATUS_BYTES, non_empty=True)), default=None)
     already_said: Tuple[str, ...] = _wire(_list(_text(MAX_LINE_BYTES), MAX_ALREADY_SAID), default=())
     reply: Optional[str] = _wire(_optional(_text(MAX_REPLY_BYTES, non_empty=True)), default=None)
+    previous: Optional[str] = _wire(_optional(_text(MAX_LINE_BYTES, non_empty=True)), default=None)
+    may_chat: bool = _wire(_bool(), default=False)
+
+
+@dataclass(frozen=True)
+class Classify:
+    id: int = _wire(U32)
+    text: str = _wire(_text(MAX_COMMAND_TEXT_BYTES, non_empty=True))
+    allowed: Tuple[DeviceCommand, ...] = _wire(_list(_model_command(), len(DeviceCommand), min_items=1, drop_unknown=True))
+
+
+@dataclass(frozen=True)
+class Animate:
+    id: int = _wire(U32)
+    intent: str = _wire(_text(MAX_INTENT_BYTES, non_empty=True))
+    duration_ms: int = _wire(_int(MIN_ANIMATION_MS, MAX_ANIMATION_MS))
 
 
 @dataclass(frozen=True)
@@ -332,6 +416,20 @@ class SpeakDone:
 class NarrateResult:
     id: int = _wire(U32)
     lines: Tuple[NarratedLine, ...] = _wire(_list(_narrated_line(), MAX_NARRATED_LINES))
+    intent: Optional[Intent] = _wire(_optional(_intent()), default=None)
+
+
+@dataclass(frozen=True)
+class ClassifyResult:
+    id: int = _wire(U32)
+    command: Optional[DeviceCommand] = _wire(_optional(_model_command()), default=None)
+
+
+@dataclass(frozen=True)
+class AnimateResult:
+    id: int = _wire(U32)
+    fps: int = _wire(_int(1, MAX_ANIMATION_FPS))
+    frames: Frames = _wire(_frames(), default=())
 
 
 @dataclass(frozen=True)
@@ -343,8 +441,8 @@ class Error:
 
 
 Message = Union[
-    Hello, HearOpen, HearClose, SpeakStart, SpeakCancel, Narrate,
-    Welcome, HearPartial, HearEndpoint, SpeakDone, NarrateResult, Error,
+    Hello, HearOpen, HearClose, SpeakStart, SpeakCancel, Narrate, Classify, Animate,
+    Welcome, HearPartial, HearEndpoint, SpeakDone, NarrateResult, ClassifyResult, AnimateResult, Error,
 ]
 
 
@@ -368,11 +466,15 @@ MESSAGES: Dict[str, _Spec] = {
     "speak_start": _Spec(SpeakStart, Sender.ROBOT),
     "speak_cancel": _Spec(SpeakCancel, Sender.ROBOT),
     "narrate": _Spec(Narrate, Sender.ROBOT, _narrate_has_op_inputs),
+    "classify": _Spec(Classify, Sender.ROBOT),
+    "animate": _Spec(Animate, Sender.ROBOT),
     "welcome": _Spec(Welcome, Sender.COMPANION),
     "hear_partial": _Spec(HearPartial, Sender.COMPANION),
     "hear_endpoint": _Spec(HearEndpoint, Sender.COMPANION),
     "speak_done": _Spec(SpeakDone, Sender.COMPANION),
     "narrate_result": _Spec(NarrateResult, Sender.COMPANION),
+    "classify_result": _Spec(ClassifyResult, Sender.COMPANION),
+    "animate_result": _Spec(AnimateResult, Sender.COMPANION),
     "error": _Spec(Error, Sender.COMPANION),
 }
 _TYPE_OF: Dict[type, str] = {spec.cls: name for name, spec in MESSAGES.items()}

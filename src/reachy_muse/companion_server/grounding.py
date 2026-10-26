@@ -66,6 +66,8 @@ should shouldn't will won't shall may might must have has had haven't hasn't isn
 to of in on at by for with from about into over after before during until up down out off again once
 all any each every both few more most some such one none nothing something anything everything
 unfortunately however also actually currently right now still almost around about
+ooh oh aw aww mm mmm hmm haha ha wow yay ugh whoa ah aha nice fair cool totally absolutely sounds
+glad happy need want sweet anytime same yeah yep mhm oof interesting love lucky got hang huh
 """.split())
 
 

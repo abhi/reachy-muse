@@ -4,7 +4,7 @@ from reachy_muse.contract.expressions import Expression
 from reachy_muse.capabilities import Partial
 from reachy_muse.expression_plan import (
     AnswerArrived, CaptureGap, ExpressionPlanner, Gesture, Heard, MuseStatus, OutputIdle, Recording, RequestHeld,
-    SetState, Started, State, TurnDone, TurnStarted, UserSpeech, WakeClosed, WakeHeard, Working,
+    SetState, Sleep, Started, State, TurnDone, TurnStarted, UserSpeech, WakeClosed, WakeHeard, Working,
 )
 
 IDLE = SetState(State.IDLE)
@@ -251,3 +251,24 @@ def test_a_held_request_gets_a_nod_even_mid_answer():
     assert plan([(0, TurnStarted(output=False, user_speaking=False)),
                  (.2, AnswerArrived(output=True)),
                  (.3, RequestHeld())]) == [(0, (THINKING,)), (.2, ()), (.3, (NOD,))]
+
+
+SLEEPING = SetState(State.SLEEPING)
+
+
+def test_sleep_waits_for_the_goodnight_line_then_every_resting_pose_is_sleep_until_the_wake_phrase():
+    assert plan([
+        (0, Sleep(asleep=True, output=True)),
+        (1, OutputIdle(user_speaking=False, turn_open=False, wake_open=True)),
+        (2, heard("hello there and", 1)),
+        (3, RequestHeld()),
+        (4, WakeClosed()),
+        (5, WakeHeard()),
+        (6, OutputIdle(user_speaking=False, turn_open=False, wake_open=True)),
+    ]) == [(0, ()), (1, (SLEEPING,)), (2, ()), (3, ()), (4, (SLEEPING,)),
+           (5, (SetState(State.LISTENING, Expression.HAPPY),)), (6, (LISTENING,))]
+
+
+def test_sleep_and_wake_with_nothing_left_to_say_take_effect_at_once():
+    assert plan([(0, Sleep(asleep=True, output=False)), (1, Sleep(asleep=False, output=False)),
+                 (2, WakeClosed())]) == [(0, (SLEEPING,)), (1, (LISTENING,)), (2, (IDLE,))]

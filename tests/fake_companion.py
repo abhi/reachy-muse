@@ -14,6 +14,10 @@ Scripted hearing, a deterministic tone for speech, an echo narrator, and fault k
 - port: listen on this port instead of a free one, so a test can start the companion late.
 - ssl: serve wss:// with this server context.
 - acknowledges: False answers every acknowledge request with no lines, as a narrator does for small talk.
+- narrate_delay_s: {op: seconds} answers that narration op only after a delay, as a busy model does.
+- with Op.ANIMATE in ops, every animate gets a nod of the asked length; `animated` lists the intents.
+
+`answered` lists, in order, "<op> narrated" each time a narration result is sent.
 
 `hellos` records every hello token the fake was sent, accepted or not.
 """
@@ -29,11 +33,15 @@ from typing import Dict, Optional, Tuple
 
 from websockets.asyncio.server import serve
 
+from reachy_muse.companion_server.engines import NodAnimator
+from reachy_muse.contract.intent import Intent
 from reachy_muse.contract.expressions import Expression
 from reachy_muse.protocol import (
     MAX_ERROR_MESSAGE_BYTES,
     MAX_LINE_BYTES,
     VERSION,
+    Animate,
+    AnimateResult,
     AudioKind,
     CloseHow,
     Error,
@@ -61,7 +69,7 @@ from reachy_muse.protocol import (
 )
 
 TOKEN = "rc1_test_token_0123456789abcdef0123456789"
-MODELS = (("hear", "fake"), ("speak", "tone"), ("narrate", "echo"))
+MODELS = (("hear", "fake"), ("speak", "tone"), ("narrate", "echo"), ("animate", "nod"))
 FABRICATION = " It took 17 minutes."
 
 
@@ -91,6 +99,9 @@ class FakeCompanion:
         port: int = 0,
         ssl=None,
         acknowledges: bool = True,
+        opening_intent: Optional[Intent] = None,
+        opening_lines: Optional[Tuple[str, ...]] = None,
+        narrate_delay_s: Optional[Dict[NarrateOp, float]] = None,
     ) -> None:
         self.token = token
         self.ops = ops
@@ -110,6 +121,11 @@ class FakeCompanion:
         self.port = port
         self.ssl = ssl
         self.acknowledges = acknowledges
+        self.opening_intent = opening_intent
+        self.opening_lines = opening_lines
+        self.narrate_delay_s = narrate_delay_s or {}
+        self.answered = []
+        self.animated = []
         self.hellos = []
         self.received = []
         self.url = ""
@@ -147,6 +163,7 @@ class _Session:
         self.hearing: Dict[int, int] = {}
         self.speaking: Dict[int, asyncio.Task] = {}
         self.sent: Dict[int, int] = {}
+        self.narrating = set()
 
     def _count(self) -> None:
         if self.crossed is None:
@@ -195,7 +212,7 @@ class _Session:
                 except ProtocolError as error:
                     await self.send(Error(error.code, _clip(str(error), MAX_ERROR_MESSAGE_BYTES)))
         finally:
-            for task in self.speaking.values():
+            for task in (*self.speaking.values(), *self.narrating):
                 task.cancel()
 
     async def _audio(self, frame: bytes) -> None:
@@ -225,8 +242,25 @@ class _Session:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
                 await self.send(SpeakDone(message.stream, self.sent[message.stream]))
+        elif isinstance(message, Narrate) and message.op in self.fake.narrate_delay_s:
+            narration = asyncio.ensure_future(self._narrate(message, self.fake.narrate_delay_s[message.op]))
+            self.narrating.add(narration)
+            narration.add_done_callback(self.narrating.discard)
         elif isinstance(message, Narrate):
-            await self.send(NarrateResult(message.id, self._echo(message)))
+            await self._narrate(message)
+        elif isinstance(message, Animate):
+            self.fake.animated.append(message.intent)
+            animation = await NodAnimator().animate(message.intent, message.duration_ms / 1000)
+            await self.send(AnimateResult(message.id, animation.fps, animation.frames))
+
+    async def _narrate(self, message: Narrate, delay_s: float = 0.0) -> None:
+        await asyncio.sleep(delay_s)
+        self.fake.answered.append(f"{message.op.value} narrated")
+        intent = self.fake.opening_intent if message.op is NarrateOp.ACKNOWLEDGE else None
+        lines = self._echo(message)
+        if message.op is NarrateOp.ACKNOWLEDGE and self.fake.opening_lines is not None:
+            lines = tuple(NarratedLine(text, self.fake.expression) for text in self.fake.opening_lines)
+        await self.send(NarrateResult(message.id, lines, intent))
 
     async def _speak(self, stream: int) -> None:
         self.sent[stream] = 0

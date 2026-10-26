@@ -25,6 +25,7 @@ class State(str, Enum):
     IDLE = "idle"
     LISTENING = "listening"
     THINKING = "thinking"
+    SLEEPING = "sleeping"
 
 
 @dataclass(frozen=True)
@@ -151,8 +152,14 @@ class OutputIdle:
     wake_open: bool
 
 
+@dataclass(frozen=True)
+class Sleep:
+    asleep: bool
+    output: bool
+
+
 Event = Union[Started, WakeHeard, WakeClosed, CaptureGap, Recording, UserSpeech, Working,
-              TurnStarted, Heard, MuseStatus, AnswerArrived, RequestHeld, TurnDone, OutputIdle]
+              TurnStarted, Heard, MuseStatus, AnswerArrived, RequestHeld, TurnDone, OutputIdle, Sleep]
 
 
 class ExpressionPlanner:
@@ -170,6 +177,7 @@ class ExpressionPlanner:
         self._varied_at = -math.inf
         self._variations = 0
         self._thinking_expression: Optional[Expression] = None
+        self._asleep = False
         self._handlers: Dict[type, Callable[..., Tuple[Cue, ...]]] = {
             Started: self._started,
             WakeHeard: self._wake_heard,
@@ -185,10 +193,15 @@ class ExpressionPlanner:
             RequestHeld: self._request_held,
             TurnDone: self._turn_done,
             OutputIdle: self._output_idle,
+            Sleep: self._sleep,
         }
 
     def on(self, event: Event, now: float) -> Tuple[Cue, ...]:
+        if isinstance(event, (Started, WakeHeard)):
+            self._asleep = False
         cues = self._handlers[type(event)](event, now)
+        if self._asleep:
+            cues = (SetState(State.SLEEPING),) if any(isinstance(cue, SetState) for cue in cues) else ()
         for cue in cues:
             if isinstance(cue, SetState):
                 self._state = cue.state
@@ -297,6 +310,12 @@ class ExpressionPlanner:
         if event.turns_waiting or event.output:
             return ()
         return (SetState(State.LISTENING if event.recording or event.wake_open else State.IDLE),)
+
+    def _sleep(self, event: Sleep, now: float) -> Tuple[Cue, ...]:
+        self._asleep = event.asleep
+        if event.output:
+            return ()
+        return (SetState(State.SLEEPING if event.asleep else State.LISTENING),)
 
     def _output_idle(self, event: OutputIdle, now: float) -> Tuple[Cue, ...]:
         if event.user_speaking:

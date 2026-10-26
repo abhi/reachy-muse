@@ -10,6 +10,7 @@ import pytest
 from musegadget import muse_turn
 import reachy_muse.conversation
 from reachy_muse.capabilities import Mode
+from reachy_muse.contract.replies import ReplyStyle
 from reachy_muse.local_backends import backends_for
 from reachy_muse.conversation import TurnOutcome, VoiceConversation
 
@@ -127,3 +128,61 @@ def test_owned_microphone_does_not_send_expression_bootstrap(owns_chat, expected
         assert calls == expected
 
     asyncio.run(check())
+
+
+@pytest.mark.parametrize("style", list(ReplyStyle))
+@pytest.mark.parametrize("style_changed", [False, True])
+def test_briefing_dispatch_overrides_short_answers_and_collects_every_sentence(monkeypatch, style, style_changed):
+    from dataclasses import replace
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from reachy_muse.contract.prompts import MORNING_BRIEFING_REQUEST
+    from reachy_muse.conversation import _BriefingSlot
+    from reachy_muse.morning_briefing import briefing_request
+    from test_conversation import chat_event, sentence_frame
+
+    sentences = ["Good morning.", "Finish one task first.", "Markets rose.",
+                 "Chip stocks led the gains.", "A new phone shipped.", "Have a good day."]
+    reply = ("".join(sentence_frame(text) for text in sentences)
+             if style is ReplyStyle.EXPRESSIVE_JSON else " ".join(sentences))
+
+    class BriefingSession(Session):
+        async def send_chat(self, text, session_id, **options):
+            response = await super().send_chat(text, session_id, **options)
+            job = self.conversation.job
+            await self.conversation._queue_replies(job.reader.read(job.turn.feed(
+                chat_event("delta.message_done", "reply-1", session_id=session_id, content=reply))), job)
+            return response
+
+    class NoCondensing:
+        async def lines(self, *args, **kwargs):
+            raise AssertionError("briefings must bypass narration and condensation")
+
+    async def check():
+        session = BriefingSession()
+        bundle = backends_for(Mode.ON_ROBOT, session, speech=object(), transcriber=object())
+        conversation = VoiceConversation(session, Hardware(), session_id="owned-chat", owns_chat=True,
+                                        backends=replace(bundle, local_style=style, narrator=NoCondensing()))
+        session.conversation = conversation
+        if style_changed:
+            conversation._muse_style = None
+        request = briefing_request(MORNING_BRIEFING_REQUEST,
+                                   datetime(2026, 10, 24, 5, 20, tzinfo=ZoneInfo("America/Los_Angeles")))
+        slot = _BriefingSlot(request, lambda: False)
+        await conversation._collect_briefing(slot)
+        return session.sent[0][0], slot.result.result()
+
+    monkeypatch.setattr(muse_turn, "EMPTY_REPLY_GRACE_S", 0)
+    sent, lines = asyncio.run(check())
+    assert [line.text for line in lines] == sentences
+    assert "The user's spoken request is:" not in sent
+    assert "scheduled morning briefing" in sent
+    assert "Saturday, October 24, 05:20 local time" in sent
+    assert "supersedes any earlier short-answer or sentence limit" in sent
+    assert "For this reply only" in sent
+    assert "60 to 90 seconds" in sent
+    if style_changed:
+        assert "You are Muse speaking through Reachy Mini" in sent
+        if style is ReplyStyle.PLAIN_SHORT:
+            assert "By default, unless a request specifies a different length" in sent

@@ -583,14 +583,17 @@ def test_main_and_explicit_session_conflict_before_hardware(tmp_path, monkeypatc
 
 
 def test_native_media_connects_to_local_daemon(monkeypatch):
+    from reachy_muse.motion import MotionStyle
     captured = {}
+    monkeypatch.setenv('REACHY_MUSE_SWAY', 'sdk')
+    monkeypatch.setenv('REACHY_MUSE_BREATHING', '0')
     monkeypatch.setattr('reachy_muse.hardware.ReachyController',
                         lambda **kwargs: captured.update(kwargs))
     reachy_muse.cli._hardware(reachy_muse.cli.parser().parse_args(['run']))
     assert captured == {'host': 'localhost', 'port': 8000,
                         'connection_mode': 'localhost_only', 'media_backend': 'local',
                         'enable_motion': True, 'antenna_mode': 'both', 'face_follow_model': None,
-                        'speaker_eq_gains': SPEAKER_EQ_GAINS}
+                        'speaker_eq_gains': SPEAKER_EQ_GAINS, 'style': MotionStyle(sway='sdk', breathing=False)}
 
 
 @pytest.mark.parametrize('command, gains', [
@@ -1073,3 +1076,47 @@ def test_each_mode_starts_the_conversation_with_its_reply_style_and_voice(tmp_pa
     assert (backends.reply_style(), type(backends.voice).__name__) == (style, voice)
     # A stop request while the robot starts ends the run cleanly instead of killing the process.
     assert captured['sigterm_while_starting'] is not signal.SIG_DFL
+
+
+@pytest.mark.parametrize('options, error', [
+    (['--morning-briefing', '06:00-04:50', '--mode', 'on-robot'], 'must end after it starts'),
+    (['--morning-briefing', '04:50-06:00', '--mode', 'on-robot', '--morning-days', 'someday'], 'days must look like'),
+    (['--morning-briefing', '04:50-06:00', '--mode', 'on-robot', '--no-motion'], 'requires motion'),
+    (['--morning-briefing', '04:50-06:00'], 'needs --mode on-robot or companion'),
+    (['--mode', 'on-robot', '--morning-days', 'daily'], 'need --morning-briefing'),
+])
+def test_invalid_morning_briefing_fails_before_hardware_start(tmp_path, monkeypatch, options, error):
+    monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: pytest.fail('hardware must not start'))
+    args = reachy_muse.cli.parser().parse_args(['--state-dir', str(tmp_path), 'run', *options])
+    with pytest.raises(ValueError, match=error):
+        asyncio.run(reachy_muse.cli.run(args))
+
+
+def test_the_morning_briefing_is_off_unless_asked_for(monkeypatch):
+    captured = {}
+    monkeypatch.setattr('reachy_muse.hardware.ReachyController', lambda **kwargs: captured.update(kwargs))
+    args = reachy_muse.cli.parser().parse_args(['run', '--mode', 'on-robot'])
+    reachy_muse.cli._hardware(args)
+    assert reachy_muse.cli.morning_routine(args) is None
+    assert 'arrival_model' not in captured
+
+
+def test_the_morning_briefing_flags_build_its_routine_and_camera_detector(tmp_path, monkeypatch):
+    from reachy_muse.arrival import WatchPose
+    captured = {}
+    monkeypatch.setattr('reachy_muse.hardware.ReachyController', lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr('reachy_muse.arrival.default_person_model', lambda: '/tmp/person.onnx', raising=False)
+    monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
+    request = tmp_path / 'request.txt'
+    request.write_text('Brief me for {when}.\n')
+    args = reachy_muse.cli.parser().parse_args([
+        'run', '--mode', 'companion', '--morning-briefing', '05:15-06:30', '--morning-days', 'mon-fri',
+        '--morning-request', str(request), '--morning-watch-yaw', '30'])
+    reachy_muse.cli._hardware(args)
+    camera = object()
+    routine = reachy_muse.cli.morning_routine(args)(camera)
+    assert captured['arrival_model'] == '/tmp/person.onnx'
+    assert (str(routine.schedule), routine.request, routine.camera, routine.pose, routine.ledger.path) == (
+        '05:15-06:30 mon,tue,wed,thu,fri', 'Brief me for {when}.', camera, WatchPose(30.0, 0.0),
+        tmp_path / 'morning-briefing.json')

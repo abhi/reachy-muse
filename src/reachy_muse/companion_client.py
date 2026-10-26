@@ -21,15 +21,20 @@ import ssl
 import time
 import wave
 from collections import deque
+from dataclasses import dataclass
 from enum import Enum
-from typing import AsyncIterator, Dict, List, Optional, Tuple
+from typing import AsyncIterator, Callable, Dict, FrozenSet, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from reachy_muse.contract.replies import ReplyStyle
-from reachy_muse.capabilities import CapabilityUnavailable, Endpoint, HeardAudio, Partial, SpokenLine
+from reachy_muse.contract.intent import Intent
+from reachy_muse.capabilities import CapabilityUnavailable, Endpoint, Heard, HeardAudio, Motion, Partial, SpokenLine
+from reachy_muse.device_command import DeviceCommand
 from reachy_muse.protocol import (
-    MAX_ALREADY_SAID, MAX_LINE_BYTES, MAX_MIC_PCM_BYTES, MAX_OUTSTANDING_NARRATIONS, MAX_REPLY_BYTES,
-    MAX_REQUEST_BYTES, MAX_STATUS_BYTES, MAX_TEXT_FRAME_BYTES, VERSION, AudioKind, CloseHow, Error,
+    MAX_ALREADY_SAID, MAX_ANIMATION_MS, MAX_COMMAND_TEXT_BYTES, MAX_INTENT_BYTES, MAX_LINE_BYTES, MAX_MIC_PCM_BYTES,
+    MAX_OUTSTANDING_ANIMATIONS, MAX_OUTSTANDING_NARRATIONS, MAX_REPLY_BYTES, MAX_REQUEST_BYTES, MAX_STATUS_BYTES,
+    MAX_TEXT_FRAME_BYTES, MIN_ANIMATION_MS, VERSION, Animate, AnimateResult, AudioKind, Classify,
+    ClassifyResult, CloseHow, Error,
     ErrorCode, HearClose, HearEndpoint, HearOpen, HearPartial, Hello, Narrate, NarratedLine, NarrateOp,
     NarrateResult, Op, ProtocolError, Reason, Sender, SequenceCheck, SpeakCancel, SpeakDone, SpeakStart,
     VoiceRole, Welcome, decode, decode_audio, encode, encode_audio,
@@ -90,6 +95,7 @@ class _Connection:
         self.hearing: Dict[int, _HearStream] = {}
         self.speaking: Dict[int, asyncio.Queue] = {}
         self.narrations: Dict[int, asyncio.Future] = {}
+        self.animations: Dict[int, asyncio.Future] = {}
         self.sequence = SequenceCheck()
         self.closed = False
         self._next_hear = -1
@@ -113,7 +119,7 @@ class _Connection:
         self.closed = True
         for queue in self.speaking.values():
             queue.put_nowait(CapabilityUnavailable(reason))
-        for future in self.narrations.values():
+        for future in (*self.narrations.values(), *self.animations.values()):
             if not future.done():
                 future.set_exception(CapabilityUnavailable(reason))
         for stream in self.hearing.values():
@@ -169,7 +175,7 @@ class CompanionLink:
 
     def __init__(self, url: str, *, token: str, out_rate: int, pin: Optional[str] = None,
                  insecure: bool = False, robot: str = "Reachy Mini",
-                 ops: Tuple[Op, ...] = (Op.HEAR, Op.SPEAK, Op.NARRATE),
+                 ops: Tuple[Op, ...] = (Op.HEAR, Op.SPEAK, Op.NARRATE, Op.CLASSIFY, Op.ANIMATE),
                  backoff_s: Tuple[float, float] = BACKOFF_S, handshake_timeout_s: float = HANDSHAKE_TIMEOUT_S,
                  ping_interval_s: float = PING_INTERVAL_S, ping_timeout_s: float = PING_TIMEOUT_S,
                  healthy_s: float = HEALTHY_S):
@@ -352,10 +358,14 @@ class CompanionLink:
             queue = connection.speaking.pop(message.stream, None)
             if queue is not None:
                 queue.put_nowait(_DONE)
-        elif isinstance(message, NarrateResult):
+        elif isinstance(message, (NarrateResult, ClassifyResult)):
             future = connection.narrations.pop(message.id, None)
             if future is not None and not future.done():
-                future.set_result(message.lines)
+                future.set_result(message if isinstance(message, NarrateResult) else message.command)
+        elif isinstance(message, AnimateResult):
+            future = connection.animations.pop(message.id, None)
+            if future is not None and not future.done():
+                future.set_result(message)
         elif isinstance(message, Error):
             self._error(connection, message)
 
@@ -368,8 +378,8 @@ class CompanionLink:
         elif error.stream is not None and error.stream in connection.speaking:
             connection.speaking.pop(error.stream).put_nowait(failure)
             connection.sequence.forget(error.stream)
-        elif error.id is not None and error.id in connection.narrations:
-            future = connection.narrations.pop(error.id)
+        elif error.id is not None and (error.id in connection.narrations or error.id in connection.animations):
+            future = connection.narrations.pop(error.id, None) or connection.animations.pop(error.id)
             if not future.done():
                 future.set_exception(failure)
         else:
@@ -413,21 +423,35 @@ class CompanionLink:
                 connection.send(SpeakCancel(stream))
 
     async def narrate(self, op: NarrateOp, request: str, *, status: Optional[str] = None,
-                      already_said: Tuple[str, ...] = (), reply: Optional[str] = None) -> Tuple[NarratedLine, ...]:
-        connection = self._live(Op.NARRATE)
-        if len(connection.narrations) >= MAX_OUTSTANDING_NARRATIONS:
-            raise CapabilityUnavailable("too many narrations outstanding", link_down=False)
+                      already_said: Tuple[str, ...] = (), reply: Optional[str] = None,
+                      previous: Optional[str] = None, may_chat: bool = False) -> NarrateResult:
+        return await self._ask(Op.NARRATE, lambda identity: Narrate(
+            identity, op, _clip(request, MAX_REQUEST_BYTES), status,
+            tuple(_clip(line, MAX_LINE_BYTES) for line in already_said[-MAX_ALREADY_SAID:]), reply, previous, may_chat))
+
+    async def classify(self, text: str, allowed: FrozenSet[DeviceCommand]) -> Optional[DeviceCommand]:
+        return await self._ask(Op.CLASSIFY, lambda identity: Classify(
+            identity, _clip(text, MAX_COMMAND_TEXT_BYTES), tuple(command for command in DeviceCommand if command in allowed)))
+
+    async def animate(self, intent: str, duration_s: float) -> AnimateResult:
+        duration_ms = min(max(round(duration_s * 1000), MIN_ANIMATION_MS), MAX_ANIMATION_MS)
+        return await self._ask(Op.ANIMATE, lambda identity: Animate(identity, _clip(intent, MAX_INTENT_BYTES), duration_ms))
+
+    async def _ask(self, op: Op, build: Callable[[int], object]):
+        connection = self._live(op)
+        waiting, limit = ((connection.animations, MAX_OUTSTANDING_ANIMATIONS) if op is Op.ANIMATE
+                          else (connection.narrations, MAX_OUTSTANDING_NARRATIONS))
+        if len(waiting) >= limit:
+            raise CapabilityUnavailable(f"too many {op.value} requests outstanding", link_down=False)
         self._narrate_id = (self._narrate_id + 1) % 2 ** 32
         future = asyncio.get_running_loop().create_future()
-        connection.narrations[self._narrate_id] = future
+        waiting[self._narrate_id] = future
         identity = self._narrate_id
         try:
-            connection.send(Narrate(identity, op, _clip(request, MAX_REQUEST_BYTES), status,
-                                    tuple(_clip(line, MAX_LINE_BYTES) for line in already_said[-MAX_ALREADY_SAID:]),
-                                    reply))
+            connection.send(build(identity))
             return await future
         finally:
-            connection.narrations.pop(identity, None)
+            waiting.pop(identity, None)
 
 
 def _wav(pcm: bytes) -> bytes:
@@ -484,6 +508,10 @@ class CompanionHearingTurn:
     @property
     def speech_active(self) -> bool:
         return self._recorder.speech_active
+
+    @property
+    def quiet_s(self) -> float:
+        return self._recorder.quiet_s
 
     def feed(self, samples) -> None:
         self._fed += len(samples)
@@ -609,6 +637,12 @@ class CompanionVoice:
         return None
 
 
+@dataclass(frozen=True)
+class CompanionOpening:
+    intent: Optional[Intent]
+    lines: Tuple[SpokenLine, ...]
+
+
 class CompanionNarrator:
     """The companion's narrator. Ids and request text only; never Muse identifiers."""
 
@@ -619,15 +653,17 @@ class CompanionNarrator:
     def available(self) -> bool:
         return self.link.can(Op.NARRATE)
 
-    async def acknowledge(self, request: str) -> Optional[SpokenLine]:
-        lines = await self.link.narrate(NarrateOp.ACKNOWLEDGE, request)
-        return _spoken(lines[0], "ack") if lines else None
+    async def acknowledge(self, heard: Heard) -> CompanionOpening:
+        result = await self.link.narrate(NarrateOp.ACKNOWLEDGE, heard.text,
+                                         previous=heard.previous or None, already_said=heard.recently_said,
+                                         may_chat=heard.may_chat)
+        return CompanionOpening(result.intent, tuple(_spoken(line, "ack") for line in result.lines))
 
     async def say_progress(self, request: str, status: str,
                            already_said: Tuple[str, ...]) -> Optional[SpokenLine]:
         lines = await self.link.narrate(NarrateOp.PROGRESS, request, status=_fit(status, MAX_STATUS_BYTES, r"\S+"),
                                         already_said=already_said)
-        return _spoken(lines[0], "progress") if lines else None
+        return _spoken(lines.lines[0], "progress") if lines.lines else None
 
     async def lines(self, request: str, reply: str, style: ReplyStyle, *,
                     message_id: Optional[str] = None) -> Tuple[SpokenLine, ...]:
@@ -636,7 +672,32 @@ class CompanionNarrator:
         if len(reply.encode("utf-8")) > MAX_REPLY_BYTES:
             raise CapabilityUnavailable("the reply is too long for the companion to condense", link_down=False)
         lines = await self.link.narrate(NarrateOp.LINES, request, reply=reply)
-        return tuple(_spoken(line, "answer") for line in lines)
+        return tuple(_spoken(line, "answer") for line in lines.lines)
+
+
+class CompanionCommandModel:
+    def __init__(self, link: CompanionLink):
+        self.link = link
+
+    @property
+    def available(self) -> bool:
+        return self.link.can(Op.CLASSIFY)
+
+    async def classify(self, text: str, allowed: FrozenSet[DeviceCommand]) -> Optional[DeviceCommand]:
+        return await self.link.classify(text, allowed)
+
+
+class CompanionMotion:
+    def __init__(self, link: CompanionLink):
+        self.link = link
+
+    @property
+    def available(self) -> bool:
+        return self.link.can(Op.ANIMATE)
+
+    async def generate(self, intent: str, duration_s: float) -> Optional[Motion]:
+        result = await self.link.animate(intent, duration_s)
+        return Motion(result.fps, result.frames) if result.frames else None
 
 
 def _spoken(line: NarratedLine, role) -> SpokenLine:

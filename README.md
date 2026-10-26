@@ -17,6 +17,11 @@ The repository has two programs:
 - `on-robot` keeps speech on the robot. Whisper turns your words into text, and Piper speaks Muse's answer.
 - `companion` lets the Mac hear, speak and narrate for the robot. If the Mac stops answering, the robot falls back to its own `on-robot` models.
 
+In `on-robot` and `companion` modes, the robot handles requests about itself without Muse.
+"Go to sleep" and "stop listening" return it to the wake word, "louder" and "quieter" step its speaker volume, "look at me" and "stop looking at me" switch face tracking, and "stop talking" cuts off an answer that is still playing.
+After "go to sleep", Reachy bows its head and folds its antennas. "Hey Muse" wakes it: the head lifts and the antennas unfold over one second. Said alone, "Hey Muse" gets "I'm awake."; a question in the same breath goes straight to Muse.
+In `companion` mode, the Mac's narrator model also recognizes paraphrases such as "could you quiet down a little".
+
 ## Install on the robot
 
 reachy-muse needs Python 3.10 or later. The robot's own environment uses Python 3.12.
@@ -54,8 +59,11 @@ The [companion server guide](docs/companion-server.md) explains each step and th
 
 The [Muse Gadget SDK](https://github.com/abhi/muse-gadget-sdk) (`musegadget`) does everything that talks to Muse.
 It pairs the robot with the Muse app, keeps the encrypted link to Muse open, sends each spoken request and follows Muse's answer.
-reachy-muse uses only the parts of the SDK that the "Building a gadget" section of its [`linux/AGENTS.md`](https://github.com/abhi/muse-gadget-sdk/blob/f76b2d0507ea641d18c1b72577227fcaccae1596/linux/AGENTS.md#building-a-gadget) lists.
+reachy-muse uses only the parts of the SDK that the "Building a gadget" section of its [`linux/AGENTS.md`](https://github.com/abhi/muse-gadget-sdk/blob/5692fe233189a9d2f3bd331d6014dd14cab3de04/linux/AGENTS.md#building-a-gadget) lists.
 Everything else here is the robot app: audio, wake words, speech models, motors, face tracking and the companion.
+
+The pinned fork is upstream `facebookincubator/muse-gadget-sdk` main plus one commit that adds public hooks for gadgets built on the SDK.
+The other fork changes are now upstream. Only the hooks commit is pending as [upstream PR #142](https://github.com/facebookincubator/muse-gadget-sdk/pull/142).
 
 What Muse and the robot agree on lives here, in `reachy_muse.contract`: the robot commands, the expressions, the prompts and the reply formats.
 [The Reachy Mini contract with Muse](docs/contract.md) lists them.
@@ -72,3 +80,4 @@ Install the same way with the `robot,test` extras, or `companion-server,test`, t
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE). The face detection model in `src/reachy_muse/data/face_tracking` has its own MIT license next to it.
+Speech sway and motion crossfades come from [reachy-animation](https://github.com/pham-tuan-binh/reachy-animation), also Apache-2.0. See [NOTICE](NOTICE).

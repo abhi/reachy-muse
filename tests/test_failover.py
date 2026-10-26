@@ -5,7 +5,9 @@ import asyncio
 import pytest
 
 import reachy_muse.failover
-from reachy_muse.capabilities import CapabilityUnavailable, HeardAudio, SpokenLine
+from reachy_muse.contract.intent import Intent
+from reachy_muse.companion_client import CompanionOpening
+from reachy_muse.capabilities import Heard, Hold, CapabilityUnavailable, HeardAudio, SpokenLine
 from reachy_muse.companion_client import CompanionHearingTurn, _HearStream
 from reachy_muse.protocol import HearEndpoint
 from reachy_muse.failover import CompanionRoute, FailoverHearing, FailoverNarrator
@@ -139,12 +141,12 @@ class InventingNarrator:
 
     async def acknowledge(self, request):
         self.asked += 1
-        return SpokenLine("It took 17 minutes.", None, "ack")
+        return CompanionOpening(Intent.QUESTION, (SpokenLine("It took 17 minutes.", None, "ack"),))
 
 
 class RobotNarrator:
-    async def acknowledge(self, request):
-        return SpokenLine("Okay.", None, "ack")
+    def hold(self, intent, heard):
+        return Hold(intent, SpokenLine("Okay.", None, "ack"))
 
 
 def test_a_rested_narrator_is_asked_again_after_the_cooldown(monkeypatch):
@@ -155,9 +157,9 @@ def test_a_rested_narrator_is_asked_again_after_the_cooldown(monkeypatch):
     narrator = FailoverNarrator(companion, RobotNarrator(), route)
 
     async def run():
-        said = [(await narrator.acknowledge("castles")).text for _ in range(4)]
+        said = [(await narrator.acknowledge(Heard("castles"))).line.text for _ in range(4)]
         await asyncio.sleep(.3)
-        said.append((await narrator.acknowledge("castles")).text)
+        said.append((await narrator.acknowledge(Heard("castles"))).line.text)
         return said
     assert asyncio.run(run()) == ["Okay."] * 5
     assert companion.asked == 4

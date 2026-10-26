@@ -15,29 +15,38 @@
 """Reachy Mini audio and motion, with one thread owning the target poses.
 
 The public methods are synchronous. An asyncio caller should offload start,
-close, read_audio, clear_audio, and run_command. The SDK's speech wobbler adds
-offsets on the daemon; it does not replace this driver's primary poses.
+close, read_audio, clear_audio, and run_command. Speech sway comes from the
+audio handed to play_audio and is added on the motion thread, or, with
+REACHY_MUSE_SWAY=sdk, from the SDK's wobbler, which adds offsets on the daemon.
+Neither replaces this driver's primary poses.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import queue
 import threading
 import time
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Collection, NamedTuple
 
 from reachy_muse.contract.commands import POSE_LIMITS, parse_command
+from reachy_muse.motion import MotionStyle
 
 if TYPE_CHECKING:
     import numpy as np
 
+    from reachy_muse.arrival import WatchPose
+    from reachy_muse.motion.layers import ClipTimeline
+
 log = logging.getLogger(__name__)
 EMOTIONS_DATASET = "pollen-robotics/reachy-mini-emotions-library"
-STATES = frozenset({"idle", "listening", "thinking", "speaking", "error"})
+STATES = frozenset({"idle", "listening", "thinking", "speaking", "error", "sleeping"})
+VOLUME_TIMEOUT_S = 1.0
 BUILTIN_EXPRESSIONS = frozenset({
     "neutral", "happy", "sad", "surprised", "curious", "nod", "shake",
     "listening", "thinking", "error",
@@ -51,11 +60,31 @@ EXPRESSION_POSES = {
     "thinking": ({"roll": 12, "pitch": -5, "z": 5}, [-45, 45]),
     "error": ({"pitch": 8, "z": -3}, [-35, 35]),
 }
+# Recorded Pollen emotions shown when a spoken line carries the expression. Each is
+# the shortest, calmest fitting clip in EMOTIONS_DATASET; docs/reachy-mini.md lists
+# their measured length and speed. Other expressions keep their static pose.
+EXPRESSION_CLIPS = {"happy": "success1", "surprised": "surprised1", "curious": "inquiring2"}
+SPOKEN_CLIP_INTENSITY = 0.6
+# Leaving the sleep pose: the head lifts and the antennas unfold over this long. Pollen's
+# wake-mini-up clip lasts 15.7 s and swings the body 62 degrees, too long to hold a request for.
+WAKE_UP_S = 1.0
 _MOTION_PERIOD_S = 0.025
 GESTURE_DURATION_S = 1.6
+PROGRESS_ACCENT_S = 1.4
 _GESTURE_KEYFRAMES = ((0., 0.), (.25, 1.), (.45, 1.), (.95, -1.),
                       (1.15, -1.), (GESTURE_DURATION_S, 0.))
 HEAD_GESTURES = frozenset({"nod", "shake", "tilt"})
+CAMERA_STILL_STEP = 0.02
+CAMERA_AXES = [0, 1, 2, 3, 4, 5, 8]
+CAMERA_STILL_S = 0.5
+WATCH_TURN_S = 4.0
+
+
+class _WatchTurn(NamedTuple):
+    angles: dict
+    share_from: float
+    share_to: float
+    since: float
 
 
 def _ease(progress: float) -> float:
@@ -83,11 +112,75 @@ class _Command:
     result: dict | None = None
 
 
+@dataclass
+class _Clip:
+    """A recorded move shown over the resting pose; a command clip answers its request when it fades out."""
+
+    move: object
+    timeline: ClipTimeline
+    intensity: float
+    request: _Command | None = None
+    result: dict | None = None
+    during: str | None = None  # the state the clip belongs to; it fades out when the state changes
+
+
+@dataclass(frozen=True)
+class _Travel:
+    """An eased move between two pose vectors, shaped like a recorded move so it plays as a clip."""
+
+    start: np.ndarray
+    end: np.ndarray
+    duration: float
+    head: Callable
+
+    def evaluate(self, elapsed: float):
+        values = self.start + (self.end - self.start) * _ease(elapsed / self.duration)
+        return (self.head(**dict(zip(("x", "y", "z", "roll", "pitch", "yaw"), values[:6]))),
+                values[6:8] * (math.pi / 180), math.radians(values[8]))
+
+
+@dataclass(frozen=True)
+class _Frames:
+    """Generated poses at ``fps``, shaped like a recorded move so they play as a clip.
+
+    ``frames`` is (T, 9) in the order and units of POSE_LIMITS' axes; a looping one wraps around.
+    """
+
+    frames: np.ndarray
+    fps: int
+    loop: bool
+    head: Callable
+
+    @property
+    def duration(self) -> float:
+        return len(self.frames) / self.fps
+
+    def evaluate(self, elapsed: float):
+        position = elapsed * self.fps
+        count = len(self.frames)
+        if self.loop:
+            position %= count
+        index = min(int(position), count - 1)
+        following = (index + 1) % count if self.loop else min(index + 1, count - 1)
+        fraction = min(position - index, 1.0)
+        values = self.frames[index] * (1 - fraction) + self.frames[following] * fraction
+        return (self.head(**dict(zip(("x", "y", "z", "roll", "pitch", "yaw"), values[:6]))),
+                values[6:8] * (math.pi / 180), math.radians(values[8]))
+
+
+@dataclass(frozen=True)
+class _PendingMotion:
+    move: _Frames
+    states: frozenset
+    start_by: float
+
+
 class ReachyController:
     """Own the robot for a standalone Muse session.
 
     Inject factories only for tests. No SDK, numpy, or move datasets are loaded
-    until start; the emotion library is loaded only for an explicit named move.
+    until start. The emotion library loads in the background at start when
+    expression clips are on, and otherwise for the first explicit named move.
     Set sleep_on_close=False when a Reachy app host owns the sleep lifecycle.
     """
 
@@ -98,10 +191,13 @@ class ReachyController:
         antenna_mode: str = "both",
         face_follow_model: Path | None = None,
         face_follower_factory: Callable | None = None,
+        arrival_model: Path | None = None,
+        arrival_watcher_factory: Callable | None = None,
         robot_factory: Callable | None = None,
         pose_factory: Callable | None = None, pose_interpolator: Callable | None = None,
         moves_factory: Callable | None = None,
         speaker_eq_gains: tuple[float, ...] | None = None,
+        style: MotionStyle = MotionStyle(),
     ) -> None:
         if antenna_mode not in ("both", "left", "right", "none"):
             raise ValueError("antenna_mode must be both, left, right, or none")
@@ -119,7 +215,15 @@ class ReachyController:
         self._face_follower_factory = face_follower_factory
         self._face_follower = None
         self._face_failure_logged = False
+        self._face_tracking_on = True
         self._head_angles = (0.0, 0.0)
+        self._arrival_model = arrival_model
+        self._arrival_watcher_factory = arrival_watcher_factory
+        self._arrival_watcher = None
+        self._arrival_warned = False
+        self._watching = False
+        self._watch = _WatchTurn({}, 0.0, 0.0, -math.inf)
+        self._still_since = None
         self._connect_options = dict(host=host, port=port, connection_mode=connection_mode,
                                      media_backend=media_backend)
         self._sleep_on_close = sleep_on_close
@@ -149,6 +253,15 @@ class ReachyController:
         self._last_pose = None
         self._last_antennas = None
         self._last_body_yaw = 0.0
+        self._style = style
+        self._layers = None
+        self._rest = None
+        self._clip = None
+        self._clip_line = None
+        self._generated = None
+        self._pending_motion = None
+        self._stop_generated = False
+        self._deferred = None
         self._gesture_name = None
         self._gesture_started = 0.0
         self.wobbling_available = False
@@ -161,6 +274,25 @@ class ReachyController:
     def face_tracking_enabled(self) -> bool:
         return (self._face_follower is not None
                 and getattr(self._face_follower, "failure", None) is None)
+
+    def allow_face_tracking(self, enabled: bool) -> None:
+        with self._state_lock:
+            self._face_tracking_on = enabled
+
+    def change_volume(self, step: int) -> int | None:
+        """The daemon plays a short sound at the new level."""
+        base = f"http://{self._connect_options['host']}:{self._connect_options['port']}/api/volume"
+        try:
+            with urllib.request.urlopen(f"{base}/current", timeout=VOLUME_TIMEOUT_S) as response:
+                current = json.load(response)["volume"]
+            level = max(0, min(100, int(current) + step))
+            request = urllib.request.Request(f"{base}/set", data=json.dumps({"volume": level}).encode(),
+                                             headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(request, timeout=VOLUME_TIMEOUT_S) as response:
+                return int(json.load(response)["volume"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            log.warning("Reachy could not change its speaker volume: %s", type(exc).__name__)
+            return None
 
     @property
     def sample_rate(self) -> int:
@@ -194,6 +326,15 @@ class ReachyController:
         self._last_antennas = None
         self._frozen_antennas = None
         self._gesture_name = None
+        self._clip = None
+        self._clip_line = None
+        self._generated = None
+        self._pending_motion = None
+        self._stop_generated = False
+        self._deferred = None
+        from reachy_muse.motion.layers import MotionLayers, Ramp
+        self._layers = MotionLayers(self._style)
+        self._generated_gain = Ramp(1.0)
         try:
             self._robot = self._robot_factory(**self._connect_options)
             import reachy_muse.speaker_eq
@@ -223,6 +364,8 @@ class ReachyController:
             self._motion_thread = threading.Thread(target=self._motion_loop,
                                                    name="muse-reachy-motion", daemon=True)
             self._motion_thread.start()
+            if self._style.expression_clips:
+                self._start_loading_moves()
             if not self._started.wait(10):
                 raise RuntimeError("Reachy Mini motion startup timed out")
             self._require_running()
@@ -266,6 +409,7 @@ class ReachyController:
                     self._robot.media.push_audio_sample(audio)
                 except Exception as exc:
                     raise ReachyHardwareError(f"Reachy Mini speaker failed: {exc}") from exc
+                self._layers.feed_speech(audio, self._output_sample_rate, time.monotonic())
 
     def clear_audio(self) -> None:
         """Flush queued speech without stopping the shared microphone pipeline."""
@@ -279,6 +423,7 @@ class ReachyController:
                 clear_player()
             except Exception as exc:
                 raise ReachyHardwareError(f"Reachy Mini playback flush failed: {exc}") from exc
+            self._layers.interrupt_speech(time.monotonic())
 
     def set_state(self, state: str, *, expression: str | None = None) -> None:
         if state not in STATES:
@@ -315,6 +460,37 @@ class ReachyController:
             if self._state == "thinking":
                 self._progress_started = time.monotonic()
 
+    def play_motion(self, frames, fps: int, *, during: Collection[str], loop: bool = False,
+                    start_within_s: float = 1.0) -> None:
+        """Show generated poses over the resting pose, starting in one of the ``during`` states.
+
+        ``frames`` holds one pose per row in the order and units of POSE_LIMITS' axes; every
+        value is clamped to POSE_LIMITS here, whatever its source. The motion starts once the
+        state is one of ``during`` and no other clip or command is showing, unless
+        ``start_within_s`` passes first. It crossfades in and out like a recorded clip, a looping
+        one repeats until stopped, and it fades out as soon as the state it started in changes.
+        """
+        import numpy as np
+        from reachy_muse.motion.layers import CROSSFADE_S, clamp_to_limits, seamless_loop
+        poses = np.asarray(frames, dtype=float)
+        if poses.ndim != 2 or poses.shape[1] != 9 or not len(poses) or not np.isfinite(poses).all() or fps <= 0:
+            raise ValueError("generated motion needs finite frames of nine values at a positive rate")
+        poses = clamp_to_limits(poses)
+        if not self._enable_motion:
+            return
+        if loop:
+            poses = seamless_loop(poses, round(CROSSFADE_S * fps))
+        pending = _PendingMotion(_Frames(poses, fps, loop, self._head), frozenset(during),
+                                 time.monotonic() + start_within_s)
+        with self._state_lock:
+            self._pending_motion = pending
+
+    def stop_motion(self) -> None:
+        """Drop generated motion that has not started, and fade out the one showing."""
+        with self._state_lock:
+            self._pending_motion = None
+            self._stop_generated = True
+
     def run_command(self, name: str, params: dict, timeout_ms: int | None = None) -> dict:
         """Wait for a bounded motion command; all motor targets stay on one thread."""
         try:
@@ -331,6 +507,89 @@ class ReachyController:
         except (ValueError, RuntimeError, queue.Full) as exc:
             return {"ok": False, "error": str(exc) or "Reachy Mini motion queue is full"}
 
+    def start_watching(self, pose: WatchPose | None) -> None:
+        angles = {}
+        if pose is not None:
+            requested = {"yaw": pose.yaw_deg, "pitch": pose.pitch_deg}
+            for axis, value in requested.items():
+                low, high = POSE_LIMITS[axis]
+                angles[axis] = max(low, min(high, value))
+            if angles != requested:
+                log.info("Watch pose limited to yaw %.0f, pitch %.0f degrees", angles["yaw"], angles["pitch"])
+        self._watching = True
+        self._turn_watch(angles, 1.0)
+        failed = self._arrival_watcher
+        if failed is not None and failed.failure is not None:
+            self._arrival_watcher = None
+            self._arrival_warned = False
+            failed.close()
+        watcher = self._arrival_watcher or self._start_arrival_watcher()
+        if watcher is not None:
+            watcher.set_watching(True)
+
+    def stop_watching(self) -> None:
+        self._watching = False
+        self._turn_watch(None, 0.0)
+        if self._arrival_watcher is not None:
+            self._arrival_watcher.set_watching(False)
+
+    def _turn_watch(self, angles: dict | None, share: float) -> None:
+        now = time.monotonic()
+        current_angles, current = self._watch_share(now)
+        if angles is None or angles == current_angles:
+            angles = current_angles
+        else:
+            current = 0.0
+        self._watch = _WatchTurn(angles, current, share, now)
+
+    def _watch_share(self, now: float) -> tuple[dict, float]:
+        turn = self._watch
+        progress = _ease((now - turn.since) / WATCH_TURN_S)
+        return turn.angles, turn.share_from + (turn.share_to - turn.share_from) * progress
+
+    def _watched(self, coordinates: dict) -> dict:
+        angles, share = self._watch_share(time.monotonic())
+        return {**coordinates, **{axis: coordinates.get(axis, 0.0) + (value - coordinates.get(axis, 0.0)) * share
+                                  for axis, value in angles.items()}}
+
+    def arrival(self) -> float | None:
+        watcher = self._arrival_watcher
+        if watcher is None:
+            return None
+        failure = watcher.failure
+        if failure is not None:
+            self._warn_arrival_unavailable(type(failure).__name__)
+            return None
+        return watcher.arrival()
+
+    def _start_arrival_watcher(self):
+        if self._arrival_model is None or not self._enable_motion or self._robot is None:
+            self._warn_arrival_unavailable("no person model or camera")
+            return None
+        factory = self._arrival_watcher_factory
+        if factory is None:
+            from reachy_muse.arrival import ArrivalWatcher
+            factory = ArrivalWatcher
+        try:
+            watcher = factory(self._robot.media.get_frame, self._camera_still, self._arrival_model)
+            watcher.start()
+        except Exception as exc:
+            self._warn_arrival_unavailable(type(exc).__name__)
+            return None
+        self._arrival_watcher = watcher
+        log.info("Arrival watching ready; camera frames remain on Reachy")
+        return watcher
+
+    def _warn_arrival_unavailable(self, reason: str) -> None:
+        if not self._arrival_warned:
+            self._arrival_warned = True
+            log.warning("Arrival detection is unavailable: %s; voice remains available", reason)
+
+    def _camera_still(self) -> bool:
+        still_since = self._still_since
+        return (self._failure is None and still_since is not None
+                and time.monotonic() - still_since >= CAMERA_STILL_S)
+
     def close(self) -> None:
         self._stop.set()
         if self._face_follower is not None:
@@ -343,6 +602,9 @@ class ReachyController:
         if self._face_follower is not None:
             self._face_follower.close()
             self._face_follower = None
+        if self._arrival_watcher is not None:
+            self._arrival_watcher.close()
+            self._arrival_watcher = None
         if self._robot is not None:
             robot, self._robot = self._robot, None
             with self._audio_lock:
@@ -384,7 +646,7 @@ class ReachyController:
         coordinates = self._pose_parameters(pose)
         return (math.radians(coordinates["yaw"]), math.radians(coordinates["pitch"]))
 
-    def _update_face_tracking(self, state: str) -> None:
+    def _update_face_tracking(self, state: str, *, commanded: bool = False) -> None:
         follower = self._face_follower
         if follower is None:
             return
@@ -392,7 +654,8 @@ class ReachyController:
         if failure is not None and not self._face_failure_logged:
             log.warning("Local face tracking stopped: %s; voice remains available", type(failure).__name__)
             self._face_failure_logged = True
-        follower.set_active(failure is None and state in ("listening", "thinking", "speaking"))
+        follower.set_active(failure is None and not commanded and self._face_tracking_on
+                            and state in ("listening", "thinking", "speaking"))
 
     def _face_pose(self, pose):
         follower = self._face_follower
@@ -421,8 +684,94 @@ class ReachyController:
         self._last_antennas = self._np.asarray(antennas, dtype=float).copy()
         self._last_body_yaw = float(body_yaw)
 
+    def _pose_vector(self, pose, antennas, body_yaw: float):
+        """One pose as values in the order and units of POSE_LIMITS."""
+        return self._np.array([*self._pose_parameters(pose).values(),
+                               *self._np.degrees(antennas), math.degrees(body_yaw)])
+
+    def _write_vector(self, values) -> None:
+        """Write a pose vector after the final POSE_LIMITS clamp."""
+        from reachy_muse.motion.layers import AXES, clamp_to_limits
+        values = clamp_to_limits(values)
+        self._write(self._head(**dict(zip(AXES[:6], values[:6]))),
+                    self._np.radians(values[6:8]), math.radians(values[8]))
+
+    def _cue_clip(self, now: float, state: str, expression: str | None, line: float) -> None:
+        """Give each spoken line one chance, at its start, to play its expression's clip.
+
+        A spoken clip fades out as soon as Reachy stops speaking.
+        """
+        clip = self._clip
+        if clip is not None and clip.during is not None and state != clip.during:
+            clip.timeline.stop(now)
+        if state != "speaking" or line == self._clip_line:
+            return
+        self._clip_line = line
+        name = EXPRESSION_CLIPS.get(expression)
+        moves = self._ready_moves() if self._style.expression_clips and name else None
+        if clip is not None or moves is None or name not in moves.list_moves():
+            return
+        from reachy_muse.motion.layers import ClipTimeline
+        move = moves.get(name)
+        self._clip = _Clip(move, ClipTimeline(now, float(move.duration)), SPOKEN_CLIP_INTENSITY, during="speaking")
+
+    def _cue_generated(self, now: float, state: str) -> None:
+        with self._state_lock:
+            stop, self._stop_generated = self._stop_generated, False
+            pending = self._pending_motion
+            if pending is not None and now > pending.start_by:
+                self._pending_motion = pending = None
+            free = self._clip is None and self._generated is None and self._deferred is None
+            if pending is not None and free and state in pending.states:
+                self._pending_motion = None
+            else:
+                pending = None
+        generated = self._generated
+        if generated is not None and (stop or state != generated.during):
+            generated.timeline.stop(now)
+        if pending is not None:
+            from reachy_muse.motion.layers import ClipTimeline
+            length = math.inf if pending.move.loop else pending.move.duration
+            self._generated = _Clip(pending.move, ClipTimeline(now, length), 1.0, during=state)
+
+    def _show_generated(self, now: float, pose, *, yielding: bool):
+        """Crossfade generated motion over a resting pose vector; drop it once it has faded out.
+
+        While ``yielding``, for a nod, tilt or progress accent on the resting pose, it eases out of the
+        way over the crossfade and comes back afterwards.
+        """
+        if self._generated_gain.target != float(not yielding):
+            self._generated_gain.to(float(not yielding), now)
+        generated = self._generated
+        if generated is not None and generated.timeline.finished(now):
+            self._generated = generated = None
+        return pose if generated is None else self._crossfade(generated, now, pose, self._generated_gain.at(now))
+
+    def _show_clip(self, now: float, pose):
+        """Crossfade the playing clip over a resting pose vector; drop the clip once it has faded out."""
+        clip = self._clip
+        if clip is None:
+            return pose
+        request = clip.request
+        if request is not None and (request.cancelled.is_set() or now >= request.deadline):
+            clip.timeline.stop(now)
+        if clip.timeline.finished(now):
+            self._clip = None
+            if request is not None:
+                request.result = clip.result
+                request.done.set()
+            return pose
+        return self._crossfade(clip, now, pose)
+
+    def _crossfade(self, clip: _Clip, now: float, pose, gain: float = 1.0):
+        weight = clip.timeline.weight(now) * gain
+        elapsed = min(clip.timeline.clip_time(now), clip.timeline.duration - 0.001)
+        return pose * (1 - weight) + self._recorded_pose(clip.move.evaluate(elapsed), clip.intensity) * weight
+
     def _motion_loop(self) -> None:
         wobbling_active = False
+        previous_state = None
+        previous_written = None
         try:
             if hasattr(self._robot, "client"):
                 status = self._robot.client.get_status()
@@ -467,7 +816,7 @@ class ReachyController:
                     gesture = self._gesture_name
                     gesture_age = now - self._gesture_started
                 gesture_active = gesture is not None and gesture_age < GESTURE_DURATION_S
-                wants_wobbling = state == "speaking" and not gesture_active
+                wants_wobbling = self._style.sway == "sdk" and state == "speaking" and not gesture_active
                 if self.wobbling_available and wants_wobbling != wobbling_active:
                     try:
                         if wants_wobbling:
@@ -481,31 +830,50 @@ class ReachyController:
                         self._robot.disable_wobbling()
                         log.warning("Reachy speech motion is unavailable: %s", exc)
                         self.wobbling_available = False
-                try:
-                    request = self._commands.get_nowait()
-                except queue.Empty:
-                    request = None
+                # A command clip keeps the queue waiting, as every other command does.
+                commanded = self._clip is not None and self._clip.request is not None
+                request, self._deferred = self._deferred, None
+                if request is None and not commanded:
+                    try:
+                        request = self._commands.get_nowait()
+                    except queue.Empty:
+                        pass
+                if request is not None and (self._clip is not None or self._generated is not None):
+                    # A command starts from the pose last written, so showing clips fade out first.
+                    for clip in (self._clip, self._generated):
+                        if clip is not None:
+                            clip.timeline.stop(now)
+                    request, self._deferred = None, request
                 if request is not None:
+                    self._still_since = None
                     if self._face_follower is not None:
                         self._face_follower.set_active(False)
                     try:
                         self._check_command(request)
-                        payload = self._execute_motion(request)
-                        request.result = {"ok": True, "payload": payload}
+                        result = {"ok": True, "payload": self._execute_motion(request)}
                     except Exception as exc:
-                        request.result = {"ok": False, "error": str(exc)}
+                        result = {"ok": False, "error": str(exc)}
                     finally:
-                        request.done.set()
+                        if self._clip is not None and self._clip.request is request:
+                            self._clip.result = result
+                        else:
+                            request.result = result
+                            request.done.set()
                         with self._state_lock:
                             self._gesture_name = None
                         previous_update = time.monotonic()
                         self._stop.wait(_MOTION_PERIOD_S)
                 else:
-                    self._update_face_tracking(state)
+                    self._update_face_tracking(state, commanded=commanded or self._generated is not None)
+                    self._cue_clip(now, state, expression, state_started)
                     pose, antennas = self._state_pose(state, elapsed, expression, progress_age=progress_age)
                     pose = self._face_pose(pose)
                     if gesture_active:
                         pose = self._gesture_pose(pose, gesture, gesture_age)
+                    if previous_state == "sleeping" and state != "sleeping" and self._clip is None:
+                        self._wake_up(now, pose, antennas)
+                    previous_state = state
+                    self._cue_generated(now, state)
                     quick_cue = ((state == "listening" and expression == "happy" and elapsed < 1.0)
                                  or (gesture_active and state != "speaking"))
                     if quick_cue:
@@ -520,20 +888,42 @@ class ReachyController:
                     previous_update = now
                     head_blend = _blend_factor(head_blend, dt)
                     antenna_blend = _blend_factor(antenna_blend, dt)
-                    self._write(self._interpolate_pose(self._last_pose, pose, head_blend),
-                                self._last_antennas * (1 - antenna_blend) + antennas * antenna_blend,
-                                self._last_body_yaw * (1 - _blend_factor(0.08, dt)))
+                    rest_pose, rest_antennas, rest_body_yaw = self._rest
+                    self._rest = (self._interpolate_pose(rest_pose, pose, head_blend),
+                                  rest_antennas * (1 - antenna_blend) + antennas * antenna_blend,
+                                  rest_body_yaw * (1 - _blend_factor(0.08, dt)))
+                    resting = self._pose_vector(*self._rest) + self._layers.breathing_offset(
+                        now, active=state in ("idle", "listening") and not gesture_active and not self._watching)
+                    accenting = progress_age is not None and 0 <= progress_age < PROGRESS_ACCENT_S
+                    generated = self._show_generated(now, resting, yielding=gesture_active or accenting)
+                    written = (self._show_clip(now, generated)
+                               + self._layers.sway_offset(now, active=state == "speaking"))
+                    self._write_vector(written)
+                    settled = (state in ("idle", "sleeping") and not gesture_active
+                               and self._clip is None and self._generated is None and self._deferred is None
+                               and previous_written is not None
+                               and self._np.abs(written - previous_written)[CAMERA_AXES].max()
+                               < CAMERA_STILL_STEP)
+                    if not settled:
+                        self._still_since = None
+                    elif self._still_since is None:
+                        self._still_since = now
+                    previous_written = written
                     self._stop.wait(_MOTION_PERIOD_S)
         except Exception as exc:
             self._failure = exc
             log.exception("Reachy Mini motion worker failed")
         finally:
             self._started.set()
+            self._still_since = None
+            unfinished = [self._deferred, self._clip and self._clip.request]
+            self._clip = self._deferred = self._generated = self._pending_motion = None
             while True:
                 try:
-                    pending = self._commands.get_nowait()
+                    unfinished.append(self._commands.get_nowait())
                 except queue.Empty:
                     break
+            for pending in filter(None, unfinished):
                 pending.result = {"ok": False, "error": "Reachy Mini stopped"}
                 pending.done.set()
             try:
@@ -560,6 +950,15 @@ class ReachyController:
                     self._robot.enable_gravity_compensation()
             except Exception:
                 log.exception("Could not park Reachy Mini")
+
+    def _wake_up(self, now: float, pose, antennas) -> None:
+        """Lift the head and unfold the antennas from wherever the resting pose is, then hand back to it.
+
+        The travel starts at the resting pose, so it shows at once; it fades out into breathing.
+        """
+        from reachy_muse.motion.layers import ClipTimeline
+        travel = _Travel(self._pose_vector(*self._rest), self._pose_vector(pose, antennas, 0.0), WAKE_UP_S, self._head)
+        self._clip = _Clip(travel, ClipTimeline(now, WAKE_UP_S, fade_in_s=0.0), 1.0)
 
     def _gesture_pose(self, pose, name: str, age: float):
         if not 0 <= age < GESTURE_DURATION_S:
@@ -602,8 +1001,8 @@ class ReachyController:
                 energy = 0.0
             amplitude = 30 * energy
             flourish = 0.0
-            if progress_age is not None and 0 <= progress_age < 1.4:
-                accent = math.sin(math.pi * progress_age / 1.4) ** 2
+            if progress_age is not None and 0 <= progress_age < PROGRESS_ACCENT_S:
+                accent = math.sin(math.pi * progress_age / PROGRESS_ACCENT_S) ** 2
                 amplitude += (45 - amplitude) * accent
                 flourish = 5 * accent * math.sin(progress_age * 2 * math.pi * 3.2)
             right = amplitude * math.sin(now * 2 * math.pi * 1.6) + flourish
@@ -630,8 +1029,9 @@ class ReachyController:
             return self._head(**coordinates), self._np.deg2rad(antennas)
         if state == "error":
             return self._head(pitch=8, z=-3), self._np.deg2rad([-35, 35])
-        z = 1.5 * math.sin(now * 2 * math.pi * 0.12) if state == "idle" else 0
-        return self._head(z=z), self._np.deg2rad([-10, 10])
+        if state == "sleeping":
+            return self._head(**self._watched({"pitch": 15, "z": -10})), self._np.deg2rad([-80, 80])
+        return self._head(**self._watched({})), self._np.deg2rad([-10, 10])
 
     def _check_command(self, request: _Command) -> None:
         if self._stop.is_set() or request.cancelled.is_set():
@@ -641,6 +1041,7 @@ class ReachyController:
 
     def _travel(self, request: _Command, pose, antennas, body_yaw: float, duration: float) -> None:
         start = time.monotonic()
+        self._layers.suspend(start)
         start_pose = self._last_pose.copy()
         start_antennas = self._last_antennas.copy()
         start_body = self._last_body_yaw
@@ -651,6 +1052,7 @@ class ReachyController:
             self._write(self._interpolate_pose(start_pose, pose, eased),
                         start_antennas * (1 - eased) + antennas * eased,
                         start_body * (1 - eased) + body_yaw * eased)
+            self._rest = (self._last_pose, self._last_antennas, self._last_body_yaw)
             if progress >= 1:
                 return
             self._stop.wait(0.025)
@@ -698,62 +1100,64 @@ class ReachyController:
         duration = float(move.duration)
         if not math.isfinite(duration) or not 0 < duration <= 15:
             raise ValueError("Recorded expressions must last at most 15 seconds")
-        first = self._bounded_recorded(move.evaluate(0), params["intensity"])
-        self._travel(request, *first, duration=0.4)
-        start = time.monotonic()
-        while True:
-            self._check_command(request)
-            elapsed = min(time.monotonic() - start, max(0, duration - 0.001))
-            self._write(*self._bounded_recorded(move.evaluate(elapsed), params["intensity"]))
-            if time.monotonic() - start >= duration:
-                break
-            self._stop.wait(0.025)
+        from reachy_muse.motion.layers import ClipTimeline
+        self._clip = _Clip(move, ClipTimeline(time.monotonic(), duration), params["intensity"], request)
         return {"name": expression, "source": "recorded", "dataset": EMOTIONS_DATASET,
                 "duration": duration, "intensity": params["intensity"], "bounded": True}
+
+    def _start_loading_moves(self) -> dict:
+        """Load the emotion library on a background thread, unless a load is running or succeeded."""
+        loading = self._moves_load
+        if loading is not None and not (loading["done"].is_set() and loading["error"] is not None):
+            return loading
+        loading = {"done": threading.Event(), "value": None, "error": None}
+        self._moves_load = loading
+        factory = self._moves_factory
+
+        def load() -> None:
+            try:
+                nonlocal factory
+                if factory is None:
+                    from reachy_mini.motion.recorded_move import RecordedMoves
+                    factory = RecordedMoves
+                loading["value"] = factory(EMOTIONS_DATASET)
+            except Exception as exc:
+                loading["error"] = exc
+                log.warning("Official Reachy emotion library is unavailable: %s; "
+                            "spoken expressions use static poses", exc)
+            finally:
+                loading["done"].set()
+
+        threading.Thread(target=load, name="muse-reachy-emotions", daemon=True).start()
+        return loading
+
+    def _ready_moves(self):
+        """The emotion library if it has loaded, without waiting for it."""
+        loading = self._moves_load
+        if (self._moves is None and loading is not None and loading["done"].is_set()
+                and loading["error"] is None):
+            self._moves = loading["value"]
+        return self._moves
 
     def _load_moves(self, request: _Command) -> None:
         if self._moves is not None:
             return
-        if self._moves_load is None:
-            loading = {"done": threading.Event(), "value": None, "error": None}
-            self._moves_load = loading
-
-            def load() -> None:
-                try:
-                    factory = self._moves_factory
-                    if factory is None:
-                        from reachy_mini.motion.recorded_move import RecordedMoves
-                        factory = RecordedMoves
-                    loading["value"] = factory(EMOTIONS_DATASET)
-                except Exception as exc:
-                    loading["error"] = exc
-                finally:
-                    loading["done"].set()
-
-            threading.Thread(target=load, name="muse-reachy-emotions", daemon=True).start()
-        loading = self._moves_load
+        loading = self._start_loading_moves()
         while not loading["done"].wait(0.025):
             self._check_command(request)
         self._check_command(request)
         if loading["error"] is not None:
-            self._moves_load = None
             raise RuntimeError(f"Official Reachy emotion library is unavailable: {loading['error']}")
         self._moves = loading["value"]
 
-    def _bounded_recorded(self, values, intensity: float):
+    def _recorded_pose(self, values, intensity: float):
+        """A recorded frame scaled by intensity and clamped to POSE_LIMITS, as a pose vector."""
+        from reachy_muse.motion.layers import clamp_to_limits
         head, antennas, body_yaw = values
-        if head is None:
-            head = self._last_pose
-        coordinates = self._pose_parameters(head)
-        for key, value in coordinates.items():
-            low, high = POSE_LIMITS[key]
-            coordinates[key] = max(low, min(high, value * intensity))
-        head = self._head(**coordinates)
-        antennas = self._last_antennas if antennas is None else self._np.asarray(antennas)
-        antennas = self._np.clip(antennas * intensity, -math.pi / 2, math.pi / 2)
-        yaw = self._last_body_yaw if body_yaw is None else float(body_yaw)
-        yaw = max(math.radians(-35), min(math.radians(35), yaw * intensity))
-        return head, antennas, yaw
+        pose = self._pose_vector(self._last_pose if head is None else head,
+                                 self._last_antennas if antennas is None else antennas,
+                                 self._last_body_yaw if body_yaw is None else float(body_yaw))
+        return clamp_to_limits(pose * intensity)
 
     def _builtin_expression(self, request: _Command) -> None:
         params = request.params

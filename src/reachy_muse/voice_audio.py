@@ -54,12 +54,20 @@ class SpeechEnd:
     accepted: bool
 
 
+# With a short-utterance guard, a turn holding less voiced speech than this ("um",
+# "remind me") ends only after the guard's longer silence, so a hesitation does not
+# send a fragment.
+SHORT_UTTERANCE_S = 0.6
+
+
 class TurnRecorder:
     """Collect sustained speech as a mono, 16 kHz, PCM16 WAV.
 
     Input chunks may have any length. Resampling and VAD framing retain their
     state between calls. Three consecutive voiced 20 ms frames start a turn;
-    the preceding 200 ms preserve the start of the word. ``min_s`` counts
+    the preceding 200 ms preserve the start of the word. ``silence_s`` of
+    silence ends a turn; ``short_utterance_silence_s``, when given and longer,
+    ends one that holds under ``SHORT_UTTERANCE_S`` of voiced speech. ``min_s`` counts
     voiced audio, while ``max_s`` caps the whole WAV, including its silence.
     ``last_truncated`` reports whether the last returned turn hit that cap.
     ``initial_min_s`` can temporarily lower the threshold for invocation audio;
@@ -84,6 +92,7 @@ class TurnRecorder:
         max_s: float = 20.0,
         initial_min_s: float | None = None,
         stream_audio: bool = False,
+        short_utterance_silence_s: float | None = None,
     ):
         if not isinstance(input_rate, int) or input_rate <= 0:
             raise ValueError("input_rate must be a positive integer")
@@ -100,9 +109,10 @@ class TurnRecorder:
             vad = webrtcvad.Vad(2)
         self._vad = vad
         self._input_rate = input_rate
-        self._silence_frames = max(
-            1, math.ceil(math.nextafter(silence_s / self.FRAME_SECONDS, -math.inf))
-        )
+        self._silence_frames = self._frames(silence_s)
+        self._short_silence_frames = max(self._silence_frames, self._frames(
+            short_utterance_silence_s or silence_s))
+        self._short_frames = self._frames(SHORT_UTTERANCE_S)
         self._min_frames = max(
             1, math.ceil(math.nextafter(min_s / self.FRAME_SECONDS, -math.inf))
         )
@@ -120,6 +130,10 @@ class TurnRecorder:
         self.last_truncated = False
         self.reset()
 
+    @classmethod
+    def _frames(cls, seconds: float) -> int:
+        return max(1, math.ceil(math.nextafter(seconds / cls.FRAME_SECONDS, -math.inf)))
+
     @property
     def active(self) -> bool:
         return bool(self._turn)
@@ -128,6 +142,11 @@ class TurnRecorder:
     def speech_active(self) -> bool:
         """Sustained speech remains active until the silence endpoint, across WAV caps."""
         return self._speech_active
+
+    @property
+    def quiet_s(self) -> float:
+        """Seconds of audio since the voice detector last heard speech."""
+        return self._speech_quiet * self.FRAME_SECONDS
 
     def reset(self) -> None:
         """Discard capture, pending samples, and resampling filter history."""
@@ -209,7 +228,9 @@ class TurnRecorder:
                 self._voiced_frames += int(voiced)
             self._quiet_frames = 0 if voiced else self._quiet_frames + 1
             truncated = len(self._turn) >= self._max_frames
-            if truncated or self._quiet_frames >= self._silence_frames:
+            silence_frames = (self._silence_frames if self._voiced_frames >= self._short_frames
+                              else self._short_silence_frames)
+            if truncated or self._quiet_frames >= silence_frames:
                 accepted = self._voiced_frames >= self._min_frames
                 if self._stream_audio:
                     self._audio_events.append(SpeechEnd(accepted))

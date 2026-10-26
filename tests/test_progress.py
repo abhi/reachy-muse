@@ -508,5 +508,5 @@ def test_a_new_label_takes_the_next_tick_and_waiting_lines_resume_after_it():
 
 
 def test_waiting_lines_are_public_phrases_the_robot_can_say_ahead_of_time():
-    assert set(WAITING_LINES) <= set(PUBLIC_PROGRESS_PHRASES)
+    assert {line for lines in WAITING_LINES.values() for line in lines} <= set(PUBLIC_PROGRESS_PHRASES)
     assert len(WAITING_LINES) >= 2

@@ -1,0 +1,9 @@
+reachy-muse
+Copyright (c) Meta Platforms, Inc. and affiliates.
+
+This product includes software from reachy-animation
+(https://github.com/pham-tuan-binh/reachy-animation), Copyright 2025 Pollen
+Robotics, licensed under the Apache License, Version 2.0:
+src/reachy_muse/motion/speech_sway.py is vendored from
+src/reachy_animation/speech.py, and the crossfade and gain ramp in
+src/reachy_muse/motion/layers.py follow src/reachy_animation/animator.py.

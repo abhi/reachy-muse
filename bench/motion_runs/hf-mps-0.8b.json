@@ -1,0 +1,645 @@
+{
+ "config": {
+  "planner": "hf",
+  "mlx_model": null,
+  "bundle": "0.8b",
+  "device": "mps",
+  "runs": 3,
+  "contend": null,
+  "machine": "macOS-26.4-arm64-arm-64bit-Mach-O",
+  "python": "3.13.14"
+ },
+ "load_s": 3.6,
+ "latency_ms": {
+  "planner": {
+   "p50": 1518.8,
+   "p95": 1698.8,
+   "max": 1821.5
+  },
+  "generator": {
+   "p50": 22.6,
+   "p95": 50.3,
+   "max": 57.0
+  },
+  "reach": {
+   "p50": 2.5,
+   "p95": 3.5,
+   "max": 3.5
+  },
+  "total": {
+   "p50": 1546.9,
+   "p95": 1738.4,
+   "max": 1850.8
+  }
+ },
+ "recipe_tokens": {
+  "p50": 84.0,
+  "p95": 103,
+  "max": 103
+ },
+ "duration_s": {
+  "p50": 4.6,
+  "p95": 6.3,
+  "max": 6.3
+ },
+ "peak_footprint_gb": 3.68,
+ "baseline_footprint_gb": 0.08,
+ "live_server": {
+  "before": {
+   "running": true,
+   "pid": 74447,
+   "cpu_percent": 0.0,
+   "footprint": "8669 MB (16384 bytes per page)"
+  },
+  "after": {
+   "running": true,
+   "pid": 74447,
+   "cpu_percent": 0.0,
+   "footprint": "8669 MB (16384 bytes per page)"
+  }
+ },
+ "quality": {
+  "happy, answering a question": {
+   "frames": 86,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 6.7,
+    "y": 2.3,
+    "z": 8.1,
+    "roll": 1.7,
+    "pitch": 10.1,
+    "yaw": 1.7,
+    "body_yaw": 2.3,
+    "right_antenna": 22.1,
+    "left_antenna": 17.8
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 2,
+   "yaw_swings": 0
+  },
+  "curious, listening": {
+   "frames": 100,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 5.0,
+    "y": 10.3,
+    "z": 4.9,
+    "roll": 19.9,
+    "pitch": 5.2,
+    "yaw": 0.8,
+    "body_yaw": 1.6,
+    "right_antenna": 22.4,
+    "left_antenna": 17.1
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 1,
+   "yaw_swings": 0
+  },
+  "thinking hard": {
+   "frames": 157,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 131,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 4.5,
+    "y": 13.1,
+    "z": 16.2,
+    "roll": 0.9,
+    "pitch": 20.4,
+    "yaw": 3.1,
+    "body_yaw": 2.3,
+    "right_antenna": 99.9,
+    "left_antenna": 97.9
+   },
+   "frames_at_limit": {
+    "z": 131,
+    "left_antenna": 129,
+    "right_antenna": 128,
+    "pitch": 87
+   },
+   "pitch_swings": 1,
+   "yaw_swings": 0
+  },
+  "surprised by good news": {
+   "frames": 158,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 5.9,
+    "y": 2.2,
+    "z": 3.1,
+    "roll": 23.4,
+    "pitch": 12.9,
+    "yaw": 1.7,
+    "body_yaw": 1.5,
+    "right_antenna": 10.7,
+    "left_antenna": 11.1
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 5,
+   "yaw_swings": 0
+  },
+  "sad, apologizing": {
+   "frames": 147,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 119,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 2.1,
+    "y": 10.6,
+    "z": 15.2,
+    "roll": 1.0,
+    "pitch": 20.8,
+    "yaw": 2.7,
+    "body_yaw": 2.6,
+    "right_antenna": 93.7,
+    "left_antenna": 90.1
+   },
+   "frames_at_limit": {
+    "left_antenna": 119,
+    "right_antenna": 118,
+    "z": 67,
+    "pitch": 60
+   },
+   "pitch_swings": 1,
+   "yaw_swings": 0
+  },
+  "nodding yes": {
+   "frames": 77,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 31,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 9.8,
+    "y": 30.0,
+    "z": 12.0,
+    "roll": 3.6,
+    "pitch": 27.4,
+    "yaw": 4.2,
+    "body_yaw": 3.8,
+    "right_antenna": 26.8,
+    "left_antenna": 27.9
+   },
+   "oscillation": {
+    "channel": "pitch",
+    "half_cycles": 0,
+    "yaw_half_cycles": 0,
+    "min_amplitude_deg": 5.0
+   },
+   "frames_at_limit": {
+    "y": 31
+   },
+   "pitch_swings": 3,
+   "yaw_swings": 0
+  },
+  "shaking head no": {
+   "frames": 90,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 16,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 12.1,
+    "y": 13.6,
+    "z": 14.9,
+    "roll": 4.1,
+    "pitch": 34.8,
+    "yaw": 7.2,
+    "body_yaw": 2.6,
+    "right_antenna": 39.9,
+    "left_antenna": 33.4
+   },
+   "oscillation": {
+    "channel": "yaw",
+    "half_cycles": 0,
+    "pitch_half_cycles": 1,
+    "min_amplitude_deg": 8.0
+   },
+   "frames_at_limit": {
+    "y": 8,
+    "pitch": 9
+   },
+   "pitch_swings": 3,
+   "yaw_swings": 0
+  },
+  "excited greeting": {
+   "frames": 132,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 6.8,
+    "y": 2.3,
+    "z": 12.3,
+    "roll": 1.8,
+    "pitch": 13.7,
+    "yaw": 1.1,
+    "body_yaw": 1.7,
+    "right_antenna": 16.6,
+    "left_antenna": 16.9
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 1,
+   "yaw_swings": 0
+  }
+ },
+ "probes": {
+  "overall": 0.625,
+  "ood_core": 0.625,
+  "skill": 0.625,
+  "per_prompt": {
+   "sneezing. You build up and then release a sudden sharp sneeze.": 1.0,
+   "a big sneeze is coming. Ah... ah... choo!": 1.0,
+   "startled. A sudden loud noise just made you jump.": 1.0,
+   "bowing deeply. You thank the audience for coming.": 0.0,
+   "nodding yes. You agree with everything enthusiastically.": 1.0,
+   "shaking your head no. You refuse firmly.": 0.0,
+   "looking up at the stars. The night sky is beautiful.": 1.0,
+   "cowering in fear. Something huge looms over you.": 1.0,
+   "heartbroken. You have just received news that devastated you.": 1.0,
+   "ecstatic. You are overjoyed and can barely contain yourself.": 0.0,
+   "sleepy toddler. You are fighting to stay awake and keep nodding off.": 0.0,
+   "drunk. You are unsteady and your movements are loose and uncoordinated.": 0.0,
+   "a cat stalking prey. You crouch low, freeze, and creep forward slowly.": 1.0,
+   "jumping for joy. You just got the best news ever.": 1.0,
+   "yawning widely. You are so sleepy.": 0.0,
+   "checking both ways. You look left and right before crossing.": 1.0
+  },
+  "recipes": {
+   "sneezing. You build up and then release a sudden sharp sneeze.": [
+    "go 1 e=20 p=-6 z=4 E=1 | hold .6 E=2 | go .15 p=16 z=-8 e=100 E=9 | hold .5 E=2 | go .8 p=0 z=2 e=40 E=1"
+   ],
+   "a big sneeze is coming. Ah... ah... choo!": [
+    "go 1 e=20 p=-6 z=4 E=1 | hold .6 E=2 | go .15 e=120 p=18 z=-12 E=10 | go .2 p=-10 z=12 e=-10 E=10 | hold .6 E=2 | go .5 p=0 z=4 e=30 E=1"
+   ],
+   "startled. A sudden loud noise just made you jump.": [
+    "go .5 e=20 E=.5 | hold .8 E=0 | go .15 e=-15 p=-10 z=12 E=8 | go .4 r=10 E=3 | hold .6 E=1"
+   ],
+   "bowing deeply. You thank the audience for coming.": [
+    "go 1.5 e=100 p=16 z=-8 E=.5 | go 1.5 p=20 z=-12 | hold 1.5 E=.3 | go .6 p=10 | hold 1"
+   ],
+   "nodding yes. You agree with everything enthusiastically.": [
+    "go .4 e=0 p=-4 z=8 E=3 | osc 2.5 p 10 .6 E=4 | osc 1.5 z 4 .5 | hold .6"
+   ],
+   "shaking your head no. You refuse firmly.": [
+    "go .6 e=20 E=.5 | osc 1.5 y 10 .6 E=2 | go .2 p=10 z=-4 e=100 E=5 | hold .6 E=1 | go .6 p=0 z=4 e=40 E=1 | hold .6"
+   ],
+   "looking up at the stars. The night sky is beautiful.": [
+    "go 1.5 e=40 p=-10 z=8 E=.3 | osc 4 r 6 3 E=.3 | hold 1"
+   ],
+   "cowering in fear. Something huge looms over you.": [
+    "go 1.2 e=140 p=20 z=-16 y=-20 E=.5 | hold 2 E=.2 | go 1.5 y=20 | hold 1.5 E=.2"
+   ],
+   "heartbroken. You have just received news that devastated you.": [
+    "go 1.5 e=120 p=16 z=-10 E=.8 | hold 2 E=.6 | go 1.2 p=20 z=-14 e=150 | hold 1.5"
+   ],
+   "ecstatic. You are overjoyed and can barely contain yourself.": [
+    "go .5 e=0 p=-10 z=10 E=3 | osc 2 z 4 .5 E=4 | hold .8 E=2"
+   ],
+   "sleepy toddler. You are fighting to stay awake and keep nodding off.": [
+    "go 1 e=100 p=4 z=2 E=.5 | osc 4 p 4 1.2 E=.5 | go 1.5 e=150 p=16 z=-10 E=.3 | hold 1"
+   ],
+   "drunk. You are unsteady and your movements are loose and uncoordinated.": [
+    "go 1 e=100 p=10 z=-4 E=.8 | osc 4 r 8 1.8 E=1 | go 1.5 e=150 p=18 z=-10 E=.6 | hold 1"
+   ],
+   "a cat stalking prey. You crouch low, freeze, and creep forward slowly.": [
+    "go 1.2 e=110 p=16 z=-14 E=.3 | hold 2 E=0 | go 1.5 p=10 z=-10 E=.3 | go 1.5 p=18 z=-14 E=.3 | hold 1"
+   ],
+   "jumping for joy. You just got the best news ever.": [
+    "go 1 e=20 p=-6 z=4 E=1 | hold .6 E=2 | go .15 e=-20 p=-16 z=16 E=10 | hold .6 E=3 | go 1.2 e=40 p=4 z=0 E=1 | hold .6"
+   ],
+   "yawning widely. You are so sleepy.": [
+    "go 1.5 e=100 p=10 z=-4 E=.3 | go 2 p=18 z=-12 e=140 | hold 1.5 E=.2"
+   ],
+   "checking both ways. You look left and right before crossing.": [
+    "go .6 e=5 y=25 E=1.6 | go .8 e=35 y=-25 E=1.8 | go .6 y=0 E=1.5 | go .6 y=25 E=1.8 | go .6 y=0 E=1.5 | go .6 y=-25 E=1.8 | go .6 y=0 E=1.5"
+   ]
+  }
+ },
+ "runs": [
+  {
+   "prompt": "happy, answering a question",
+   "repeat": 0,
+   "idea": "lean in, ears up, small nods",
+   "recipe": "go .6 e=0 p=-4 z=8 E=2 | osc 2 p 5 1 E=2.5 | hold .8 E=1.5",
+   "recipe_tokens": 57,
+   "attempts": 1,
+   "duration_s": 3.44,
+   "planner": 1322.9,
+   "generator": 57.0,
+   "reach": 1.8,
+   "total": 1381.7
+  },
+  {
+   "prompt": "curious, listening",
+   "repeat": 0,
+   "idea": "lean in, ears up, small tilts",
+   "recipe": "go .8 e=0 p=-4 z=8 r=10 E=1 | hold 1.5 E=.5 | osc 2 r 6 1.8 E=1.5",
+   "recipe_tokens": 64,
+   "attempts": 1,
+   "duration_s": 4.0,
+   "planner": 1439.7,
+   "generator": 22.8,
+   "reach": 2.3,
+   "total": 1464.7
+  },
+  {
+   "prompt": "thinking hard",
+   "repeat": 0,
+   "idea": "head down, slow, still",
+   "recipe": "go 1.5 e=100 p=16 z=-10 E=.3 | hold 3 E=.1 | go 1.2 p=10 z=-12 e=120 | hold 1",
+   "recipe_tokens": 68,
+   "attempts": 1,
+   "duration_s": 6.28,
+   "planner": 1446.9,
+   "generator": 46.4,
+   "reach": 3.5,
+   "total": 1496.8
+  },
+  {
+   "prompt": "surprised by good news",
+   "repeat": 0,
+   "idea": "phases: curious tilt, ears up, slow nod, delighted bounce, happy tilt",
+   "recipe": "go .6 e=10 p=4 r=10 E=1 | hold .6 | go .6 p=0 r=0 E=2 | osc 2 p 6 .8 E=3 | go .6 r=12 p=4 | osc 1.5 z 3 .6 E=5 | hold .6",
+   "recipe_tokens": 103,
+   "attempts": 1,
+   "duration_s": 6.32,
+   "planner": 1821.5,
+   "generator": 25.8,
+   "reach": 3.5,
+   "total": 1850.8
+  },
+  {
+   "prompt": "sad, apologizing",
+   "repeat": 0,
+   "idea": "slow head down, small droop, ears soft",
+   "recipe": "go 1.5 e=100 p=12 z=-4 E=.6 | go 1.5 p=18 z=-10 e=140 E=.4 | hold 1.5 E=.3 | go .6 p=12 z=-6 E=.6 | hold 1",
+   "recipe_tokens": 90,
+   "attempts": 1,
+   "duration_s": 5.88,
+   "planner": 1584.3,
+   "generator": 50.3,
+   "reach": 3.0,
+   "total": 1637.6
+  },
+  {
+   "prompt": "nodding yes",
+   "repeat": 0,
+   "idea": "build: rise and tilt back 0.8s; release: head down forward, ears up; hold 1s",
+   "recipe": "go .6 e=0 p=-8 z=10 E=1.5 | go .2 p=10 z=0 E=3 | hold 1.2 E=.5 | go .6 p=0 z=4 E=1.5 | hold .6",
+   "recipe_tokens": 96,
+   "attempts": 1,
+   "duration_s": 3.08,
+   "planner": 1695.7,
+   "generator": 41.1,
+   "reach": 1.6,
+   "total": 1738.4
+  },
+  {
+   "prompt": "shaking head no",
+   "repeat": 0,
+   "idea": "build: slow tilt back, breathe 1s; release: head snaps forward, ears drop, freeze",
+   "recipe": "go 1 e=20 p=-10 z=4 E=1 | hold .6 E=2 | go .15 p=10 z=0 E=8 | hold 1.5 E=0 | go .5 p=0 z=4 E=1",
+   "recipe_tokens": 93,
+   "attempts": 1,
+   "duration_s": 3.6,
+   "planner": 1605.7,
+   "generator": 24.2,
+   "reach": 2.0,
+   "total": 1631.8
+  },
+  {
+   "prompt": "excited greeting",
+   "repeat": 0,
+   "idea": "lean in, head back, ears up, happy bounces",
+   "recipe": "go .5 e=0 p=-10 z=10 E=3 | osc 2 z 5 .6 E=4 | go .5 p=-12 | osc 1.5 z 5 .6 E=4 | hold .6",
+   "recipe_tokens": 78,
+   "attempts": 1,
+   "duration_s": 5.28,
+   "planner": 1465.6,
+   "generator": 24.2,
+   "reach": 2.8,
+   "total": 1492.7
+  },
+  {
+   "prompt": "happy, answering a question",
+   "repeat": 1,
+   "idea": "lean in, ears up, small nods",
+   "recipe": "go .6 e=0 p=-4 z=8 E=2 | osc 2 p 5 1 E=2.5 | hold .8 E=1.5",
+   "recipe_tokens": 57,
+   "attempts": 1,
+   "duration_s": 3.44,
+   "planner": 1265.3,
+   "generator": 18.8,
+   "reach": 1.7,
+   "total": 1285.8
+  },
+  {
+   "prompt": "curious, listening",
+   "repeat": 1,
+   "idea": "lean in, ears up, small tilts",
+   "recipe": "go .8 e=0 p=-4 z=8 r=10 E=1 | hold 1.5 E=.5 | osc 2 r 6 1.8 E=1.5",
+   "recipe_tokens": 64,
+   "attempts": 1,
+   "duration_s": 4.0,
+   "planner": 1334.9,
+   "generator": 19.4,
+   "reach": 2.0,
+   "total": 1356.3
+  },
+  {
+   "prompt": "thinking hard",
+   "repeat": 1,
+   "idea": "head down, slow, still",
+   "recipe": "go 1.5 e=100 p=16 z=-10 E=.3 | hold 3 E=.1 | go 1.2 p=10 z=-12 e=120 | hold 1",
+   "recipe_tokens": 68,
+   "attempts": 1,
+   "duration_s": 6.28,
+   "planner": 1367.4,
+   "generator": 22.8,
+   "reach": 3.4,
+   "total": 1393.6
+  },
+  {
+   "prompt": "surprised by good news",
+   "repeat": 1,
+   "idea": "phases: curious tilt, ears up, slow nod, delighted bounce, happy tilt",
+   "recipe": "go .6 e=10 p=4 r=10 E=1 | hold .6 | go .6 p=0 r=0 E=2 | osc 2 p 6 .8 E=3 | go .6 r=12 p=4 | osc 1.5 z 3 .6 E=5 | hold .6",
+   "recipe_tokens": 103,
+   "attempts": 1,
+   "duration_s": 6.32,
+   "planner": 1697.1,
+   "generator": 22.9,
+   "reach": 3.5,
+   "total": 1723.4
+  },
+  {
+   "prompt": "sad, apologizing",
+   "repeat": 1,
+   "idea": "slow head down, small droop, ears soft",
+   "recipe": "go 1.5 e=100 p=12 z=-4 E=.6 | go 1.5 p=18 z=-10 e=140 E=.4 | hold 1.5 E=.3 | go .6 p=12 z=-6 E=.6 | hold 1",
+   "recipe_tokens": 90,
+   "attempts": 1,
+   "duration_s": 5.88,
+   "planner": 1584.2,
+   "generator": 22.2,
+   "reach": 2.9,
+   "total": 1609.3
+  },
+  {
+   "prompt": "nodding yes",
+   "repeat": 1,
+   "idea": "build: rise and tilt back 0.8s; release: head down forward, ears up; hold 1s",
+   "recipe": "go .6 e=0 p=-8 z=10 E=1.5 | go .2 p=10 z=0 E=3 | hold 1.2 E=.5 | go .6 p=0 z=4 E=1.5 | hold .6",
+   "recipe_tokens": 96,
+   "attempts": 1,
+   "duration_s": 3.08,
+   "planner": 1630.4,
+   "generator": 19.5,
+   "reach": 1.6,
+   "total": 1651.5
+  },
+  {
+   "prompt": "shaking head no",
+   "repeat": 1,
+   "idea": "build: slow tilt back, breathe 1s; release: head snaps forward, ears drop, freeze",
+   "recipe": "go 1 e=20 p=-10 z=4 E=1 | hold .6 E=2 | go .15 p=10 z=0 E=8 | hold 1.5 E=0 | go .5 p=0 z=4 E=1",
+   "recipe_tokens": 93,
+   "attempts": 1,
+   "duration_s": 3.6,
+   "planner": 1605.9,
+   "generator": 19.1,
+   "reach": 1.8,
+   "total": 1626.7
+  },
+  {
+   "prompt": "excited greeting",
+   "repeat": 1,
+   "idea": "lean in, head back, ears up, happy bounces",
+   "recipe": "go .5 e=0 p=-10 z=10 E=3 | osc 2 z 5 .6 E=4 | go .5 p=-12 | osc 1.5 z 5 .6 E=4 | hold .6",
+   "recipe_tokens": 78,
+   "attempts": 1,
+   "duration_s": 5.28,
+   "planner": 1462.5,
+   "generator": 21.6,
+   "reach": 2.8,
+   "total": 1486.9
+  },
+  {
+   "prompt": "happy, answering a question",
+   "repeat": 2,
+   "idea": "lean in, ears up, small nods",
+   "recipe": "go .6 e=0 p=-4 z=8 E=2 | osc 2 p 5 1 E=2.5 | hold .8 E=1.5",
+   "recipe_tokens": 57,
+   "attempts": 1,
+   "duration_s": 3.44,
+   "planner": 1264.6,
+   "generator": 19.2,
+   "reach": 1.8,
+   "total": 1285.7
+  },
+  {
+   "prompt": "curious, listening",
+   "repeat": 2,
+   "idea": "lean in, ears up, small tilts",
+   "recipe": "go .8 e=0 p=-4 z=8 r=10 E=1 | hold 1.5 E=.5 | osc 2 r 6 1.8 E=1.5",
+   "recipe_tokens": 64,
+   "attempts": 1,
+   "duration_s": 4.0,
+   "planner": 1330.9,
+   "generator": 19.8,
+   "reach": 2.2,
+   "total": 1352.8
+  },
+  {
+   "prompt": "thinking hard",
+   "repeat": 2,
+   "idea": "head down, slow, still",
+   "recipe": "go 1.5 e=100 p=16 z=-10 E=.3 | hold 3 E=.1 | go 1.2 p=10 z=-12 e=120 | hold 1",
+   "recipe_tokens": 68,
+   "attempts": 1,
+   "duration_s": 6.28,
+   "planner": 1366.4,
+   "generator": 22.8,
+   "reach": 3.5,
+   "total": 1392.6
+  },
+  {
+   "prompt": "surprised by good news",
+   "repeat": 2,
+   "idea": "phases: curious tilt, ears up, slow nod, delighted bounce, happy tilt",
+   "recipe": "go .6 e=10 p=4 r=10 E=1 | hold .6 | go .6 p=0 r=0 E=2 | osc 2 p 6 .8 E=3 | go .6 r=12 p=4 | osc 1.5 z 3 .6 E=5 | hold .6",
+   "recipe_tokens": 103,
+   "attempts": 1,
+   "duration_s": 6.32,
+   "planner": 1698.8,
+   "generator": 23.0,
+   "reach": 3.4,
+   "total": 1725.2
+  },
+  {
+   "prompt": "sad, apologizing",
+   "repeat": 2,
+   "idea": "slow head down, small droop, ears soft",
+   "recipe": "go 1.5 e=100 p=12 z=-4 E=.6 | go 1.5 p=18 z=-10 e=140 E=.4 | hold 1.5 E=.3 | go .6 p=12 z=-6 E=.6 | hold 1",
+   "recipe_tokens": 90,
+   "attempts": 1,
+   "duration_s": 5.88,
+   "planner": 1571.9,
+   "generator": 22.3,
+   "reach": 2.9,
+   "total": 1597.1
+  },
+  {
+   "prompt": "nodding yes",
+   "repeat": 2,
+   "idea": "build: rise and tilt back 0.8s; release: head down forward, ears up; hold 1s",
+   "recipe": "go .6 e=0 p=-8 z=10 E=1.5 | go .2 p=10 z=0 E=3 | hold 1.2 E=.5 | go .6 p=0 z=4 E=1.5 | hold .6",
+   "recipe_tokens": 96,
+   "attempts": 1,
+   "duration_s": 3.08,
+   "planner": 1627.4,
+   "generator": 19.1,
+   "reach": 1.6,
+   "total": 1648.1
+  },
+  {
+   "prompt": "shaking head no",
+   "repeat": 2,
+   "idea": "build: slow tilt back, breathe 1s; release: head snaps forward, ears drop, freeze",
+   "recipe": "go 1 e=20 p=-10 z=4 E=1 | hold .6 E=2 | go .15 p=10 z=0 E=8 | hold 1.5 E=0 | go .5 p=0 z=4 E=1",
+   "recipe_tokens": 93,
+   "attempts": 1,
+   "duration_s": 3.6,
+   "planner": 1602.8,
+   "generator": 20.3,
+   "reach": 2.1,
+   "total": 1625.1
+  },
+  {
+   "prompt": "excited greeting",
+   "repeat": 2,
+   "idea": "lean in, head back, ears up, happy bounces",
+   "recipe": "go .5 e=0 p=-10 z=10 E=3 | osc 2 z 5 .6 E=4 | go .5 p=-12 | osc 1.5 z 5 .6 E=4 | hold .6",
+   "recipe_tokens": 78,
+   "attempts": 1,
+   "duration_s": 5.28,
+   "planner": 1461.2,
+   "generator": 21.9,
+   "reach": 2.8,
+   "total": 1485.9
+  }
+ ]
+}

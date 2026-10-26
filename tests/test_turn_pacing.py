@@ -8,7 +8,7 @@ import pytest
 import reachy_muse.local_backends
 import reachy_muse.conversation
 from reachy_muse.capabilities import Mode
-from reachy_muse.follow_up import is_small_talk
+from reachy_muse.contract.intent import maybe_chat
 from reachy_muse.local_backends import backends_for
 from reachy_muse.conversation import VoiceConversation
 from test_conversation import FakeHardware, FakeSession, cancel_task, chat_event
@@ -17,25 +17,13 @@ np = pytest.importorskip("numpy")
 
 
 @pytest.mark.parametrize("text, expected", [
-    ("Hi!", True),
-    ("Hello Muse.", True),
-    ("How are you?", True),
-    ("Hi Muse, how are you doing today?", True),
-    ("Good morning, Reachy!", True),
-    ("Thank you so much!", True),
-    ("Thanks.", True),
-    ("Yes.", True),
-    ("No, thanks.", True),
-    ("Okay.", True),
-    ("Tell me more", True),
-    ("What's the weather tomorrow?", False),
-    ("How are you supposed to cook rice?", False),
-    ("Can you search for the latest robot news?", False),
-    ("Thanks, now what's the weather in Paris?", False),
-    ("", True),
+    ("Hi!", True), ("How are you doing today?", True), ("Thanks.", True),
+    ("Yes.", False), ("Tell me more", False), ("", False),
+    ("What's the weather tomorrow?", False), ("How are you supposed to cook rice?", False),
+    ("Can you search for the latest robot news?", False), ("Thanks, can you also check traffic", False),
 ])
-def test_small_talk_is_greetings_thanks_yes_no_or_three_words_at_most(text, expected):
-    assert is_small_talk(text) is expected
+def test_social_gate_rejects_requests_and_ambiguous_short_utterances(text, expected):
+    assert maybe_chat(text) is expected
 
 
 class Labels:
@@ -147,7 +135,7 @@ def test_a_slow_answer_is_acknowledged_once_the_grace_has_passed(monkeypatch):
     hardware = PacedHardware(labels)
     dispatched = run_turn(monkeypatch, conversation_for(labels, hardware, "What's the weather tomorrow?"),
                           answer_after(1.6, "Sunny all day. [reachy:happy]"))
-    assert hardware.spoken() == ["Let me check the weather.", "Sunny all day."]
+    assert hardware.spoken() == ["Hmm, good question.", "Sunny all day."]
     ack_started = hardware.timeline[0][1] - dispatched
     assert reachy_muse.conversation.ACK_GRACE_S <= ack_started < reachy_muse.conversation.ACK_GRACE_S + .3
 
@@ -155,7 +143,7 @@ def test_a_slow_answer_is_acknowledged_once_the_grace_has_passed(monkeypatch):
 def test_an_answer_arriving_mid_acknowledgement_lets_it_finish_then_plays_at_once(monkeypatch):
     labels = Labels()
     hardware = PacedHardware(labels, chunk_s=.05)
-    ack = "Let me check the weather."
+    ack = "Hmm, good question."
     run_turn(monkeypatch, conversation_for(labels, hardware, "What's the weather tomorrow?", ack_chunks=10),
              answer_after(None, "Sunny all day. [reachy:happy]", when=lambda: hardware.spoken() == [ack]))
     assert hardware.spoken() == [ack, "Sunny all day."]
@@ -174,7 +162,7 @@ def test_a_long_turn_without_labels_keeps_saying_waiting_lines_without_asking_th
     def paced(session):
         conversation = build(session)
         narrator = conversation.backends.narrator
-        narrator.progress = lambda request, started: ProgressPlan(request, started, first_delay_s=1.2,
+        narrator.progress = lambda request, started, intent: ProgressPlan(request, started, intent=intent, first_delay_s=1.2,
                                                                   interval_s=.4)
         say_progress = narrator.say_progress
 
@@ -198,7 +186,7 @@ def test_a_long_turn_without_labels_keeps_saying_waiting_lines_without_asking_th
 
     run_turn(monkeypatch, paced, working_then_answer)
     assert hardware.spoken() == [
-        "Let me look that up.", "I haven't received a detailed progress update yet.",
+        "Hmm, good question.", "I haven't received a detailed progress update yet.",
         "Still on it.", "Working on that for you.", "Muse is still digging in.", "Robots began as toys."]
     assert narrated == ["I haven't received a detailed progress update yet."]
 

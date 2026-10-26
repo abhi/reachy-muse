@@ -7,6 +7,7 @@ import re
 import ssl
 import subprocess
 import sys
+import time
 from enum import Enum
 from importlib.resources import files
 
@@ -14,10 +15,18 @@ import pytest
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
+from reachy_muse.capabilities import CapabilityUnavailable
+from reachy_muse.contract.expressions import Expression
+from reachy_muse.companion_client import CompanionCommandModel, CompanionLink, CompanionMotion
+from reachy_muse.device_command import DeviceCommand
 from reachy_muse.protocol import (
     MESSAGES,
+    Animate,
+    AnimateResult,
     AudioFrame,
     AudioKind,
+    Classify,
+    ClassifyResult,
     CloseHow,
     Error,
     ErrorCode,
@@ -45,7 +54,9 @@ from reachy_muse.protocol import (
     message_type,
 )
 
-from reachy_muse.companion_server.engines import EchoNarrator, Partial, ScriptedHearing, ToneVoice
+from reachy_muse.companion_server.engines import (
+    Animation, EchoNarrator, NodAnimator, Partial, ScriptedHearing, SpeechFirst, ToneVoice,
+)
 from reachy_muse.companion_server.pair import pair
 from reachy_muse.companion_server.server import CompanionServer, Engines
 
@@ -103,7 +114,7 @@ def test_sdk_vectors_cover_every_message_type():
 class HangingVoice:
     name = "hanging"
 
-    async def speak(self, text, role, out_rate):
+    async def speak(self, text, role, out_rate, expression=None):
         yield b"\x01\x00" * (out_rate // 10)
         await asyncio.Event().wait()
 
@@ -111,7 +122,7 @@ class HangingVoice:
 class HangingNarrator(EchoNarrator):
     name = "hanging"
 
-    async def acknowledge(self, request):
+    async def acknowledge(self, request, **options):
         await asyncio.Event().wait()
 
 
@@ -121,7 +132,7 @@ class FailingNarrator(EchoNarrator):
     async def lines(self, request, reply):
         raise RuntimeError("boom")
 
-    async def acknowledge(self, request):
+    async def acknowledge(self, request, **options):
         return tuple(NarratedLine(f"Line {n}.", None) for n in range(4))
 
 
@@ -350,6 +361,37 @@ def test_speak_cancel_stops_with_one_done_and_repeats_are_ignored():
     scenario(script, engines=Engines(voice=HangingVoice(), narrator=EchoNarrator()))
 
 
+class ExpressiveNarrator(EchoNarrator):
+    async def lines(self, request, reply):
+        return (NarratedLine("Good news.", Expression.HAPPY), NarratedLine("It rained.", Expression.SAD), NarratedLine("Anyway.", None))
+
+
+class RecordingVoice(ToneVoice):
+    def __init__(self):
+        super().__init__(chunks=1)
+        self.heard = []
+
+    async def speak(self, text, role, out_rate, expression=None):
+        self.heard.append((text, expression))
+        async for chunk in super().speak(text, role, out_rate):
+            yield chunk
+
+
+def test_speak_gets_the_expression_the_narrator_gave_that_line():
+    async def script(companion):
+        ws = await connected(companion)
+        await send(ws, Narrate(id=1, op=NarrateOp.LINES, request="Weather?", reply="ignored"))
+        await recv(ws)
+        for stream, text in enumerate(("It rained.", "Good news.", "Anyway.", "Never narrated."), start=1):
+            await send(ws, SpeakStart(stream=2 * stream, text=text, voice=VoiceRole.MAIN))
+            while not isinstance(await recv(ws), SpeakDone):
+                pass
+        assert voice.heard == [("It rained.", Expression.SAD), ("Good news.", Expression.HAPPY), ("Anyway.", None), ("Never narrated.", None)]
+
+    voice = RecordingVoice()
+    scenario(script, engines=Engines(voice=voice, narrator=ExpressiveNarrator()))
+
+
 def test_narrate_echo_answers_each_op_by_id():
     async def script(companion):
         ws = await connected(companion)
@@ -396,6 +438,224 @@ def test_narrator_output_the_codec_refuses_is_error_model():
         assert await recv(ws) == Error(ErrorCode.MODEL, "ProtocolError: bad_request/too_many: lines has more than 3 items", id=8)
 
     scenario(script, engines=Engines(narrator=FailingNarrator()))
+
+
+CLASSIFYING = dataclasses.replace(STUBS, classifier=STUBS.narrator)
+CLASSIFY_HELLO = dataclasses.replace(HELLO, ops=(*HELLO.ops, Op.CLASSIFY))
+
+
+def test_classify_is_offered_with_its_engine_name():
+    async def script(companion):
+        async with connect(companion.url) as ws:
+            await send(ws, CLASSIFY_HELLO)
+            welcome = await recv(ws)
+            assert (welcome.ops, welcome.models[-1]) == ((Op.HEAR, Op.SPEAK, Op.NARRATE, Op.CLASSIFY), ("classify", "echo"))
+
+    scenario(script, engines=CLASSIFYING)
+
+
+def test_classify_answers_each_id_with_an_allowed_command_or_none():
+    async def script(companion):
+        ws = await connected(companion, CLASSIFY_HELLO)
+        await send(ws, Classify(1, "Could you go to sleep?", (DeviceCommand.SLEEP, DeviceCommand.VOLUME_UP)))
+        await send(ws, Classify(2, "Go to sleep.", (DeviceCommand.VOLUME_UP,)))
+        await send(ws, Classify(3, "What's the weather?", (DeviceCommand.SLEEP,)))
+        assert {(await recv(ws)) for _ in range(3)} == {
+            ClassifyResult(1, DeviceCommand.SLEEP), ClassifyResult(2, None), ClassifyResult(3, None)}
+
+    scenario(script, engines=CLASSIFYING)
+
+
+class UnrulyClassifier:
+    name = "unruly"
+
+    def __init__(self, answer):
+        self.answer = answer
+
+    async def classify(self, text, allowed):
+        return self.answer
+
+
+@pytest.mark.parametrize("answer", [DeviceCommand.STOP_TALKING, DeviceCommand.SLEEP, "volume_up"])
+def test_a_classifier_answer_outside_the_allowed_labels_is_none_and_the_link_stays_up(answer):
+    async def script(companion):
+        ws = await connected(companion, CLASSIFY_HELLO)
+        await send(ws, Classify(4, "pipe down", (DeviceCommand.VOLUME_DOWN,)))
+        assert await recv(ws) == ClassifyResult(4, None)
+        await nothing_else_arrived(ws)
+
+    scenario(script, engines=dataclasses.replace(STUBS, classifier=UnrulyClassifier(answer)))
+
+
+def test_classifications_share_the_narration_ids_and_cap():
+    async def script(companion):
+        ws = await connected(companion, CLASSIFY_HELLO)
+        for id in range(1, 5):
+            await send(ws, Narrate(id=id, op=NarrateOp.ACKNOWLEDGE, request="hi"))
+        await send(ws, Classify(4, "louder", (DeviceCommand.VOLUME_UP,)))
+        assert await recv(ws) == Error(ErrorCode.BAD_REQUEST, "narration 4 is already outstanding", id=4)
+        await send(ws, Classify(5, "louder", (DeviceCommand.VOLUME_UP,)))
+        assert await recv(ws) == Error(ErrorCode.OVERLOADED, "4 narrations are outstanding", id=5)
+
+    scenario(script, engines=Engines(narrator=HangingNarrator(), classifier=HangingNarrator()))
+
+
+ANIMATING = dataclasses.replace(STUBS, motion=NodAnimator())
+ANIMATE_HELLO = dataclasses.replace(HELLO, ops=(*HELLO.ops, Op.ANIMATE))
+
+
+class HangingAnimator:
+    name = "hanging"
+
+    async def animate(self, intent, duration_s):
+        await asyncio.Event().wait()
+
+
+class FailingAnimator:
+    name = "failing"
+
+    def __init__(self, failure):
+        self.failure = failure
+
+    async def animate(self, intent, duration_s):
+        if self.failure == "engine":
+            raise ValueError("the planner wrote no valid recipe")
+        return Animation(25, ((5000.0,) * 9,))
+
+
+def test_animate_is_offered_with_its_engine_name_and_answers_with_frames():
+    async def script(companion):
+        async with connect(companion.url) as ws:
+            await send(ws, ANIMATE_HELLO)
+            welcome = await recv(ws)
+            assert (welcome.ops[-1], welcome.models[-1]) == (Op.ANIMATE, ("animate", "nod"))
+            await send(ws, Animate(3, "nodding yes", 520))
+            result = await recv(ws)
+            assert (result.id, result.fps, len(result.frames)) == (3, 25, 13)
+            assert [frame[4] for frame in result.frames[:5]] == [0.0, 8.2, 9.4, 2.4, -6.6]
+
+    scenario(script, engines=ANIMATING)
+
+
+@pytest.mark.parametrize("failure", ["engine", "out_of_range"])
+def test_a_motion_the_companion_cannot_make_is_a_result_with_no_frames_and_the_link_stays_up(failure):
+    async def script(companion):
+        ws = await connected(companion, ANIMATE_HELLO)
+        await send(ws, Animate(9, "gibberish", 2000))
+        assert await recv(ws) == AnimateResult(9, 25, ())
+        await nothing_else_arrived(ws)
+
+    scenario(script, engines=dataclasses.replace(STUBS, motion=FailingAnimator(failure)))
+
+
+def test_a_third_outstanding_animation_is_overloaded_while_narration_still_answers():
+    async def script(companion):
+        ws = await connected(companion, ANIMATE_HELLO)
+        for id in (1, 2, 3):
+            await send(ws, Animate(id, "thinking hard", 4000))
+        assert await recv(ws) == Error(ErrorCode.OVERLOADED, "2 animations are outstanding", id=3)
+        await send(ws, Narrate(id=2, op=NarrateOp.ACKNOWLEDGE, request="hi"))
+        assert await recv(ws) == Error(ErrorCode.BAD_REQUEST, "narration 2 is already outstanding", id=2)
+        await nothing_else_arrived(ws)
+
+    scenario(script, engines=dataclasses.replace(STUBS, motion=HangingAnimator()))
+
+
+def test_motion_that_yields_to_speech_answers_only_after_the_narration_in_flight():
+    gate = SpeechFirst()
+    release = asyncio.Event()
+
+    class SlowNarrator(EchoNarrator):
+        async def acknowledge(self, request, **options):
+            await release.wait()
+            return await super().acknowledge(request, **options)
+
+    class Yielding:
+        name = "yielding"
+
+        async def animate(self, intent, duration_s):
+            await asyncio.to_thread(gate.wait_quiet, 5.0)
+            return Animation(25, ((0.0,) * 9,))
+
+    async def script(companion):
+        ws = await connected(companion, ANIMATE_HELLO)
+        await send(ws, Narrate(id=1, op=NarrateOp.ACKNOWLEDGE, request="Checking."))
+        await send(ws, Animate(2, "thinking hard", 4000))
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(ws.recv(), .3)
+        release.set()
+        assert [await recv(ws), await recv(ws)] == [
+            NarrateResult(1, (NarratedLine("Checking.", None),)), AnimateResult(2, 25, ((0.0,) * 9,))]
+
+    scenario(script, engines=Engines(narrator=SlowNarrator(), motion=Yielding(), speech_first=gate))
+
+
+def test_speech_first_lets_motion_through_once_its_limit_passes():
+    gate = SpeechFirst()
+    with gate.busy():
+        started = time.monotonic()
+        gate.wait_quiet(.2)
+        waited = time.monotonic() - started
+    started = time.monotonic()
+    gate.wait_quiet(5.0)
+    assert (round(waited, 1), round(time.monotonic() - started, 1)) == (0.2, 0.0)
+
+
+def test_animate_without_the_granted_op_is_refused():
+    async def script(companion):
+        ws = await connected(companion)
+        await send(ws, Animate(6, "nodding yes", 2000))
+        assert await recv(ws) == Error(ErrorCode.BAD_REQUEST, "op animate was not granted in welcome", id=6)
+
+    scenario(script, engines=ANIMATING)
+
+
+def test_classify_without_the_granted_op_is_refused():
+    async def script(companion):
+        ws = await connected(companion)
+        await send(ws, Classify(6, "louder", (DeviceCommand.VOLUME_UP,)))
+        assert await recv(ws) == Error(ErrorCode.BAD_REQUEST, "op classify was not granted in welcome", id=6)
+
+    scenario(script, engines=CLASSIFYING)
+
+
+def test_the_robots_command_model_gets_the_companions_label():
+    async def script(companion):
+        link = CompanionLink(companion.url[:-3], token=TOKEN, insecure=True, out_rate=16000, backoff_s=(5, 5))
+        running = asyncio.ensure_future(link.run())
+        try:
+            await asyncio.wait_for(link.settled(), 5)
+            model = CompanionCommandModel(link)
+            assert model.available
+            assert await model.classify("Turn the volume up a bit.", frozenset(DeviceCommand) - {DeviceCommand.STOP_TALKING}) \
+                is DeviceCommand.VOLUME_UP
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+    scenario(script, engines=CLASSIFYING)
+
+
+@pytest.mark.parametrize("engines, offered", [(ANIMATING, True), (STUBS, False)], ids=["animate", "no animate"])
+def test_the_robots_motion_source_gets_the_companions_frames_or_is_unavailable(engines, offered):
+    async def script(companion):
+        link = CompanionLink(companion.url[:-3], token=TOKEN, insecure=True, out_rate=16000, backoff_s=(5, 5))
+        running = asyncio.ensure_future(link.run())
+        try:
+            await asyncio.wait_for(link.settled(), 5)
+            source = CompanionMotion(link)
+            assert source.available is offered
+            if offered:
+                motion = await source.generate("nodding yes", 0.3)
+                assert (motion.fps, len(motion.frames), motion.frames[1][4]) == (25, 12, 8.7)
+            else:
+                with pytest.raises(CapabilityUnavailable, match="cannot animate"):
+                    await source.generate("nodding yes", 2.0)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+    scenario(script, engines=engines)
 
 
 def test_model_names_the_codec_would_refuse_fail_at_startup():

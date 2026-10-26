@@ -1,0 +1,135 @@
+{
+ "config": {
+  "planner": "hf",
+  "mlx_model": null,
+  "bundle": "0.8b",
+  "device": "cpu",
+  "runs": 1,
+  "formatted": false,
+  "contend": null,
+  "machine": "macOS-26.4-arm64-arm-64bit-Mach-O",
+  "python": "3.13.14"
+ },
+ "load_s": 3.9,
+ "latency_ms": {
+  "planner": {
+   "p50": 743045.4,
+   "p95": 768288.3,
+   "max": 768288.3
+  },
+  "generator": {
+   "p50": 190.2,
+   "p95": 198.0,
+   "max": 198.0
+  },
+  "reach": {
+   "p50": 2.0,
+   "p95": 2.1,
+   "max": 2.1
+  },
+  "total": {
+   "p50": 743237.7,
+   "p95": 768488.4,
+   "max": 768488.4
+  }
+ },
+ "recipe_tokens": {
+  "p50": 56.0,
+  "p95": 57,
+  "max": 57
+ },
+ "duration_s": {
+  "p50": 3.6,
+  "p95": 3.8,
+  "max": 3.8
+ },
+ "peak_footprint_gb": 0.87,
+ "baseline_footprint_gb": 0.08,
+ "live_server": {
+  "before": {
+   "running": true,
+   "pid": 74447,
+   "cpu_percent": 0.1,
+   "footprint": "8669 MB (16384 bytes per page)"
+  },
+  "after": {
+   "running": true,
+   "pid": 74447,
+   "cpu_percent": 0.0,
+   "footprint": "8669 MB (16384 bytes per page)"
+  }
+ },
+ "quality": {
+  "happy, answering a question": {
+   "frames": 86,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 6.3,
+    "y": 2.4,
+    "z": 8.6,
+    "roll": 1.7,
+    "pitch": 12.4,
+    "yaw": 1.6,
+    "body_yaw": 2.5,
+    "right_antenna": 21.2,
+    "left_antenna": 17.0
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 2,
+   "yaw_swings": 0
+  },
+  "curious, listening": {
+   "frames": 96,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 6.7,
+    "y": 2.9,
+    "z": 7.3,
+    "roll": 10.6,
+    "pitch": 5.3,
+    "yaw": 1.6,
+    "body_yaw": 2.2,
+    "right_antenna": 23.5,
+    "left_antenna": 18.0
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 1,
+   "yaw_swings": 0
+  }
+ },
+ "probes": null,
+ "runs": [
+  {
+   "prompt": "happy, answering a question",
+   "repeat": 0,
+   "idea": "lean in, ears up, small nods",
+   "recipe": "go .6 e=0 p=-6 z=8 E=2 | osc 2 p 5 1 E=2.5 | hold .8 E=1.5",
+   "recipe_tokens": 57,
+   "attempts": 1,
+   "duration_s": 3.44,
+   "planner": 717802.6,
+   "generator": 182.5,
+   "reach": 2.0,
+   "total": 717987.0
+  },
+  {
+   "prompt": "curious, listening",
+   "repeat": 0,
+   "idea": "lean in, ears up, small tilts",
+   "recipe": "go .8 e=0 p=-4 z=8 E=1 | osc 2 r 6 1.2 E=1.5 | hold 1",
+   "recipe_tokens": 55,
+   "attempts": 1,
+   "duration_s": 3.84,
+   "planner": 768288.3,
+   "generator": 198.0,
+   "reach": 2.1,
+   "total": 768488.4
+  }
+ ]
+}

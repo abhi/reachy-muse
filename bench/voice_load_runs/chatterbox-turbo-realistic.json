@@ -1,0 +1,136 @@
+{
+ "voice": "chatterbox-turbo",
+ "narrate_every_s": 4.0,
+ "gpu_env": {},
+ "load_s": 16.2,
+ "memory_loaded": {
+  "Physical footprint": "13.8G",
+  "Physical footprint (peak)": "14.6G"
+ },
+ "speak_alone": {
+  "first_audio_s": {
+   "p50": 0.502,
+   "p95": 0.591,
+   "max": 0.628,
+   "n": 24
+  },
+  "rtf": {
+   "p50": 0.43,
+   "p95": 0.463,
+   "max": 0.479,
+   "n": 24
+  },
+  "jitter_0ms": {
+   "lines_with_underrun": "0/24",
+   "worst_gap_s": 0.0,
+   "first_audio_p95_s": 0.591
+  },
+  "jitter_150ms": {
+   "lines_with_underrun": "0/24",
+   "worst_gap_s": 0.0,
+   "first_audio_p95_s": 0.741
+  },
+  "jitter_300ms": {
+   "lines_with_underrun": "0/24",
+   "worst_gap_s": 0.0,
+   "first_audio_p95_s": 0.891
+  }
+ },
+ "speak_under_load": {
+  "first_audio_s": {
+   "p50": 0.627,
+   "p95": 0.899,
+   "max": 0.972,
+   "n": 24
+  },
+  "rtf": {
+   "p50": 0.604,
+   "p95": 0.751,
+   "max": 0.783,
+   "n": 24
+  },
+  "jitter_0ms": {
+   "lines_with_underrun": "4/24",
+   "worst_gap_s": 0.343,
+   "first_audio_p95_s": 0.899
+  },
+  "jitter_150ms": {
+   "lines_with_underrun": "2/24",
+   "worst_gap_s": 0.193,
+   "first_audio_p95_s": 1.049
+  },
+  "jitter_300ms": {
+   "lines_with_underrun": "1/24",
+   "worst_gap_s": 0.043,
+   "first_audio_p95_s": 1.199
+  }
+ },
+ "paths_alone_s": {
+  "acknowledge": {
+   "p50": 0.423,
+   "p95": 0.591,
+   "max": 0.591,
+   "n": 3
+  },
+  "lines": {
+   "p50": 0.832,
+   "p95": 0.841,
+   "max": 0.841,
+   "n": 3
+  },
+  "classify": {
+   "p50": 0.078,
+   "p95": 0.08,
+   "max": 0.08,
+   "n": 3
+  },
+  "speak_first_audio": {
+   "p50": 0.493,
+   "p95": 0.496,
+   "max": 0.496,
+   "n": 3
+  },
+  "hear_final": {
+   "p50": 0.66,
+   "p95": 0.663,
+   "max": 0.663,
+   "n": 3
+  }
+ },
+ "paths_while_speaking_s": {
+  "acknowledge": {
+   "p50": 0.638,
+   "p95": 0.642,
+   "max": 0.642,
+   "n": 3
+  },
+  "lines": {
+   "p50": 1.079,
+   "p95": 1.1,
+   "max": 1.1,
+   "n": 3
+  },
+  "classify": {
+   "p50": 0.107,
+   "p95": 0.121,
+   "max": 0.121,
+   "n": 3
+  },
+  "speak_first_audio": {
+   "p50": 1.103,
+   "p95": 1.164,
+   "max": 1.164,
+   "n": 3
+  },
+  "hear_final": {
+   "p50": 0.829,
+   "p95": 0.915,
+   "max": 0.915,
+   "n": 3
+  }
+ },
+ "memory_after": {
+  "Physical footprint": "25.2G",
+  "Physical footprint (peak)": "25.3G"
+ }
+}

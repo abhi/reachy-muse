@@ -12,7 +12,7 @@ from musegadget.identity import Identity
 from reachy_muse.contract.expressions import Expression
 from reachy_muse.capabilities import COMPANION_NOTICE, Mode
 from reachy_muse.companion_client import CompanionLink, LinkState
-from reachy_muse.protocol import HearOpen, Narrate, Sender, SpeakStart, decode
+from reachy_muse.protocol import HearOpen, Narrate, Op, Sender, SpeakStart, decode
 from reachy_muse.local_backends import backends_for
 from test_pins import CHUNK, VOICE_SAMPLE, PinHardware, PinSession, Recording, TextCodedVoice, Transcriber, Vad
 
@@ -23,7 +23,8 @@ VM_TOKEN = "vm-secret-7f3a91"
 IDENTITY = Identity("02:00:00:ab:cd:ef")
 QUESTION = "tell me about the old castles and dragons"
 PARTIALS = ("tell me about", "tell me about the old castles", QUESTION)
-PLAIN_PROMPT = "Answer in one to three short, plain spoken sentences"
+PLAIN_PROMPT = ("By default, unless a request specifies a different length, answer in one to three short, "
+                "plain spoken sentences")
 SLOW_S = reachy_muse.conversation.ACK_GRACE_S + .5
 
 
@@ -164,15 +165,53 @@ def test_happy_turn_nods_along_to_partials_and_speaks_condensed_lines_with_their
         async with FakeCompanion(partials=PARTIALS, frames_per_partial=12, endpoint_after=46,
                                  expression=Expression.HAPPY) as companion:
             robot = Conversation(monkeypatch, companion.url[:-3],
-                                 answer("Castles kept dragons out. They had tall walls.", SLOW_S))
+                                 answer("Castles kept dragons out. They had tall walls. Moats kept them dry.", SLOW_S))
             await robot.run(lambda: robot.turns(1))
             prompt, request = robot.requests()[0].rsplit("\n\n", 1)
             assert (len(robot.requests()), request) == (1, f"The user's spoken request is: {QUESTION}")
             assert PLAIN_PROMPT in prompt
-            assert spoken_by_companion(companion) == [QUESTION, "Castles kept dragons out.", "They had tall walls."]
+            assert spoken_by_companion(companion) == [QUESTION, "Castles kept dragons out.", "They had tall walls.",
+                                                      "Moats kept them dry."]
+            assert narrated_by_companion(companion) == ["acknowledge", "lines"]
             assert {"robot": "gesture", "name": "tilt"} in robot.recording.events
             assert {"robot": "set_state", "state": "speaking", "expression": "happy"} in robot.recording.events
             assert robot.notices() == []
+    scenario(run())
+
+
+class MotionHardware(CompanionHardware):
+    def play_motion(self, frames, fps, *, during, loop=False, start_within_s=1.0):
+        self.recording.add({"robot": "motion", "during": sorted(during), "loop": loop, "frames": len(frames)})
+
+    def stop_motion(self):
+        self.recording.add({"robot": "stop_motion"})
+
+
+@pytest.mark.parametrize("ops, moved", [
+    ((Op.HEAR, Op.SPEAK, Op.NARRATE, Op.ANIMATE), True), ((Op.HEAR, Op.SPEAK, Op.NARRATE), False),
+], ids=["animate offered", "older companion"])
+def test_a_companion_that_animates_moves_reachy_while_muse_works_and_an_older_one_leaves_it_as_today(
+        monkeypatch, ops, moved):
+    async def run():
+        async with FakeCompanion(ops=ops, partials=PARTIALS, frames_per_partial=12, endpoint_after=46,
+                                 expression=Expression.HAPPY) as companion:
+            robot = Conversation(monkeypatch, companion.url[:-3],
+                                 answer("Castles kept dragons out. They had tall walls. Moats kept them dry.", SLOW_S))
+            robot.hardware = MotionHardware(robot.recording)
+            robot.service.executor = robot.hardware
+            await robot.run(lambda: robot.turns(1))
+            motions = [event for event in robot.recording.events if event.get("robot") == "motion"]
+            if moved:
+                assert motions == [
+                    {"robot": "motion", "during": ["thinking"], "loop": True, "frames": 100},
+                    {"robot": "motion", "during": ["idle", "listening"], "loop": False, "frames": 62},
+                ]
+                assert companion.animated[:4] == ["thinking hard", "perking up to say hello", "celebrating good news",
+                                                  "apologetic and sorry"]
+                assert not any(word in intent for intent in companion.animated for word in ("castles", "dragons"))
+            else:
+                assert (motions, companion.animated) == ([], [])
+                assert not any(event.get("robot") == "stop_motion" for event in robot.recording.events)
     scenario(run())
 
 
@@ -308,12 +347,13 @@ def test_three_ungrounded_narrations_rest_only_the_narrator(monkeypatch):
     async def run():
         async with FakeCompanion(partials=PARTIALS, frames_per_partial=12, fabricate=True) as companion:
             robot = Conversation(monkeypatch, companion.url[:-3],
-                                 answer("Castles kept dragons out. They had tall walls.", SLOW_S))
+                                 answer("Castles kept dragons out. They had tall walls. Moats kept them dry.", SLOW_S))
             await robot.run(lambda: robot.turns(3))
             # Turn one strikes the acknowledgement and the lines, turn two's acknowledgement is the
             # third strike, and the narrator rests for the rest of the test.
             assert narrated_by_companion(companion) == ["acknowledge", "lines", "acknowledge"]
-            assert spoken_by_companion(companion) == ["Castles kept dragons out.", "They had tall walls."] * 3
+            assert spoken_by_companion(companion) == ["Castles kept dragons out.", "They had tall walls.",
+                                                      "Moats kept them dry."] * 3
             assert [request.endswith(QUESTION) for request in robot.requests()] == [True] * 3
             assert robot.notices() == []
             assert robot.transitions_before_stop == [LinkState.CONNECTING, LinkState.UP]
@@ -333,7 +373,7 @@ def test_companion_speech_that_never_starts_rests_only_the_companion_voice(monke
             assert spoken_by_companion(companion) == [QUESTION, "Castles kept dragons out.", "They had tall walls."]
             assert [line for line in robot.spoken() if "walls" in line] == ["tts:They had tall walls.",
                                                                              "tts:They had thick walls."]
-            assert narrated_by_companion(companion).count("lines") == 2
+            assert narrated_by_companion(companion) == ["acknowledge", "acknowledge"]
             assert robot.notices() == []
             assert robot.transitions_before_stop == [LinkState.CONNECTING, LinkState.UP]
     scenario(run())
@@ -421,7 +461,7 @@ def test_a_reply_too_long_to_narrate_is_spoken_whole_by_the_robot_without_restin
         async with FakeCompanion(partials=PARTIALS, frames_per_partial=12) as companion:
             robot = Conversation(monkeypatch, companion.url[:-3], muse)
             await robot.run(lambda: robot.turns(4))
-            assert narrated_by_companion(companion) == ["acknowledge"] * 4 + ["lines"]
+            assert narrated_by_companion(companion) == ["acknowledge"] * 4
             assert spoken_by_companion(companion) == [QUESTION] * 4 + ["Castles kept dragons out."]
             assert [line for line in robot.spoken() if line != "companion"] == [f"tts:{walls}", f"tts:{moats}"] * 3
             assert robot.notices() == []
@@ -439,13 +479,13 @@ def test_a_companion_that_chooses_no_acknowledgement_leaves_the_robot_silent_unt
         async with FakeCompanion(partials=(question,), frames_per_partial=12, acknowledges=False) as companion:
             robot = Conversation(monkeypatch, companion.url[:-3], muse)
             await robot.run(lambda: robot.turns(1))
-            assert narrated_by_companion(companion) == ["acknowledge", "lines"]
+            assert narrated_by_companion(companion) == ["acknowledge"]
             assert spoken_by_companion(companion) == ["Sunlight bends in raindrops."]
             assert robot.spoken() == ["companion"]
     scenario(run())
 
 
-def test_small_talk_is_never_acknowledged_by_the_companion_or_the_robot(monkeypatch):
+def test_small_talk_is_narrated_but_never_spoken_over(monkeypatch):
     async def muse(session, request):
         await asyncio.sleep(1.5)
         await session.answer(request, "I'm doing well.")
@@ -454,7 +494,56 @@ def test_small_talk_is_never_acknowledged_by_the_companion_or_the_robot(monkeypa
         async with FakeCompanion(partials=("how are you",), frames_per_partial=12) as companion:
             robot = Conversation(monkeypatch, companion.url[:-3], muse)
             await robot.run(lambda: robot.turns(1))
-            assert narrated_by_companion(companion) == ["lines"]
+            assert narrated_by_companion(companion) == ["acknowledge"]
             assert spoken_by_companion(companion) == ["I'm doing well."]
+            assert robot.spoken() == ["companion"]
+    scenario(run())
+
+
+def test_the_request_reaches_muse_before_a_slow_acknowledgement_narration_returns(monkeypatch):
+    from reachy_muse.protocol import NarrateOp
+
+    async def run():
+        async with FakeCompanion(partials=PARTIALS, frames_per_partial=12, endpoint_after=46,
+                                 narrate_delay_s={NarrateOp.ACKNOWLEDGE: .6}) as companion:
+            robot = Conversation(monkeypatch, companion.url[:-3],
+                                 answer("Castles kept dragons out. They had tall walls.", SLOW_S))
+            send_chat = robot.session.send_chat
+
+            async def observed(message, session_id=None, **options):
+                companion.answered.append("send_chat")
+                return await send_chat(message, session_id, **options)
+            robot.session.send_chat = observed
+            await robot.run(lambda: robot.turns(1))
+            assert companion.answered[:2] == ["send_chat", "acknowledge narrated"]
+            assert spoken_by_companion(companion)[0] == QUESTION
+    scenario(run())
+
+
+def test_a_reply_of_two_short_sentences_goes_straight_to_speech_without_the_condense_round_trip(monkeypatch):
+    from reachy_muse.protocol import NarrateOp
+
+    async def run():
+        async with FakeCompanion(partials=PARTIALS, frames_per_partial=12, endpoint_after=46,
+                                 narrate_delay_s={NarrateOp.LINES: 3.0}) as companion:
+            robot = Conversation(monkeypatch, companion.url[:-3],
+                                 answer("Castles kept dragons out. They had tall walls.", SLOW_S))
+            await robot.run(lambda: robot.turns(1))
+            assert narrated_by_companion(companion) == ["acknowledge"]
+            assert spoken_by_companion(companion) == [QUESTION, "Castles kept dragons out.", "They had tall walls."]
+    scenario(run())
+
+
+def test_an_acknowledgement_the_companion_narrates_too_late_is_skipped_not_replaced(monkeypatch):
+    from reachy_muse.protocol import NarrateOp
+    question = "what's the weather in paris"
+
+    async def run():
+        async with FakeCompanion(partials=(question,), frames_per_partial=12, endpoint_after=46,
+                                 narrate_delay_s={NarrateOp.ACKNOWLEDGE: 1.5}) as companion:
+            robot = Conversation(monkeypatch, companion.url[:-3], answer("It is sunny in Paris.", SLOW_S))
+            await robot.run(lambda: robot.turns(1))
+            assert robot.requests()[0].endswith(question)
+            assert spoken_by_companion(companion) == ["It is sunny in Paris."]
             assert robot.spoken() == ["companion"]
     scenario(run())

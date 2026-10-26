@@ -1,0 +1,371 @@
+{
+ "config": {
+  "planner": "mlx",
+  "mlx_model": "0.8b-4bit",
+  "bundle": "0.8b",
+  "device": "mps",
+  "runs": 1,
+  "formatted": false,
+  "contend": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+  "machine": "macOS-26.4-arm64-arm-64bit-Mach-O",
+  "python": "3.13.14"
+ },
+ "load_s": 2.7,
+ "latency_ms": {
+  "planner": {
+   "p50": 440.7,
+   "p95": 1017.8,
+   "max": 1017.8
+  },
+  "generator": {
+   "p50": 37.9,
+   "p95": 62.9,
+   "max": 62.9
+  },
+  "reach": {
+   "p50": 2.5,
+   "p95": 3.7,
+   "max": 3.7
+  },
+  "total": {
+   "p50": 478.9,
+   "p95": 1084.4,
+   "max": 1084.4
+  }
+ },
+ "recipe_tokens": {
+  "p50": 69.0,
+  "p95": 117,
+  "max": 117
+ },
+ "duration_s": {
+  "p50": 4.1,
+  "p95": 6.2,
+  "max": 6.2
+ },
+ "peak_footprint_gb": 2.71,
+ "baseline_footprint_gb": 0.08,
+ "live_server": {
+  "before": {
+   "running": true,
+   "pid": 74447,
+   "cpu_percent": 0.0,
+   "footprint": "8669 MB (16384 bytes per page)"
+  },
+  "after": {
+   "running": true,
+   "pid": 74447,
+   "cpu_percent": 0.0,
+   "footprint": "8669 MB (16384 bytes per page)"
+  }
+ },
+ "quality": {
+  "happy, answering a question": {
+   "frames": 85,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 5.3,
+    "y": 6.6,
+    "z": 2.9,
+    "roll": 15.6,
+    "pitch": 7.4,
+    "yaw": 1.4,
+    "body_yaw": 1.7,
+    "right_antenna": 23.5,
+    "left_antenna": 18.0
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 0,
+   "yaw_swings": 0
+  },
+  "curious, listening": {
+   "frames": 79,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 5.2,
+    "y": 14.4,
+    "z": 3.9,
+    "roll": 15.2,
+    "pitch": 6.9,
+    "yaw": 2.3,
+    "body_yaw": 2.1,
+    "right_antenna": 26.2,
+    "left_antenna": 32.9
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 1,
+   "yaw_swings": 0
+  },
+  "thinking hard": {
+   "frames": 99,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 90,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 3.8,
+    "y": 30.0,
+    "z": 4.8,
+    "roll": 18.4,
+    "pitch": 13.5,
+    "yaw": 3.7,
+    "body_yaw": 3.8,
+    "right_antenna": 89.6,
+    "left_antenna": 98.9
+   },
+   "frames_at_limit": {
+    "y": 38,
+    "right_antenna": 77,
+    "left_antenna": 75
+   },
+   "pitch_swings": 2,
+   "yaw_swings": 0
+  },
+  "surprised by good news": {
+   "frames": 131,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 15,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 4.9,
+    "y": 20.8,
+    "z": 4.3,
+    "roll": 37.7,
+    "pitch": 1.8,
+    "yaw": 1.3,
+    "body_yaw": 1.0,
+    "right_antenna": 84.9,
+    "left_antenna": 76.9
+   },
+   "frames_at_limit": {
+    "y": 15
+   },
+   "pitch_swings": 0,
+   "yaw_swings": 0
+  },
+  "sad, apologizing": {
+   "frames": 105,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 95,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 3.8,
+    "y": 30.0,
+    "z": 15.4,
+    "roll": 1.5,
+    "pitch": 20.0,
+    "yaw": 6.0,
+    "body_yaw": 3.9,
+    "right_antenna": 104.5,
+    "left_antenna": 105.7
+   },
+   "frames_at_limit": {
+    "y": 55,
+    "right_antenna": 87,
+    "left_antenna": 87,
+    "z": 56,
+    "x": 14,
+    "pitch": 47
+   },
+   "pitch_swings": 2,
+   "yaw_swings": 0
+  },
+  "nodding yes": {
+   "frames": 95,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 3.2,
+    "y": 2.5,
+    "z": 3.2,
+    "roll": 0.7,
+    "pitch": 12.1,
+    "yaw": 2.5,
+    "body_yaw": 2.3,
+    "right_antenna": 22.7,
+    "left_antenna": 13.5
+   },
+   "oscillation": {
+    "channel": "pitch",
+    "half_cycles": 0,
+    "yaw_half_cycles": 0,
+    "min_amplitude_deg": 5.0
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 3,
+   "yaw_swings": 0
+  },
+  "shaking head no": {
+   "frames": 156,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 151,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 7.2,
+    "y": 30.0,
+    "z": 20.7,
+    "roll": 21.0,
+    "pitch": 19.6,
+    "yaw": 13.1,
+    "body_yaw": 7.5,
+    "right_antenna": 125.5,
+    "left_antenna": 134.2
+   },
+   "oscillation": {
+    "channel": "yaw",
+    "half_cycles": 0,
+    "pitch_half_cycles": 1,
+    "min_amplitude_deg": 8.0
+   },
+   "frames_at_limit": {
+    "x": 12,
+    "y": 30,
+    "right_antenna": 146,
+    "left_antenna": 146,
+    "pitch": 97,
+    "z": 96
+   },
+   "pitch_swings": 2,
+   "yaw_swings": 4
+  },
+  "excited greeting": {
+   "frames": 115,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 9.0,
+    "y": 3.8,
+    "z": 9.5,
+    "roll": 1.2,
+    "pitch": 8.7,
+    "yaw": 13.5,
+    "body_yaw": 2.0,
+    "right_antenna": 20.3,
+    "left_antenna": 21.5
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 1,
+   "yaw_swings": 0
+  }
+ },
+ "probes": null,
+ "runs": [
+  {
+   "prompt": "happy, answering a question",
+   "repeat": 0,
+   "idea": "lean in, tilt, ears up, then happy nod",
+   "recipe": "go .6 e=0 p=4 r=10 E=1.5 | go .8 r=0 p=0 E=1 | osc 1.5 p 6 1.5 E=2 | hold .6",
+   "recipe_tokens": 72,
+   "attempts": 1,
+   "duration_s": 3.4,
+   "planner": 493.5,
+   "generator": 29.6,
+   "reach": 2.0,
+   "total": 525.2
+  },
+  {
+   "prompt": "curious, listening",
+   "repeat": 0,
+   "idea": "lean in, ears up, small attentive nods",
+   "recipe": "go .8 e=30 p=4 r=10 E=1 | osc 1.5 p 4 .7 E=1.2 | hold .8",
+   "recipe_tokens": 56,
+   "attempts": 1,
+   "duration_s": 3.16,
+   "planner": 413.0,
+   "generator": 47.9,
+   "reach": 1.8,
+   "total": 462.7
+  },
+  {
+   "prompt": "thinking hard",
+   "repeat": 0,
+   "idea": "lean in, slow tilt, ears down",
+   "recipe": "go 1.2 e=100 p=10 r=10 E=1 | go 1.5 r=0 p=4 | hold 1.5 E=1",
+   "recipe_tokens": 60,
+   "attempts": 1,
+   "duration_s": 3.96,
+   "planner": 460.2,
+   "generator": 32.7,
+   "reach": 2.2,
+   "total": 495.1
+  },
+  {
+   "prompt": "surprised by good news",
+   "repeat": 0,
+   "idea": "build: slow tilt right then left, ears up 3x; release: head up, ears down",
+   "recipe": "go .8 e=10 E=1.5 | go .8 r=12 | go .8 r=-12 | go .8 r=0 | go .8 e=60 E=1 | hold 1.2 E=1",
+   "recipe_tokens": 86,
+   "attempts": 1,
+   "duration_s": 5.24,
+   "planner": 612.2,
+   "generator": 37.7,
+   "reach": 3.1,
+   "total": 653.0
+  },
+  {
+   "prompt": "sad, apologizing",
+   "repeat": 0,
+   "idea": "head down, small nod, then ears drooping",
+   "recipe": "go 1.2 e=140 p=16 z=-12 E=.5 | hold 1.5 E=.3 | go .8 p=4 z=0 e=110 | hold 1",
+   "recipe_tokens": 69,
+   "attempts": 1,
+   "duration_s": 4.2,
+   "planner": 421.2,
+   "generator": 38.0,
+   "reach": 3.3,
+   "total": 462.5
+  },
+  {
+   "prompt": "nodding yes",
+   "repeat": 0,
+   "idea": "look up, then down, then up again",
+   "recipe": "go .6 e=0 p=-10 E=1 | hold 1 | go .5 p=0 E=1 | go .8 p=-10 E=1 | hold 1",
+   "recipe_tokens": 61,
+   "attempts": 1,
+   "duration_s": 3.8,
+   "planner": 378.7,
+   "generator": 32.9,
+   "reach": 2.5,
+   "total": 414.1
+  },
+  {
+   "prompt": "shaking head no",
+   "repeat": 0,
+   "idea": "repeated: head shakes, ears flop, sink, head shakes",
+   "recipe": "go .3 e=110 p=10 r=10 E=5 | osc 1.5 y 12 .5 E=7 | go .3 e=140 p=16 z=-12 E=5 | hold 1.5 E=3 | osc 1.5 y 12 .5 E=6 | go .8 y=0 p=4 z=4 E=1",
+   "recipe_tokens": 117,
+   "attempts": 2,
+   "duration_s": 6.24,
+   "planner": 1017.8,
+   "generator": 62.9,
+   "reach": 3.7,
+   "total": 1084.4
+  },
+  {
+   "prompt": "excited greeting",
+   "repeat": 0,
+   "idea": "lean in, head up, ears up, happy bounces",
+   "recipe": "go .4 e=0 p=-6 z=10 E=4 | osc 2 z 6 .5 E=5 | osc 1.5 y 10 .5 E=5 | hold .6",
+   "recipe_tokens": 69,
+   "attempts": 1,
+   "duration_s": 4.6,
+   "planner": 342.1,
+   "generator": 39.4,
+   "reach": 2.6,
+   "total": 384.1
+  }
+ ]
+}

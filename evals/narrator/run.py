@@ -83,7 +83,8 @@ def run_model(repo: str, repeat: int, cases_file: str) -> Dict[str, Any]:
             narration = narrator.narrate(ask_for(case))
             seconds = time.perf_counter() - began
         first = narration.attempts[0].raw if narration.attempts else '{"lines": []}'  # no attempt: the small-talk rule answered
-        raw_lines, raw_problems = parse(ask_for(case), first)
+        raw_result, raw_problems = parse(ask_for(case), first)
+        raw_lines = raw_result.lines
         raw = score(case, raw_lines, fell_back=False)
         records.append({
             "id": case["id"], "op": case["op"], "category": case["category"], "seconds": seconds,

@@ -1,7 +1,7 @@
 """The companion's WebSocket server, speaking the SDK's wire protocol v1.
 
-One `_Session` per robot connection. Each hear stream, speak stream and narration
-runs as its own task, so a slow engine never stalls the receive loop.
+One `_Session` per robot connection. Each hear stream, speak stream, narration,
+classification and animation runs as its own task, so a slow engine never stalls the receive loop.
 """
 
 from __future__ import annotations
@@ -10,21 +10,28 @@ import asyncio
 import hmac
 import logging
 import ssl
+from collections import OrderedDict
 from contextlib import aclosing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import Awaitable, Callable, Dict, Optional, Sequence, Tuple, Union
 
 from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
+from reachy_muse.contract.expressions import Expression
 from reachy_muse.protocol import (
     MAX_ERROR_MESSAGE_BYTES,
+    MAX_OUTSTANDING_ANIMATIONS,
     MAX_OUTSTANDING_NARRATIONS,
     MAX_TEXT_FRAME_BYTES,
     VERSION,
+    Animate,
+    AnimateResult,
     AudioFrame,
     AudioKind,
+    Classify,
+    ClassifyResult,
     CloseHow,
     Error,
     ErrorCode,
@@ -45,6 +52,7 @@ from reachy_muse.protocol import (
     SpeakCancel,
     SpeakDone,
     SpeakStart,
+    VoiceRole,
     Welcome,
     decode,
     decode_audio,
@@ -52,7 +60,10 @@ from reachy_muse.protocol import (
     encode_audio,
 )
 
-from reachy_muse.companion_server.engines import Endpoint, Hearing, Narrator, Partial, Voice
+from reachy_muse.companion_server.engines import (
+    Narrated,
+    Animator, Classifier, Endpoint, Hearing, Narrator, Partial, SpeechFirst, Voice,
+)
 
 log = logging.getLogger("reachy_muse.companion_server")
 
@@ -61,6 +72,7 @@ PATH = "/v1"
 HELLO_TIMEOUT = 5.0
 CLOSE_POLICY_VIOLATION = 1008
 CLOSE_INTERNAL_ERROR = 1011
+REMEMBERED_EXPRESSIONS = 64
 
 
 @dataclass(frozen=True)
@@ -70,9 +82,13 @@ class Engines:
     hearing: Optional[Hearing] = None
     voice: Optional[Voice] = None
     narrator: Optional[Narrator] = None
+    motion: Optional[Animator] = None
+    classifier: Optional[Classifier] = None
+    speech_first: SpeechFirst = field(default_factory=SpeechFirst)
 
     def offered(self) -> Dict[Op, str]:
-        engines = {Op.HEAR: self.hearing, Op.SPEAK: self.voice, Op.NARRATE: self.narrator}
+        engines = {Op.HEAR: self.hearing, Op.SPEAK: self.voice, Op.NARRATE: self.narrator, Op.CLASSIFY: self.classifier,
+                   Op.ANIMATE: self.motion}
         return {op: engine.name for op, engine in engines.items() if engine is not None}
 
 
@@ -140,8 +156,26 @@ class _Speech:
     frames: int = 0
 
 
-_NARRATE: Dict[NarrateOp, Callable[[Narrator, Narrate], Awaitable[Sequence[NarratedLine]]]] = {
-    NarrateOp.ACKNOWLEDGE: lambda narrator, m: narrator.acknowledge(m.request),
+WARM_TTL_S = 15.0
+WARM_ENTRIES = 2
+
+
+@dataclass
+class _Warm:
+    chunks: asyncio.Queue = field(default_factory=asyncio.Queue)
+    task: Optional[asyncio.Task] = None
+    expiry: Optional[asyncio.TimerHandle] = None
+
+    def cancel(self) -> None:
+        if self.expiry is not None:
+            self.expiry.cancel()
+        if self.task is not None:
+            self.task.cancel()
+
+
+_NARRATE: Dict[NarrateOp, Callable[[Narrator, Narrate], Awaitable[Union[Narrated, Sequence[NarratedLine]]]]] = {
+    NarrateOp.ACKNOWLEDGE: lambda narrator, m: narrator.acknowledge(
+        m.request, previous=m.previous or "", recently_said=m.already_said, may_chat=m.may_chat),
     NarrateOp.PROGRESS: lambda narrator, m: narrator.progress(m.request, m.status or "", m.already_said),
     NarrateOp.LINES: lambda narrator, m: narrator.lines(m.request, m.reply or ""),
 }
@@ -158,6 +192,10 @@ class _Session:
         self.hearing: Dict[int, _Hear] = {}
         self.speaking: Dict[int, _Speech] = {}
         self.narrating: Dict[int, asyncio.Task] = {}
+        self.animating: Dict[int, asyncio.Task] = {}
+        self.warm: Dict[str, _Warm] = {}
+        self.warming: set[asyncio.Task] = set()
+        self.expressions: OrderedDict[str, Optional[Expression]] = OrderedDict()
 
     async def run(self) -> None:
         if not await self._handshake():
@@ -227,7 +265,7 @@ class _Session:
             await self._send(_error(ErrorCode.BAD_REQUEST, f"hear stream {message.stream} is already open", stream=message.stream))
             return
         hear = self.hearing[message.stream] = _Hear(asyncio.Queue())
-        hear.task = asyncio.create_task(self._guard(lambda: self._hear(message, hear), stream=message.stream))
+        hear.task = asyncio.create_task(self._guard(self._speech_first(lambda: self._hear(message, hear)), stream=message.stream))
 
     async def _hear_close(self, message: HearClose) -> None:
         hear = self.hearing.get(message.stream)
@@ -293,7 +331,7 @@ class _Session:
             await self._send(_error(ErrorCode.BAD_REQUEST, f"speak stream {message.stream} is already speaking", stream=message.stream))
             return
         speech = self.speaking[message.stream] = _Speech()
-        speech.task = asyncio.create_task(self._guard(lambda: self._speak(message, speech), stream=message.stream))
+        speech.task = asyncio.create_task(self._guard(self._speech_first(lambda: self._speak(message, speech)), stream=message.stream))
 
     async def _speak_cancel(self, message: SpeakCancel) -> None:
         speech = self.speaking.pop(message.stream, None)
@@ -309,7 +347,13 @@ class _Session:
         frame_bytes = self.out_rate // 10 * 2
         pending = b""
         try:
-            async with aclosing(self.engines.voice.speak(message.text, message.voice, self.out_rate)) as chunks:
+            warm = self.warm.pop(message.text, None) if message.voice is VoiceRole.MAIN else None
+            if warm is not None and warm.expiry is not None:
+                warm.expiry.cancel()
+            source = (self._warm_chunks(warm) if warm is not None
+                      else self.engines.voice.speak(message.text, message.voice, self.out_rate,
+                                                    self.expressions.get(message.text)))
+            async with aclosing(source) as chunks:
                 async for chunk in chunks:
                     pending += chunk
                     while len(pending) >= frame_bytes:
@@ -333,24 +377,118 @@ class _Session:
     # ---- narrate
 
     async def _narrate(self, message: Narrate) -> None:
-        if message.id in self.narrating:
-            await self._send(_error(ErrorCode.BAD_REQUEST, f"narration {message.id} is already outstanding", id=message.id))
+        await self._start(message.id, self._speech_first(lambda: self._narration(message)), self.narrating, MAX_OUTSTANDING_NARRATIONS, "narration")
+
+    async def _classify(self, message: Classify) -> None:
+        await self._start(message.id, self._speech_first(lambda: self._classification(message)), self.narrating, MAX_OUTSTANDING_NARRATIONS, "narration")
+
+    async def _animate(self, message: Animate) -> None:
+        await self._start(message.id, lambda: self._animation(message), self.animating, MAX_OUTSTANDING_ANIMATIONS, "animation")
+
+    async def _start(self, id: int, work: Callable[[], Awaitable[None]], tasks: Dict[int, asyncio.Task], limit: int,
+                     kind: str) -> None:
+        if id in self.narrating or id in self.animating:
+            await self._send(_error(ErrorCode.BAD_REQUEST, f"{kind} {id} is already outstanding", id=id))
             return
-        if len(self.narrating) >= MAX_OUTSTANDING_NARRATIONS:
-            await self._send(_error(ErrorCode.OVERLOADED, f"{MAX_OUTSTANDING_NARRATIONS} narrations are outstanding", id=message.id))
+        if len(tasks) >= limit:
+            await self._send(_error(ErrorCode.OVERLOADED, f"{limit} {kind}s are outstanding", id=id))
             return
-        self.narrating[message.id] = asyncio.create_task(self._guard(lambda: self._narration(message), id=message.id))
+        tasks[id] = asyncio.create_task(self._guard(work, id=id))
 
     async def _narration(self, message: Narrate) -> None:
         assert self.engines.narrator is not None
         try:
-            lines = await _NARRATE[message.op](self.engines.narrator, message)
-            frame = encode(NarrateResult(message.id, tuple(lines)))
+            result = await _NARRATE[message.op](self.engines.narrator, message)
+            narrated = result if isinstance(result, Narrated) else Narrated(None, tuple(result))
+            frame = encode(NarrateResult(message.id, narrated.lines, narrated.intent))
+            self._remember(narrated.lines)
+            if message.op is NarrateOp.ACKNOWLEDGE and self.engines.voice is not None:
+                for line in narrated.lines[:WARM_ENTRIES]:
+                    self._warm_voice(line.text)
         finally:
             self.narrating.pop(message.id, None)
         await self.ws.send(frame)
 
+    def _warm_voice(self, text: str) -> None:
+        old = self.warm.pop(text, None)
+        if old is not None:
+            old.cancel()
+        while len(self.warm) >= WARM_ENTRIES:
+            self.warm.pop(next(iter(self.warm))).cancel()
+        warm = self.warm[text] = _Warm()
+
+        async def produce() -> None:
+            assert self.engines.voice is not None
+            try:
+                async with aclosing(self.engines.voice.speak(text, VoiceRole.MAIN, self.out_rate,
+                                                             self.expressions.get(text))) as chunks:
+                    async for chunk in chunks:
+                        warm.chunks.put_nowait(chunk)
+            except Exception as error:
+                warm.chunks.put_nowait(error)
+            finally:
+                warm.chunks.put_nowait(None)
+
+        def expire() -> None:
+            if self.warm.get(text) is warm:
+                self.warm.pop(text).cancel()
+
+        warm.task = asyncio.create_task(self._speech_first(produce)())
+        self.warming.add(warm.task)
+        warm.task.add_done_callback(self.warming.discard)
+        warm.expiry = asyncio.get_running_loop().call_later(WARM_TTL_S, expire)
+
+    async def _warm_chunks(self, warm: _Warm):
+        try:
+            while True:
+                chunk = await warm.chunks.get()
+                if chunk is None:
+                    return
+                if isinstance(chunk, Exception):
+                    raise chunk
+                yield chunk
+        finally:
+            warm.cancel()
+            if warm.task is not None:
+                await asyncio.gather(warm.task, return_exceptions=True)
+
+    def _remember(self, lines: Sequence[NarratedLine]) -> None:
+        for line in lines:
+            self.expressions[line.text] = line.expression
+            self.expressions.move_to_end(line.text)
+        while len(self.expressions) > REMEMBERED_EXPRESSIONS:
+            self.expressions.popitem(last=False)
+
+    async def _classification(self, message: Classify) -> None:
+        assert self.engines.classifier is not None
+        try:
+            command = await self.engines.classifier.classify(message.text, message.allowed)
+            frame = encode(ClassifyResult(message.id, command if command in message.allowed else None))
+        finally:
+            self.narrating.pop(message.id, None)
+        await self.ws.send(frame)
+
+    async def _animation(self, message: Animate) -> None:
+        """Motion is decoration: an engine that fails answers with no frames and keeps the link up."""
+        assert self.engines.motion is not None
+        try:
+            try:
+                animation = await self.engines.motion.animate(message.intent, message.duration_ms / 1000)
+                frame = encode(AnimateResult(message.id, animation.fps, animation.frames))
+            except Exception:
+                log.exception("motion for request %s failed; answering with no frames", message.id)
+                frame = encode(AnimateResult(message.id, 25))
+        finally:
+            self.animating.pop(message.id, None)
+        await self.ws.send(frame)
+
     # ---- lifecycle
+
+    def _speech_first(self, work: Callable[[], Awaitable[None]]) -> Callable[[], Awaitable[None]]:
+        async def first() -> None:
+            with self.engines.speech_first.busy():
+                await work()
+        return first
 
     async def _guard(self, work: Callable[[], Awaitable[None]], *, stream: Optional[int] = None, id: Optional[int] = None) -> None:
         """Run one op. An engine failure, including output the codec refuses, is error{model}."""
@@ -371,7 +509,11 @@ class _Session:
             pass
 
     async def _stop_everything(self) -> None:
-        tasks = [h.task for h in self.hearing.values()] + [s.task for s in self.speaking.values()] + list(self.narrating.values())
+        tasks = ([h.task for h in self.hearing.values()] + [s.task for s in self.speaking.values()]
+                 + list(self.narrating.values()) + list(self.animating.values()) + list(self.warming))
+        for warm in self.warm.values():
+            warm.cancel()
+        self.warm.clear()
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -384,11 +526,13 @@ _ROUTES: Dict[type, Tuple[Optional[Op], Callable[[_Session, Message], Awaitable[
     SpeakStart: (Op.SPEAK, _Session._speak_start),
     SpeakCancel: (Op.SPEAK, _Session._speak_cancel),
     Narrate: (Op.NARRATE, _Session._narrate),
+    Classify: (Op.CLASSIFY, _Session._classify),
+    Animate: (Op.ANIMATE, _Session._animate),
 }
 
 
 def _target(message: Message) -> Dict[str, int]:
-    if isinstance(message, Narrate):
+    if isinstance(message, (Narrate, Classify, Animate)):
         return {"id": message.id}
     return {"stream": message.stream}
 

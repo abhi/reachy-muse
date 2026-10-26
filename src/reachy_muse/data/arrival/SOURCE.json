@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/Megvii-BaseDetection/YOLOX",
+  "tag": "0.1.1rc0",
+  "commit": "e1052df71842031413f6030723c3607b839c80ce",
+  "model_url": "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano.onnx",
+  "model_sha256": "c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d",
+  "model_bytes": 3659407,
+  "license": "Apache-2.0",
+  "purpose": "Local person detection to notice someone entering the room; no identity recognition"
+}

@@ -304,3 +304,28 @@ def test_next_authorized_utterance_is_captured_separately_while_first_asr_waits(
         assert session.setup_messages[0][0].endswith("The user's spoken request is: Find flights from Boston to Paris.")
 
     asyncio.run(bounded(handoff(run, pause_asr=True)))
+
+
+@pytest.mark.parametrize("question", [False, True])
+def test_waking_from_sleep_by_the_keyword_alone_greets_and_a_question_goes_to_muse_instead(handoff, question):
+    from reachy_muse.device_command import WakeWindow
+    np = pytest.importorskip("numpy")
+
+    async def run(conversation, session, hardware, wake, recognition, recordings, accepted, feed):
+        conversation._wake_window = WakeWindow.ASLEEP
+        conversation.backends.voice.phrases["I'm awake."] = (np.full(80, .3, np.float32),)
+        if question:
+            await feed((.25, 14), (.5, 20), (0, 7))
+            await accepted.wait()
+            assert session.setup_messages[0][0].endswith(
+                "The user's spoken request is: Find flights from Boston to Paris.")
+        else:
+            await feed((.25, 14), (0, 7))
+            while not hardware.played:
+                await feed((0, 5))
+                await asyncio.sleep(.02)
+            assert recordings == [] and session.setup_messages == []
+        assert conversation._wake_window is WakeWindow.AWAKE
+        assert [np.allclose(samples, .3) for samples in hardware.played] == ([] if question else [True])
+
+    asyncio.run(bounded(handoff(run)))

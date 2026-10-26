@@ -1,0 +1,164 @@
+{
+ "load_s": 9.1,
+ "memory_loaded": {
+  "Physical footprint": "15.5G",
+  "Physical footprint (peak)": "15.5G"
+ },
+ "motion": {
+  "cold_s": {
+   "thinking": {
+    "p50": 0.788,
+    "p95": 0.942,
+    "max": 3.399,
+    "n": 30
+   },
+   "greeting": {
+    "p50": 1.046,
+    "p95": 1.064,
+    "max": 1.064,
+    "n": 30
+   },
+   "celebration": {
+    "p50": 0.949,
+    "p95": 0.955,
+    "max": 0.955,
+    "n": 20
+   },
+   "apology": {
+    "p50": 0.868,
+    "p95": 0.877,
+    "max": 0.881,
+    "n": 20
+   }
+  },
+  "motion_s": {
+   "thinking": {
+    "p50": 4.0,
+    "p95": 4.08,
+    "max": 4.08,
+    "n": 30
+   },
+   "greeting": {
+    "p50": 2.48,
+    "p95": 2.56,
+    "max": 2.56,
+    "n": 30
+   },
+   "celebration": {
+    "p50": 2.8,
+    "p95": 3.04,
+    "max": 3.04,
+    "n": 20
+   },
+   "apology": {
+    "p50": 2.48,
+    "p95": 2.48,
+    "max": 2.48,
+    "n": 20
+   }
+  },
+  "prefetched_ms": {
+   "thinking": {
+    "p50": 0.087,
+    "p95": 0.11,
+    "max": 0.11,
+    "n": 10
+   },
+   "greeting": {
+    "p50": 0.088,
+    "p95": 1.16,
+    "max": 1.16,
+    "n": 10
+   },
+   "celebration": {
+    "p50": 0.119,
+    "p95": 0.153,
+    "max": 0.153,
+    "n": 10
+   },
+   "apology": {
+    "p50": 0.105,
+    "p95": 0.129,
+    "max": 0.129,
+    "n": 10
+   }
+  },
+  "all_moments_ready_after_connect_s": 3.65
+ },
+ "contention": {
+  "alone_s": {
+   "acknowledge": {
+    "p50": 0.369,
+    "p95": 0.692,
+    "max": 0.692,
+    "n": 10
+   },
+   "lines": {
+    "p50": 0.664,
+    "p95": 0.829,
+    "max": 0.829,
+    "n": 10
+   },
+   "classify": {
+    "p50": 0.058,
+    "p95": 0.06,
+    "max": 0.06,
+    "n": 10
+   },
+   "speak_first_audio": {
+    "p50": 0.066,
+    "p95": 0.071,
+    "max": 0.071,
+    "n": 10
+   },
+   "hear_final": {
+    "p50": 0.627,
+    "p95": 0.635,
+    "max": 0.635,
+    "n": 10
+   }
+  },
+  "with_motion_s": {
+   "acknowledge": {
+    "p50": 0.477,
+    "p95": 0.719,
+    "max": 0.719,
+    "n": 10
+   },
+   "lines": {
+    "p50": 1.27,
+    "p95": 1.367,
+    "max": 1.367,
+    "n": 10
+   },
+   "classify": {
+    "p50": 0.09,
+    "p95": 0.383,
+    "max": 0.383,
+    "n": 10
+   },
+   "speak_first_audio": {
+    "p50": 0.108,
+    "p95": 0.371,
+    "max": 0.371,
+    "n": 10
+   },
+   "hear_final": {
+    "p50": 1.122,
+    "p95": 3.641,
+    "max": 3.641,
+    "n": 10
+   }
+  },
+  "motion_while_contended_s": {
+   "p50": 2.345,
+   "p95": 3.174,
+   "max": 4.827,
+   "n": 53
+  }
+ },
+ "memory_after": {
+  "Physical footprint": "12.5G",
+  "Physical footprint (peak)": "17.3G"
+ }
+}

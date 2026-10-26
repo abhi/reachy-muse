@@ -434,7 +434,7 @@ def test_progress_playback_is_preempted_and_closed_before_answer_or_turn_cleanup
     np = pytest.importorskip("numpy")
     from reachy_muse.progress import ProgressPlan
     monkeypatch.setattr(reachy_muse.local_backends, "ProgressPlan",
-                        lambda text, started: ProgressPlan(text, started, first_delay_s=0))
+                        lambda text, started, **options: ProgressPlan(text, started, first_delay_s=0, **options))
 
     async def scenario():
         hardware = FakeHardware()
@@ -503,7 +503,7 @@ def test_progress_playback_is_preempted_and_closed_before_answer_or_turn_cleanup
 def test_answer_queued_before_progress_due_suppresses_the_cue(monkeypatch, streaming_speech):
     from reachy_muse.progress import ProgressPlan
     monkeypatch.setattr(reachy_muse.local_backends, "ProgressPlan",
-                        lambda text, started: ProgressPlan(text, started, first_delay_s=0))
+                        lambda text, started, **options: ProgressPlan(text, started, first_delay_s=0, **options))
 
     async def scenario():
         hardware = FakeHardware()
@@ -541,9 +541,9 @@ def test_progress_clock_starts_after_muse_acknowledges(monkeypatch, streaming_sp
     origins = []
     acknowledged = []
 
-    def make_plan(text, started):
+    def make_plan(text, started, **options):
         origins.append(started)
-        return ProgressPlan(text, started)
+        return ProgressPlan(text, started, **options)
 
     monkeypatch.setattr(reachy_muse.local_backends, "ProgressPlan", make_plan)
 
@@ -578,7 +578,7 @@ def test_completed_progress_hardware_error_survives_answer_race(monkeypatch, str
     from reachy_muse.hardware import ReachyHardwareError
     from reachy_muse.progress import ProgressPlan
     monkeypatch.setattr(reachy_muse.local_backends, "ProgressPlan",
-                        lambda text, started: ProgressPlan(text, started, first_delay_s=0))
+                        lambda text, started, **options: ProgressPlan(text, started, first_delay_s=0, **options))
 
     async def scenario():
         hardware = FakeHardware()
@@ -621,7 +621,7 @@ def test_preemption_finishes_pending_hardware_call_before_flush_and_answer(
     from reachy_muse.hardware import ReachyHardwareError
     from reachy_muse.progress import ProgressPlan
     monkeypatch.setattr(reachy_muse.local_backends, "ProgressPlan",
-                        lambda text, started: ProgressPlan(text, started, first_delay_s=0))
+                        lambda text, started, **options: ProgressPlan(text, started, first_delay_s=0, **options))
 
     async def scenario():
         entered, release = threading.Event(), threading.Event()
@@ -1300,7 +1300,7 @@ def test_authoritative_revision_during_progress_shutdown_speaks_only_replacement
     np = pytest.importorskip("numpy")
     from reachy_muse.progress import ProgressPlan
     monkeypatch.setattr(reachy_muse.local_backends, "ProgressPlan",
-                        lambda text, started: ProgressPlan(text, started, first_delay_s=0))
+                        lambda text, started, **options: ProgressPlan(text, started, first_delay_s=0, **options))
 
     async def scenario():
         closing, release = asyncio.Event(), asyncio.Event()
@@ -1673,8 +1673,8 @@ def test_reply_emotion_is_present_during_speech_without_a_delayed_extra_move(mon
 
 
 @pytest.mark.parametrize("recognized, expected_ack", [
-    ("What's the weather tomorrow?", "Let me check the weather."),
-    ("Hello!", None), ("Say hello.", None), ("", None),
+    ("What's the weather tomorrow?", "Hmm, good question."),
+    ("Hello!", None), ("Say hello.", "Hmm, good question."), ("", None),
 ])
 def test_contextual_acknowledgement_waits_for_words_and_skips_unmatched_input(monkeypatch, recognized, expected_ack):
     np = pytest.importorskip("numpy")
@@ -1738,7 +1738,7 @@ def test_cancelling_request_stops_contextual_acknowledgement_before_listening_re
         conversation = VoiceConversation(session, hardware,
                                          backends=backends_for(Mode.ON_ROBOT, session, speech=object(),
                                                                transcriber=LocalRecognition()))
-        conversation.backends.voice.phrases = {"Let me check the weather.":
+        conversation.backends.voice.phrases = {"Hmm, good question.":
                                                (np.full(8000, .1, dtype=np.float32),) * 3}
         turn = asyncio.create_task(conversation.turn(b"voice"))
         while not hardware.played:
@@ -1778,7 +1778,7 @@ def test_completed_acknowledgement_hardware_failure_propagates_and_restores_capt
         conversation = VoiceConversation(session, hardware,
                                          backends=backends_for(Mode.ON_ROBOT, session, speech=object(),
                                                                transcriber=LocalRecognition()))
-        conversation.backends.voice.phrases = {"Let me check the weather.": (np.full(80, .1, dtype=np.float32),)}
+        conversation.backends.voice.phrases = {"Hmm, good question.": (np.full(80, .1, dtype=np.float32),)}
         speak = conversation._speak
         async def observed_speech(*args, **kwargs):
             try:
@@ -1826,7 +1826,7 @@ def test_turn_cancellation_preserves_cancellation_after_acknowledgement_hardware
         conversation = VoiceConversation(session, hardware,
                                          backends=backends_for(Mode.ON_ROBOT, session, speech=object(),
                                                                transcriber=LocalRecognition()))
-        conversation.backends.voice.phrases = {"Let me check the weather.": (np.full(80, .1, dtype=np.float32),)}
+        conversation.backends.voice.phrases = {"Hmm, good question.": (np.full(80, .1, dtype=np.float32),)}
         speak = conversation._speak
         async def observed_speech(*args, **kwargs):
             try:
@@ -1844,18 +1844,6 @@ def test_turn_cancellation_preserves_cancellation_after_acknowledgement_hardware
     asyncio.run(bounded(scenario()))
 
 
-@pytest.mark.parametrize("text, expected", [
-    ("What's the weather today?", "Let me check the weather."),
-    ("Find the latest news.", "Let me look that up."),
-    ("Explain how a radio works.", "Let me explain that."),
-    ("Help me plan my week.", "Let me work out a plan."),
-    ("Please calculate 14 * 8.", "Let me work that out."),
-    ("Could you plan a trip to Kyoto?", "Let me look into that trip."),
-    ("Hello, Muse!", None), ("Weather is nice.", None),
-    ("Say pineapple sunshine.", None), ("I am sad.", None),
-])
-def test_question_acknowledgement_matches_intent_without_a_generic_fallback(text, expected):
-    assert reachy_muse.local_backends.contextual_acknowledgement(text) == expected
 
 
 @pytest.mark.parametrize("text, expected", [
@@ -3412,10 +3400,12 @@ def test_hardware_failure_leaves_service_for_a_fresh_controller(monkeypatch):
     asyncio.run(bounded(scenario()))
 
 
-def test_cli_closes_failed_hardware_and_exits_for_service_restart(monkeypatch, tmp_path, capsys):
-    from musegadget import config
+@pytest.mark.parametrize("problem", ["microphone disconnected", "motion controller failed"])
+def test_cli_exits_on_hardware_failure_through_sdk_run_loop(monkeypatch, tmp_path, capsys, problem):
+    from musegadget import config, service
     import reachy_muse.cli
     from musegadget.identity import Identity
+    from musegadget.link_client import Outcome
     from reachy_muse.hardware import ReachyHardwareError
 
     class Hardware:
@@ -3428,29 +3418,45 @@ def test_cli_closes_failed_hardware_and_exits_for_service_restart(monkeypatch, t
         def close(self):
             self.closes += 1
 
-    class FailedService:
+    class IdleLink:
+        registered_at = None
         runs = 0
+        stops = 0
 
         def __init__(self, **kwargs):
-            pass
+            self.registered = asyncio.Event()
+            self.registered.set()
 
-        def stop(self):
+        async def run(self, stop):
+            type(self).runs += 1
+            if self.runs > 1:
+                return Outcome.STOPPED
+            await stop.wait()
+            type(self).stops += 1
+            return Outcome.STOPPED
+
+    class FailedConversation:
+        def __init__(self, *args, **kwargs):
             pass
 
         async def run(self):
-            type(self).runs += 1
-            raise ReachyHardwareError("microphone disconnected")
+            raise ReachyHardwareError(problem)
 
     hardware = Hardware()
+    pairing = {"access_token": "test-token", "access_token_saved_at": time.time()}
+    vm = {"vm_id": "vm-1", "vm_name": "test-vm", "vm_auth_token": "test-token", "is_default": True}
     monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
-    monkeypatch.setattr(config, "load_json", lambda *args: {"paired": True})
+    monkeypatch.setattr(config, "load_json", lambda *args: pairing)
     monkeypatch.setattr(config, "sdk_token", lambda: None)
+    monkeypatch.setattr(service.muse_api, "fetch_vms_with_status", lambda *args: ([vm], 200))
+    monkeypatch.setattr(service, "LinkSession", IdleLink)
+    monkeypatch.setattr(service, "BACKOFF_BASE_S", 0)
     monkeypatch.setattr(reachy_muse.cli.identity, "load_or_create", lambda: Identity("02:00:00:ab:cd:ef"))
     monkeypatch.setattr(reachy_muse.cli, "_hardware", lambda *args, **kwargs: hardware)
-    monkeypatch.setattr(reachy_muse.conversation, "ReachyService", FailedService)
-    assert reachy_muse.cli.main(["--state-dir", str(tmp_path), "run"]) == 1
-    assert (hardware.starts, hardware.closes, FailedService.runs) == (1, 1, 1)
-    assert "Reachy: microphone disconnected" in capsys.readouterr().err
+    monkeypatch.setattr(reachy_muse.conversation, "VoiceConversation", FailedConversation)
+    assert reachy_muse.cli.main(["--state-dir", str(tmp_path), "run", "--main-chat"]) == 1
+    assert (hardware.starts, hardware.closes, IdleLink.runs, IdleLink.stops) == (1, 1, 1, 1)
+    assert f"Reachy: {problem}" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("chat_args, expected_session", [

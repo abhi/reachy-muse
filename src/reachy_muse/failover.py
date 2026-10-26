@@ -9,11 +9,16 @@ import asyncio
 import logging
 import time
 from collections import deque
-from typing import Optional, Tuple
+from typing import Any, Callable, Optional, Tuple, Union
 
 from reachy_muse.contract.replies import ReplyStyle
-from reachy_muse.capabilities import Backends, CapabilityUnavailable, HeardAudio, SpokenLine, grounded
-from reachy_muse.protocol import MAX_REPLY_BYTES
+from reachy_muse.contract.intent import Intent, guess_intent
+from reachy_muse.companion_client import CompanionOpening
+from reachy_muse.local_backends import RuleNarrator
+from reachy_muse.capabilities import (EMOJI, MARKUP, Backends, CapabilityUnavailable, Heard, HeardAudio, Hold, LocalReply,
+                                      Opener, SpokenLine, grounded)
+from reachy_muse.device_command import Commands
+from reachy_muse.protocol import MAX_LINE_BYTES, MAX_REPLY_BYTES
 from reachy_muse.progress import ProgressPlan
 
 log = logging.getLogger(__name__)
@@ -24,6 +29,7 @@ ACK_DEADLINE_S = 0.9
 PROGRESS_DEADLINE_S = 1.5
 LINES_DEADLINE_S = 4.0
 SPEECH_GAP_S = 2.0                 # companion speech that pauses this long falls back
+SPOKEN_AS_WRITTEN_LINES = 2       # a plain reply this short is spoken as Muse wrote it, not condensed
 STRIKES = 3                        # consecutive failures of one companion op that rest it
 COOLDOWN_S = 60.0                  # how long a rested op stays on the robot before the companion is tried again
 
@@ -102,6 +108,10 @@ class FailoverHearingTurn:
     @property
     def speech_active(self) -> bool:
         return self._turn.speech_active
+
+    @property
+    def quiet_s(self) -> float:
+        return self._turn.quiet_s
 
     @property
     def partial(self):
@@ -257,6 +267,26 @@ class FailoverVoice:
             await speech.aclose()
 
 
+class _Late:
+    """The companion's narration missed its deadline: it is busy, not broken."""
+
+
+LATE = _Late()
+
+
+def settle(heard: Heard, guess: Intent, got: Union[CompanionOpening, _Late, None], local: RuleNarrator) -> Opener:
+    if got is LATE:
+        return Hold(guess, None)
+    if got is None:
+        return local.hold(guess, heard)
+    intent = got.intent or guess
+    if intent is Intent.CHAT:
+        if got.intent is Intent.CHAT and heard.may_chat and got.lines:
+            return LocalReply(tuple(SpokenLine(line.text, line.expression, "answer") for line in got.lines))
+        return Hold(Intent.CHAT, None)
+    return Hold(intent, got.lines[0] if got.lines else None)
+
+
 class FailoverNarrator:
     """The companion narrates within deadlines; Reachy's rules answer whenever it can't."""
 
@@ -269,8 +299,8 @@ class FailoverNarrator:
     def _on_companion(self) -> bool:
         return self.route.this_turn and self.companion.available and not self.route.narration.resting
 
-    async def _ask(self, call, deadline_s: float, sources: Tuple[str, ...]) -> Optional[Tuple[SpokenLine, ...]]:
-        """The companion's lines, possibly none, or None when they are late, failed or ungrounded."""
+    async def _ask(self, call, deadline_s: float, sources: Tuple[str, ...],
+                   lines: Callable[[Any], Tuple[SpokenLine, ...]] = lambda result: result) -> Any:
         try:
             result = await asyncio.wait_for(call, deadline_s)
         except CapabilityUnavailable as error:
@@ -279,32 +309,34 @@ class FailoverNarrator:
             return None
         except asyncio.TimeoutError:
             self.route.narration.fail("narration timed out")
-            return None
-        lines = result if isinstance(result, tuple) else (() if result is None else (result,))
-        if not all(grounded(line.text, *sources) for line in lines):
+            return LATE
+        if not all(grounded(line.text, *sources) for line in lines(result)):
             self.route.narration.fail("narration added facts that are not in the request or reply")
             return None
         self.route.narration.succeed()
-        return lines
+        return result
 
-    async def acknowledge(self, request: str) -> Optional[SpokenLine]:
-        if self._on_companion:
-            lines = await self._ask(self.companion.acknowledge(request), ACK_DEADLINE_S, (request,))
-            if lines is not None:
-                # A healthy companion that chose no acknowledgement means silence, not a miss.
-                return lines[0] if lines else None
-        return await self.local.acknowledge(request)
+    async def acknowledge(self, heard: Heard) -> Opener:
+        guess = guess_intent(heard.text, heard.previous)
+        if not self._on_companion:
+            return self.local.hold(guess, heard)
+        got = await self._ask(self.companion.acknowledge(heard), ACK_DEADLINE_S, (heard.text, heard.previous),
+                              lines=lambda opening: opening.lines)
+        if got is LATE:
+            log.info("Reachy skips the acknowledgement; its companion's narration was late")
+        return settle(heard, guess, got, self.local)
 
-    def progress(self, request: str, started: float) -> ProgressPlan:
-        return self.local.progress(request, started)
+    def progress(self, request: str, started: float, intent: Intent = Intent.QUESTION) -> ProgressPlan:
+        return self.local.progress(request, started, intent)
 
     async def say_progress(self, request: str, status: str,
                            already_said: Tuple[str, ...]) -> Optional[SpokenLine]:
         if self._on_companion:
-            lines = await self._ask(self.companion.say_progress(request, status, already_said),
-                                    PROGRESS_DEADLINE_S, (status, request))
-            if lines:
-                return lines[0]
+            line = await self._ask(self.companion.say_progress(request, status, already_said),
+                                   PROGRESS_DEADLINE_S, (status, request),
+                                   lines=lambda line: () if line is None else (line,))
+            if isinstance(line, SpokenLine):
+                return line
         return await self.local.say_progress(request, status, already_said)
 
     async def lines(self, request: str, reply: str, style: ReplyStyle, *,
@@ -317,17 +349,27 @@ class FailoverNarrator:
                          len(spoken.encode("utf-8")), MAX_REPLY_BYTES)
                 self.route.this_turn = False
                 return local
+            if _speakable_as_written(local):
+                log.info("Reachy speaks a %d-sentence reply as written, without condensing it", len(local))
+                return local
             result = await self._ask(self.companion.lines(request, spoken, style), LINES_DEADLINE_S,
                                      (request, spoken))
-            if result:
+            if result and result is not LATE:
                 return result
         return local
+
+
+def _speakable_as_written(lines: Tuple[SpokenLine, ...]) -> bool:
+    """Already what the companion's condense would produce: few short sentences with no markup."""
+    return len(lines) <= SPOKEN_AS_WRITTEN_LINES and all(
+        len(line.text.encode("utf-8")) <= MAX_LINE_BYTES and not MARKUP.search(line.text)
+        and not EMOJI.search(line.text) for line in lines)
 
 
 def companion_backends(local: Backends, link) -> Backends:
     """Mode 3: the companion's parts, each backed by the on-robot part of mode 2."""
     from reachy_muse.companion_client import (
-        CompanionHearing, CompanionNarrator, CompanionVoice, VoiceRole,
+        CompanionCommandModel, CompanionHearing, CompanionMotion, CompanionNarrator, CompanionVoice, VoiceRole,
     )
 
     route = CompanionRoute(link)
@@ -340,4 +382,6 @@ def companion_backends(local: Backends, link) -> Backends:
         local_style=local.local_style,
         progress_voice=progress,
         companion=route,
+        commands=Commands(CompanionCommandModel(link)),
+        motion=CompanionMotion(link),
     )

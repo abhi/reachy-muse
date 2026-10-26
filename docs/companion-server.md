@@ -9,8 +9,11 @@ The robot and the server import the same codec, `src/reachy_muse/protocol.py`, s
 Hearing, speech and narration run real models on the Mac. Each engine is a Protocol in `src/reachy_muse/companion_server/engines.py`.
 
 - Hearing uses Voxtral Mini 4B Realtime for the running transcript. Silero VAD and Smart Turn v3 decide when the user has finished. Parakeet TDT v2 then transcribes the whole utterance again for the final text.
-- Speech uses Kokoro-82M. It speaks one sentence at a time, at the rate the robot asks for, raised to -20 dBFS RMS with peaks held under -1 dBFS. `serve --voice NAME` picks the voice (default `af_heart`) and `--loudness DBFS` the level.
-- Narration uses Qwen3-4B-Instruct-2507, 4-bit, through mlx-lm. It writes the acknowledgement, the progress lines and the condensed answer. See [Narration](#narration).
+- Speech uses Chatterbox Turbo, `mlx-community/chatterbox-turbo-8bit`, whose weights are MIT-licensed. It speaks in the one voice its weights ship with and never clones a voice. It streams: every 20 speech tokens, 0.8 s of speech, it decodes the sentence so far and sends the audio that the next decode will not change, with a 60 ms crossfade at each seam. The companion holds a line's first audio for 150 ms, which covers the wait for the second decode, so the first audio reaches the robot about 0.5 s after it asks (0.6 s at p95), against 0.1 s for Kokoro. The next sentence is ready before the robot finishes the last one. A narrated line's expression adds a sound to its first sentence: happy adds `[chuckle]`, sad `[sigh]` and surprised `[gasp]`. When the server starts, it measures the voice on three fixed sentences and sets one gain that brings the voiced level to -12 dBFS RMS. A limiter with a 2 ms look-ahead then holds peaks under -4 dBFS, so the robot's speaker EQ, which lifts peaks about 2.5 dB, stays under its own limiter. The MLX port does not add the PerTh watermark that Resemble's PyTorch package adds.
+- Kokoro-82M `af_heart` stands in for Chatterbox. It speaks every line if Chatterbox fails to load. It speaks the rest of a line when a sentence's first audio takes longer than 1 s or Chatterbox fails mid-line. Kokoro speaks one sentence at a time and levels each sentence on its own.
+- `serve` loads the models one at a time and caps MLX at 16 operations per Metal command buffer (`MLX_MAX_OPS_PER_BUFFER`, unless already set). With hearing, the narrator and Chatterbox evaluating at once on their own threads, Metal otherwise reported GPU hangs and aborted the process. The cap costs each model about 18% of its throughput. It makes hangs rarer, not impossible: see [bench/voice_richness.md](../bench/voice_richness.md).
+- `serve --voice ENGINE[:VOICE]` picks the voice: `chatterbox-turbo`, the default, or `kokoro[:VOICE]`, such as `kokoro:bm_george`. `--loudness DBFS` sets the level for both. [bench/voice_richness.md](../bench/voice_richness.md) has the measurements.
+- Narration uses Qwen3-4B-Instruct-2507, 4-bit, through mlx-lm. It writes the acknowledgement, the progress lines and the condensed answer. See [Narration](#narration). The same model answers `classify`: it names the device command in a short utterance the robot's own grammar did not match, such as "could you be a bit quieter", or none.
 
 A speech benchmark on the Mac, mac-speech-bench-2, chose the speech models. `evals/narrator` chose the narrator.
 
@@ -18,7 +21,7 @@ A speech benchmark on the Mac, mac-speech-bench-2, chose the speech models. `eva
 
 - A Mac with Apple Silicon. The models run on the GPU through MLX. Smart Turn and the VAD run on the CPU.
 - About 15 GB of free memory. The speech models hold about 5 to 9 GB in steady use and peaked at 12 GB in the latency benchmark. The narrator adds 2.3 GB of weights and peaked at 3 GB on the eval set. MLX keeps freed GPU buffers for reuse, and capping that cache at 1 GB made the final text ten times slower.
-- About 8 GB of disk for the models.
+- About 10 GB of disk for the models.
 
 ## Install
 
@@ -60,8 +63,8 @@ Use `--host` when the robot reaches the Mac by another name or address.
 reachy-companion serve
 ```
 
-The server loads and warms the speech and narrator models before it listens. This takes about 10 s.
-The first run also downloads the models, about 7.9 GB, from Hugging Face. Voxtral is 2.9 GB, Parakeet 2.3 GB, Qwen3-4B 2.3 GB and Kokoro 0.3 GB. They go to the Hugging Face cache, `~/.cache/huggingface/hub`. Set `HF_HOME` to put them somewhere else.
+The server loads and warms the speech and narrator models, one at a time, before it listens. With `--motion` this took 15 to 17 s on the Mac Studio.
+The first run also downloads the models, about 9.2 GB, from Hugging Face. Voxtral is 2.9 GB, Parakeet 2.3 GB, Qwen3-4B 2.3 GB, Chatterbox Turbo 1.3 GB and Kokoro 0.3 GB. They go to the Hugging Face cache, `~/.cache/huggingface/hub`. Set `HF_HOME` to put them somewhere else.
 
 The server listens on port 8765 at the path `/v1`, with TLS and the paired certificate. Stop it with Ctrl-C.
 
@@ -70,9 +73,38 @@ These options change the engines:
 - `--engines stub` serves the stub engines instead: a fixed script, a 440 Hz tone and an echo. The tests use it.
 - `--delay-ms 240` makes Voxtral's partial text arrive sooner. The default is 480 ms.
 - `--narrator-model mlx-community/Llama-3.1-8B-Instruct-4bit` narrates with another MLX instruction model. The eval set below scores any model you name.
+- `--motion` also generates full-body motion for the robot's greeting, thinking and closing moments. See [Generated motion](#generated-motion).
 - `--no-final-pass` skips Parakeet and uses Voxtral's own final text. This saves about 1 GB of memory and 2.3 GB of download, but the final text arrives about 130 ms later.
 
 `reachy-companion serve --insecure` serves plain `ws://` without TLS, and listens only on 127.0.0.1 unless you pass `--bind`. Use it only for tests.
+
+## Generated motion
+
+`serve --motion` offers the protocol's `animate` op. It runs
+[reachy-motion-generator](https://github.com/pham-tuan-binh/reachy-motion-generator) (Apache-2.0): a
+fine-tuned Qwen3.5 4B planner, 8-bit on MLX, writes a short recipe for an intent such as "thinking hard", and a
+flow-matching generator on torch MPS turns it into 25 Hz frames for the head, antennas and body.
+[bench/motion.md](../bench/motion.md) chose this configuration, and
+[bench/generated_motion.md](../bench/generated_motion.md) measures it beside the speech models.
+
+Install the extra into the same environment:
+
+```sh
+uv pip install -e '.[companion-server,companion-motion]'
+```
+
+The planner and generator live in `~/Library/Application Support/reachy-companion/motion`, outside the
+checkout. Pass `--motion-dir DIR` to use another directory. The directory holds two entries:
+
+- `binhpham--reachy-mini-motion-planner-4b@1b60d8f16b85/generator.pt`, the generator, 83 MB.
+- `binhpham--reachy-mini-motion-planner-4b@1b60d8f16b85-mlx-8bit/`, the planner converted to 8-bit MLX, 4.2 GB.
+
+When both exist, `serve` loads them without the network. Otherwise the first `serve --motion` downloads the
+bundle, about 9 GB with the full-precision planner, and converts the planner, which takes about a minute. After
+that, the bundle's `planner/` folder can be deleted.
+
+Motion is decoration. A request the planner cannot answer gets a result with no frames, and the robot keeps its
+fixed expressions. The robot keeps at most two `animate` requests outstanding, apart from the narrations.
 
 ## Add the companion to the robot
 
@@ -96,7 +128,7 @@ The conformance tests run every golden vector through the codec, then drive the 
 .venv/bin/python -m pytest tests/companion_server -m real -s
 ```
 
-These slow tests load the real models. One sends three recorded requests to the server in real time and checks the transcripts for the words that matter, such as "eight" and "not". Then it checks that speech comes back. The other sends three eval cases to the narrator over the WebSocket and scores its lines.
+These slow tests load the real models. One checks that Chatterbox starts a line within 1 s without clipping. One sends three recorded requests to the server in real time and checks the transcripts for the words that matter, such as "eight" and "not". Then it checks that speech comes back. Another sends three eval cases to the narrator over the WebSocket and scores its lines.
 
 ## Measure latency
 

@@ -4,7 +4,8 @@ import pytest
 
 from reachy_muse.contract.expressions import Expression
 from reachy_muse.contract.replies import ReplyStyle
-from reachy_muse.capabilities import HeardAudio, Mode, Partial, SpokenLine
+from reachy_muse.contract.intent import Intent
+from reachy_muse.capabilities import Heard, Hold, HeardAudio, Mode, Partial, SpokenLine
 from reachy_muse.local_backends import LocalHearing, LocalVoice, MuseVoice, RuleNarrator, backends_for
 from reachy_muse.streaming_transcription import StreamingTranscriptionError
 from test_conversation import FakeSession, mp3_tone  # noqa: F401
@@ -57,8 +58,8 @@ class Speech:
 
 
 @pytest.mark.parametrize("mode, warmed, request_text, expected", [
-    (Mode.ON_ROBOT, True, "What's the weather tomorrow?", SpokenLine("Let me check the weather.", None, "ack")),
-    (Mode.ON_ROBOT, True, "Can you plan my trip to Lisbon?", SpokenLine("Let me look into that trip.", None, "ack")),
+    (Mode.ON_ROBOT, True, "What's the weather tomorrow?", SpokenLine("Hmm, good question.", None, "ack")),
+    (Mode.ON_ROBOT, True, "Can you plan my trip to Lisbon?", SpokenLine("Hmm, good question.", None, "ack")),
     (Mode.ON_ROBOT, True, "Hello there.", None),
     (Mode.ON_ROBOT, False, "What's the weather tomorrow?", None),
     (Mode.MUSE_VOICE, True, "What's the weather tomorrow?", None),
@@ -69,8 +70,8 @@ def test_acknowledgement_is_offered_only_once_its_phrase_can_play_at_once(mode, 
         backends = backends_for(mode, FakeSession(), **local)
         if warmed:
             await backends.voice.warm(16000)
-        return await backends.narrator.acknowledge(request_text)
-    assert asyncio.run(scenario()) == expected
+        return await backends.narrator.acknowledge(Heard(request_text))
+    assert asyncio.run(scenario()) == Hold(Intent.CHAT if request_text == "Hello there." else Intent.QUESTION, expected)
 
 
 def test_lost_streaming_transcription_has_no_endpoint():
@@ -199,14 +200,14 @@ def test_hearing_without_a_transcriber_hands_muse_the_audio():
 def test_local_voice_replays_warmed_phrases_and_synthesizes_other_text():
     async def scenario():
         speech = Speech()
-        voice = LocalVoice(speech, ("Yes?", "Let me look that up."))
+        voice = LocalVoice(speech, ("Yes?", "On it."))
         await voice.warm(24000)
         assert [chunk async for chunk in voice.stream(SpokenLine("Yes?", None, "notice"), 24000)] == ["Yes?@24000"]
         assert [chunk async for chunk in voice.prepare(SpokenLine("Yes?", None, "notice"), 24000)] == ["Yes?@24000"]
         assert [chunk async for chunk in voice.stream(SpokenLine("Hello.", None, "answer"), 16000)] == [
             "Hello.@16000"]
         assert voice.prepare(SpokenLine("Hello.", None, "answer"), 16000) is None
-        assert speech.spoken == [("Yes?", 24000), ("Let me look that up.", 24000), ("Hello.", 16000)]
+        assert speech.spoken == [("Yes?", 24000), ("On it.", 24000), ("Hello.", 16000)]
     asyncio.run(scenario())
 
 

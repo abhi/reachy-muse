@@ -1,17 +1,17 @@
-"""The three capabilities the companion serves, and stub engines for each.
-
-C2 to C4 replace the stubs with real models. The server only sees these Protocols.
-"""
-
 from __future__ import annotations
 
 import math
 import re
 import struct
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import AsyncIterator, Optional, Protocol, Sequence, Tuple, Union
+from typing import AsyncIterator, Iterator, Optional, Protocol, Sequence, Tuple, Union
 
-from reachy_muse.protocol import MAX_LINE_BYTES, NarratedLine, VoiceRole
+from reachy_muse.contract.expressions import Expression
+from reachy_muse.contract.intent import Intent
+from reachy_muse.device_command import DeviceCommand, parse_command
+from reachy_muse.protocol import ANIMATION_CHANNELS, MAX_LINE_BYTES, Frames, NarratedLine, VoiceRole
 
 
 @dataclass(frozen=True)
@@ -49,18 +49,76 @@ class Hearing(Protocol):
 class Voice(Protocol):
     name: str
 
-    def speak(self, text: str, role: VoiceRole, out_rate: int) -> AsyncIterator[bytes]:
-        """Yield s16le mono PCM at out_rate, in chunks of any size. The server frames them."""
+    def speak(self, text: str, role: VoiceRole, out_rate: int, expression: Optional[Expression] = None) -> AsyncIterator[bytes]:
+        """Yield s16le mono PCM at out_rate, in chunks of any size. The server frames them.
+
+        `expression` is the one the narrator gave this line, if it narrated it; a voice may color the line with it.
+        """
+
+
+@dataclass(frozen=True)
+class Narrated:
+    intent: Optional[Intent]
+    lines: Tuple[NarratedLine, ...]
 
 
 class Narrator(Protocol):
     name: str
 
-    async def acknowledge(self, request: str) -> Sequence[NarratedLine]: ...
+    async def acknowledge(self, request: str, *, previous: str = "", recently_said: Sequence[str] = (),
+                          may_chat: bool = False) -> Narrated: ...
 
     async def progress(self, request: str, status: str, already_said: Sequence[str]) -> Sequence[NarratedLine]: ...
 
     async def lines(self, request: str, reply: str) -> Sequence[NarratedLine]: ...
+
+
+class Classifier(Protocol):
+    name: str
+
+    async def classify(self, text: str, allowed: Sequence[DeviceCommand]) -> Optional[DeviceCommand]: ...
+
+
+@dataclass(frozen=True)
+class Animation:
+    """Frames in ANIMATION_CHANNELS order and units; no frames means no motion."""
+
+    fps: int
+    frames: Frames
+
+
+class Animator(Protocol):
+    name: str
+
+    async def animate(self, intent: str, duration_s: float) -> Animation: ...
+
+
+class SpeechFirst:
+    """Hearing, speech, narration and classify share the GPU with motion and go first.
+
+    The server marks each of those ops busy while it runs; the motion planner waits for a quiet
+    moment before each token, so motion only fills the gaps.
+    """
+
+    def __init__(self) -> None:
+        self._busy = 0
+        self._quiet = threading.Condition()
+
+    @contextmanager
+    def busy(self) -> Iterator[None]:
+        with self._quiet:
+            self._busy += 1
+        try:
+            yield
+        finally:
+            with self._quiet:
+                self._busy -= 1
+                self._quiet.notify_all()
+
+    def wait_quiet(self, limit_s: float) -> None:
+        """Block until no speech op runs, or ``limit_s`` passes, so a long one never starves motion for good."""
+        with self._quiet:
+            self._quiet.wait_for(lambda: self._busy == 0, timeout=limit_s)
 
 
 class ScriptedHearing:
@@ -110,7 +168,7 @@ class ToneVoice:
         self.chunks = chunks
         self.chunk_ms = chunk_ms
 
-    async def speak(self, text: str, role: VoiceRole, out_rate: int) -> AsyncIterator[bytes]:
+    async def speak(self, text: str, role: VoiceRole, out_rate: int, expression: Optional[Expression] = None) -> AsyncIterator[bytes]:
         count = out_rate * self.chunk_ms // 1000
         for index in range(self.chunks):
             start = index * count
@@ -122,14 +180,32 @@ class EchoNarrator:
 
     name = "echo"
 
-    async def acknowledge(self, request: str) -> Sequence[NarratedLine]:
-        return _sentences(request)
+    async def acknowledge(self, request: str, *, previous: str = "", recently_said: Sequence[str] = (),
+                          may_chat: bool = False) -> Narrated:
+        return Narrated(None, tuple(_sentences(request)))
 
     async def progress(self, request: str, status: str, already_said: Sequence[str]) -> Sequence[NarratedLine]:
         return _sentences(status)
 
     async def lines(self, request: str, reply: str) -> Sequence[NarratedLine]:
         return _sentences(reply)
+
+    async def classify(self, text: str, allowed: Sequence[DeviceCommand]) -> Optional[DeviceCommand]:
+        command = parse_command(text)
+        return command if command in allowed else None
+
+
+class NodAnimator:
+    name = "nod"
+
+    async def animate(self, intent: str, duration_s: float) -> Animation:
+        fps = 25
+        count = max(1, round(duration_s * fps))
+        pitch = ANIMATION_CHANNELS.index("pitch")
+        return Animation(fps, tuple(
+            tuple(round(10 * math.sin(4 * math.pi * n / count), 1) if axis == pitch else 0.0
+                  for axis in range(len(ANIMATION_CHANNELS)))
+            for n in range(count)))
 
 
 def _sentences(text: str) -> Tuple[NarratedLine, ...]:

@@ -1,0 +1,366 @@
+{
+ "config": {
+  "planner": "mlx",
+  "mlx_model": "0.8b-bf16",
+  "bundle": "0.8b",
+  "device": "mps",
+  "runs": 1,
+  "formatted": true,
+  "contend": null,
+  "machine": "macOS-26.4-arm64-arm-64bit-Mach-O",
+  "python": "3.13.14"
+ },
+ "load_s": 2.9,
+ "latency_ms": {
+  "planner": {
+   "p50": 345.7,
+   "p95": 487.4,
+   "max": 487.4
+  },
+  "generator": {
+   "p50": 25.7,
+   "p95": 114.7,
+   "max": 114.7
+  },
+  "reach": {
+   "p50": 2.4,
+   "p95": 3.2,
+   "max": 3.2
+  },
+  "total": {
+   "p50": 411.6,
+   "p95": 516.3,
+   "max": 516.3
+  }
+ },
+ "recipe_tokens": {
+  "p50": 65.0,
+  "p95": 100,
+  "max": 100
+ },
+ "duration_s": {
+  "p50": 4.4,
+  "p95": 6.4,
+  "max": 6.4
+ },
+ "peak_footprint_gb": 3.69,
+ "baseline_footprint_gb": 0.08,
+ "live_server": {
+  "before": {
+   "running": true,
+   "pid": 74447,
+   "cpu_percent": 0.0,
+   "footprint": "8669 MB (16384 bytes per page)"
+  },
+  "after": {
+   "running": true,
+   "pid": 74447,
+   "cpu_percent": 0.0,
+   "footprint": "8669 MB (16384 bytes per page)"
+  }
+ },
+ "quality": {
+  "happy. You are answering a question cheerfully.": {
+   "frames": 129,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 7.8,
+    "y": 4.6,
+    "z": 10.2,
+    "roll": 2.0,
+    "pitch": 9.5,
+    "yaw": 35.8,
+    "body_yaw": 2.3,
+    "right_antenna": 19.0,
+    "left_antenna": 19.9
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 1,
+   "yaw_swings": 4
+  },
+  "curious. You are listening closely to someone.": {
+   "frames": 96,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 3.7,
+    "y": 5.1,
+    "z": 2.8,
+    "roll": 0.9,
+    "pitch": 7.5,
+    "yaw": 3.2,
+    "body_yaw": 2.2,
+    "right_antenna": 17.8,
+    "left_antenna": 14.0
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 2,
+   "yaw_swings": 0
+  },
+  "thinking hard. You are working on a difficult problem.": {
+   "frames": 157,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 130,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 5.0,
+    "y": 13.5,
+    "z": 16.3,
+    "roll": 1.1,
+    "pitch": 20.2,
+    "yaw": 3.0,
+    "body_yaw": 2.3,
+    "right_antenna": 99.4,
+    "left_antenna": 97.6
+   },
+   "frames_at_limit": {
+    "z": 130,
+    "left_antenna": 129,
+    "right_antenna": 128,
+    "pitch": 87
+   },
+   "pitch_swings": 2,
+   "yaw_swings": 0
+  },
+  "surprised. You just heard good news.": {
+   "frames": 102,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 5.3,
+    "y": 9.0,
+    "z": 14.0,
+    "roll": 17.6,
+    "pitch": 15.4,
+    "yaw": 4.4,
+    "body_yaw": 1.6,
+    "right_antenna": 44.5,
+    "left_antenna": 39.5
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 3,
+   "yaw_swings": 0
+  },
+  "sad. You are apologizing for a mistake.": {
+   "frames": 120,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 110,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 4.9,
+    "y": 23.7,
+    "z": 16.3,
+    "roll": 1.4,
+    "pitch": 20.8,
+    "yaw": 5.2,
+    "body_yaw": 3.5,
+    "right_antenna": 99.1,
+    "left_antenna": 97.7
+   },
+   "frames_at_limit": {
+    "x": 90,
+    "right_antenna": 102,
+    "left_antenna": 102,
+    "z": 99,
+    "pitch": 80
+   },
+   "pitch_swings": 1,
+   "yaw_swings": 0
+  },
+  "nodding yes. You agree with what was just said.": {
+   "frames": 52,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 12,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 4.1,
+    "y": 13.4,
+    "z": 5.7,
+    "roll": 2.7,
+    "pitch": 22.5,
+    "yaw": 5.7,
+    "body_yaw": 3.1,
+    "right_antenna": 23.5,
+    "left_antenna": 19.5
+   },
+   "oscillation": {
+    "channel": "pitch",
+    "half_cycles": 0,
+    "yaw_half_cycles": 0,
+    "min_amplitude_deg": 5.0
+   },
+   "frames_at_limit": {
+    "y": 12
+   },
+   "pitch_swings": 3,
+   "yaw_swings": 0
+  },
+  "shaking your head no. You disagree.": {
+   "frames": 160,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 3,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 5.8,
+    "y": 6.6,
+    "z": 6.4,
+    "roll": 2.3,
+    "pitch": 2.8,
+    "yaw": 15.0,
+    "body_yaw": 1.2,
+    "right_antenna": 80.6,
+    "left_antenna": 82.1
+   },
+   "oscillation": {
+    "channel": "yaw",
+    "half_cycles": 4,
+    "pitch_half_cycles": 0,
+    "min_amplitude_deg": 8.0
+   },
+   "frames_at_limit": {
+    "left_antenna": 3
+   },
+   "pitch_swings": 0,
+   "yaw_swings": 5
+  },
+  "excited. You greet someone you are happy to see.": {
+   "frames": 77,
+   "outside_limits": 0,
+   "unreachable_after_clamp": 0,
+   "clamped_frames": 0,
+   "projected_fraction": 0.0,
+   "range_deg_or_mm": {
+    "x": 7.9,
+    "y": 5.4,
+    "z": 11.0,
+    "roll": 1.7,
+    "pitch": 7.7,
+    "yaw": 2.0,
+    "body_yaw": 1.7,
+    "right_antenna": 24.5,
+    "left_antenna": 20.4
+   },
+   "frames_at_limit": {},
+   "pitch_swings": 1,
+   "yaw_swings": 0
+  }
+ },
+ "probes": null,
+ "runs": [
+  {
+   "prompt": "happy. You are answering a question cheerfully.",
+   "repeat": 0,
+   "idea": "lift up, ears up, happy bounces",
+   "recipe": "go .5 e=0 p=-6 z=10 E=3 | osc 2.5 z 5 .6 E=4 | osc 1.5 y 10 1 E=3 | hold .6",
+   "recipe_tokens": 68,
+   "attempts": 1,
+   "duration_s": 5.16,
+   "planner": 359.2,
+   "generator": 26.4,
+   "reach": 2.9,
+   "total": 388.5
+  },
+  {
+   "prompt": "curious. You are listening closely to someone.",
+   "repeat": 0,
+   "idea": "lean in, ears slightly down, small attentive nods",
+   "recipe": "go .8 e=20 p=6 z=4 E=.8 | osc 2 p 4 1.2 E=1 | hold 1 E=.5",
+   "recipe_tokens": 57,
+   "attempts": 1,
+   "duration_s": 3.84,
+   "planner": 312.3,
+   "generator": 25.5,
+   "reach": 2.2,
+   "total": 339.9
+  },
+  {
+   "prompt": "thinking hard. You are working on a difficult problem.",
+   "repeat": 0,
+   "idea": "head down, slow, still",
+   "recipe": "go 1.5 e=100 p=16 z=-10 E=.3 | hold 3 E=.1 | go 1.2 p=10 z=-12 | hold 1",
+   "recipe_tokens": 62,
+   "attempts": 1,
+   "duration_s": 6.28,
+   "planner": 332.2,
+   "generator": 25.7,
+   "reach": 3.2,
+   "total": 361.1
+  },
+  {
+   "prompt": "surprised. You just heard good news.",
+   "repeat": 0,
+   "idea": "phases: curious tilt, ears up, happy bounce, ears down, happy bounce",
+   "recipe": "go .5 e=10 p=4 r=10 E=1 | hold .8 E=2 | go .5 r=0 p=-4 z=8 e=-10 E=3 | osc 2 z 5 .8 E=4 | hold .6 E=2",
+   "recipe_tokens": 90,
+   "attempts": 1,
+   "duration_s": 4.08,
+   "planner": 445.8,
+   "generator": 23.0,
+   "reach": 2.2,
+   "total": 471.0
+  },
+  {
+   "prompt": "sad. You are apologizing for a mistake.",
+   "repeat": 0,
+   "idea": "head down, small nod, drooping ears",
+   "recipe": "go 1.2 e=130 p=16 z=-10 E=.6 | osc 2 p 5 1 E=.8 | hold 1.5 E=.4",
+   "recipe_tokens": 61,
+   "attempts": 1,
+   "duration_s": 4.8,
+   "planner": 328.5,
+   "generator": 114.7,
+   "reach": 2.6,
+   "total": 445.8
+  },
+  {
+   "prompt": "nodding yes. You agree with what was just said.",
+   "repeat": 0,
+   "idea": "build: look up and tilt right 0.8s; release: nod forward and settle",
+   "recipe": "go .6 e=0 p=-6 z=8 E=1.5 | go .4 p=10 E=2 | go .6 p=0 E=1.5 | hold .6 E=1.2",
+   "recipe_tokens": 78,
+   "attempts": 1,
+   "duration_s": 2.08,
+   "planner": 396.8,
+   "generator": 36.7,
+   "reach": 1.3,
+   "total": 434.8
+  },
+  {
+   "prompt": "shaking your head no. You disagree.",
+   "repeat": 0,
+   "idea": "repeated: head shakes, ears back, then head shakes again",
+   "recipe": "go .5 e=20 E=.5 | osc 1.5 y 12 .5 E=4 | go .5 e=60 E=.5 | osc 1.5 y 12 .5 E=4 | go .5 e=20 E=.5 | osc 1.5 y 12 .5 E=4",
+   "recipe_tokens": 100,
+   "attempts": 1,
+   "duration_s": 6.4,
+   "planner": 487.4,
+   "generator": 25.7,
+   "reach": 3.2,
+   "total": 516.3
+  },
+  {
+   "prompt": "excited. You greet someone you are happy to see.",
+   "repeat": 0,
+   "idea": "lean in, ears up, quick bounces",
+   "recipe": "go .5 e=0 p=-6 z=10 E=3 | osc 2 z 5 .6 E=4 | hold .6 E=2",
+   "recipe_tokens": 54,
+   "attempts": 1,
+   "duration_s": 3.08,
+   "planner": 299.6,
+   "generator": 22.6,
+   "reach": 1.7,
+   "total": 323.9
+  }
+ ]
+}

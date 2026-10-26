@@ -66,6 +66,29 @@ def classify_follow_up(text: str) -> FollowUp:
     return FollowUp.NEW
 
 
+# One-word replies that still mean something while Muse works; any other single word
+# ("thanks", "okay", a fragment of Reachy's own voice) is not sent as a request.
+FOLLOW_UP_WORDS = frozenset(("yes", "yeah", "yep", "no", "nope", "stop", "cancel"))
+
+
+def too_short_for_follow_up(text: str) -> bool:
+    words = _words(text)
+    return len(words) < 2 and not (words and words[0] in FOLLOW_UP_WORDS)
+
+
+def is_echo(text: str, heard_over: Tuple[str, ...]) -> bool:
+    """Whether an utterance repeats a contiguous phrase from a recently spoken line."""
+    words = _words(text)
+    if (len(words) < 2 or (len(words) <= 3 and words[0] in FOLLOW_UP_WORDS)
+            or words[0] in ("not", "actually", "instead")):
+        return False
+    for line in heard_over:
+        said = _words(line)
+        if any(said[start:start + len(words)] == words for start in range(len(said) - len(words) + 1)):
+            return True
+    return False
+
+
 def request_topic(request: str) -> str:
     """A few of the request's own words naming what it was about; "" when it has none."""
     tokens = [token.strip(".,!?;:\"()") for token in request.split()]
@@ -75,16 +98,3 @@ def request_topic(request: str) -> str:
         start += 1
     return " ".join(tokens[start:][:TOPIC_WORDS] or tokens[:TOPIC_WORDS])
 
-
-SMALL_TALK_WORDS = 3
-_SMALL_TALK = re.compile(
-    r"(?:\s*(?:hi|hello|hey|hey there|good (?:morning|afternoon|evening|night)|muse|reachy|there"
-    r"|how are you(?: doing)?(?: today)?|how's it going|how is it going|what's up|whats up"
-    r"|nice to meet you|thanks|thank you(?: so much| very much)?|you too|i'm (?:fine|good|great|okay|ok)"
-    r"|yes|yeah|yep|no|nope|okay|ok|sure|cool|great|bye|goodbye|see you(?: later)?)\b[\s,.!?]*)+")
-
-
-def is_small_talk(text: str) -> bool:
-    """Greetings, thanks, yes or no, or at most ``SMALL_TALK_WORDS`` words: nothing worth acknowledging."""
-    words = _words(text)
-    return len(words) <= SMALL_TALK_WORDS or _SMALL_TALK.fullmatch(" ".join(words)) is not None

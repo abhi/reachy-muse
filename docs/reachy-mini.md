@@ -122,8 +122,11 @@ Then start with `--mode companion` and the usual `on-robot` flags.
 
 - Reachy still decides when you start talking. The companion decides when you
   are done, hears your words as you say them, and speaks the answer.
-- Muse is asked for one to three short, plain sentences. The companion turns
-  them into spoken lines with expressions. A reply longer than 8192 bytes is
+- Muse is asked for one to three short, plain sentences. A reply of at most two
+  sentences, each within 240 bytes and free of markup, goes straight to the
+  companion's voice as Muse wrote it, without expressions. A longer one is
+  condensed by the companion into spoken lines with expressions, which costs a
+  narration round trip (0.46 s median on the bench). A reply longer than 8192 bytes is
   too long for the companion to condense, so Reachy speaks all of it in its
   own voice.
 - Reachy checks each companion line against your request and Muse's reply. A
@@ -162,10 +165,15 @@ on the robot speaker, and moves through conversation poses. Speak during the
 capture and listen for the tone. Reported samples and queued audio prove the
 software path; your hearing confirms physical sound.
 
-Speak naturally and pause for about two seconds to send your turn. Reachy keeps
-reading its microphone independently of recognition and Muse's response.
-The default endpoint is two seconds of silence, so shorter pauses keep sentences
-in one request. `--silence 1.0` sends turns sooner. Each recording is bounded at
+Speak naturally and pause briefly to send your turn. Reachy keeps reading its
+microphone independently of recognition and Muse's response. On the robot the
+default endpoint is 0.8 seconds of silence, so mid-sentence pauses (under half a
+second in recorded speech) keep sentences in one request. An utterance with less
+than 0.6 seconds of voiced speech, such as "um" or "remind me", waits 1.2 seconds,
+so a hesitation does not send a fragment. In companion mode the companion's Smart
+Turn model ends a finished turn about half a second after the last word, and the
+robot's silence, two seconds by default, only caps a turn the companion judges
+unfinished. `--silence` overrides either default. Each recording is bounded at
 60 seconds; remaining speech continues into the next turn while the microphone
 stays open.
 
@@ -185,13 +193,15 @@ reads the microphone board's DSP controls before enabling capture through
 speaker playback. The XVF3800 hardware echo canceller removes the speaker's
 reference from the processed microphone channels. This permits simultaneous
 speaking and listening, although room acoustics and residual echo still affect
-recognition. Unknown or unqualified audio routes pause input during actual
+recognition. Words heard while Reachy's own line is audible are dropped when every
+one of them is in that line, since that is the line's echo. While Muse works, a
+one-word utterance other than yes, no, stop or cancel is not sent as a request. Unknown or unqualified audio routes pause input during actual
 playback and its echo tail; they continue listening during recognition and
 backend work. The adapter does not change the DSP settings.
 On the verified duplex route, sustained user speech holds new TTS and pauses
 speech already playing. Reachy shows its listening pose, keeps transcribing
-follow-ups, and resumes the retained audio after the configured silence interval
-(two seconds by default). Playback uses 40 ms chunks and at most 80 ms of software
+follow-ups, and resumes the retained audio after the configured silence interval.
+Playback uses 40 ms chunks and at most 80 ms of software
 queue lead; device buffering and voice detection add some interruption latency.
 Pausing retains unsent samples instead of flushing or restarting the microphone
 pipeline. Only the current sentence and one lookahead sentence prepare audio,
@@ -209,8 +219,9 @@ fewer. The acknowledgment is prepared when the request is sent, but it starts
 only if Muse has sent no reply text within one second (`ACK_GRACE_S`), so a
 fast answer is never delayed behind it. An acknowledgment already playing when
 the answer arrives finishes its words; nothing else queued plays before the
-answer. A companion that returns no acknowledgment means silence; only a late,
-failed, or ungrounded one falls back to Reachy's own phrase. The adapter
+answer. A companion that returns no acknowledgment means silence, and so does one that
+misses its 0.9-second deadline, because a busy companion would voice a fallback
+late too. Only a failed or ungrounded one falls back to Reachy's own phrase. The adapter
 selects the on-robot phrases locally without an additional model request.
 Startup caches their audio. Empty
 recognition does not send a message to Muse. A timed wake opens question capture
@@ -240,6 +251,16 @@ Logs report recognition, Muse's first assistant event, first text, completed
 reply messages, and speaker startup separately. Use those timestamps to
 distinguish Muse generation from recognition and synthesis. A later message
 may wait behind earlier speech even after its text has arrived.
+Each turn also logs one `Reachy turn timeline` line with the seconds from its
+first stage to each later one: wake, speech end, endpoint, transcript, dispatch,
+Muse's acceptance, acknowledgement audio, first status, first text, reply done,
+narration done and first answer audio, plus whether the robot's silence forced
+the endpoint. `tools/turn_timeline.py` turns the journal into a table:
+
+```bash
+ssh pollen@reachy-mini.local 'journalctl -u muse-reachy --since "-2h" --no-pager -o cat' \
+  | python3 tools/turn_timeline.py --steps
+```
 
 ## Spoken progress for long requests
 
@@ -546,7 +567,7 @@ muse-reachy run --mode on-robot --stt-backend sherpa-streaming \
 
 The model stays in a child process. Only audio admitted after wake authorization
 and speech detection enters recognition. Partial text stays in RAM; native
-endpoint detection is disabled. Reachy's two-second silence
+endpoint detection is disabled. Reachy's end-of-turn silence
 boundary finalizes the transcript, then the request can be submitted. An earlier
 active Muse request still holds later requests in order. Playback does not hold
 the request queue. Missing audio or a recognition overflow invalidates the
@@ -611,12 +632,131 @@ companion curve too. Other media backends and SDKs with their own speaker
 correction retain their own audio path. The voice remains Piper Lessac medium;
 synthesis of Lessac high was too slow on the tested Pi.
 
+## Morning briefing
+
+Reachy can greet you with a spoken briefing the first time you walk into the
+room each morning. Add `--morning-briefing` to the `muse-reachy run` command:
+
+```bash
+muse-reachy run --mode companion --morning-briefing 04:50-06:00 ...
+```
+
+The window uses the robot's local clock. It cannot cross midnight. During the
+window, Reachy watches the room with its camera. At the window start it also
+asks Muse for the briefing, so the briefing is usually ready before you arrive.
+Reachy says nothing and shows no thinking pose while it waits.
+
+When a person walks in, Reachy wakes up if it is asleep and says "Good morning!"
+with a greeting motion. It then speaks the whole briefing: a good-morning wish,
+one piece of advice for focus, the latest market news and the latest technology
+news. If the briefing is not ready yet, Reachy says so and adds a short line
+about every 15 seconds until Muse answers. A briefing older than 40 minutes is
+fetched again once.
+
+### How Reachy notices an arrival
+
+Reachy looks for a person, not a face, so it notices you from the side or from
+behind. It reads three camera frames a second, and only while its head is
+still: idle or asleep, with no gesture or clip playing. A cheap motion check
+compares each small grayscale frame with the recent scene. When something
+moves, or a light switches on, a person detector (YOLOX-nano, Apache-2.0) runs
+on the frame twice a second for 3 seconds. An arrival needs two person
+detections within 2 seconds, each on a part of the frame that moved. A light
+switching on starts the detector but never counts as an arrival by itself.
+
+This rules out a photo or poster of a person, because it does not move, and a
+single misdetection. A person already in view when the window opens counts once
+they move, for example when they get up. A person on a moving TV picture can
+still count. Point the camera away from a TV with the watch flags.
+
+Reachy sees only where its head points. `--morning-watch-yaw` and
+`--morning-watch-pitch` turn the head toward the door over 4 seconds at the
+window start, also in the sleep pose, and turn it back after the briefing or at
+the window end. Without them, Reachy watches from its resting pose. In the sleep
+pose the head is bowed, so set a watch pose if Reachy sleeps at night. Idle
+breathing pauses while Reachy watches, because the camera must stay still.
+
+The briefing behaves like any other answer. "Stop talking" ends it, speech
+pauses it, and "go to sleep" stops it and puts Reachy to sleep. After it ends,
+you can ask a follow-up question without the wake phrase for the usual
+`--wake-timeout`. The briefing goes to the same Muse chat as your questions,
+usually Reachy's side chat, so "tell me more about that chip news" has its
+context.
+
+Reachy briefs once a day. Once the briefing is spoken, Reachy records the day
+in `morning-briefing.json` in the state directory, so a restart does not brief
+again. If the Muse link reconnects to the same VM and chat during the window,
+Reachy keeps the held briefing and its age, reusing it when you arrive or
+replaying it after an interrupted delivery. A different VM or chat clears
+the held briefing and arrival, so Reachy fetches a new briefing and watches
+for a new arrival. If nobody arrives before
+the window ends, Reachy discards the briefing and never speaks it.
+
+| Flag | Effect |
+| --- | --- |
+| `--morning-briefing HH:MM-HH:MM` | Turns the briefing on for this local-time window. Off by default. |
+| `--morning-days DAYS` | `daily` (default), a range such as `mon-fri`, or a list such as `mon,wed,sat`. |
+| `--morning-request FILE` | Replaces the request sent to Muse with the text of `FILE`. `{when}` in the text becomes the local day and time. |
+| `--morning-watch-yaw DEG` | Turns the head toward the door while watching. Positive turns left. |
+| `--morning-watch-pitch DEG` | Tilts the head while watching. Positive looks down. |
+
+Without a watch flag, Reachy watches from its resting pose. The briefing needs
+motion, so `--no-motion` is refused. It needs `--mode on-robot` or
+`--mode companion`; `--mode muse-voice` is refused.
+
+### Privacy
+
+Camera frames stay in memory on Reachy. They are not saved and not sent to Muse
+or to the companion. Any person who walks in triggers the briefing. Reachy does
+not recognize faces or identify people. Muse receives only the briefing request,
+which carries nothing from the camera. Logs record the arrival time and how long
+the briefing took. They never contain the briefing text, the request or an
+image.
+
+### Test outside the window
+
+Start Reachy with a window that opens in two minutes:
+
+```bash
+muse-reachy run ... --morning-briefing "$(date -d '+2 min' +%H:%M)-$(date -d '+20 min' +%H:%M)"
+```
+
+Walk in after the window opens. The log shows
+`Reachy morning briefing: arrival detected at HH:MM` and then
+`Reachy morning briefing: spoke briefing (N s)`. To test again on the same day,
+stop Reachy and delete `morning-briefing.json` from the state directory.
+
 ## Expressivity
 
-[Reachy's SDK](https://huggingface.co/docs/reachy_mini/en/SDK/quickstart) supplies
-speech wobbling that adds audio-driven head offsets while the primary pose
-continues. The controller uses it during spoken replies. One motion thread
-owns the primary head, body, and antenna targets.
+One motion thread owns the primary head, body, and antenna targets. Every pose
+it writes passes through the `POSE_LIMITS` clamp in `reachy_muse.contract.commands`.
+
+While Reachy speaks, its head sways with the loudness of its own voice. The
+motion thread reads the audio that `play_audio` hands to the speaker. It delays
+the sway by 60 ms to match the SDK's speaker pipeline and adds it to every pose,
+nods and shakes included. When `clear_audio` flushes a reply, for example
+because you started talking, the sway dies out within 1.5 seconds. The sway is
+reachy-animation's `speech.py`, vendored as `src/reachy_muse/motion/speech_sway.py`.
+To use the SDK's speech wobbler instead, start `muse-reachy` with
+`REACHY_MUSE_SWAY=sdk`. The SDK wobbler runs on the daemon during spoken answers
+and pauses during nods and shakes.
+
+While Reachy is idle or listening, it breathes. The head rises 5 mm and falls
+every 10 seconds and tips up one degree as it rises. The antennas sway 15
+degrees apart and back every 2 seconds. Breathing fades out over 0.4 seconds when
+Reachy starts thinking or speaking, or plays a nod or shake, and fades back in
+afterwards. Breathing and sway stop for `reachy.move` and the built-in
+`reachy.expression` names, so a commanded pose is exact, and ease back in over
+0.4 seconds afterwards. The amplitudes and periods come from reachy-animation's
+idle motion; the pitch is our addition. To keep the head and antennas still
+instead, start `muse-reachy` with `REACHY_MUSE_BREATHING=0`.
+
+After "go to sleep", Reachy glides into its sleep pose: head bowed 15 degrees and
+lowered 10 mm, antennas folded to 80 degrees. Breathing, sway, and face tracking
+stop, and only the wake phrase is heard. "Hey Muse" wakes it: the head lifts and
+the antennas unfold over one second, eased at both ends, and then breathing fades
+back in. "Wake up" takes the same path. Pollen's `wake-mini-up` clip is not used;
+it lasts 15.7 seconds and turns the body 62 degrees.
 Thinking is led by the antennas. Each 3.6-second beat has a smooth 0.45-second
 attack, 1.2 seconds of lively movement, a 0.6-second release, and a 1.35-second
 pause. The antennas oscillate at 1.6 Hz with up to 30-degree amplitude around
@@ -630,9 +770,8 @@ for more than 90 percent of a long thinking sequence; it does not sway or bob.
 The same rhythm continues under spoken acknowledgments. At the first audio of
 a progress update, a 1.4-second playful antenna flourish briefly takes over,
 then the normal score resumes. It does not restart the head-glance cadence or
-add a head gesture. SDK audio wobbling is disabled during thinking, so these
-phrases cannot add extra head motion.
-The motion writer enables it only for spoken answers.
+add a head gesture. Speech sway is off during thinking, so these phrases cannot
+add extra head motion. Sway shows only during spoken answers.
 While speaking, Muse's selected emotion rises, holds briefly, and settles through
 head lift, tilt, and antenna movement. Face following preserves eye contact while
 these gestures play. A nod or shake begins with the spoken chunk and holds the
@@ -643,21 +782,88 @@ head-angle limits still apply near the edges of the tracking range.
 A reply without an emotion marker uses a neutral speaking pose. Motion smoothing
 uses elapsed time so changes in the update rate do not slow the transitions.
 
+Three expressions also have a recorded clip from Pollen's emotions library,
+`pollen-robotics/reachy-mini-emotions-library`. When a spoken line starts with
+one of them, the clip crossfades in over the static pose at 0.6 intensity and
+fades back out 0.4 seconds after it ends. Each is the shortest, calmest clip
+that fits:
+
+| Expression | Clip | Length | Peak head speed at full intensity |
+| --- | --- | --- | --- |
+| happy | `success1` | 2.26 s | 47 degrees per second |
+| surprised | `surprised1` | 2.48 s | 51 degrees per second |
+| curious | `inquiring2` | 2.58 s | 84 degrees per second |
+
+The lengths and speeds were measured on the library at revision `873ae49`.
+The other expressions keep their static pose. No clip of 2.5 seconds or less
+fits sad: `sad1`, `sad2`, and `downcast1` last 5.9 to 9 seconds. Nod and shake
+keep their 1.6-second gestures, because `yes1`, `understanding2`, and `no1`
+reach 144 to 196 degrees per second.
+
+Each spoken line gets one chance at its start. A line that starts while a clip
+still plays keeps the static pose. The clip fades out as soon as Reachy stops
+speaking, and a command waits for that fade before it moves the head. The
+recorded clips sit about 8 mm back and 6 to 9 mm up from Reachy's center, and
+some turn the body up to 5 degrees, so the head shifts slightly while one plays.
+The controller loads the library in the background at startup. Until it loads,
+or when it cannot load, for example offline, every expression keeps its static
+pose. To use only the static poses, start `muse-reachy` with
+`REACHY_MUSE_EXPRESSION_CLIPS=0`.
+
+### Generated motion from the companion
+
+In companion mode, a companion started with `reachy-companion serve --motion`
+also generates full-body motion for Reachy's longer moments. The robot asks for
+it with the protocol's `animate` op, and only when `welcome.ops` grants that op.
+With an older companion, or one started without `--motion`, Reachy keeps the
+fixed expressions described above, unchanged.
+
+| Moment | When it plays | Ends |
+| --- | --- | --- |
+| Greeting | "Hey Muse" alone, waking from sleep, and "wake up", after the wake lift | After about 2.5 s, or when the state changes |
+| Thinking | From the moment a request goes to Muse, looping while Muse works | When the answer starts |
+| Celebration | When speech ends, after a reply marked happy or surprised | After about 2.5 s, or when the state changes |
+| Apology | When speech ends, after a reply marked sad or with a shake | After about 2.5 s, or when the state changes |
+
+Generating one motion takes about a second on the Mac, so the robot asks for one
+of each when it connects and asks for the next one each time it uses one. A
+moment whose motion is not ready waits for it: a greeting at most 3 s, thinking
+at most 12 s, and a closing at most 1 s after speech ends. Then it is skipped.
+The intents come from a fixed table in `src/reachy_muse/motion/moments.py`; the
+user's words are never sent for motion.
+
+Generated motion plays through the same crossfade as recorded clips: it fades in
+over 0.4 seconds from the resting pose and back out over 0.4 seconds. Breathing,
+the thinking antenna score and face tracking yield to it and come back after
+it. Every frame is clamped to the `reachy.move` limits on the robot, whatever the
+companion sent, and an antenna that `--antenna-mode` leaves inactive stays where
+it is. Talking over Reachy, "never mind", "stop talking", "stop listening" and
+"go to sleep" fade it out at once, as does any `reachy.move` or
+`reachy.expression` command, which waits for the fade. With
+`REACHY_MUSE_BREATHING=0`, Reachy returns to a still pose when the motion ends.
+
+To measure what these layers cost on the robot's CPU, run
+`~/muse-reachy-venv/bin/python bench/motion_tick.py`. It times one motion-loop
+tick on the old and the layered path without moving a motor.
+
 The expressive playbook gives each conversational state a recognizable purpose:
 
 | Moment | Expression | Meaning |
 | --- | --- | --- |
 | "Hey Muse" | One warm head lift, tilt, and antenna wiggle | "I'm here." |
-| Listening | Attentive pose with still antennas | "You have my attention." |
+| Listening | Attentive pose with slowly breathing antennas | "You have my attention." |
 | Thinking | Quick antenna bursts with short pauses; rare small head glances | "I'm working on it." |
 | Long-request progress | A brief antenna flourish at audio onset, then the thinking score | Waiting for this answer, or a confirmed current step. |
 | Speaking | Muse's emotion for each chunk, with speech-driven head movement | The motion follows the answer's tone. |
 | Spoken nod or shake | One deliberate gesture starting with the spoken chunk | A clear acknowledgment. |
-| Quiet waiting | Resting antennas and subtle idle breathing | Ready for another wake phrase. |
+| Quiet waiting | Slow breathing of the head and antennas | Ready for another wake phrase. |
 | Error | Gentle lowered pose | A problem needs attention. |
 
 Long waits repeat the same calm score without becoming more frantic or implying
 that an answer is almost ready. A new spoken answer takes over immediately.
+With a companion that generates motion, the greeting, thinking and the end of a
+happy or sad reply also get the generated motion described in
+[Generated motion from the companion](#generated-motion-from-the-companion).
 Partial antenna mode applies this score to the working antenna and keeps the
 other target at its measured startup position.
 
@@ -665,7 +871,7 @@ The device registers two commands:
 
 | Command | Behavior |
 | --- | --- |
-| `reachy.expression` | Plays neutral, happy, sad, surprised, curious, nod, shake, listening, thinking, or error. An exact name from Pollen's official recorded emotions library loads that move on demand. Sound effects stay off during Muse speech. |
+| `reachy.expression` | Plays neutral, happy, sad, surprised, curious, nod, shake, listening, thinking, or error. An exact name from Pollen's official recorded emotions library loads that move on demand. The move crossfades in from the resting pose over 0.4 seconds while it plays, and back out over 0.4 seconds after it ends. Speech sway continues on top, and the result stays within the `reachy.move` limits. Sound effects stay off during Muse speech. |
 | `reachy.move` | Moves head translation, rotation, body yaw, and antennas smoothly within advertised limits. Invalid or nonfinite values are rejected. |
 
 Try asking Muse, "Give me a happy nod when you finish answering."

@@ -63,7 +63,7 @@ def render_all(out: Path, voices: Sequence[str], sentences: Sequence[Dict], loud
     for voice in voices:
         for index, sentence in enumerate(sentences, 1):
             raw = render(model, sentence["text"], voice, RATE)
-            loud = loudness.apply(raw)
+            loud = loudness.apply(raw, RATE)
             name = f"{voice}/{index:02d}.wav"
             write_wav(out / name, pcm16(loud))
             files.append({"file": name, "voice": voice, "sentence": index, "seconds": round(len(raw) / RATE, 2),

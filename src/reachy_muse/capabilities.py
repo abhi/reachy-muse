@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, AsyncIterator, Optional, Protocol, Tuple
+from typing import TYPE_CHECKING, AsyncIterator, Optional, Protocol, Tuple, Union
 
 from reachy_muse.contract.expressions import Expression
+from reachy_muse.contract.intent import Intent
 from reachy_muse.contract.replies import ReplyStyle
+from reachy_muse.device_command import Commands
 
 if TYPE_CHECKING:
     from typing import Literal
@@ -58,6 +60,28 @@ class SpokenLine:
     muse_message_id: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class Heard:
+    text: str
+    previous: str = ""
+    recently_said: Tuple[str, ...] = ()
+    may_chat: bool = False
+
+
+@dataclass(frozen=True)
+class LocalReply:
+    lines: Tuple[SpokenLine, ...]
+
+
+@dataclass(frozen=True)
+class Hold:
+    intent: Intent
+    line: Optional[SpokenLine]
+
+
+Opener = Union[LocalReply, Hold]
+
+
 class EndedTurn(Protocol):
     """One user turn whose end the hearing decided; its transcript may still be on the way."""
 
@@ -86,6 +110,7 @@ class HearingTurn(Protocol):
 
     active: bool                   # inside a user turn that has not ended yet
     speech_active: bool
+    quiet_s: float                 # seconds since the robot's voice detector last heard speech
     partial: Optional[Partial]     # the open utterance's transcript so far; never sent to Muse
 
     def feed(self, samples: np.ndarray) -> None: ...
@@ -120,14 +145,28 @@ class Voice(Protocol):
 
 
 class Narrator(Protocol):
-    """Restates the request, relays public status and condenses the reply; it never adds facts."""
-
-    async def acknowledge(self, request: str) -> Optional[SpokenLine]: ...
-    def progress(self, request: str, started: float) -> ProgressPlan: ...
+    async def acknowledge(self, heard: Heard) -> Opener: ...
+    def progress(self, request: str, started: float, intent: Intent = Intent.QUESTION) -> ProgressPlan: ...
     async def say_progress(self, request: str, status: str,
                            already_said: Tuple[str, ...]) -> Optional[SpokenLine]: ...
     async def lines(self, request: str, reply: str, style: ReplyStyle, *,
                     message_id: Optional[str] = None) -> Tuple[SpokenLine, ...]: ...
+
+
+@dataclass(frozen=True)
+class Motion:
+    """Generated poses at ``fps``: rows of nine values in the order and units of POSE_LIMITS' axes."""
+
+    fps: int
+    frames: Tuple[Tuple[float, ...], ...]
+
+
+class MotionSource(Protocol):
+    """Generates motion for an intent; None means no motion this time."""
+
+    @property
+    def available(self) -> bool: ...
+    async def generate(self, intent: str, duration_s: float) -> Optional[Motion]: ...
 
 
 class CapabilityUnavailable(Exception):
@@ -146,6 +185,10 @@ class LinkHealth(Protocol):
     def take_outage(self) -> bool: ...   # True once for each outage worth announcing
 
 
+# What a spoken line must not contain: markup, links, list markers and emoji.
+MARKUP = re.compile(r"[*#`_~|<>\[\]{}]|https?://|www\.|^\s*(?:[-•]|\d+[.)])\s")
+EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF]")
+
 COMPANION_NOTICE = "My companion computer isn't answering, so I'll use my own voice for now."
 
 
@@ -157,6 +200,8 @@ class Backends:
     local_style: ReplyStyle        # the style of this mode's on-robot parts
     progress_voice: Optional[Voice] = None
     companion: Optional[LinkHealth] = None
+    commands: Commands = field(default_factory=Commands)
+    motion: Optional[MotionSource] = None
 
     def reply_style(self) -> ReplyStyle:
         """The style for the next request; read once per turn, at its boundary."""
@@ -197,6 +242,8 @@ was were be been being am do does did have has had can could will would shall sh
 lets try check ask take bring catch call go get make keep look wear grab remember note expect plan head
 see find tell give use wait meet start stop turn maybe perhaps sounds looks seems unfortunately actually
 currently first next last
+ooh oh aw aww mm mmm hmm haha ha wow yay ugh whoa ah aha nice fair cool totally absolutely
+glad happy need want sweet anytime same yeah yep mhm oof interesting love lucky got hang huh
 """.split())
 
 

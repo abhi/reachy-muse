@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -24,7 +26,23 @@ import pytest
 np = pytest.importorskip("numpy")
 
 import reachy_muse.hardware
+from reachy_muse.arrival import WatchPose
 from reachy_muse.hardware import EMOTIONS_DATASET, ReachyController, ReachyHardwareError
+from reachy_muse.motion import MotionStyle
+
+SDK_SWAY = MotionStyle(sway="sdk")
+
+
+class OfflineLibrary:
+    def __init__(self, dataset):
+        raise OSError("huggingface.co is unreachable")
+
+
+@pytest.fixture(autouse=True)
+def offline_emotion_library(monkeypatch):
+    """Every controller here starts on a robot whose emotion library cannot load."""
+    monkeypatch.setitem(sys.modules, "reachy_mini.motion.recorded_move",
+                        SimpleNamespace(RecordedMoves=OfflineLibrary))
 
 
 def pose_factory(x=0, y=0, z=0, roll=0, pitch=0, yaw=0, degrees=True, mm=True):
@@ -138,15 +156,29 @@ class FakeRobot:
         self.closed = True
 
 
-@pytest.fixture
-def hardware():
-    robot = FakeRobot()
+def start_controller(robot, **options):
     controller = ReachyController(
         robot_factory=lambda **kwargs: robot,
         pose_factory=pose_factory,
         pose_interpolator=lambda first, last, t: first * (1 - t) + last * t,
+        **options,
     )
     controller.start()
+    return controller
+
+
+@pytest.fixture
+def hardware():
+    robot = FakeRobot()
+    controller = start_controller(robot)
+    yield controller, robot
+    controller.close()
+
+
+@pytest.fixture
+def sdk_sway_hardware():
+    robot = FakeRobot()
+    controller = start_controller(robot, style=SDK_SWAY)
     yield controller, robot
     controller.close()
 
@@ -461,7 +493,7 @@ def test_gesture_keeps_face_tracking_audio_and_a_single_writer(
 
     controller = ReachyController(robot_factory=lambda **kwargs: robot, pose_factory=pose_factory,
         pose_interpolator=lambda a, b, t: a * (1 - t) + b * t,
-        face_follow_model="public-test-model", face_follower_factory=Follower)
+        face_follow_model="public-test-model", face_follower_factory=Follower, style=SDK_SWAY)
     try:
         controller.start()
         controller.set_state("listening")
@@ -653,8 +685,8 @@ def test_face_follow_shares_motor_writer_and_yields_to_explicit_commands():
     assert events == ["camera-start", "camera-close"]
 
 
-def test_audio_head_wobble_runs_only_during_answers_and_keeps_one_writer(hardware):
-    controller, robot = hardware
+def test_audio_head_wobble_runs_only_during_answers_and_keeps_one_writer(sdk_sway_hardware):
+    controller, robot = sdk_sway_hardware
 
     def wait_for_wobbling(expected):
         deadline = time.monotonic() + 1
@@ -690,7 +722,7 @@ def test_unavailable_wobble_control_keeps_primary_motion_and_audio_working():
     robot = Robot()
     controller = ReachyController(
         robot_factory=lambda **kwargs: robot, pose_factory=pose_factory,
-        pose_interpolator=lambda first, last, t: first * (1 - t) + last * t,
+        pose_interpolator=lambda first, last, t: first * (1 - t) + last * t, style=SDK_SWAY,
     )
     try:
         controller.start()
@@ -704,8 +736,8 @@ def test_unavailable_wobble_control_keeps_primary_motion_and_audio_working():
     assert robot.closed and robot.events[-2:] == ["sleep", "disable"]
 
 
-def test_partial_wobble_start_is_stopped_before_falling_back(hardware, monkeypatch):
-    controller, robot = hardware
+def test_partial_wobble_start_is_stopped_before_falling_back(sdk_sway_hardware, monkeypatch):
+    controller, robot = sdk_sway_hardware
     enable = robot.enable_wobbling
 
     def interrupted_start():
@@ -726,9 +758,9 @@ def test_partial_wobble_start_is_stopped_before_falling_back(hardware, monkeypat
 
 
 @pytest.mark.parametrize("stop_during_shutdown", [False, True])
-def test_failed_wobble_stop_reports_failure_and_still_parks_and_closes_media(hardware, monkeypatch,
+def test_failed_wobble_stop_reports_failure_and_still_parks_and_closes_media(sdk_sway_hardware, monkeypatch,
                                                                           stop_during_shutdown):
-    controller, robot = hardware
+    controller, robot = sdk_sway_hardware
     controller.set_state("speaking")
     deadline = time.monotonic() + 1
     while not robot.wobbling:
@@ -885,17 +917,16 @@ def test_timed_out_command_stops_before_target(hardware):
     assert max(frame[1][0, 3] for frame in robot.frames) < 0.001
 
 
-def test_builtin_expression_never_downloads_a_dataset(hardware):
+def test_builtin_expression_works_without_the_emotion_library(hardware):
     controller, robot = hardware
-    controller._moves_factory = lambda dataset: pytest.fail("dataset loaded for builtin")
     result = controller.run_command("reachy.expression", {"name": "happy", "duration": 0.2})
     assert result["ok"] is True
     assert result["payload"]["source"] == "builtin"
     assert max(frame[1][2, 3] for frame in robot.frames) >= 0.004
 
 
-def test_exact_recorded_expression_loads_official_library_and_bounds_the_motion(hardware):
-    controller, robot = hardware
+def test_exact_recorded_expression_loads_official_library_and_bounds_the_motion():
+    robot = FakeRobot()
     datasets = []
 
     class Move:
@@ -915,9 +946,11 @@ def test_exact_recorded_expression_loads_official_library_and_bounds_the_motion(
             assert name == "happy1"
             return Move()
 
-    controller._moves_factory = Moves
-    assert datasets == []
-    result = controller.run_command("reachy.expression", {"name": "happy1", "intensity": 1})
+    controller = start_controller(robot, moves_factory=Moves)
+    try:
+        result = controller.run_command("reachy.expression", {"name": "happy1", "intensity": 1})
+    finally:
+        controller.close()
     assert result["ok"] is True
     assert result["payload"]["source"] == "recorded"
     assert datasets == [EMOTIONS_DATASET]
@@ -989,15 +1022,15 @@ def test_close_keeps_motors_that_were_already_enabled():
     assert robot.closed
 
 
-def test_slow_expression_download_can_time_out_and_does_not_block_parking(hardware):
-    controller, robot = hardware
+def test_slow_expression_download_can_time_out_and_does_not_block_parking():
+    robot = FakeRobot()
     release = threading.Event()
 
     def slow_library(dataset):
         release.wait(3)
         return SimpleNamespace(list_moves=lambda: ["happy1"])
 
-    controller._moves_factory = slow_library
+    controller = start_controller(robot, moves_factory=slow_library)
     try:
         result = controller.run_command("reachy.expression", {"name": "happy1"}, timeout_ms=50)
         assert result == {"ok": False, "error": "Reachy Mini command timed out"}
@@ -1011,3 +1044,729 @@ def test_slow_expression_download_can_time_out_and_does_not_block_parking(hardwa
         assert len(robot.frames) == frame_count
     finally:
         release.set()
+
+
+def loud_speech(seconds: float) -> np.ndarray:
+    t = np.arange(int(seconds * 16000)) / 16000
+    return (0.3 * np.sin(2 * np.pi * 220 * t) * (0.6 + 0.4 * np.sin(2 * np.pi * 4 * t))).astype(np.float32)
+
+
+def frames_between(robot, start: float, end: float) -> list:
+    return [frame for frame in robot.frames if start <= frame[0] <= end]
+
+
+def head_yaws(controller, frames) -> list[float]:
+    return [controller._pose_parameters(frame[1])["yaw"] for frame in frames]
+
+
+def test_speech_sway_follows_the_played_audio_and_settles_after_a_flush(hardware):
+    controller, robot = hardware
+    controller.set_state("speaking")
+    time.sleep(.5)
+    silent = time.monotonic()
+    time.sleep(.3)
+    controller.set_state("thinking")
+    time.sleep(.5)
+    thinking = time.monotonic()
+    controller.play_audio(loud_speech(.6))
+    time.sleep(.8)
+    controller.set_state("speaking")
+    time.sleep(.5)
+    played = time.monotonic()
+    for chunk in np.array_split(loud_speech(3.0), 30):
+        controller.play_audio(chunk)
+    time.sleep(1.0)
+    flushed = time.monotonic()
+    controller.clear_audio()
+    time.sleep(1.8)
+    assert np.ptp(head_yaws(controller, frames_between(robot, silent, silent + .3))) < .01
+    assert np.ptp(head_yaws(controller, frames_between(robot, thinking, thinking + .8))) < .01
+    assert np.ptp(head_yaws(controller, frames_between(robot, played + .2, flushed))) > 5
+    assert np.ptp(head_yaws(controller, frames_between(robot, flushed + 1.5, flushed + 1.8))) < .05
+    assert robot.wobble_events == [False]
+    assert len(robot.writers) == 1
+
+
+def test_layered_motion_is_clamped_to_the_pose_limits_before_it_reaches_the_motors(hardware):
+    controller, robot = hardware
+
+    class Overshoot:
+        def breathing_offset(self, now, active):
+            return np.zeros(9)
+
+        def sway_offset(self, now, active):
+            return np.array([40, 40, 40, 40, 40, 60, 120, 120, 60], dtype=float)
+
+    controller._layers = Overshoot()
+    time.sleep(.2)
+    swapped = time.monotonic() + .05
+    time.sleep(.2)
+    frames = frames_between(robot, swapped, swapped + .15)
+    assert len(frames) >= 4
+    for _, head, antennas, body_yaw in frames:
+        assert controller._pose_parameters(head) == pytest.approx(
+            {"x": 15, "y": 15, "z": 20, "roll": 20, "pitch": 20, "yaw": 35})
+        np.testing.assert_allclose(np.degrees(antennas), [90, 90])
+        assert math.degrees(body_yaw) == pytest.approx(35)
+
+
+def antenna_spread(frames) -> float:
+    return float(np.ptp([math.degrees(frame[2][0]) for frame in frames]))
+
+
+@pytest.mark.parametrize("breathing, idle_spread", [(True, (25, 31)), (False, (0, .01))])
+def test_idle_breathing_sways_the_antennas_and_stops_while_speaking(breathing, idle_spread):
+    robot = FakeRobot()
+    controller = start_controller(robot, style=MotionStyle(breathing=breathing))
+    try:
+        time.sleep(.5)
+        idle = time.monotonic()
+        time.sleep(2.0)
+        controller.set_state("speaking")
+        time.sleep(1.4)
+        speaking = time.monotonic()
+        time.sleep(.6)
+    finally:
+        controller.close()
+    assert idle_spread[0] <= antenna_spread(frames_between(robot, idle, idle + 2.0)) <= idle_spread[1]
+    assert antenna_spread(frames_between(robot, speaking, speaking + .6)) < .1
+
+
+class TiltedMove:
+    """A recorded move that holds a 16-degree roll for one second."""
+
+    duration = 1.0
+
+    def evaluate(self, elapsed):
+        assert 0 <= elapsed < 1.0
+        return pose_factory(roll=16), np.deg2rad([-10, 10]), 0.0
+
+
+def move_library(requested: list | None = None):
+    """An emotion library factory whose moves are all TiltedMove; it records the names asked for."""
+    requested = [] if requested is None else requested
+
+    class Library:
+        def __init__(self, dataset):
+            assert dataset == EMOTIONS_DATASET
+
+        def list_moves(self):
+            return ["tilted1", "success1", "surprised1", "inquiring2"]
+
+        def get(self, name):
+            requested.append(name)
+            return TiltedMove()
+
+    return Library
+
+
+def roll_at(controller, robot, moment: float) -> float:
+    frame = min(robot.frames, key=lambda frame: abs(frame[0] - moment))
+    return controller._pose_parameters(frame[1])["roll"]
+
+
+def test_recorded_expression_crossfades_in_and_out_of_the_resting_pose():
+    robot = FakeRobot()
+    controller = start_controller(robot, moves_factory=move_library())
+    try:
+        controller.set_state("listening")
+        time.sleep(.5)
+        outcomes = []
+        called = time.monotonic()
+        worker = threading.Thread(target=lambda: outcomes.append(controller.run_command(
+            "reachy.expression", {"name": "tilted1", "intensity": 1})))
+        worker.start()
+        while controller._clip is None:
+            assert time.monotonic() < called + 1
+            time.sleep(.002)
+        clip_start = controller._clip.timeline.started
+        worker.join(3)
+        answered = time.monotonic()
+    finally:
+        controller.close()
+    assert outcomes[0]["ok"] is True and outcomes[0]["payload"]["duration"] == 1.0
+    assert answered - clip_start == pytest.approx(1.4, abs=.1)
+    rolls = [roll_at(controller, robot, clip_start + t) for t in (0.2, 0.4, 0.9, 1.2, 1.45)]
+    assert rolls == pytest.approx([8, 16, 16, 8, 0], abs=1.5)
+
+def rolls_between(controller, robot, start: float, end: float) -> list[float]:
+    return [controller._pose_parameters(frame[1])["roll"] for frame in frames_between(robot, start, end)]
+
+
+@pytest.mark.parametrize("expression, clip", [
+    ("happy", "success1"), ("surprised", "surprised1"), ("curious", "inquiring2"), ("sad", None),
+])
+def test_a_spoken_expression_plays_its_recorded_clip(expression, clip):
+    robot = FakeRobot()
+    requested = []
+    controller = start_controller(robot, moves_factory=move_library(requested))
+    try:
+        time.sleep(.3)
+        controller.set_state("speaking", expression=expression)
+        time.sleep(.3)
+    finally:
+        controller.close()
+    assert requested == ([clip] if clip else [])
+
+
+def test_a_spoken_clip_crossfades_over_the_static_pose_and_leaves_it_behind():
+    robot = FakeRobot()
+    controller = start_controller(robot, moves_factory=move_library())
+    try:
+        time.sleep(.3)
+        spoken = time.monotonic()
+        controller.set_state("speaking", expression="happy")
+        time.sleep(1.2)
+        controller.set_state("speaking", expression="happy")
+        time.sleep(1.2)
+        after = time.monotonic()
+        time.sleep(.3)
+    finally:
+        controller.close()
+    # TiltedMove rolls +16 degrees at intensity 0.6; the static happy pose rolls the other way.
+    assert max(rolls_between(controller, robot, spoken, spoken + 1.2)) == pytest.approx(9.6, abs=.2)
+    assert max(rolls_between(controller, robot, after, after + .3)) < -4
+
+
+@pytest.mark.parametrize("options", [{}, {"style": MotionStyle(expression_clips=False)}],
+                         ids=["offline library", "clips turned off"])
+def test_a_spoken_expression_falls_back_to_its_static_pose(options):
+    robot = FakeRobot()
+    if options:
+        options["moves_factory"] = move_library()
+    controller = start_controller(robot, **options)
+    try:
+        time.sleep(.3)
+        spoken = time.monotonic()
+        controller.set_state("speaking", expression="happy")
+        time.sleep(1.2)
+    finally:
+        controller.close()
+    rolls = rolls_between(controller, robot, spoken, spoken + 1.2)
+    assert max(rolls) < .5 and min(rolls) < -4
+
+
+def test_a_command_during_a_spoken_clip_waits_for_its_fade_out_without_a_jump():
+    robot = FakeRobot()
+    controller = start_controller(robot, moves_factory=move_library())
+    try:
+        time.sleep(.3)
+        spoken = time.monotonic()
+        controller.set_state("speaking", expression="happy")
+        time.sleep(.5)
+        called = time.monotonic()
+        result = controller.run_command("reachy.move", {"yaw": 10, "duration": .2, "hold": 0})
+        answered = time.monotonic()
+    finally:
+        controller.close()
+    assert result["ok"] is True
+    assert answered - called == pytest.approx(.6, abs=.1)
+    rolls = rolls_between(controller, robot, spoken, answered)
+    assert max(rolls) > 9
+    # The 17-degree swing from the clip back to the static pose spreads over the 0.4 s fade.
+    assert max(abs(later - earlier) for earlier, later in zip(rolls, rolls[1:])) < 3
+
+
+def test_sleeping_bows_the_head_and_folds_the_antennas_without_the_idle_bob():
+    controller = ReachyController(pose_factory=pose_factory)
+    controller._np = np
+    for now in (0, 2.1, 7.4):
+        pose, antennas = controller._state_pose("sleeping", now)
+        np.testing.assert_allclose(pose, pose_factory(pitch=15, z=-10), atol=1e-12)
+        np.testing.assert_allclose(np.rad2deg(antennas), [-80, 80])
+
+
+def test_face_tracking_turned_off_keeps_the_follower_idle_until_turned_back_on():
+    active = []
+    controller = ReachyController()
+    controller._face_follower = SimpleNamespace(set_active=active.append)
+    controller.allow_face_tracking(False)
+    controller._update_face_tracking("listening")
+    controller.allow_face_tracking(True)
+    controller._update_face_tracking("listening")
+    controller._update_face_tracking("sleeping")
+    assert active == [False, True, False]
+
+
+@pytest.fixture
+def volume_daemon():
+    import http.server
+    import json
+
+    daemon = SimpleNamespace(volume=95, sets=[], refuse=False)
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def reply(self, body):
+            data = json.dumps(body).encode()
+            self.send_response(500 if daemon.refuse else 200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            assert self.path == "/api/volume/current"
+            self.reply({"volume": daemon.volume, "platform": "linux", "device": "speaker"})
+
+        def do_POST(self):
+            assert self.path == "/api/volume/set"
+            daemon.volume = json.loads(self.rfile.read(int(self.headers["Content-Length"])))["volume"]
+            daemon.sets.append(daemon.volume)
+            self.reply({"volume": daemon.volume, "platform": "linux", "device": "speaker"})
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    daemon.port = server.server_address[1]
+    yield daemon
+    server.shutdown()
+    server.server_close()
+
+
+def test_volume_steps_through_the_daemon_and_stays_within_range(volume_daemon):
+    controller = ReachyController(host="127.0.0.1", port=volume_daemon.port)
+    assert controller.change_volume(10) == 100
+    assert controller.change_volume(-30) == 70
+    assert volume_daemon.sets == [100, 70]
+
+
+def test_a_volume_the_daemon_refuses_or_cannot_reach_is_none(volume_daemon, caplog):
+    volume_daemon.refuse = True
+    assert ReachyController(host="127.0.0.1", port=volume_daemon.port).change_volume(10) is None
+    with __import__("socket").socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        closed_port = probe.getsockname()[1]
+    assert ReachyController(host="127.0.0.1", port=closed_port).change_volume(10) is None
+    assert volume_daemon.sets == []
+    assert caplog.text.count("Reachy could not change its speaker volume") == 2
+
+
+def test_going_to_sleep_glides_into_the_bowed_pose_and_stops_breathing_and_sway():
+    robot = FakeRobot()
+    controller = start_controller(robot)
+    try:
+        controller.set_state("speaking")
+        controller.play_audio(loud_speech(.6))
+        time.sleep(.3)
+        asleep = time.monotonic()
+        controller.set_state("sleeping")
+        time.sleep(4.0)
+        settled = time.monotonic()
+        time.sleep(1.0)
+    finally:
+        controller.close()
+    gliding = frames_between(robot, asleep, settled)
+    steps = [np.abs(np.degrees(later[2] - earlier[2])).max() for earlier, later in zip(gliding, gliding[1:])]
+    # The 70-degree antenna fold eases in over many ticks instead of jumping.
+    assert max(steps) < 10 and len([step for step in steps if step > 1]) > 10
+    resting = frames_between(robot, settled, settled + 1.0)
+    assert antenna_spread(resting) < .1
+    np.testing.assert_allclose(np.degrees(resting[-1][2]), [-80, 80], atol=1)
+    assert controller._pose_parameters(resting[-1][1]) == pytest.approx(
+        {"x": 0, "y": 0, "z": -10, "roll": 0, "pitch": 15, "yaw": 0}, abs=.5)
+    assert np.ptp(head_yaws(controller, resting)) < .01
+
+
+def test_waking_lifts_the_head_and_unfolds_the_antennas_over_a_second_then_breathes_again():
+    robot = FakeRobot()
+    controller = start_controller(robot)
+    try:
+        controller.set_state("sleeping")
+        time.sleep(4.0)
+        woke = time.monotonic()
+        controller.set_state("listening", expression="happy")
+        time.sleep(3.5)
+    finally:
+        controller.close()
+
+    def antennas_at(moment):
+        frame = min(robot.frames, key=lambda frame: abs(frame[0] - moment))
+        return np.degrees(frame[2])
+
+    def pitch_at(moment):
+        frame = min(robot.frames, key=lambda frame: abs(frame[0] - moment))
+        return controller._pose_parameters(frame[1])["pitch"]
+
+    assert antennas_at(woke - .05) == pytest.approx([-80, 80], abs=1)
+    assert pitch_at(woke - .05) == pytest.approx(15, abs=.5)
+    # Eased: barely moving after 0.1 s, about halfway at 0.5 s, unfolded by 1 s.
+    assert antennas_at(woke + .1)[1] > 77
+    assert 35 < antennas_at(woke + .5)[1] < 55
+    assert antennas_at(woke + 1.0)[1] == pytest.approx(10, abs=3)
+    assert pitch_at(woke + 1.0) < 2
+    lifting = frames_between(robot, woke, woke + 1.4)
+    steps = [np.abs(np.degrees(later[2] - earlier[2])).max() for earlier, later in zip(lifting, lifting[1:])]
+    assert max(steps) < 6
+    assert antenna_spread(frames_between(robot, woke + 1.5, woke + 3.5)) > 10
+
+
+def generated(seconds, **values):
+    pose = {"x": 0, "y": 0, "z": 0, "roll": 0, "pitch": 0, "yaw": 0, "right_antenna": -10, "left_antenna": 10,
+            "body_yaw": 0, **values}
+    return np.tile([pose[axis] for axis in ("x", "y", "z", "roll", "pitch", "yaw", "right_antenna", "left_antenna",
+                                             "body_yaw")], (round(seconds * 25), 1)).astype(float)
+
+
+def pose_at(controller, robot, moment):
+    frame = min(robot.frames, key=lambda frame: abs(frame[0] - moment))
+    return {**controller._pose_parameters(frame[1]), "antennas": np.degrees(frame[2]).tolist(),
+            "body_yaw": math.degrees(frame[3])}
+
+
+def wait_for_generated(controller, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while controller._generated is None:
+        assert time.monotonic() < deadline, "the generated motion never started"
+        time.sleep(.002)
+    return controller._generated.timeline.started
+
+
+def test_generated_motion_is_clamped_then_crossfades_out_when_the_answer_starts():
+    robot = FakeRobot()
+    controller = start_controller(robot)
+    try:
+        controller.set_state("thinking")
+        time.sleep(.3)
+        controller.play_motion(generated(1.0, roll=50, x=40, body_yaw=80, right_antenna=-150, left_antenna=120),
+                               25, during={"thinking"}, loop=True, start_within_s=1.0)
+        started = wait_for_generated(controller)
+        time.sleep(1.6)
+        answered = time.monotonic()
+        controller.set_state("speaking")
+        time.sleep(.6)
+    finally:
+        controller.close()
+    held = pose_at(controller, robot, started + 1.2)
+    assert (held["roll"], held["x"], held["body_yaw"]) == pytest.approx((20, 15, 35), abs=.01)
+    assert held["antennas"] == pytest.approx([-90, 90], abs=.01)
+    assert pose_at(controller, robot, answered - .05)["roll"] == pytest.approx(20, abs=.01)
+    assert pose_at(controller, robot, answered + .5)["roll"] == pytest.approx(0, abs=.5)
+    rolls = rolls_between(controller, robot, started, answered + .5)
+    assert max(abs(later - earlier) for earlier, later in zip(rolls, rolls[1:])) < 3
+
+
+def test_generated_motion_waits_for_its_state_and_is_dropped_once_its_window_passes():
+    robot = FakeRobot()
+    controller = start_controller(robot)
+    try:
+        time.sleep(.2)
+        controller.play_motion(generated(1.0, roll=15), 25, during={"listening"}, start_within_s=.3)
+        time.sleep(.5)
+        listening = time.monotonic()
+        controller.set_state("listening")
+        time.sleep(.8)
+    finally:
+        controller.close()
+    assert controller._generated is None
+    assert max(abs(roll) for roll in rolls_between(controller, robot, listening, listening + .8)) < .5
+
+
+def test_a_greeting_after_waking_plays_once_the_wake_lift_has_finished():
+    robot = FakeRobot()
+    controller = start_controller(robot)
+    try:
+        controller.set_state("sleeping")
+        time.sleep(3.0)
+        woke = time.monotonic()
+        controller.set_state("listening", expression="happy")
+        controller.play_motion(generated(1.5, roll=15), 25, during={"listening"}, start_within_s=3.0)
+        started = wait_for_generated(controller, 3.0)
+        time.sleep(.6)
+    finally:
+        controller.close()
+    assert started - woke == pytest.approx(1.4, abs=.1)
+    assert pose_at(controller, robot, woke + .9)["antennas"][1] == pytest.approx(10, abs=4)
+    assert pose_at(controller, robot, started + .5)["roll"] == pytest.approx(15, abs=.01)
+
+
+def test_stopping_generated_motion_fades_it_out_within_the_crossfade():
+    robot = FakeRobot()
+    controller = start_controller(robot)
+    try:
+        controller.set_state("listening")
+        controller.play_motion(generated(3.0, pitch=-15), 25, during={"listening"})
+        started = wait_for_generated(controller)
+        time.sleep(.6)
+        stopped = time.monotonic()
+        controller.stop_motion()
+        time.sleep(.6)
+    finally:
+        controller.close()
+    assert pose_at(controller, robot, started + .5)["pitch"] == pytest.approx(-15, abs=.01)
+    assert abs(pose_at(controller, robot, stopped + .45)["pitch"] + 3) < 1.1
+    assert controller._generated is None
+
+
+def test_generated_motion_keeps_an_inactive_antenna_where_it_was():
+    robot = FakeRobot()
+    robot.antennas = np.deg2rad([-30, 30])
+    controller = start_controller(robot, antenna_mode="left")
+    try:
+        controller.set_state("listening")
+        controller.play_motion(generated(1.0, right_antenna=80, left_antenna=-60), 25, during={"listening"})
+        started = wait_for_generated(controller)
+        time.sleep(.6)
+    finally:
+        controller.close()
+    assert pose_at(controller, robot, started + .5)["antennas"] == pytest.approx([-30, -60], abs=.01)
+
+
+def test_with_breathing_off_reachy_is_still_when_idle_and_after_generated_motion_ends():
+    robot = FakeRobot()
+    controller = start_controller(robot, style=MotionStyle(breathing=False))
+    try:
+        time.sleep(1.5)
+        idle = time.monotonic()
+        time.sleep(1.0)
+        controller.play_motion(generated(.8, yaw=12, z=8), 25, during={"idle"})
+        started = wait_for_generated(controller)
+        time.sleep(1.4)
+        ended = time.monotonic()
+        time.sleep(1.5)
+    finally:
+        controller.close()
+    assert pose_at(controller, robot, started + .6)["yaw"] == pytest.approx(12, abs=.01)
+    for since in (idle, ended):
+        frames = frames_between(robot, since, since + 1.0)
+        assert len(frames) > 20
+        assert np.ptp([controller._pose_parameters(frame[1])["z"] for frame in frames]) < .01
+        assert np.ptp(head_yaws(controller, frames)) < .01
+        assert antenna_spread(frames) < .01
+    assert pose_at(controller, robot, ended + .5)["z"] == pytest.approx(0, abs=.01)
+
+
+def test_generated_motion_pauses_face_tracking_and_hands_it_back():
+    robot = FakeRobot()
+    robot.media.get_frame = lambda: None
+    robot.media.camera = SimpleNamespace(K=np.eye(3), D=np.zeros(5))
+    activity = []
+
+    class Follower:
+        failure = None
+
+        def __init__(self, read_frame, model_path, **options):
+            pass
+
+        def start(self):
+            pass
+
+        def set_active(self, active):
+            if activity[-1:] != [active]:
+                activity.append(active)
+
+        def target(self):
+            return None
+
+        def close(self):
+            pass
+
+    controller = start_controller(robot, face_follow_model="public-test-model", face_follower_factory=Follower)
+    try:
+        controller.set_state("listening")
+        time.sleep(.2)
+        controller.play_motion(generated(.4), 25, during={"listening"})
+        wait_for_generated(controller)
+        time.sleep(1.2)
+    finally:
+        controller.close()
+    assert activity == [True, False, True, False]
+
+
+def test_generated_motion_refuses_frames_that_are_not_poses(hardware):
+    controller, _ = hardware
+    for frames, fps in ((np.zeros((4, 8)), 25), (np.full((4, 9), np.nan), 25), (np.zeros((0, 9)), 25), (np.zeros((4, 9)), 0)):
+        with pytest.raises(ValueError, match="nine values"):
+            controller.play_motion(frames, fps, during={"idle"})
+
+
+def test_a_nod_during_generated_motion_shows_and_the_motion_comes_back_after_it():
+    robot = FakeRobot()
+    controller = start_controller(robot)
+    try:
+        controller.set_state("thinking")
+        controller.play_motion(generated(1.0, roll=15), 25, during={"thinking"}, loop=True)
+        started = wait_for_generated(controller)
+        time.sleep(.6)
+        nodded = time.monotonic()
+        controller.gesture("nod")
+        time.sleep(2.4)
+    finally:
+        controller.close()
+    assert pose_at(controller, robot, nodded - .05)["roll"] == pytest.approx(15, abs=.01)
+    during = pose_at(controller, robot, nodded + 1.05)
+    assert during["roll"] == pytest.approx(0, abs=.5) and during["pitch"] < -9
+    assert pose_at(controller, robot, nodded + 2.2)["roll"] == pytest.approx(15, abs=.01)
+    rolls = rolls_between(controller, robot, started, nodded + 2.4)
+    assert max(abs(later - earlier) for earlier, later in zip(rolls, rolls[1:])) < 3
+
+
+class FakeWatcher:
+    def __init__(self, read_frame, is_still, model_path):
+        self.read_frame, self.is_still, self.model_path = read_frame, is_still, model_path
+        self.watching = []
+        self.seen_at = None
+        self.failure = None
+        self.closed = False
+
+    def start(self):
+        pass
+
+    def set_watching(self, watching):
+        self.watching.append(watching)
+
+    def arrival(self):
+        return self.seen_at
+
+    def close(self):
+        self.closed = True
+
+
+def watched_controller(robot, **options):
+    robot.media.get_frame = lambda: None
+    watchers = []
+
+    def factory(*args):
+        watchers.append(FakeWatcher(*args))
+        return watchers[-1]
+
+    controller = start_controller(robot, arrival_model=Path("public-test-model"),
+                                  arrival_watcher_factory=factory, **options)
+    return controller, watchers
+
+
+def test_watching_turns_the_resting_head_toward_the_door_gently_without_breathing_then_returns(caplog):
+    caplog.set_level("INFO", logger="reachy_muse.hardware")
+    robot = FakeRobot()
+    controller, watchers = watched_controller(robot)
+    try:
+        time.sleep(1.0)
+        turned = time.monotonic()
+        controller.start_watching(WatchPose(30, 5))
+        controller.stop_watching()
+        controller.start_watching(WatchPose(40, 5))
+        time.sleep(5.0)
+        settled = time.monotonic()
+        time.sleep(1.0)
+        controller.stop_watching()
+        left = time.monotonic()
+        time.sleep(5.0)
+    finally:
+        controller.close()
+    assert pose_at(controller, robot, settled)["yaw"] == pytest.approx(35, abs=.3)
+    assert pose_at(controller, robot, settled)["pitch"] == pytest.approx(5, abs=.3)
+    turning = frames_between(robot, turned, settled)
+    yaws = head_yaws(controller, turning)
+    speeds = [abs(later - earlier) / (after[0] - before[0])
+              for earlier, later, before, after in zip(yaws, yaws[1:], turning, turning[1:])]
+    assert max(speeds) < 25
+    watching = frames_between(robot, settled, settled + 1.0)
+    assert np.ptp([controller._pose_parameters(frame[1])["z"] for frame in watching]) < .01
+    assert antenna_spread(watching) < .01
+    assert pose_at(controller, robot, left + 4.9)["yaw"] == pytest.approx(0, abs=.3)
+    assert pose_at(controller, robot, left + 4.9)["pitch"] == pytest.approx(0, abs=1)
+    assert watchers[0].model_path == Path("public-test-model") and watchers[0].watching == [True, False, True, False]
+    assert watchers[0].closed
+    assert caplog.text.count("Watch pose limited to yaw 35, pitch 5 degrees") == 1
+
+
+def test_sleeping_while_watching_keeps_the_bow_height_and_folded_antennas_but_faces_the_door(monkeypatch):
+    controller = ReachyController(pose_factory=pose_factory)
+    controller._np = np
+    clock = [100.0]
+    monkeypatch.setattr(reachy_muse.hardware.time, "monotonic", lambda: clock[0])
+    controller.start_watching(WatchPose(-8, 4))
+    np.testing.assert_allclose(controller._state_pose("sleeping", 3.0)[0], pose_factory(pitch=15, z=-10),
+                               atol=1e-12)
+    clock[0] += 2.0
+    np.testing.assert_allclose(controller._state_pose("sleeping", 3.0)[0], pose_factory(yaw=-4, pitch=9.5, z=-10),
+                               atol=1e-12)
+    clock[0] += 2.0
+    pose, antennas = controller._state_pose("sleeping", 3.0)
+    np.testing.assert_allclose(pose, pose_factory(yaw=-8, pitch=4, z=-10), atol=1e-12)
+    np.testing.assert_allclose(np.rad2deg(antennas), [-80, 80])
+    listening, _ = controller._state_pose("listening", 3.0)
+    np.testing.assert_allclose(listening, pose_factory(pitch=-3, z=3), atol=1e-12)
+    controller.stop_watching()
+    clock[0] += 4.0
+    np.testing.assert_allclose(controller._state_pose("sleeping", 3.0)[0], pose_factory(pitch=15, z=-10),
+                               atol=1e-12)
+
+
+def wait_until(condition, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "the camera never reached the expected stillness"
+        time.sleep(.005)
+
+
+def test_camera_is_still_only_while_resting_without_a_gesture_or_speech():
+    robot = FakeRobot()
+    controller, watchers = watched_controller(robot)
+    try:
+        controller.start_watching(None)
+        still = watchers[0].is_still
+        wait_until(still)
+        controller.gesture("nod")
+        time.sleep(.1)
+        assert not still()
+        wait_until(still)
+        controller.set_state("speaking")
+        time.sleep(.1)
+        assert not still()
+        controller.set_state("sleeping")
+        time.sleep(.3)
+        assert not still()
+        wait_until(still, timeout=6.0)
+    finally:
+        controller.close()
+    assert not still()
+
+
+def test_arrival_is_none_with_one_warning_when_there_is_no_person_model(caplog):
+    robot = FakeRobot()
+    controller = start_controller(robot)
+    try:
+        controller.start_watching(WatchPose(10, 0))
+        controller.start_watching(WatchPose(10, 0))
+        assert controller.arrival() is None
+    finally:
+        controller.close()
+    assert caplog.text.count("Arrival detection is unavailable") == 1
+
+
+def test_arrival_reports_the_watcher_time_and_a_failed_camera_is_none_with_one_warning(caplog):
+    robot = FakeRobot()
+    controller, watchers = watched_controller(robot)
+    try:
+        controller.start_watching(None)
+        watchers[0].seen_at = 1234.5
+        assert controller.arrival() == 1234.5
+        watchers[0].failure = RuntimeError("camera unavailable")
+        assert controller.arrival() is None
+        assert controller.arrival() is None
+    finally:
+        controller.close()
+    assert caplog.text.count("Arrival detection is unavailable: RuntimeError") == 1
+
+
+def test_a_failed_camera_watcher_is_replaced_the_next_time_reachy_watches(caplog):
+    robot = FakeRobot()
+    controller, watchers = watched_controller(robot)
+    try:
+        controller.start_watching(None)
+        watchers[0].failure = RuntimeError("camera unavailable")
+        assert controller.arrival() is None
+        controller.stop_watching()
+        controller.start_watching(None)
+        watchers[1].seen_at = 99.0
+        arrived = controller.arrival()
+        watchers[1].failure = OSError("camera gone")
+        assert controller.arrival() is None
+    finally:
+        controller.close()
+    assert (len(watchers), watchers[0].closed, watchers[1].watching, arrived) == (2, True, [True], 99.0)
+    assert caplog.text.count("Arrival detection is unavailable: RuntimeError") == 1
+    assert caplog.text.count("Arrival detection is unavailable: OSError") == 1

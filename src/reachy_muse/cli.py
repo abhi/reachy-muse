@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from dataclasses import dataclass
+import functools
 import getpass
 import hashlib
 import json
@@ -30,6 +31,7 @@ from reachy_muse.capabilities import Mode
 
 CHAT_STATE_FILE = "reachy-chat.json"
 COMPANION_FILE = "companion.json"
+MORNING_LEDGER_FILE = "morning-briefing.json"
 CHAT_SETUP_TIMEOUT_S = 60
 
 
@@ -326,6 +328,8 @@ def parser() -> argparse.ArgumentParser:
                               help="Piper ONNX model for speaking normal Muse answers locally")
             item.add_argument("--stream-replies", action="store_true",
                               help="Speak incoming Muse chunks with per-chunk expressions")
+            item.add_argument("--local-chat", choices=("on", "off"), default="on",
+                              help="Let Reachy answer pure social chat itself instead of sending it to Muse")
             item.add_argument("--audio-diagnostics", action="store_true",
                               help="Log playback timing counters without audio or transcript content")
             item.add_argument("--wake-model", type=Path,
@@ -338,8 +342,20 @@ def parser() -> argparse.ArgumentParser:
                               help="Idle seconds before returning to wake-word detection; excludes thinking and speech")
             item.add_argument("--session-id", help="Existing Muse chat to use instead of Reachy's dedicated side chat")
             item.add_argument("--main-chat", action="store_true", help="Use the main Muse chat instead of Reachy's dedicated side chat")
-            item.add_argument("--silence", type=float, default=2.0,
-                              help="Seconds of silence that end a spoken turn (default: 2)")
+            item.add_argument("--silence", type=float, default=None,
+                              help="Seconds of silence that end a spoken turn (default: 0.8, or 2 in "
+                                   "companion mode, where the companion ends finished turns sooner)")
+            item.add_argument("--morning-briefing", metavar="HH:MM-HH:MM",
+                              help="Each morning in this local-time window, greet the first person who walks in "
+                                   "and speak Muse's briefing; camera frames stay on the robot")
+            item.add_argument("--morning-days", help="Days with a morning briefing: daily (default), mon-fri, "
+                                                     "or a list such as mon,wed,sat")
+            item.add_argument("--morning-request", type=Path,
+                              help="File whose text replaces the briefing request; {when} becomes the local time")
+            item.add_argument("--morning-watch-yaw", type=float, metavar="DEG",
+                              help="Head yaw toward the door while watching; positive turns left")
+            item.add_argument("--morning-watch-pitch", type=float, metavar="DEG",
+                              help="Head pitch while watching; positive looks down")
         else:
             item.add_argument("--exercise", action="store_true",
                               help="Capture microphone audio, play a tone, and exercise motion")
@@ -412,18 +428,67 @@ async def _probe(saved: dict):
 def _hardware(args, *, motion=True):
     from reachy_muse.hardware import ReachyController
     from reachy_muse.local_face_tracking import default_face_model
+    from reachy_muse.motion import MotionStyle
     from reachy_muse.speaker_eq import COMPANION_SPEAKER_EQ_GAINS, SPEAKER_EQ_GAINS
     # One speaker curve per mode: the GStreamer EQ cannot switch per line without glitches.
     companion = getattr(args, "mode", None) == Mode.COMPANION.value
     face_model = None
     if getattr(args, "face_follow", False) and motion and not args.no_motion:
         face_model = args.face_follow_model or default_face_model()
+    watcher = {}
+    if getattr(args, "morning_briefing", None):
+        from reachy_muse.arrival import default_person_model
+        watcher["arrival_model"] = default_person_model()
     return ReachyController(host=args.host, port=args.port,
                            connection_mode="localhost_only" if args.host in ("localhost", "127.0.0.1")
                            else "network", media_backend=args.media_backend,
                            enable_motion=motion and not args.no_motion,
                            antenna_mode=args.antenna_mode, face_follow_model=face_model,
-                           speaker_eq_gains=COMPANION_SPEAKER_EQ_GAINS if companion else SPEAKER_EQ_GAINS)
+                           speaker_eq_gains=COMPANION_SPEAKER_EQ_GAINS if companion else SPEAKER_EQ_GAINS,
+                           style=MotionStyle.from_env(), **watcher)
+
+
+ON_ROBOT_SILENCE_S = 0.8
+# In companion mode Smart Turn ends a finished turn about 0.45 s after speech; the robot's
+# silence only caps a turn the companion judges unfinished.
+COMPANION_SILENCE_S = 2.0
+SHORT_UTTERANCE_SILENCE_S = 1.2
+
+
+def morning_routine(args):
+    from reachy_muse.arrival import WatchPose
+    from reachy_muse.contract.prompts import MORNING_BRIEFING_REQUEST
+    from reachy_muse.morning_briefing import BriefingSchedule, DayLedger, MorningRoutine
+
+    if args.morning_briefing is None:
+        if any(value is not None for value in (args.morning_days, args.morning_request,
+                                               args.morning_watch_yaw, args.morning_watch_pitch)):
+            raise ValueError("--morning-days, --morning-request and --morning-watch-* need --morning-briefing")
+        return None
+    if args.no_motion:
+        raise ValueError("--morning-briefing requires motion to be enabled")
+    if Mode(args.mode) is Mode.MUSE_VOICE:
+        raise ValueError("--morning-briefing needs --mode on-robot or companion")
+    schedule = BriefingSchedule.parse(args.morning_briefing, args.morning_days)
+    request = MORNING_BRIEFING_REQUEST
+    if args.morning_request is not None:
+        request = args.morning_request.expanduser().read_text(encoding="utf-8").strip()
+        if not request:
+            raise ValueError("--morning-request file is empty")
+    angles = (args.morning_watch_yaw, args.morning_watch_pitch)
+    if not all(angle is None or math.isfinite(angle) for angle in angles):
+        raise ValueError("--morning-watch-yaw and --morning-watch-pitch must be finite degrees")
+    pose = None if angles == (None, None) else WatchPose(*(angle or 0.0 for angle in angles))
+    logging.getLogger(__name__).info("Reachy morning briefing: on, %s", schedule)
+    return functools.partial(MorningRoutine, schedule, request,
+                             ledger=DayLedger(config.state_dir() / MORNING_LEDGER_FILE), pose=pose)
+
+
+def end_of_turn_silence(mode: Mode, given: float | None) -> float:
+    """The robot's end-of-turn silence: ``--silence`` when given, else the mode's default."""
+    if given is not None:
+        return given
+    return COMPANION_SILENCE_S if mode is Mode.COMPANION else ON_ROBOT_SILENCE_S
 
 
 async def run(args) -> int:
@@ -440,12 +505,14 @@ async def run(args) -> int:
         raise ValueError("--face-follow-model requires --face-follow")
     if args.face_follow and args.no_motion:
         raise ValueError("--face-follow requires motion to be enabled")
-    if not 0.3 <= args.silence <= 3:
+    silence_s = end_of_turn_silence(Mode(args.mode), args.silence)
+    if not 0.3 <= silence_s <= 3:
         raise ValueError("--silence must be between 0.3 and 3 seconds")
     if args.wake_backend == "vosk" and args.wake_model is None:
         raise ValueError("--wake-backend vosk requires --wake-model")
     if not math.isfinite(args.wake_timeout) or not 1 <= args.wake_timeout <= 300:
         raise ValueError("--wake-timeout must be between 1 and 300 seconds")
+    morning = morning_routine(args)
     companion = None
     if Mode(args.mode) is Mode.COMPANION:
         companion = saved_companion()
@@ -509,9 +576,12 @@ async def run(args) -> int:
                                display_name="Reachy Mini", session_id=session_id,
                                prepare_chat=dedicated_chat.prepare if dedicated_chat else None,
                                owns_chat=dedicated_chat is not None,
-                               silence_s=args.silence, backends=backends,
+                               silence_s=silence_s, short_utterance_silence_s=SHORT_UTTERANCE_SILENCE_S,
+                               backends=backends,
+                               local_chat=args.local_chat == "on",
                                audio_diagnostics=args.audio_diagnostics, wake_detector=wake_detector,
-                               wake_timeout_s=args.wake_timeout, speech_gate=speech_gate)
+                               wake_timeout_s=args.wake_timeout, speech_gate=speech_gate,
+                               morning=morning(robot) if morning is not None else None)
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, service.stop)
