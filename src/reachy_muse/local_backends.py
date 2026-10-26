@@ -209,9 +209,15 @@ class LocalVoice:
         self.speech = speech
         self.fixed_phrases = fixed_phrases
         self.phrases = {}
+        self._phrase_cache = getattr(speech, "phrase_cache", {})
 
     async def warm(self, output_rate: int) -> None:
-        for phrase in self.fixed_phrases:
+        started = time.monotonic()
+        self.phrases = self._phrase_cache.setdefault(output_rate, {})
+        missing = [phrase for phrase in self.fixed_phrases if not self.is_presynthesized(phrase)]
+        log.info("Reachy fixed speech warm-up: %d cached, %d to synthesize at %d Hz",
+                 len(self.fixed_phrases) - len(missing), len(missing), output_rate)
+        for phrase in missing:
             stream = self.speech.stream(phrase, output_rate)
             audio = []
             try:
@@ -220,6 +226,7 @@ class LocalVoice:
             finally:
                 await stream.aclose()
             self.phrases[phrase] = tuple(audio)
+        log.info("Reachy fixed speech warm-up finished in %.3fs", time.monotonic() - started)
 
     def is_presynthesized(self, text: str) -> bool:
         return bool(self.phrases.get(text))

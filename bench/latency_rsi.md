@@ -111,4 +111,25 @@ Its session is an in-memory queue and its microphone returns no samples. It cann
 PYTHONPATH=src python -m bench.latency_replay --runs 7
 ```
 
-Results and subsequent hypotheses are recorded below as they are tested.
+Experiment 1 accepted. Store the fixed recordings on `PiperSpeech`, whose lifetime already
+spans reconnects, keyed by output sample rate. Each conversation still gets a new narrator,
+route, and turn state. Only completed recordings enter the cache; cancellation preserves
+completed phrases and retries the incomplete phrase. Private replies never enter this cache.
+Warm-up now logs the cached/missing counts and elapsed time, without phrase text.
+
+| Replay metric, seven runs | Before | After |
+|---|---:|---:|
+| Reconnect to ready p50, ms | 567.643 | 0.599 |
+| Reconnect to ready p95, ms | 572.069 | 0.805 |
+| Reconnect synthesis calls | 49 | 0 |
+| Cold start to ready p50, ms | 573.062 | 557.955 |
+| Cold start synthesis calls | 49 | 49 |
+
+The small cold-start timing difference is noise, not an accepted cold-start improvement.
+The 49 phrases are 14 acknowledgements/wake cues and 35 progress phrases.
+The PCM digest is identical before and after:
+`604e5162d4d9936bd0d096bbf4c55348ad89947006ff966efd7578d2a298968f`.
+Raw results: `latency_rsi_runs/warm-before.json` and `latency_rsi_runs/warm-after.json`.
+Validation: 58 focused tests passed, including actual ready-log startup, PCM equality,
+companion failover reuse, separate voice/rate caches, and interrupted warm-up recovery.
+This cache is in memory. A process restart still performs the first synthesis.

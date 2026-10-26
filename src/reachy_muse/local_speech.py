@@ -87,6 +87,8 @@ class PiperSpeech:
         self.sample_rate = rate
         self._process = None
         self._lock = asyncio.Lock()
+        # Fixed recordings live as long as this voice, across Muse reconnects.
+        self.phrase_cache: dict[int, dict[str, tuple[np.ndarray, ...]]] = {}
 
     async def start(self) -> None:
         """Load the model once and wait until its worker is ready."""
