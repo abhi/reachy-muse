@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from bench.latency_replay import ReplaySpeech, startup
+from bench.latency_replay import OfflineSession, ReplaySpeech, SilentHardware, startup
 from reachy_muse.capabilities import Backends, Mode, SpokenLine
 from reachy_muse.contract.replies import ReplyStyle
 from reachy_muse.conversation import VoiceConversation
@@ -150,4 +150,34 @@ def test_failed_or_cancelled_startup_joins_every_warmup(failure):
         with pytest.raises(asyncio.CancelledError if failure == "cancel" else ValueError):
             await warming
         assert voice.closed.is_set() and progress.closed.is_set()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_subscribe_overlaps_warmup_and_is_closed_if_startup_stops(fail):
+    class NoCaptureHardware(SilentHardware):
+        def read_audio(self):
+            raise AssertionError("capture started before warm-up finished")
+
+    async def scenario():
+        session, voice = OfflineSession(), BlockedVoice()
+        backends = Backends(hearing=None, voice=voice, narrator=None, local_style=ReplyStyle.MARKER)
+        conversation = VoiceConversation(session, NoCaptureHardware(), backends=backends, owns_chat=True)
+        running = asyncio.create_task(conversation.run())
+        try:
+            await asyncio.wait_for(session.subscription_started.wait(), 1)
+            await asyncio.wait_for(voice.started.wait(), 1)
+            assert not running.done()
+            if fail:
+                voice.error = ValueError("synthesis failed")
+                voice.finish.set()
+            else:
+                running.cancel()
+            with pytest.raises(ValueError if fail else asyncio.CancelledError):
+                await running
+            assert session.subscription_closed.is_set()
+            assert voice.closed.is_set()
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
     asyncio.run(scenario())

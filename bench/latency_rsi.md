@@ -147,3 +147,23 @@ Raw results: `latency_rsi_runs/parallel-before.json` and `latency_rsi_runs/paral
 All 62 focused tests passed, including simultaneous start, waiting for the slower bank,
 and cancelling either bank when its sibling fails. Actual cold-start savings depend on
 CPU contention on the robot and must be measured there.
+
+Experiment 3 hypothesis: subscribing while fixed speech warms removes an unnecessary serial
+transport wait after setup. Registration and the setup challenge remain untouched. The
+installed SDK clears `chat_subscribed` when the setup iterator closes, then sets it after the
+next subscription's acknowledgement. Replay that acknowledgement with a fixed 120 ms delay.
+
+```sh
+PYTHONPATH=src python -m bench.latency_replay --runs 7 --subscription-delay-ms 120
+```
+
+Experiment 3 accepted. Start the existing subscription before warming speech; start capture
+only after warm-up and the subscription acknowledgement. Seven cold-start replays improved
+from 530.848 to 405.139 ms p50 and 634.970 to 503.582 ms p95 with the fixed 120 ms
+subscription delay. Reconnects, which already reuse the cache, remain transport-bound
+at 122.685 versus 121.740 ms p50. No extra request is made and all PCM remains identical.
+Raw results: `latency_rsi_runs/subscribe-before.json` and `latency_rsi_runs/subscribe-after.json`.
+All 64 focused tests passed. The new lifecycle tests verify subscription overlap, no capture
+during warm-up, and closing the subscription on warm-up failure or cancellation.
+The initial full-suite run also passed: 1,968 passed, two skipped, six real-model tests deselected.
+The suite is repeated after the final production changes.

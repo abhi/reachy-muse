@@ -58,16 +58,25 @@ class SilentHardware:
 
 
 class OfflineSession:
-    def __init__(self):
+    def __init__(self, subscription_delay_s=0):
         self.registered = asyncio.Event()
         self.registered.set()
         self.chat_subscribed = asyncio.Event()
+        self.subscription_started = asyncio.Event()
+        self.subscription_closed = asyncio.Event()
         self.events = asyncio.Queue()
+        self.subscription_delay_s = subscription_delay_s
 
     async def subscribe_chat(self, session_id):
-        self.chat_subscribed.set()
-        while True:
-            yield await self.events.get()
+        self.subscription_started.set()
+        try:
+            await asyncio.sleep(self.subscription_delay_s)
+            self.chat_subscribed.set()
+            while True:
+                yield await self.events.get()
+        finally:
+            self.chat_subscribed.clear()
+            self.subscription_closed.set()
 
 
 class ReadyLog(logging.Handler):
@@ -80,8 +89,8 @@ class ReadyLog(logging.Handler):
             self.ready.set()
 
 
-async def startup(speech, progress_speech):
-    session = OfflineSession()
+async def startup(speech, progress_speech, *, subscription_delay_s=0):
+    session = OfflineSession(subscription_delay_s)
     backends = backends_for(Mode.ON_ROBOT, session, speech=speech, progress_speech=progress_speech, wake=True)
     conversation = VoiceConversation(session, SilentHardware(), backends=backends, owns_chat=True)
     logger = logging.getLogger("reachy_muse.conversation")
@@ -118,7 +127,7 @@ def summary(values):
             "p95_ms": round(percentile(values, .95) * 1000, 3)}
 
 
-async def warm_replay(runs):
+async def warm_replay(runs, *, subscription_delay_s=0):
     cold, reconnect = [], []
     calls = []
     with tempfile.TemporaryDirectory(prefix="reachy-latency-") as directory:
@@ -127,14 +136,15 @@ async def warm_replay(runs):
         Path(str(model) + ".json").write_text(json.dumps({"audio": {"sample_rate": 22050}}))
         for _ in range(runs):
             speech, progress = ReplaySpeech(model), ReplaySpeech(model)
-            before, digest = await startup(speech, progress)
+            before, digest = await startup(speech, progress, subscription_delay_s=subscription_delay_s)
             cold.append(before)
             first_count = len(speech.requests) + len(progress.requests)
-            after, replay_digest = await startup(speech, progress)
+            after, replay_digest = await startup(speech, progress, subscription_delay_s=subscription_delay_s)
             reconnect.append(after)
             assert replay_digest == digest, "reconnect changed the phrase audio"
             calls.append([first_count, len(speech.requests) + len(progress.requests) - first_count])
-    return {"experiment": "startup with 10 ms per phrase and a ready local subscription",
+    return {"experiment": "startup with 10 ms per phrase",
+            "subscription_delay_ms": subscription_delay_s * 1000,
             "cold": summary(cold), "reconnect": summary(reconnect), "synthesis_calls": calls,
             "pcm_sha256": digest}
 
@@ -142,10 +152,12 @@ async def warm_replay(runs):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=7)
+    parser.add_argument("--subscription-delay-ms", type=float, default=0)
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs must be positive")
-    print(json.dumps(asyncio.run(warm_replay(args.runs)), indent=2))
+    print(json.dumps(asyncio.run(warm_replay(
+        args.runs, subscription_delay_s=args.subscription_delay_ms / 1000)), indent=2))
 
 
 if __name__ == "__main__":

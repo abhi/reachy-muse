@@ -553,21 +553,23 @@ class VoiceConversation:
 
     async def run(self) -> None:
         await self.session.registered.wait()
-        await self.warm_up()
         subscriber = asyncio.create_task(self._subscribe())
-        microphone = asyncio.create_task(self._microphone())
-        moments = asyncio.create_task(self._moments.keep_ready())
-        morning = asyncio.create_task(self._morning.run(self)) if self._morning is not None else None
-        watched = {subscriber, microphone} | ({morning} if morning is not None else set())
+        tasks = {subscriber}
         try:
+            await self.warm_up()
+            microphone = asyncio.create_task(self._microphone())
+            moments = asyncio.create_task(self._moments.keep_ready())
+            morning = asyncio.create_task(self._morning.run(self)) if self._morning is not None else None
+            watched = {subscriber, microphone} | ({morning} if morning is not None else set())
+            tasks.update(watched, {moments})
             done, _ = await asyncio.wait(watched, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 task.result()
             raise ConnectionError("Muse voice stream ended")
         finally:
-            for task in (*watched, moments):
+            for task in tasks:
                 task.cancel()
-            await asyncio.gather(*watched, moments, return_exceptions=True)
+            await asyncio.gather(*tasks, return_exceptions=True)
             await self._moments.close()
             await asyncio.to_thread(self.hardware.clear_audio)
 
