@@ -213,6 +213,8 @@ class LocalVoice:
 
     async def warm(self, output_rate: int) -> None:
         started = time.monotonic()
+        if callable(getattr(self.speech, "start", None)):
+            await self.speech.start()
         self.phrases = self._phrase_cache.setdefault(output_rate, {})
         missing = [phrase for phrase in self.fixed_phrases if not self.is_presynthesized(phrase)]
         log.info("Reachy fixed speech warm-up: %d cached, %d to synthesize at %d Hz",

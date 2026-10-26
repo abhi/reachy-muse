@@ -14,6 +14,8 @@ from reachy_muse.capabilities import Backends, Mode, SpokenLine
 from reachy_muse.contract.replies import ReplyStyle
 from reachy_muse.conversation import VoiceConversation
 from reachy_muse.local_backends import LocalVoice, backends_for
+from reachy_muse.local_speech import PiperSpeech
+from test_local_speech import worker  # noqa: F401
 
 
 @pytest.fixture
@@ -32,6 +34,35 @@ def test_reconnection_reaches_ready_with_identical_audio_and_no_new_synthesis(mo
         _, after = await startup(speech, progress)
         assert after == before
         assert (len(speech.requests), len(progress.requests)) == (14, 35)
+    asyncio.run(scenario())
+
+
+def test_cancelled_speech_restarts_worker_before_reconnect_is_ready(model, worker):
+    async def scenario():
+        speech, progress = PiperSpeech(model), PiperSpeech(model)
+        stream = None
+        try:
+            _, before = await startup(speech, progress)
+            assert len(worker[1]) == 2
+            process = speech._process
+            stream = speech.stream("Cancelled reply.", 48000)
+            await asyncio.wait_for(stream.__anext__(), 3)
+            await stream.aclose()
+            assert process.returncode == -9
+            _, after = await startup(speech, progress)
+            assert len(worker[1]) == 3
+            assert worker[1][-1].returncode is None
+            assert worker[2].read_text() == "Cancelled reply."
+            assert after == before
+            stream = speech.stream("An uncached answer.", 48000)
+            samples = [chunk async for chunk in stream]
+            assert sum(len(chunk) for chunk in samples) == 4800
+            assert worker[2].read_text() == "An uncached answer."
+            assert len(worker[1]) == 3
+        finally:
+            if stream is not None:
+                await stream.aclose()
+            await asyncio.gather(speech.close(), progress.close())
     asyncio.run(scenario())
 
 

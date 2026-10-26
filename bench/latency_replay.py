@@ -34,6 +34,9 @@ class ReplaySpeech(PiperSpeech):
         self.delay_s = delay_s
         self.requests = []
 
+    async def start(self):
+        pass
+
     async def stream(self, text, output_rate):
         async with self._lock:
             self.requests.append((text, output_rate))
