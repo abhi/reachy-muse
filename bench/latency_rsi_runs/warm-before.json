@@ -1,0 +1,44 @@
+{
+  "experiment": "startup with 10 ms per phrase and a ready local subscription",
+  "cold": {
+    "n": 7,
+    "p50_ms": 573.062,
+    "p95_ms": 635.927
+  },
+  "reconnect": {
+    "n": 7,
+    "p50_ms": 567.643,
+    "p95_ms": 572.069
+  },
+  "synthesis_calls": [
+    [
+      49,
+      49
+    ],
+    [
+      49,
+      49
+    ],
+    [
+      49,
+      49
+    ],
+    [
+      49,
+      49
+    ],
+    [
+      49,
+      49
+    ],
+    [
+      49,
+      49
+    ],
+    [
+      49,
+      49
+    ]
+  ],
+  "pcm_sha256": "604e5162d4d9936bd0d096bbf4c55348ad89947006ff966efd7578d2a298968f"
+}
