@@ -584,7 +584,16 @@ class VoiceConversation:
         finally:
             for task in warming:
                 task.cancel()
-            await asyncio.gather(group, *warming, return_exceptions=True)
+            cleanup = asyncio.gather(group, *warming, return_exceptions=True)
+            cancelled = False
+            while True:
+                try:
+                    await asyncio.shield(cleanup)
+                    break
+                except asyncio.CancelledError:
+                    cancelled = True
+            if cancelled:
+                raise asyncio.CancelledError
 
     async def _subscribe(self) -> None:
         subscription = self.session.subscribe_chat(self.session_id)

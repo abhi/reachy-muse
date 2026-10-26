@@ -10,9 +10,11 @@ np = pytest.importorskip("numpy")
 pytest.importorskip("av")
 
 from bench.latency_replay import OfflineSession, ReplaySpeech, SilentHardware, startup
+from musegadget.identity import Identity
+from musegadget.link_client import Outcome
 from reachy_muse.capabilities import Backends, Mode, SpokenLine
 from reachy_muse.contract.replies import ReplyStyle
-from reachy_muse.conversation import VoiceConversation
+from reachy_muse.conversation import ReachyService, VoiceConversation
 from reachy_muse.local_backends import LocalVoice, backends_for
 from reachy_muse.local_speech import PiperSpeech
 from test_local_speech import worker  # noqa: F401
@@ -198,7 +200,9 @@ def test_failed_or_cancelled_startup_joins_every_warmup(failure):
 
 
 @pytest.mark.parametrize("piper_voice", ["main", "progress"])
-def test_cancelled_warmup_reaps_worker_spawned_during_sibling_cleanup(model, worker, monkeypatch, piper_voice):
+@pytest.mark.parametrize("cancellations", [1, 3])
+def test_cancelled_warmup_reaps_worker_spawned_during_sibling_cleanup(model, worker, monkeypatch,
+                                                                      piper_voice, cancellations):
     async def scenario():
         spawn_started, start_spawn = asyncio.Event(), asyncio.Event()
         process_created, closing, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
@@ -236,6 +240,9 @@ def test_cancelled_warmup_reaps_worker_spawned_during_sibling_cleanup(model, wor
             warming.cancel()
             await asyncio.wait_for(closing.wait(), 3)
             assert not warming.done()
+            for _ in range(1, cancellations):
+                warming.cancel()
+                await asyncio.sleep(0)
             start_spawn.set()
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(warming, 3)
@@ -249,6 +256,79 @@ def test_cancelled_warmup_reaps_worker_spawned_during_sibling_cleanup(model, wor
             if not warming.done():
                 warming.cancel()
             await asyncio.gather(warming, return_exceptions=True)
+            await speech.close()
+            for process in worker[1]:
+                if process.returncode is None:
+                    process.kill()
+                await process.communicate()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("piper_voice", ["main", "progress"])
+@pytest.mark.parametrize("shutdown", ["stop", "link_loss"])
+def test_service_shutdown_during_failed_warmup_reaps_spawning_worker(model, worker, monkeypatch,
+                                                                     piper_voice, shutdown):
+    async def scenario():
+        process_created, release_process = asyncio.Event(), asyncio.Event()
+        stop, disconnected = asyncio.Event(), asyncio.Event()
+        original = asyncio.create_subprocess_exec
+
+        async def delayed(*args, **kwargs):
+            process = await original(*args, **kwargs)
+            process_created.set()
+            await release_process.wait()
+            return process
+
+        class SpawningVoice(LocalVoice):
+            async def warm(self, rate):
+                self.warming = asyncio.current_task()
+                await super().warm(rate)
+
+        class OfflineLink(OfflineSession):
+            async def run(self, stop_link):
+                self.stop_link = stop_link
+                if shutdown == "link_loss":
+                    await disconnected.wait()
+                    return Outcome.CLOSED
+                await stop_link.wait()
+                return Outcome.STOPPED
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", delayed)
+        speech = PiperSpeech(model)
+        piper, failing = SpawningVoice(speech), BlockedVoice()
+        failing.error = ValueError("synthesis failed")
+        voice, progress = (piper, failing) if piper_voice == "main" else (failing, piper)
+        backends = Backends(hearing=None, voice=voice, narrator=None, progress_voice=progress,
+                            local_style=ReplyStyle.MARKER)
+        session = OfflineLink()
+        service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=SilentHardware(),
+                               backends=lambda session: backends)
+        serving = asyncio.create_task(service.serve(session, {"vm_id": "vm-1"}, stop))
+
+        async def wait_for_cleanup():
+            while not piper.warming.cancelling():
+                await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        try:
+            await asyncio.wait_for(process_created.wait(), 3)
+            assert worker[1][0].returncode is None
+            failing.finish.set()
+            await asyncio.wait_for(wait_for_cleanup(), 3)
+            (stop if shutdown == "stop" else disconnected).set()
+            await asyncio.wait_for(session.stop_link.wait(), 3)
+            release_process.set()
+            outcome = await asyncio.wait_for(serving, 3)
+            assert outcome is (Outcome.STOPPED if shutdown == "stop" else Outcome.CLOSED)
+            assert worker[1][0].returncode == -9
+            assert session.subscription_closed.is_set()
+        finally:
+            release_process.set()
+            stop.set()
+            disconnected.set()
+            if not serving.done():
+                serving.cancel()
+            await asyncio.gather(serving, return_exceptions=True)
             await speech.close()
             for process in worker[1]:
                 if process.returncode is None:
