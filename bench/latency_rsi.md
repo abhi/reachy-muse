@@ -295,13 +295,16 @@ was sandbox-restricted. The repository's default selection excludes its six real
 uv run -q --no-project --python "$REACHY_PYTHON" \
   --with pytest --with pytest-timeout --with 'av>=12' --with 'webrtcvad-wheels>=2.0.14' \
   env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD/src" \
-  python -m pytest -q -p no:cacheprovider --timeout 120 .
+  python -m pytest -q -p no:cacheprovider --timeout 120
 ```
 
-Final full-suite result: **1,978 passed, two skipped, six deselected in 682.94 seconds**.
-The initial full run had 1,968 passes in 690.94 seconds. The ten added tests cover cache reuse,
-audio equality, rates, cancellation, concurrent warm-up, and subscription lifetime. A final
-focused run of those tests plus repository hygiene passed all 11 checks after staging every artifact.
+Final full-suite result at `4c8a5c0`: **1,981 passed, two skipped, six deselected in 685.73 seconds**.
+The initial full run had 1,968 passes in 690.94 seconds. The 13 added tests cover cache reuse,
+baseline PCM, rates, cancellation, concurrent warm-up, worker restart, and subscription lifetime.
+The two worker-startup cancellation cases failed before the fix with a running worker after
+warm-up returned. Both pass now. Cold and reconnect PCM are pinned to the pre-cache revision
+`06fd273`; replacing cached phrases with silence now fails five audio tests.
+A focused run of the latency and local-speech tests passed all 40 checks.
 All six rejected-turn replay commands completed with their behavior assertions intact.
 All 12 result files parse as JSON, and every warm-up replay has the same PCM digest.
 The journal hash is unchanged. `git diff --check` passes. Only `conversation.py`,
