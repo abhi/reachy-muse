@@ -50,7 +50,6 @@ BACKOFF_S = (1.0, 30.0)
 HEALTHY_S = 10.0                   # a session shorter than this is a failed attempt, not a recovery
 ENDPOINT_WAIT_S = 2.0              # how long the companion has to end a stream the robot finished
 HEAR_RESPONSE_S = 2.0              # also covers a short utterance that never gets its first partial
-PARTIAL_GAP_BYTES = 2 * 16000 * 2  # microphone audio sent with no partial back before the companion counts as deaf
 _PIN = re.compile(r"sha256:([0-9a-f]{64})")
 _FATAL = (ErrorCode.AUTH, ErrorCode.VERSION, ErrorCode.INTERNAL, ErrorCode.MODEL)
 
@@ -139,14 +138,11 @@ class _HearStream:
         self.truncated = False
         self.end_sample = 0            # where the robot's VAD ended the utterance, in samples fed to the turn
         self.deadline: Optional[float] = None
-        self.bytes_since_partial = 0
-        self.opened_at = time.monotonic()
-        self.responded = False
+        self.last_progress_at = time.monotonic()
         self._seq = 0
 
     def send(self, pcm: bytes) -> None:
         self.audio.extend(pcm)
-        self.bytes_since_partial += len(pcm)
         for offset in range(0, len(pcm), MAX_MIC_PCM_BYTES):
             self.connection.send(encode_audio(AudioKind.MIC, self.id, self._seq, pcm[offset:offset + MAX_MIC_PCM_BYTES]))
             self._seq += 1
@@ -361,6 +357,7 @@ class CompanionLink:
         if isinstance(message, (HearPartial, HearEndpoint)):
             stream = connection.hearing.get(message.stream)
             if stream is not None:
+                stream.last_progress_at = time.monotonic()
                 stream.inbox.append(message)
                 if isinstance(message, HearEndpoint):
                     del connection.hearing[message.stream]
@@ -383,7 +380,7 @@ class CompanionLink:
             self._error(connection, message)
 
     def _error(self, connection: _Connection, error: Error) -> None:
-        if error.code in _FATAL:
+        if error.code in _FATAL or (error.stream is not None and error.stream == connection.probe):
             raise ConnectionError(f"the companion failed: {error.code.value}: {error.message}")
         failure = CapabilityUnavailable(f"companion {error.code.value}: {error.message}", link_down=False)
         if error.stream is not None and error.stream in connection.hearing:
@@ -511,8 +508,8 @@ class CompanionHearingTurn:
 
     When the robot's VAD ends an utterance first, the stream closes with ``finish`` and
     the turn ends when the companion's forced endpoint arrives. A companion that sends no
-    partial for ``PARTIAL_GAP_BYTES`` of speech, or no endpoint within ``ENDPOINT_WAIT_S``
-    of ``finish``, fails the turn so that the robot finishes it.
+    partial within ``HEAR_RESPONSE_S`` of opening or the last response, or no endpoint
+    within ``ENDPOINT_WAIT_S`` of ``finish``, fails the turn so that the robot finishes it.
     """
 
     def __init__(self, link: CompanionLink, recorder):
@@ -569,8 +566,6 @@ class CompanionHearingTurn:
             messages, stream.inbox = stream.inbox, []
             for message in messages:
                 if isinstance(message, HearPartial):
-                    stream.bytes_since_partial = 0
-                    stream.responded = True
                     if stream is self._open:
                         self.partial = Partial(message.text, message.rev, stream.id)
                     continue
@@ -596,8 +591,7 @@ class CompanionHearingTurn:
         reason = None
         if stream.deadline is not None and now >= stream.deadline:
             reason = "the companion did not end the turn"
-        elif ((not stream.responded and now - stream.opened_at >= HEAR_RESPONSE_S)
-              or (stream is self._open and stream.bytes_since_partial >= PARTIAL_GAP_BYTES)):
+        elif stream.deadline is None and now - stream.last_progress_at >= HEAR_RESPONSE_S:
             reason = "the companion sent no transcript for the speech"
         if reason is not None:
             self._link.hearing_stalled(stream, reason)

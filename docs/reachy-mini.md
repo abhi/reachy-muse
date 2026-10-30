@@ -31,7 +31,7 @@ printf '%s\n' /venvs/apps_venv/lib/python3.12/site-packages \
 ~/muse-reachy-venv/bin/pip install --no-deps -e ~/reachy-muse
 ~/muse-reachy-venv/bin/pip install webrtcvad-wheels
 ~/muse-reachy-venv/bin/pip install piper-tts
-~/muse-reachy-venv/bin/pip install faster-whisper==1.2.1
+~/muse-reachy-venv/bin/pip install faster-whisper==1.2.1 av==16.1.0
 ~/muse-reachy-venv/bin/python -m piper.download_voices en_US-lessac-medium \
   --data-dir ~/.local/share/musegadget-reachy/voices
 ~/muse-reachy-venv/bin/python -c 'from huggingface_hub import snapshot_download; snapshot_download("Systran/faster-whisper-tiny.en", local_dir="/home/pollen/.local/share/musegadget-reachy/whisper-tiny.en", token=False)'
@@ -143,11 +143,13 @@ token. If the companion stops answering, Reachy says once per outage:
 "Using my own voice." It finishes the current turn with its own models,
 from the audio it already heard. A socket that stops answering pings fails
 within about two seconds, including the close handshake. Hearing also fails
-if no first partial arrives within two seconds, two seconds of audio arrive
-without another partial, or no endpoint arrives within two seconds of the
-robot closing the stream. Reachy then keeps new turns on the robot until the
-pending endpoint arrives or the companion reconnects. Speech returns to the
-companion on a turn boundary after it has been back for 10 seconds.
+if an open stream goes two seconds without a partial, or if no endpoint arrives
+within two seconds of the robot closing the stream. These deadlines measure
+elapsed time, including during buffered wake replay. Reachy then keeps new turns on
+the robot until the pending endpoint arrives or the companion reconnects.
+If that pending stream ends with an error, Reachy closes the socket and
+reconnects. Speech returns to the companion on a turn boundary after it has
+been back for 10 seconds.
 A companion that keeps dropping right after it connects is announced once, not
 on every reconnect.
 
@@ -545,7 +547,9 @@ The Pi keeps a recognition worker with its encoder and decoder warmed before
 the ready handshake. The worker uses two inference threads and one BLAS thread
 to leave CPU time for capture, VAD, and camera work. Streaming Silero speech detection
 controls recording endpoints for local recognition; it uses the bundled model
-in the tested `faster-whisper==1.2.1` installation. Silence detection also gates
+in the tested `faster-whisper==1.2.1` installation with `av==16.1.0`.
+PyAV 19 rejects the decoder's `metadata_errors` argument, so keep the PyAV pin
+when installing or upgrading the worker. Silence detection also gates
 recognition in the worker;
 the original waveform is retained so softer words are not removed by cropping.
 An uncertain short decode retries beam search on the existing short encoder

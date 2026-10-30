@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.metadata
+import importlib.util
 import io
 import json
+import struct
 import sys
 from types import SimpleNamespace
 import wave
@@ -521,6 +524,48 @@ def short_decoder(monkeypatch):
     tokenizer = SimpleNamespace(sot_sequence=[101], no_timestamps=102,
                                 decode=lambda tokens: "  What is the weather?  ")
     return np, model, tokenizer, state
+
+
+def test_worker_starts_with_real_audio_decoding_and_fake_inference(short_decoder, model, monkeypatch):
+    try:
+        distribution = importlib.metadata.distribution("faster-whisper")
+    except importlib.metadata.PackageNotFoundError:
+        pytest.skip("requires faster-whisper's audio decoder")
+    spec = importlib.util.spec_from_file_location(
+        "faster_whisper.audio", distribution.locate_file("faster_whisper/audio.py"))
+    decoder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(decoder)
+    np, fake_model, tokenizer, _ = short_decoder
+    fake_model.hf_tokenizer = None
+    fake_model.model.is_multilingual = False
+    decoded = []
+
+    def speech_timestamps(audio, options):
+        decoded.append(audio.copy())
+        return [{"start": 0, "end": len(audio)}] if np.any(audio) else []
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=lambda *a, **k: fake_model))
+    monkeypatch.setitem(sys.modules, "faster_whisper.audio", decoder)
+    monkeypatch.setitem(sys.modules, "faster_whisper.tokenizer", SimpleNamespace(Tokenizer=lambda *a, **k: tokenizer))
+    monkeypatch.setitem(sys.modules, "faster_whisper.transcribe", SimpleNamespace(get_suppressed_tokens=lambda *a: []))
+    monkeypatch.setitem(sys.modules, "faster_whisper.vad", SimpleNamespace(
+        VadOptions=lambda: None, get_vad_model=lambda: None, get_speech_timestamps=speech_timestamps))
+    wav = recording()
+    output = io.BytesIO()
+    with monkeypatch.context() as streams:
+        streams.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(struct.pack("<I", len(wav)) + wav)))
+        streams.setattr(sys, "stdout", SimpleNamespace(buffer=output))
+        local_transcription._worker(model)
+    output.seek(0)
+    assert output.read(4) == b"\0\0\0\0"
+    size, = struct.unpack("<I", output.read(4))
+    assert json.loads(output.read(size)) == {"speech_detected": True}
+    size, = struct.unpack("<I", output.read(4))
+    assert json.loads(output.read(size))["text"] == "What is the weather?"
+    assert output.read() == b""
+    assert len(decoded) == 2
+    np.testing.assert_array_equal(decoded[0], np.zeros(16000, dtype=np.float32))
+    np.testing.assert_array_equal(decoded[1], np.full(1600, 1000 / 32768, dtype=np.float32))
 
 
 def test_short_speech_uses_small_encoder_and_preserves_decoder_policy(short_decoder):

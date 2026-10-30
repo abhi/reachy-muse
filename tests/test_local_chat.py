@@ -167,11 +167,16 @@ def test_local_grammar_never_swallows_requests_or_bypasses_chat_off(text, enable
     async def scenario():
         companion = Companion()
         companion.up = False
-        session = FakeSession()
-        conversation = robot(session, FakeHardware(), Speech(), companion, local_chat=enabled)
+        session, hardware, speech = FakeSession(), FakeHardware(), Speech()
+        conversation = robot(session, hardware, speech, companion, local_chat=enabled)
+        await conversation.backends.voice.warm(hardware.output_sample_rate)
+        speech.spoken.clear()
         await conversation.turn(b"voice", recognized_text=text)
         assert session.setup_messages == [(text, None)]
         assert companion.heard == []
+        assert speech.spoken == []
+        assert hardware.played == []
+        assert conversation._recent.chat_note() == ("", 0)
     asyncio.run(scenario())
 
 

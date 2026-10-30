@@ -20,7 +20,7 @@ reachy-companion = "reachy_muse.companion_server.cli:main"
 
 [project.optional-dependencies]
 test = ["pytest"]
-robot = ["reachy-mini>=1.9,<2", "numpy>=1.24", "av>=12", "webrtcvad-wheels>=2.0.14"]
+robot = ["reachy-mini>=1.9,<2", "numpy>=1.24", "av==16.1.0", "webrtcvad-wheels>=2.0.14"]
 wake = ["sherpa-onnx==1.13.8", "sentencepiece==0.2.2"]
 wake-vosk = ["vosk==0.3.45"]
 stt-streaming = ["sherpa-onnx==1.13.8"]
