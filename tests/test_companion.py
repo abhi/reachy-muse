@@ -179,6 +179,23 @@ def test_happy_turn_nods_along_to_partials_and_speaks_condensed_lines_with_their
     scenario(run())
 
 
+@pytest.mark.parametrize("acknowledges, expected", [
+    (False, ["Good morning!", "Your next meeting is at ten."]),
+    (True, ["Good morning!", "Good morning!", "Your next meeting is at ten."]),
+])
+def test_a_healthy_answer_keeps_the_companion_voice_for_cached_chat_phrases(monkeypatch, acknowledges, expected):
+    async def run():
+        async with FakeCompanion(partials=PARTIALS, frames_per_partial=12, acknowledges=acknowledges,
+                                 opening_lines=("Good morning!",)) as companion:
+            robot = Conversation(monkeypatch, companion.url[:-3],
+                                 answer("Good morning! Your next meeting is at ten.", SLOW_S if acknowledges else 0))
+            await robot.run(lambda: robot.turns(1))
+            assert spoken_by_companion(companion) == expected
+            assert set(robot.spoken()) == {"companion"}
+            assert robot.notices() == []
+    scenario(run())
+
+
 class MotionHardware(CompanionHardware):
     def play_motion(self, frames, fps, *, during, loop=False, start_within_s=1.0):
         self.recording.add({"robot": "motion", "during": sorted(during), "loop": loop, "frames": len(frames)})
@@ -471,6 +488,33 @@ def test_outage_small_talk_uses_cached_robot_speech_and_announces_only_once(monk
         assert robot.spoken().count(f"tts:{reply}") == 2
         assert robot.recording.synthesized.count(f"tts:{reply}") == 1  # startup only
         assert robot.notices() == [f"tts:{COMPANION_NOTICE}"]
+    scenario(run())
+
+
+def test_late_chat_narration_uses_cached_audio_while_companion_speech_is_available(monkeypatch):
+    import reachy_muse.failover
+    from reachy_muse.protocol import NarrateOp
+
+    monkeypatch.setattr(reachy_muse.failover, "ACK_DEADLINE_S", .05)
+
+    async def run():
+        async def muse(session, request):
+            raise AssertionError("grammar chat must not reach Muse")
+
+        async with FakeCompanion(partials=("good morning",), frames_per_partial=12,
+                                 narrate_delay_s={NarrateOp.ACKNOWLEDGE: .3}) as companion:
+            robot = Conversation(monkeypatch, companion.url[:-3], muse)
+
+            async def user():
+                await robot.speak(.4)
+                await robot.until(lambda: "tts:Good morning!" in robot.spoken(), 1)
+                assert robot.link.up and robot.link.can(Op.SPEAK)
+
+            await robot.run(user)
+            assert robot.requests() == []
+            assert robot.spoken() == ["tts:Good morning!"]
+            assert robot.recording.synthesized.count("tts:Good morning!") == 1
+            assert spoken_by_companion(companion) == []
     scenario(run())
 
 

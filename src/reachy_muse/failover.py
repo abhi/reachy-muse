@@ -12,7 +12,7 @@ from collections import deque
 from typing import Any, Callable, Optional, Tuple, Union
 
 from reachy_muse.contract.replies import ReplyStyle
-from reachy_muse.contract.intent import Intent, guess_intent
+from reachy_muse.contract.intent import CHAT_PHRASES, Intent, guess_intent
 from reachy_muse.companion_client import CompanionOpening
 from reachy_muse.local_backends import RuleNarrator
 from reachy_muse.capabilities import (EMOJI, MARKUP, Backends, CapabilityUnavailable, Heard, HeardAudio, Hold, LocalReply,
@@ -224,7 +224,7 @@ class FailoverVoice:
 
     def _on_companion(self, line: SpokenLine) -> bool:
         return (self.route.this_turn and self.companion.available and not self.route.speech.resting
-                and not self.local.is_presynthesized(line.text))
+                and (line.text in CHAT_PHRASES or not self.local.is_presynthesized(line.text)))
 
     async def warm(self, output_rate: int) -> None:
         await self.local.warm(output_rate)
@@ -320,13 +320,16 @@ class FailoverNarrator:
 
     async def acknowledge(self, heard: Heard) -> Opener:
         guess = guess_intent(heard.text, heard.previous)
-        if not self._on_companion:
-            return self.local.hold(guess, heard)
-        got = await self._ask(self.companion.acknowledge(heard), ACK_DEADLINE_S, (heard.text, heard.previous),
-                              lines=lambda opening: opening.lines)
+        got = None
+        if self._on_companion:
+            got = await self._ask(self.companion.acknowledge(heard), ACK_DEADLINE_S, (heard.text, heard.previous),
+                                  lines=lambda opening: opening.lines)
         if got is LATE:
             log.info("Reachy skips the acknowledgement; its companion's narration was late")
-        return settle(heard, guess, got, self.local)
+        opening = settle(heard, guess, got, self.local)
+        if isinstance(opening, LocalReply) and not isinstance(got, CompanionOpening):
+            self.route.this_turn = False
+        return opening
 
     def progress(self, request: str, started: float, intent: Intent = Intent.QUESTION) -> ProgressPlan:
         return self.local.progress(request, started, intent)
