@@ -364,6 +364,7 @@ class ArrivalWatcher:
                 if decision is None or generation != current_generation:
                     decision = ArrivalDetector(detector)
                     generation = current_generation
+                    last_frame_at = -math.inf
                 started = self._clock()
                 if not self._is_still():
                     decision.reachy_moved()
@@ -376,11 +377,15 @@ class ArrivalWatcher:
                         frame = None
                     if frame is not None:
                         try:
+                            now = self._clock()
+                            if now - last_frame_at > max(CONFIRM_WINDOW_S, 2 * self._period):
+                                decision.reachy_moved()
+                            last_frame_at = now
                             brightness = float(frame.mean())
                             with self._condition:
                                 self._stats.frames += 1
                                 self._stats.brightness_total += brightness
-                            arrived = decision.observe(frame, self._clock())
+                            arrived = decision.observe(frame, now)
                         finally:
                             del frame
                             with self._condition:
@@ -395,7 +400,6 @@ class ArrivalWatcher:
                     else:
                         with self._condition:
                             self._stats.frame_errors += 1
-                        decision.reachy_moved()
                 with self._condition:
                     if self._closed:
                         return

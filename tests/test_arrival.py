@@ -279,6 +279,38 @@ def test_frame_read_errors_recover_and_diagnostics_contain_only_interval_numbers
         watcher.close()
 
 
+def test_watcher_detects_a_walker_with_every_fourth_frame_missing():
+    frames = empty_room(2) + [with_person(room(), -12 + 8 * step) for step in range(20)]
+    frames = [None if index % 4 == 3 else frame for index, frame in enumerate(frames)]
+    read, clock, camera = camera_with_frame_clock(frames)
+    watcher = ArrivalWatcher(read, lambda: True, sample_hz=10, clock=clock,
+                             detector_factory=lambda model: MarkedPeople())
+    try:
+        watcher.start()
+        watcher.set_watching(True)
+        wait_for(lambda: watcher.arrival() is not None or camera["index"] == len(frames) - 1)
+    finally:
+        watcher.close()
+    assert watcher.arrival() == pytest.approx(8 / 3)
+
+
+def test_watcher_settles_again_after_a_long_gap_in_camera_frames():
+    frames = empty_room(2) + [with_person(room(), 10)] + [None] * 9
+    frames += [with_person(room(), 70)] * (4 * FPS)
+    read, clock, camera = camera_with_frame_clock(frames)
+    watcher = ArrivalWatcher(read, lambda: True, sample_hz=10, clock=clock,
+                             detector_factory=lambda model: MarkedPeople())
+    try:
+        watcher.start()
+        watcher.set_watching(True)
+        wait_for(lambda: watcher.arrival() is not None or camera["index"] == len(frames) - 1)
+    finally:
+        watcher.close()
+    assert watcher.arrival() is None
+    assert camera["index"] == len(frames) - 1
+    assert watcher.failure is None
+
+
 def test_a_missing_person_model_is_a_watcher_failure_not_a_crash(tmp_path):
     watcher = ArrivalWatcher(room, lambda: True, tmp_path / "absent.onnx", sample_hz=10,
                              detector_factory=lambda model: YoloxPersonDetector(model))
