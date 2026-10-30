@@ -98,6 +98,7 @@ class Recorder:
     active = False
     speech_active = False
     quiet_s = 0.0
+    total_quiet_s = 0.0
     last_truncated = False
 
     def __init__(self, *events):

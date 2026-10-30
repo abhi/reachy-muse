@@ -152,6 +152,71 @@ def test_pauses_do_not_erase_time_waiting_for_transcription(monkeypatch):
     assert not link.can(Op.SPEAK)
 
 
+@pytest.mark.parametrize("quiet_frame", [0, 2, 4])
+def test_mixed_batches_exclude_only_quiet_audio_from_the_response_deadline(monkeypatch, quiet_frame):
+    from types import SimpleNamespace
+    import numpy as np
+    import reachy_muse.companion_client as client
+    from reachy_muse.protocol import Op
+
+    class Vad:
+        def is_speech(self, pcm, rate):
+            return bool(np.any(np.frombuffer(pcm, dtype="<i2")))
+
+    now = 100.0
+    monkeypatch.setattr(client, "time", SimpleNamespace(monotonic=lambda: now))
+    link = CompanionLink("ws://127.0.0.1:9000", token=TOKEN, out_rate=16000, insecure=True)
+    link._connection = client._Connection(None, (Op.HEAR, Op.SPEAK))
+    link._set(LinkState.UP)
+    turn = client.CompanionHearing(link).open_turn(16000, silence_s=3, vad=Vad())
+    turn.feed(np.full(1600, .1, dtype=np.float32))
+    assert turn.take().ended is None
+    batch = np.full(1600, .1, dtype=np.float32)
+    batch[quiet_frame * 320:(quiet_frame + 1) * 320] = 0
+    for index in range(1, 25):
+        now = 100.0 + index * .1
+        turn.feed(batch)
+        assert turn.take().ended is None
+        assert link.can(Op.SPEAK)
+    now = 102.6
+    turn.feed(np.tile(batch, 2))
+    with pytest.raises(CapabilityUnavailable, match="no transcript"):
+        turn.take()
+    assert not link.can(Op.SPEAK)
+
+
+def test_polling_does_not_reuse_quiet_audio(monkeypatch):
+    from types import SimpleNamespace
+    import numpy as np
+    import reachy_muse.companion_client as client
+    from reachy_muse.protocol import Op
+
+    class Vad:
+        def is_speech(self, pcm, rate):
+            return bool(np.any(np.frombuffer(pcm, dtype="<i2")))
+
+    now = 100.0
+    monkeypatch.setattr(client, "time", SimpleNamespace(monotonic=lambda: now))
+    link = CompanionLink("ws://127.0.0.1:9000", token=TOKEN, out_rate=16000, insecure=True)
+    link._connection = client._Connection(None, (Op.HEAR, Op.SPEAK))
+    link._set(LinkState.UP)
+    turn = client.CompanionHearing(link).open_turn(16000, silence_s=3, vad=Vad())
+    turn.feed(np.full(1600, .1, dtype=np.float32))
+    assert turn.take().ended is None
+    now = 101.5
+    turn.feed(np.full(24000, .1, dtype=np.float32))
+    assert turn.take().ended is None
+    now = 101.52
+    turn.feed(np.zeros(320, dtype=np.float32))
+    assert turn.take().ended is None
+    now = 101.8
+    assert turn.take().ended is None
+    now = 102.03
+    with pytest.raises(CapabilityUnavailable, match="no transcript"):
+        turn.take()
+    assert not link.can(Op.SPEAK)
+
+
 def test_partial_progress_restarts_the_hearing_response_deadline(monkeypatch):
     from types import SimpleNamespace
     import numpy as np

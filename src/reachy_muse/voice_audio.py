@@ -148,6 +148,11 @@ class TurnRecorder:
         """Seconds of audio since the voice detector last heard speech."""
         return self._speech_quiet * self.FRAME_SECONDS
 
+    @property
+    def total_quiet_s(self) -> float:
+        """Unvoiced audio processed since the last reset, including pauses within batches."""
+        return self._total_quiet_frames * self.FRAME_SECONDS
+
     def reset(self) -> None:
         """Discard capture, pending samples, and resampling filter history."""
         reset_vad = getattr(self._vad, "reset", None)
@@ -159,6 +164,7 @@ class TurnRecorder:
         self._speech_active = False
         self._speech_run = 0
         self._speech_quiet = 0
+        self._total_quiet_frames = 0
         self.last_truncated = False
         self._clear_turn()
         self._min_frames = self._initial_min_frames
@@ -207,6 +213,7 @@ class TurnRecorder:
             voiced = bool(self._vad.is_speech(pcm, self.RATE))
             self._speech_run = self._speech_run + 1 if voiced else 0
             self._speech_quiet = 0 if voiced else self._speech_quiet + 1
+            self._total_quiet_frames += int(not voiced)
             if self._speech_run >= 3:
                 self._speech_active = True
             elif self._speech_quiet >= self._silence_frames:
