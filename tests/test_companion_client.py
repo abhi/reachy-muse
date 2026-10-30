@@ -80,6 +80,78 @@ def test_buffered_wake_audio_waits_for_a_responsive_companion(chunk_samples):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("options", [
+    {"silence_s": 3},
+    {"silence_s": .3, "short_utterance_silence_s": 3},
+])
+@pytest.mark.parametrize("partial", [False, True])
+def test_a_permitted_pause_keeps_hearing_and_speech_on_the_companion(monkeypatch, options, partial):
+    from types import SimpleNamespace
+    import numpy as np
+    import reachy_muse.companion_client as client
+    from reachy_muse.protocol import HearEndpoint, HearPartial, Op, encode
+
+    class Vad:
+        def is_speech(self, pcm, rate):
+            return bool(np.any(np.frombuffer(pcm, dtype="<i2")))
+
+    now = 100.0
+    monkeypatch.setattr(client, "time", SimpleNamespace(monotonic=lambda: now))
+    link = CompanionLink("ws://127.0.0.1:9000", token=TOKEN, out_rate=16000, insecure=True)
+    link._connection = client._Connection(None, (Op.HEAR, Op.SPEAK, Op.NARRATE))
+    link._set(LinkState.UP)
+    turn = client.CompanionHearing(link).open_turn(16000, vad=Vad(), **options)
+    turn.feed(np.full(8000, .1, dtype=np.float32))
+    assert turn.take().ended is None
+    if partial:
+        link._receive(link._connection, encode(HearPartial(1, 0, "hello")))
+        assert turn.take().ended is None
+    for _ in range(125):
+        now += .02
+        turn.feed(np.zeros(320, dtype=np.float32))
+        assert turn.take().ended is None
+        assert link.up and link.can(Op.SPEAK)
+    now += .1
+    turn.feed(np.full(1600, .1, dtype=np.float32))
+    assert turn.take().ended is None
+    link._receive(link._connection, encode(HearEndpoint(1, "hello there", False)))
+    ended = turn.take().ended
+    assert asyncio.run(ended.endpoint()).text == "hello there"
+    assert link.up and link.can(Op.SPEAK)
+    assert link.take_outage() is False
+
+
+def test_pauses_do_not_erase_time_waiting_for_transcription(monkeypatch):
+    from types import SimpleNamespace
+    import numpy as np
+    import reachy_muse.companion_client as client
+    from reachy_muse.protocol import Op
+
+    class Vad:
+        def is_speech(self, pcm, rate):
+            return bool(np.any(np.frombuffer(pcm, dtype="<i2")))
+
+    now = 100.0
+    monkeypatch.setattr(client, "time", SimpleNamespace(monotonic=lambda: now))
+    link = CompanionLink("ws://127.0.0.1:9000", token=TOKEN, out_rate=16000, insecure=True)
+    link._connection = client._Connection(None, (Op.HEAR, Op.SPEAK))
+    link._set(LinkState.UP)
+    turn = client.CompanionHearing(link).open_turn(16000, silence_s=3, vad=Vad())
+    turn.feed(np.full(8000, .1, dtype=np.float32))
+    assert turn.take().ended is None
+    now = 101.0
+    turn.feed(np.full(16000, .1, dtype=np.float32))
+    assert turn.take().ended is None
+    now = 101.5
+    turn.feed(np.zeros(8000, dtype=np.float32))
+    assert turn.take().ended is None
+    now = 102.6
+    turn.feed(np.full(17600, .1, dtype=np.float32))
+    with pytest.raises(CapabilityUnavailable, match="no transcript"):
+        turn.take()
+    assert not link.can(Op.SPEAK)
+
+
 def test_partial_progress_restarts_the_hearing_response_deadline(monkeypatch):
     from types import SimpleNamespace
     import numpy as np

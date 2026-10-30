@@ -139,6 +139,7 @@ class _HearStream:
         self.end_sample = 0            # where the robot's VAD ended the utterance, in samples fed to the turn
         self.deadline: Optional[float] = None
         self.last_progress_at = time.monotonic()
+        self.last_checked_at = self.last_progress_at
         self._seq = 0
 
     def send(self, pcm: bytes) -> None:
@@ -508,7 +509,7 @@ class CompanionHearingTurn:
 
     When the robot's VAD ends an utterance first, the stream closes with ``finish`` and
     the turn ends when the companion's forced endpoint arrives. A companion that sends no
-    partial within ``HEAR_RESPONSE_S`` of opening or the last response, or no endpoint
+    partial within ``HEAR_RESPONSE_S`` while the user speaks, or no endpoint
     within ``ENDPOINT_WAIT_S`` of ``finish``, fails the turn so that the robot finishes it.
     """
 
@@ -591,8 +592,12 @@ class CompanionHearingTurn:
         reason = None
         if stream.deadline is not None and now >= stream.deadline:
             reason = "the companion did not end the turn"
-        elif stream.deadline is None and now - stream.last_progress_at >= HEAR_RESPONSE_S:
-            reason = "the companion sent no transcript for the speech"
+        elif stream.deadline is None:
+            if self.quiet_s:
+                stream.last_progress_at += now - max(stream.last_checked_at, stream.last_progress_at)
+            stream.last_checked_at = now
+            if now - stream.last_progress_at >= HEAR_RESPONSE_S:
+                reason = "the companion sent no transcript for the speech"
         if reason is not None:
             self._link.hearing_stalled(stream, reason)
             return CapabilityUnavailable(reason)
