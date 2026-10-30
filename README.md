@@ -57,13 +57,13 @@ The [companion server guide](docs/companion-server.md) explains each step and th
 
 ## How it uses the Muse Gadget SDK
 
-The [Muse Gadget SDK](https://github.com/abhi/muse-gadget-sdk) (`musegadget`) does everything that talks to Muse.
+The [Muse Gadget SDK](https://github.com/facebookincubator/muse-gadget-sdk) (`musegadget`) does everything that talks to Muse.
 It pairs the robot with the Muse app, keeps the encrypted link to Muse open, sends each spoken request and follows Muse's answer.
-reachy-muse uses only the parts of the SDK that the "Building a gadget" section of its [`linux/AGENTS.md`](https://github.com/abhi/muse-gadget-sdk/blob/5692fe233189a9d2f3bd331d6014dd14cab3de04/linux/AGENTS.md#building-a-gadget) lists.
+reachy-muse uses only the parts of the SDK that the "Building a gadget" section of its [`linux/AGENTS.md`](https://github.com/facebookincubator/muse-gadget-sdk/blob/4737636133c9a0253d0b778333605b16fd2626c1/linux/AGENTS.md#building-a-gadget) lists.
 Everything else here is the robot app: audio, wake words, speech models, motors, face tracking and the companion.
 
-The pinned fork is upstream `facebookincubator/muse-gadget-sdk` main plus one commit that adds public hooks for gadgets built on the SDK.
-The other fork changes are now upstream. Only the hooks commit is pending as [upstream PR #142](https://github.com/facebookincubator/muse-gadget-sdk/pull/142).
+`pyproject.toml` pins the official upstream repository at `4737636133c9a0253d0b778333605b16fd2626c1`.
+All changes from the fork are now upstream, including the public `Service` hooks from [PR #142](https://github.com/facebookincubator/muse-gadget-sdk/pull/142), merged as `729d0c8`.
 
 What Muse and the robot agree on lives here, in `reachy_muse.contract`: the robot commands, the expressions, the prompts and the reply formats.
 [The Reachy Mini contract with Muse](docs/contract.md) lists them.

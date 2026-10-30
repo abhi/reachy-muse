@@ -11,7 +11,7 @@ license = "Apache-2.0"
 requires-python = ">=3.10"
 # For a local SDK checkout, install it first: pip install -e ../muse-gadget-sdk/linux
 dependencies = [
-    "musegadget @ git+https://github.com/abhi/muse-gadget-sdk@5692fe233189a9d2f3bd331d6014dd14cab3de04#subdirectory=linux",
+    "musegadget @ git+https://github.com/facebookincubator/muse-gadget-sdk@4737636133c9a0253d0b778333605b16fd2626c1#subdirectory=linux",
 ]
 
 [project.scripts]

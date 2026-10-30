@@ -17,7 +17,7 @@ explains SSH access and its preinstalled `/venvs/apps_venv` environment. Stop an
 other robot app before starting this integration.
 
 Copy this repository to `/home/pollen/reachy-muse` and the
-[Muse Gadget SDK](https://github.com/abhi/muse-gadget-sdk) to
+[Muse Gadget SDK](https://github.com/facebookincubator/muse-gadget-sdk) to
 `/home/pollen/muse-gadget-sdk`. Check out the SDK at the commit that
 `pyproject.toml` pins. To keep the existing Reachy apps environment
 intact, create a separate environment that can use its installed SDK and media
