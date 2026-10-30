@@ -276,6 +276,8 @@ LATE = _Late()
 
 def settle(heard: Heard, guess: Intent, got: Union[CompanionOpening, _Late, None], local: RuleNarrator) -> Opener:
     if got is LATE:
+        if heard.may_chat:
+            return local.hold(guess, heard)
         return Hold(guess, None)
     if got is None:
         return local.hold(guess, heard)

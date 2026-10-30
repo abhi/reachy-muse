@@ -1,0 +1,73 @@
+{
+  "machine": "arm64",
+  "runs": 5,
+  "cases": [
+    {
+      "name": "reminder",
+      "window": "short",
+      "audio_s": 3.124,
+      "reference": "Remind me at eight to call Maya, not at nine.",
+      "recognized": [
+        "Remind be at 8 to call Maya, not at 9."
+      ],
+      "p50_s": 0.06472779158502817,
+      "p95_s": 0.07273791637271643
+    },
+    {
+      "name": "reminder",
+      "window": "original",
+      "audio_s": 8.2,
+      "reference": "Remind me at eight to call Maya, not at nine.",
+      "recognized": [
+        "Remind be ready to call Maya, not at 9."
+      ],
+      "p50_s": 0.22410495951771736,
+      "p95_s": 0.2522187912836671
+    },
+    {
+      "name": "correction",
+      "window": "short",
+      "audio_s": 4.116,
+      "reference": "Actually make that eight apples instead of seven, and keep the oat milk.",
+      "recognized": [
+        "Actually make that 8 apples instead of 7 and keep the oat milk."
+      ],
+      "p50_s": 0.07090291660279036,
+      "p95_s": 0.07751604169607162
+    },
+    {
+      "name": "correction",
+      "window": "original",
+      "audio_s": 8.2,
+      "reference": "Actually make that eight apples instead of seven, and keep the oat milk.",
+      "recognized": [
+        "Actually make that 8 apples instead of 7 and keep the oat milk."
+      ],
+      "p50_s": 0.236584291793406,
+      "p95_s": 0.24681333359330893
+    },
+    {
+      "name": "negation",
+      "window": "short",
+      "audio_s": 3.412,
+      "reference": "Do not cancel the reminder, and never move it to nine.",
+      "recognized": [
+        "Do not cancel the reminder and never move it to 9."
+      ],
+      "p50_s": 0.06607554201036692,
+      "p95_s": 0.07123270910233259
+    },
+    {
+      "name": "negation",
+      "window": "original",
+      "audio_s": 8.2,
+      "reference": "Do not cancel the reminder, and never move it to nine.",
+      "recognized": [
+        "Do not cancel the reminder and never move it to 9."
+      ],
+      "p50_s": 0.22570904064923525,
+      "p95_s": 0.2338445419445634
+    }
+  ],
+  "startup_s": 0.6123968744650483
+}

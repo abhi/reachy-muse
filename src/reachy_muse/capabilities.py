@@ -189,7 +189,7 @@ class LinkHealth(Protocol):
 MARKUP = re.compile(r"[*#`_~|<>\[\]{}]|https?://|www\.|^\s*(?:[-•]|\d+[.)])\s")
 EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF]")
 
-COMPANION_NOTICE = "My companion computer isn't answering, so I'll use my own voice for now."
+COMPANION_NOTICE = "Using my own voice."
 
 
 @dataclass(frozen=True)

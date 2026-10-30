@@ -539,6 +539,25 @@ def test_short_speech_uses_small_encoder_and_preserves_decoder_policy(short_deco
     assert not state.fallback_audio
 
 
+def test_uncertain_short_greedy_result_reuses_encoder_for_beam_search(short_decoder):
+    np, model, tokenizer, state = short_decoder
+    calls = []
+    greedy = SimpleNamespace(sequences_ids=[[1, 2, 3]], scores=[-1.5], no_speech_prob=.05)
+
+    def generate(encoded, prompts, **options):
+        calls.append(options["beam_size"])
+        return [greedy if options["beam_size"] == 1 else state.result]
+
+    model.model.generate = generate
+    timing = {}
+    assert local_transcription._transcribe_audio(model, tokenizer, [], np.ones(43200), timing=timing) == (
+        "What is the weather?")
+    assert calls == [1, 3]
+    assert len(state.encoded) == 1
+    assert not state.fallback_audio
+    assert timing["path"] == "short" and timing["full_s"] == 0
+
+
 def test_eight_second_turn_keeps_its_last_word_and_extra_encoder_context(short_decoder):
     np, model, tokenizer, state = short_decoder
     state.features = np.zeros((80, 801), dtype=np.float32)
@@ -584,6 +603,7 @@ def test_uncertain_or_incomplete_short_result_uses_complete_original_audio(short
         "The complete question, including the last instruction.")
     assert state.fallback_audio == [(audio, {
         "language": "en", "beam_size": 3, "condition_on_previous_text": False,
+        "without_timestamps": True,
         "temperature": (0.0, .2, .4), "vad_filter": False, "no_speech_threshold": .6,
         "log_prob_threshold": -1.0, "compression_ratio_threshold": 2.4,
         "max_new_tokens": 3 if failure == "token_limit" else 64,
@@ -734,6 +754,7 @@ def collect_chunks(audio, chunks):
     assert actual["load"] == {"device": "cpu", "compute_type": "int8", "cpu_threads": 2,
                               "num_workers": 1, "local_files_only": True}
     expected_settings = {"language": "en", "beam_size": 3, "condition_on_previous_text": False,
+                         "without_timestamps": True,
                          "temperature": [0.0, .2, .4], "vad_filter": False, "no_speech_threshold": 0.6,
                          "log_prob_threshold": -1.0, "compression_ratio_threshold": 2.4,
                          "max_new_tokens": 64}

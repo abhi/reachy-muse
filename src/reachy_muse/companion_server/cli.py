@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from reachy_muse.companion_server import pair as pairing
+from reachy_muse.companion_server.watchdog import watchdog
 from reachy_muse.companion_server.engines import EchoNarrator, NodAnimator, ScriptedHearing, SpeechFirst, ToneVoice
 from reachy_muse.companion_server.narrator_mlx import DEFAULT_REPO
 from reachy_muse.companion_server.server import CompanionServer, Engines
@@ -70,6 +71,7 @@ def _voice(spec: str) -> str:
 async def _serve(args: argparse.Namespace) -> None:
     paired = pairing.load(args.state_dir)
     engines = await _engines(args)
+    watchdog.start()
     tls = None if args.insecure else paired.tls_context()
     stop = asyncio.get_running_loop().create_future()
     for sig in (signal.SIGINT, signal.SIGTERM):

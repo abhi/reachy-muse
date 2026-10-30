@@ -17,6 +17,92 @@ from reachy_muse.protocol import Narrate, Sender, decode
 DIGEST = "4f" * 32
 
 
+def test_a_socket_that_never_pongs_fails_pending_work_within_two_seconds():
+    from websockets.asyncio.server import serve
+    from reachy_muse.protocol import VERSION, Op, VoiceRole, Welcome, encode
+
+    async def scenario():
+        release = asyncio.Event()
+
+        async def stalled(ws):
+            await ws.recv()
+            await ws.send(encode(Welcome(VERSION, (Op.SPEAK, Op.NARRATE), ())))
+            ws.transport.pause_reading()  # no pongs or close handshake; the event loop stays responsive
+            await release.wait()
+            ws.transport.abort()
+
+        async with serve(stalled, "127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            link = CompanionLink(f"ws://127.0.0.1:{port}", token=TOKEN, out_rate=16000,
+                                 insecure=True, backoff_s=(5, 5))
+            running = asyncio.create_task(link.run())
+            try:
+                await asyncio.wait_for(link.settled(), 2)
+                start = asyncio.get_running_loop().time()
+                with pytest.raises(CapabilityUnavailable):
+                    await asyncio.wait_for(anext(link.speak("Hello.", VoiceRole.MAIN)), 2.2)
+                assert asyncio.get_running_loop().time() - start < 2.2
+                assert not link.can(Op.HEAR) and not link.can(Op.SPEAK) and not link.up
+                assert link.take_outage() is True
+                assert link.take_outage() is False
+            finally:
+                release.set()
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+    asyncio.run(scenario())
+
+
+def test_hearing_stall_with_working_pongs_stays_local_until_a_real_endpoint():
+    from reachy_muse.companion_client import CompanionHearing
+    from reachy_muse.protocol import Op
+    import numpy as np
+
+    class Vad:
+        def is_speech(self, *args):
+            return True
+
+    async def scenario():
+        async with FakeCompanion(stall=True) as companion:
+            link = CompanionLink(companion.url[:-3], token=TOKEN, out_rate=16000, insecure=True,
+                                 backoff_s=(5, 5), healthy_s=0)
+            running = asyncio.create_task(link.run())
+            try:
+                await asyncio.wait_for(link.settled(), 2)
+                turn = CompanionHearing(link).open_turn(16000, silence_s=.3, vad=Vad())
+                turn.feed(np.full(3200, .1, dtype=np.float32))  # just 200 ms, below the byte-gap limit
+                assert turn.take().ended is None
+                start = asyncio.get_running_loop().time()
+                while link.up:
+                    try:
+                        turn.take()
+                    except CapabilityUnavailable:
+                        break
+                    await asyncio.sleep(.01)
+                assert asyncio.get_running_loop().time() - start < 2.2
+                turn.abort()
+                for _ in range(5):
+                    with pytest.raises(CapabilityUnavailable):
+                        link.open_hear()
+                assert not link.can(Op.SPEAK)
+                assert link.take_outage() is True
+                assert link.take_outage() is False
+                companion.stall = False
+                # The fake delayed the endpoint. Deliver it on the same live socket.
+                from reachy_muse.protocol import HearEndpoint, encode
+                for ws in companion._server.connections:
+                    await ws.send(encode(HearEndpoint(1, "", True)))
+                async with asyncio.timeout(2):
+                    while not link.up:
+                        await asyncio.sleep(.01)
+                assert link.open_hear().id == 3
+                assert link.can(Op.SPEAK)
+                assert link.take_outage() is False
+            finally:
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("url, insecure, expected", [
     ("wss://studio.local:8765", False, "wss://studio.local:8765"),
     ("wss://studio.local:8765/", False, "wss://studio.local:8765"),

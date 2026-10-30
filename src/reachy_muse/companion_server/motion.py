@@ -18,13 +18,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Protocol, Tuple
 
 import numpy as np
 
+from reachy_muse.companion_server.watchdog import EngineExecutor, watchdog
 from reachy_muse.companion_server.engines import Animation, SpeechFirst
 from reachy_muse.contract.commands import POSE_LIMITS
 from reachy_muse.protocol import ANIMATION_CHANNELS, MAX_ANIMATION_FRAMES
@@ -114,6 +115,7 @@ class MlxPlanner:
 
         pieces = []
         for response in stream_generate(self.model, self.tok, text, max_tokens=self.max_tokens, sampler=sampler):
+            watchdog.progress()
             pieces.append(response.text)
             if self.yield_to is not None:
                 self.yield_to.wait_quiet(YIELD_LIMIT_S)
@@ -251,7 +253,7 @@ class MotionEngine:
         self.motion_dir = motion_dir
         self.yield_to = yield_to
         self._build = build or self._real_pipeline
-        self._thread = ThreadPoolExecutor(1, thread_name_prefix="motion")
+        self._thread = EngineExecutor("motion")
         self._pipeline: Any = None
 
     def _real_pipeline(self) -> Pipeline:

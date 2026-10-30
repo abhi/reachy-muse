@@ -10,12 +10,12 @@ import asyncio
 import logging
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, List, Optional
 
 import numpy as np
 
+from reachy_muse.companion_server.watchdog import EngineExecutor
 from reachy_muse.contract.expressions import Expression
 from reachy_muse.protocol import VoiceRole
 
@@ -91,7 +91,7 @@ class KokoroVoice:
     def __init__(self, voice: str = KOKORO_DEFAULT, loudness: Loudness = Loudness()) -> None:
         self.voice = voice
         self.loudness = loudness
-        self._thread = ThreadPoolExecutor(1, thread_name_prefix="voice")
+        self._thread = EngineExecutor("voice")
         self._model: Any = None
 
     async def load(self) -> None:

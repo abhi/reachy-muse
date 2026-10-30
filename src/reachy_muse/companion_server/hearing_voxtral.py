@@ -10,12 +10,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Sequence, TypeVar
 
 import numpy as np
 
+from reachy_muse.companion_server.watchdog import EngineExecutor, watchdog
 from reachy_muse.companion_server.engines import Endpoint, HearEvent, Partial
 
 log = logging.getLogger("reachy_muse.companion_server")
@@ -57,7 +57,7 @@ class VoxtralHearing:
 
     def __init__(self, config: HearingConfig = HearingConfig()) -> None:
         self.config = config
-        self._thread = ThreadPoolExecutor(1, thread_name_prefix="hearing")
+        self._thread = EngineExecutor("hearing")
         self._models: Optional[_Models] = None
 
     async def load(self) -> None:
@@ -147,6 +147,7 @@ class _Utterance:
         self.audio.append(samples)
         self.stream.feed(samples)
         for delta in self.stream.step(max_decode_tokens=16):
+            watchdog.progress()
             self.raw += delta
         return self.final() if self._turn_over(samples) else None
 
@@ -160,6 +161,7 @@ class _Utterance:
         self.stream.close()
         while not self.stream.done:
             for delta in self.stream.step(max_decode_tokens=64):
+                watchdog.progress()
                 self.raw += delta
         return self.text
 

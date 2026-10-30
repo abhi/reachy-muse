@@ -42,13 +42,15 @@ from reachy_muse.protocol import (
 
 log = logging.getLogger(__name__)
 
-PING_INTERVAL_S = 2.0
-PING_TIMEOUT_S = 3.0
+PING_INTERVAL_S = 0.5
+PING_TIMEOUT_S = 1.25
+CLOSE_TIMEOUT_S = 0.1
 HANDSHAKE_TIMEOUT_S = 3.0
 BACKOFF_S = (1.0, 30.0)
 HEALTHY_S = 10.0                   # a session shorter than this is a failed attempt, not a recovery
-ENDPOINT_WAIT_S = 3.0              # how long the companion has to end a stream the robot finished
-PARTIAL_GAP_BYTES = 3 * 16000 * 2  # microphone audio sent with no partial back before the companion counts as deaf
+ENDPOINT_WAIT_S = 2.0              # how long the companion has to end a stream the robot finished
+HEAR_RESPONSE_S = 2.0              # also covers a short utterance that never gets its first partial
+PARTIAL_GAP_BYTES = 2 * 16000 * 2  # microphone audio sent with no partial back before the companion counts as deaf
 _PIN = re.compile(r"sha256:([0-9a-f]{64})")
 _FATAL = (ErrorCode.AUTH, ErrorCode.VERSION, ErrorCode.INTERNAL, ErrorCode.MODEL)
 
@@ -98,6 +100,7 @@ class _Connection:
         self.animations: Dict[int, asyncio.Future] = {}
         self.sequence = SequenceCheck()
         self.closed = False
+        self.probe: Optional[int] = None
         self._next_hear = -1
         self._next_speak = 0
 
@@ -137,6 +140,8 @@ class _HearStream:
         self.end_sample = 0            # where the robot's VAD ended the utterance, in samples fed to the turn
         self.deadline: Optional[float] = None
         self.bytes_since_partial = 0
+        self.opened_at = time.monotonic()
+        self.responded = False
         self._seq = 0
 
     def send(self, pcm: bytes) -> None:
@@ -147,6 +152,8 @@ class _HearStream:
             self._seq += 1
 
     def close(self, how: CloseHow) -> None:
+        if how is CloseHow.ABORT and self.connection.probe == self.id:
+            return  # retain this finished stream to prove hearing has recovered
         if how is CloseHow.ABORT:
             self.connection.hearing.pop(self.id, None)
         if not self.connection.closed:
@@ -291,7 +298,8 @@ class CompanionLink:
         from websockets.asyncio.client import connect
 
         options = dict(open_timeout=self._handshake_timeout_s, ping_interval=self._ping[0],
-                       ping_timeout=self._ping[1], max_size=2 * MAX_TEXT_FRAME_BYTES)
+                       ping_timeout=self._ping[1], close_timeout=CLOSE_TIMEOUT_S,
+                       max_size=2 * MAX_TEXT_FRAME_BYTES)
         if "proxy" in inspect.signature(connect).parameters:
             options["proxy"] = None
         context = self._ssl()
@@ -325,6 +333,8 @@ class CompanionLink:
                 async for frame in ws:
                     self._receive(connection, frame)
             finally:
+                connection.fail("the companion link closed")
+                self._set(LinkState.DOWN)
                 writer.cancel()
                 await asyncio.gather(writer, return_exceptions=True)
         finally:
@@ -354,6 +364,9 @@ class CompanionLink:
                 stream.inbox.append(message)
                 if isinstance(message, HearEndpoint):
                     del connection.hearing[message.stream]
+                    if connection.probe == message.stream:
+                        connection.probe = None
+                        self._set(LinkState.UP)
         elif isinstance(message, SpeakDone):
             queue = connection.speaking.pop(message.stream, None)
             if queue is not None:
@@ -396,6 +409,17 @@ class CompanionLink:
         connection.send(HearOpen(stream.id, 0))
         connection.hearing[stream.id] = stream
         return stream
+
+    def hearing_stalled(self, stream: _HearStream, reason: str) -> None:
+        """Quarantine a live socket whose engine stopped answering, until a real endpoint arrives."""
+        connection = stream.connection
+        if connection is not self._connection or connection.closed or connection.probe is not None:
+            return
+        if stream.deadline is None:
+            stream.close(CloseHow.FINISH)
+        connection.probe = stream.id
+        self._set(LinkState.DOWN)
+        log.warning("Reachy companion hearing is unresponsive: %s; waiting for an endpoint or reconnect", reason)
 
     async def speak(self, text: str, voice: VoiceRole) -> AsyncIterator[bytes]:
         """The companion's speech for one line, as s16le PCM at ``out_rate``."""
@@ -546,6 +570,7 @@ class CompanionHearingTurn:
             for message in messages:
                 if isinstance(message, HearPartial):
                     stream.bytes_since_partial = 0
+                    stream.responded = True
                     if stream is self._open:
                         self.partial = Partial(message.text, message.rev, stream.id)
                     continue
@@ -567,10 +592,16 @@ class CompanionHearingTurn:
         return HeardAudio()
 
     def _overdue(self, stream: _HearStream) -> Optional[CapabilityUnavailable]:
-        if stream.deadline is not None and time.monotonic() >= stream.deadline:
-            return CapabilityUnavailable("the companion did not end the turn", link_down=False)
-        if stream is self._open and stream.bytes_since_partial >= PARTIAL_GAP_BYTES:
-            return CapabilityUnavailable("the companion sent no transcript for the speech", link_down=False)
+        now = time.monotonic()
+        reason = None
+        if stream.deadline is not None and now >= stream.deadline:
+            reason = "the companion did not end the turn"
+        elif ((not stream.responded and now - stream.opened_at >= HEAR_RESPONSE_S)
+              or (stream is self._open and stream.bytes_since_partial >= PARTIAL_GAP_BYTES)):
+            reason = "the companion sent no transcript for the speech"
+        if reason is not None:
+            self._link.hearing_stalled(stream, reason)
+            return CapabilityUnavailable(reason)
         return None
 
     def abort(self) -> None:

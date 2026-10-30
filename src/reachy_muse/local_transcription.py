@@ -9,15 +9,21 @@ import asyncio
 import contextlib
 import io
 import json
+import logging
 import math
+import os
 from pathlib import Path
 import struct
 import sys
+import time
 from typing import Callable, Optional
+import wave
 import zlib
 
 MAX_WAV_BYTES = 2 * 1024 * 1024
 MAX_TRANSCRIPT_BYTES = 64 * 1024
+CPU_THREADS = 2
+log = logging.getLogger(__name__)
 
 
 class _LocalTranscriber:
@@ -59,10 +65,13 @@ class _LocalTranscriber:
         if self._process is not None and self._process.returncode is None:
             return
         await self._stop_worker()
+        started = time.monotonic()
         backend_args = ("--backend", self._backend) if self._backend != "whisper" else ()
         spawn = asyncio.create_task(asyncio.create_subprocess_exec(
             sys.executable, "-m", "reachy_muse.local_transcription", "--model", str(self.model_path),
             *backend_args,
+            env={**os.environ, "OMP_NUM_THREADS": str(CPU_THREADS), "OPENBLAS_NUM_THREADS": "1",
+                 "VECLIB_MAXIMUM_THREADS": "1", "MKL_NUM_THREADS": "1"},
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         ))
@@ -73,6 +82,7 @@ class _LocalTranscriber:
             raise
         if await self._packet_size() != 0:
             raise ValueError(f"{self._name} worker returned an invalid ready handshake")
+        log.info("%s CPU worker loaded and warmed in %.3fs", self._name, time.monotonic() - started)
 
     async def _stop_worker(self) -> None:
         process, self._process = self._process, None
@@ -131,6 +141,13 @@ class _LocalTranscriber:
                     text = response.get("text") if isinstance(response, dict) else None
                     if not isinstance(text, str):
                         raise ValueError(f"{self._name} returned an invalid transcript response")
+                    timing = response.get("timing", {})
+                    if (isinstance(timing, dict) and timing.get("path") in ("short", "full", "moonshine", "silence")
+                            and all(isinstance(timing.get(key), (int, float)) and math.isfinite(timing[key])
+                                    for key in ("audio_s", "audio_decode_s", "vad_s", "encode_s", "decode_s", "full_s"))):
+                        log.info("%s CPU ASR audio=%.3fs path=%s wav=%.3fs vad=%.3fs encode=%.3fs decode=%.3fs full=%.3fs threads=%d",
+                                 self._name, timing["audio_s"], timing["path"], timing["audio_decode_s"], timing["vad_s"],
+                                 timing["encode_s"], timing["decode_s"], timing["full_s"], CPU_THREADS)
                     succeeded = True
                     return text.strip()
             finally:
@@ -170,7 +187,7 @@ def _write_response(output, response: dict) -> None:
     output.flush()
 
 
-def _transcribe_audio(model, tokenizer, suppressed_tokens, audio) -> str:
+def _transcribe_audio(model, tokenizer, suppressed_tokens, audio, *, timing=None) -> str:
     """Decode a short turn without encoding thirty seconds of padding.
 
     Keep a second of padding and at least five seconds of context. Longer,
@@ -181,6 +198,8 @@ def _transcribe_audio(model, tokenizer, suppressed_tokens, audio) -> str:
     import ctranslate2
     import numpy as np
 
+    timing = timing if timing is not None else {}
+    timing.update(path="full", encode_s=0.0, decode_s=0.0, full_s=0.0)
     prompt = tokenizer.sot_sequence + [tokenizer.no_timestamps]
     token_budget = min(model.max_length - len(prompt), max(64, math.ceil(len(audio) / 16000 * 20)))
     if len(audio) <= 8 * 16000:
@@ -188,29 +207,39 @@ def _transcribe_audio(model, tokenizer, suppressed_tokens, audio) -> str:
         frames = max(500, ((features.shape[-1] + 199) // 100) * 100)
         if frames <= 3000:
             features = np.pad(features, ((0, 0), (0, frames - features.shape[-1])))
+            started = time.monotonic()
             encoded = model.model.encode(ctranslate2.StorageView.from_array(
                 np.ascontiguousarray(features[None, :], dtype=np.float32)))
-            result = model.model.generate(
-                encoded, [prompt], beam_size=1, max_length=len(prompt) + token_budget,
-                suppress_blank=True, suppress_tokens=suppressed_tokens,
-                return_scores=True, return_no_speech_prob=True,
-                sampling_temperature=0.0,
-            )[0]
-            tokens = result.sequences_ids[0]
-            valid_tokens = all(isinstance(token, int) and not isinstance(token, bool) and token >= 0
-                               for token in tokens)
-            text = tokenizer.decode(tokens).strip() if valid_tokens else ""
-            average_logprob = result.scores[0] * len(tokens) / (len(tokens) + 1)
-            encoded_text = text.encode("utf-8")
-            compression_ratio = len(encoded_text) / len(zlib.compress(encoded_text))
-            if (text and len(tokens) < token_budget
-                    and math.isfinite(average_logprob) and average_logprob > -1.0
-                    and math.isfinite(result.no_speech_prob) and 0 <= result.no_speech_prob <= 1
-                    and compression_ratio <= 2.4):
-                return text
+            timing["encode_s"] = time.monotonic() - started
+            # Retry uncertain greedy output with the normal beam width before paying
+            # for another encoder pass over thirty seconds of padding.
+            for beam_size in (1, 3):
+                started = time.monotonic()
+                result = model.model.generate(
+                    encoded, [prompt], beam_size=beam_size, max_length=len(prompt) + token_budget,
+                    suppress_blank=True, suppress_tokens=suppressed_tokens,
+                    return_scores=True, return_no_speech_prob=True,
+                    sampling_temperature=0.0,
+                )[0]
+                timing["decode_s"] += time.monotonic() - started
+                tokens = result.sequences_ids[0]
+                valid_tokens = all(isinstance(token, int) and not isinstance(token, bool) and token >= 0
+                                   for token in tokens)
+                text = tokenizer.decode(tokens).strip() if valid_tokens else ""
+                average_logprob = result.scores[0] * len(tokens) / (len(tokens) + 1)
+                encoded_text = text.encode("utf-8")
+                compression_ratio = len(encoded_text) / len(zlib.compress(encoded_text))
+                if (text and len(tokens) < token_budget
+                        and math.isfinite(average_logprob) and average_logprob > -1.0
+                        and math.isfinite(result.no_speech_prob) and 0 <= result.no_speech_prob <= 1
+                        and compression_ratio <= 2.4):
+                    timing["path"] = "short"
+                    return text
 
+    started = time.monotonic()
     segments, _ = model.transcribe(audio, language="en", beam_size=3,
                                    condition_on_previous_text=False, temperature=(0.0, .2, .4),
+                                   without_timestamps=True,
                                    vad_filter=False, no_speech_threshold=0.6,
                                    log_prob_threshold=-1.0, compression_ratio_threshold=2.4,
                                    max_new_tokens=token_budget)
@@ -220,9 +249,11 @@ def _transcribe_audio(model, tokenizer, suppressed_tokens, audio) -> str:
                 or not math.isfinite(segment.no_speech_prob)
                 or not 0 <= segment.no_speech_prob <= 1
                 or not math.isfinite(segment.compression_ratio) or segment.compression_ratio > 2.4):
+            timing["full_s"] = time.monotonic() - started
             return ""
         if segment.text.strip():
             parts.append(segment.text.strip())
+    timing["full_s"] = time.monotonic() - started
     return " ".join(parts)
 
 
@@ -239,17 +270,35 @@ def _worker(model_path: Path, backend: str = "whisper") -> None:
             cached_decoder=str(model_path / "cached_decode.int8.onnx"),
             tokens=str(model_path / "tokens.txt"), num_threads=2, debug=False, provider="cpu")
     else:
+        import ctranslate2
+        import numpy as np
         from faster_whisper import WhisperModel
         from faster_whisper.tokenizer import Tokenizer
         from faster_whisper.transcribe import get_suppressed_tokens
 
         model = WhisperModel(str(model_path), device="cpu", compute_type="int8",
-                             cpu_threads=2, num_workers=1, local_files_only=True)
+                             cpu_threads=CPU_THREADS, num_workers=1, local_files_only=True)
         tokenizer = Tokenizer(model.hf_tokenizer, model.model.is_multilingual,
                               task="transcribe", language="en")
         suppressed_tokens = get_suppressed_tokens(tokenizer, [-1])
+        # Loading weights alone leaves the first encoder/decoder invocation cold.
+        features = model.feature_extractor(np.zeros(16000, dtype=np.float32))
+        features = np.pad(features, ((0, 0), (0, 500 - features.shape[-1])))
+        encoded = model.model.encode(ctranslate2.StorageView.from_array(
+            np.ascontiguousarray(features[None, :], dtype=np.float32)))
+        prompt = tokenizer.sot_sequence + [tokenizer.no_timestamps]
+        model.model.generate(encoded, [prompt], beam_size=1, max_length=len(prompt) + 2,
+                             suppress_blank=True, suppress_tokens=suppressed_tokens)
     vad_options = VadOptions()
     get_vad_model()
+    # Exercise WAV conversion and VAD too: their first native call otherwise lands
+    # on the first fallback turn, possibly hours after the worker was loaded.
+    warm_wav = io.BytesIO()
+    with wave.open(warm_wav, "wb") as wav:
+        wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        wav.writeframes(b"\0\0" * 16000)
+    warm_wav.seek(0)
+    get_speech_timestamps(decode_audio(warm_wav, sampling_rate=16000), vad_options)
     source = sys.stdin.buffer
     output = sys.stdout.buffer
     output.write(struct.pack("<I", 0))
@@ -264,10 +313,15 @@ def _worker(model_path: Path, backend: str = "whisper") -> None:
         if not 44 <= size <= MAX_WAV_BYTES:
             raise ValueError("Whisper input WAV size is invalid")
         wav = _read_exact(source, size)
+        started = time.monotonic()
         audio = decode_audio(io.BytesIO(wav), sampling_rate=16000)
+        audio_decode_s = time.monotonic() - started
+        started = time.monotonic()
         speech_chunks = get_speech_timestamps(audio, vad_options)
+        timing = dict(audio_s=len(audio) / 16000, audio_decode_s=audio_decode_s, vad_s=time.monotonic() - started,
+                      encode_s=0.0, decode_s=0.0, full_s=0.0, path="silence")
         if not speech_chunks:
-            _write_response(output, {"text": ""})
+            _write_response(output, {"text": "", "timing": timing})
             continue
         _write_response(output, {"speech_detected": True})
         if backend == "moonshine":
@@ -277,9 +331,10 @@ def _worker(model_path: Path, backend: str = "whisper") -> None:
             stream.accept_waveform(16000, audio)
             model.decode_stream(stream)
             text = stream.result.text.strip()
+            timing["path"] = "moonshine"
         else:
-            text = _transcribe_audio(model, tokenizer, suppressed_tokens, audio)
-        _write_response(output, {"text": text})
+            text = _transcribe_audio(model, tokenizer, suppressed_tokens, audio, timing=timing)
+        _write_response(output, {"text": text, "timing": timing})
 
 
 if __name__ == "__main__":

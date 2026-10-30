@@ -82,7 +82,7 @@ def test_companion_fallback_reuses_recordings_but_not_route_or_narrator_state(mo
         await first.voice.warm(16000)
         second = backends_for(Mode.COMPANION, object(), speech=speech, companion=object(), wake=True)
         await second.voice.warm(16000)
-        assert len(speech.requests) == 14
+        assert len(speech.requests) == 21  # 14 original cues plus seven cached outage chat replies
         assert first.companion is not second.companion
         assert first.narrator.local is not second.narrator.local
         assert second.voice.is_presynthesized("Yes?")

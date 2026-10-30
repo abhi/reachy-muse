@@ -226,7 +226,7 @@ def test_unreachable_companion_is_announced_once_and_muse_is_set_up_for_on_robot
         setup, = robot.requests()
         assert setup.endswith(" For setup, say 'Ready to talk' and append [reachy:nod]. "
                               "Keep using this expression channel for subsequent spoken messages.")
-        assert sorted(robot.spoken()) == [f"tts:{COMPANION_NOTICE}", "tts:Ready to talk."]
+        assert sorted(robot.spoken()) == sorted([f"tts:{COMPANION_NOTICE}", "tts:Ready to talk."])
         assert robot.link.transitions[:2] == [LinkState.CONNECTING, LinkState.DOWN]
         assert LinkState.UP not in robot.link.transitions
     scenario(run())
@@ -399,7 +399,7 @@ def test_a_turn_the_companion_never_ends_is_finished_on_the_robot_within_the_dea
                 waited["s"] = asyncio.get_running_loop().time() - stopped
             await robot.run(user)
             assert waited["s"] < ENDPOINT_WAIT_S + 1
-            assert [request.endswith(LOCAL_REQUEST) for request in robot.requests()] == [True]
+            assert [request.endswith("what the robot heard") for request in robot.requests()] == [True]
     scenario(run())
 
 
@@ -418,7 +418,7 @@ def test_a_companion_that_hears_nothing_mid_utterance_is_replaced_by_the_robot(m
                 waited["s"] = asyncio.get_running_loop().time() - stopped
             await robot.run(user)
             assert waited["s"] < 1
-            assert [request.endswith(LOCAL_REQUEST) for request in robot.requests()] == [True]
+            assert [request.endswith("what the robot heard") for request in robot.requests()] == [True]
     scenario(run())
 
 
@@ -427,7 +427,7 @@ def hear_streams_opened(companion):
                                            if isinstance(frame, str)) if isinstance(message, HearOpen)]
 
 
-def test_three_turns_the_companion_never_ends_rest_only_its_hearing(monkeypatch):
+def test_a_companion_that_never_ends_a_turn_stays_quarantined_across_later_turns(monkeypatch):
     import reachy_muse.companion_client
     monkeypatch.setattr(reachy_muse.companion_client, "ENDPOINT_WAIT_S", .5)
 
@@ -440,12 +440,37 @@ def test_three_turns_the_companion_never_ends_rest_only_its_hearing(monkeypatch)
                 await robot.until(lambda: robot.link.state is LinkState.UP)
                 await robot.turns(4)
             await robot.run(user)
-            # Turn four is heard on the robot alone; the companion still speaks every answer.
-            assert hear_streams_opened(companion) == [1, 3, 5]
+            assert hear_streams_opened(companion) == [1]
             assert [request.endswith("what the robot heard") for request in robot.requests()] == [True] * 4
-            assert spoken_by_companion(companion).count("Castles kept dragons out.") == 4
-            assert robot.notices() == []
-            assert robot.transitions_before_stop == [LinkState.CONNECTING, LinkState.UP]
+            assert spoken_by_companion(companion) == []
+            assert robot.notices() == [f"tts:{COMPANION_NOTICE}"]
+            assert robot.transitions_before_stop == [LinkState.CONNECTING, LinkState.UP, LinkState.DOWN]
+    scenario(run())
+
+
+@pytest.mark.parametrize("text, reply", [
+    ("good morning", "Good morning!"),
+    ("thanks", "You're welcome!"),
+    ("how are you", "I'm here and ready to chat."),
+])
+def test_outage_small_talk_uses_cached_robot_speech_and_announces_only_once(monkeypatch, text, reply):
+    async def run():
+        async def muse(session, request):
+            raise AssertionError("grammar chat must not reach Muse")
+
+        robot = Conversation(monkeypatch, f"ws://127.0.0.1:{free_port()}", muse, transcript=text)
+
+        async def user():
+            for count in (1, 2):
+                await robot.speak(.4)
+                await robot.until(lambda: robot.spoken().count(f"tts:{reply}") == count, 1)
+                await robot.quiet()
+
+        await robot.run(user)
+        assert robot.requests() == []
+        assert robot.spoken().count(f"tts:{reply}") == 2
+        assert robot.recording.synthesized.count(f"tts:{reply}") == 1  # startup only
+        assert robot.notices() == [f"tts:{COMPANION_NOTICE}"]
     scenario(run())
 
 

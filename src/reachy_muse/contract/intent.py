@@ -91,6 +91,26 @@ FALLBACK_OPENERS = {
     Intent.CHAT: (),
 }
 
+# A narrow grammar can answer these without inventing facts or dropping a request.
+FALLBACK_CHAT = (
+    (r"(?:hi|hello|hey|hiya|yo)(?: there)?", "Hello!"),
+    (r"good morning", "Good morning!"),
+    (r"good afternoon", "Good afternoon!"),
+    (r"good evening", "Good evening!"),
+    (r"good ?night|bye|goodbye|see you(?: later)?", "See you later!"),
+    (r"(?:thanks?|thank you|cheers)(?: (?:so|very) much)?", "You're welcome!"),
+    (r"how are you(?: doing)?(?: today)?|how(?:'s| is) it going|how are things|what(?:'s| is) up",
+     "I'm here and ready to chat."),
+)
+CHAT_PHRASES = tuple(reply for _, reply in FALLBACK_CHAT)
+
+
+def chat_reply(text: str) -> Optional[str]:
+    if maybe_chat(text):
+        words = _words(text).removesuffix(" reachy")
+        return next((reply for pattern, reply in FALLBACK_CHAT if re.fullmatch(pattern, words)), None)
+    return None
+
 
 def pick(phrases: Tuple[str, ...], turn: int, recently_said: Tuple[str, ...]) -> Optional[str]:
     for offset in range(len(phrases)):

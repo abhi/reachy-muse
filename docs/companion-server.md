@@ -66,6 +66,16 @@ reachy-companion serve
 The server loads and warms the speech and narrator models, one at a time, before it listens. With `--motion` this took 15 to 17 s on the Mac Studio.
 The first run also downloads the models, about 9.2 GB, from Hugging Face. Voxtral is 2.9 GB, Parakeet 2.3 GB, Qwen3-4B 2.3 GB, Chatterbox Turbo 1.3 GB and Kokoro 0.3 GB. They go to the Hugging Face cache, `~/.cache/huggingface/hub`. Set `HF_HOME` to put them somewhere else.
 
+After loading, a watchdog thread monitors the asyncio heartbeat and each active
+model worker. It logs to stderr and exits with status 70 after 10 seconds without
+an event-loop tick or 30 seconds without engine progress. launchd's `KeepAlive`
+then restarts the process. Tokens and audio chunks reset the engine timer, so a
+long briefing or a motion planner yielding to speech can continue. Cancellation
+does not hide native work still running on a model thread. Downloads and model
+warm-up have no watchdog deadline. This recovers runtime stalls; serializing GPU
+work remains the separate fix for concurrent MLX hangs. See
+[the incident report](../bench/companion_hang.md) for bounds and tests.
+
 The server listens on port 8765 at the path `/v1`, with TLS and the paired certificate. Stop it with Ctrl-C.
 
 These options change the engines:

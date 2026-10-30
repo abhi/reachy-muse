@@ -5,7 +5,7 @@ import pytest
 
 from reachy_muse.capabilities import Heard, Hold, Mode, SpokenLine
 from reachy_muse.companion_client import CompanionOpening
-from reachy_muse.contract.intent import Intent
+from reachy_muse.contract.intent import CHAT_PHRASES, Intent
 from reachy_muse.conversation import TurnOutcome, VoiceConversation
 from reachy_muse.failover import CompanionRoute, FailoverNarrator
 from reachy_muse.local_backends import backends_for
@@ -50,6 +50,7 @@ class DispatchOnly(VoiceConversation):
 
 def robot(session, hardware, speech, companion, *, local_chat=True):
     local = backends_for(Mode.ON_ROBOT, session, speech=speech)
+    local.voice.fixed_phrases += CHAT_PHRASES
     route = CompanionRoute(companion)
     route.begin_turn()
     narrator = FailoverNarrator(companion, local.narrator, route)
@@ -130,6 +131,46 @@ def test_companion_down_uses_rotated_rules_and_never_answers_chat():
         assert await narrator.acknowledge(Heard("send an email")) == Hold(
             Intent.ACTION, SpokenLine("On it.", None, "ack"))
         assert await narrator.acknowledge(Heard("I'm tired", may_chat=True)) == Hold(Intent.CHAT, None)
+        assert companion.heard == []
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("text, reply", [
+    ("good morning", "Good morning!"),
+    ("Thanks!", "You're welcome!"),
+    ("How are you?", "I'm here and ready to chat."),
+])
+def test_companion_down_answers_simple_chat_from_cached_audio_without_muse(text, reply):
+    async def scenario():
+        companion = Companion()
+        companion.up = False
+        session, hardware, speech = FakeSession(), FakeHardware(), Speech()
+        conversation = robot(session, hardware, speech, companion)
+        await conversation.backends.voice.warm(hardware.output_sample_rate)
+        speech.spoken.clear()
+        assert await conversation.turn(b"voice", recognized_text=text) is TurnOutcome.ACCEPTED
+        assert session.setup_messages == []
+        assert companion.heard == []
+        assert speech.spoken == []  # no inference at reply time
+        assert len(hardware.played) == 1
+        assert list(conversation._recent.said) == [reply]
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("text, enabled", [
+    ("Good morning, what's on my calendar?", True),
+    ("Thanks, remind me at eight", True),
+    ("How are you going to fix my reminder?", True),
+    ("good morning", False),
+])
+def test_local_grammar_never_swallows_requests_or_bypasses_chat_off(text, enabled):
+    async def scenario():
+        companion = Companion()
+        companion.up = False
+        session = FakeSession()
+        conversation = robot(session, FakeHardware(), Speech(), companion, local_chat=enabled)
+        await conversation.turn(b"voice", recognized_text=text)
+        assert session.setup_messages == [(text, None)]
         assert companion.heard == []
     asyncio.run(scenario())
 

@@ -74,6 +74,7 @@ def test_a_late_endpoint_keeps_the_next_utterances_opening_for_a_replay():
 
 class Connection:
     closed = False
+    probe = None
 
     def __init__(self):
         self.hearing = {}

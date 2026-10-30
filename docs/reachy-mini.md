@@ -139,16 +139,22 @@ Then start with `--mode companion` and the usual `on-robot` flags.
   credentials never do.
 
 The connection is TLS, pinned to the companion's certificate, with the pairing
-token. If the companion stops answering, Reachy says once: "My companion
-computer isn't answering, so I'll use my own voice for now." It finishes the
-current turn with its own models, from the audio it already heard. It does the
-same, without the notice, for a turn the companion stops transcribing or does
-not end within 3 seconds of your last word. After three such turns in a row,
-Reachy hears on its own for a minute, still without the notice, and then
-gives the companion's hearing another try. When the
-companion has been back for 10 seconds, Reachy uses it again from the next turn.
+token. If the companion stops answering, Reachy says once per outage:
+"Using my own voice." It finishes the current turn with its own models,
+from the audio it already heard. A socket that stops answering pings fails
+within about two seconds, including the close handshake. Hearing also fails
+if no first partial arrives within two seconds, two seconds of audio arrive
+without another partial, or no endpoint arrives within two seconds of the
+robot closing the stream. Reachy then keeps new turns on the robot until the
+pending endpoint arrives or the companion reconnects. Speech returns to the
+companion on a turn boundary after it has been back for 10 seconds.
 A companion that keeps dropping right after it connects is announced once, not
 on every reconnect.
+
+With local chat enabled, the robot answers simple greetings, thanks, and
+"how are you" from fixed phrases when the companion cannot narrate them.
+Their audio is cached at startup. Requests such as "good morning, what's on
+my calendar?" still go to Muse. `--local-chat off` also sends greetings to Muse.
 
 ## Check and start
 
@@ -220,8 +226,8 @@ only if Muse has sent no reply text within one second (`ACK_GRACE_S`), so a
 fast answer is never delayed behind it. An acknowledgment already playing when
 the answer arrives finishes its words; nothing else queued plays before the
 answer. A companion that returns no acknowledgment means silence, and so does one that
-misses its 0.9-second deadline, because a busy companion would voice a fallback
-late too. Only a failed or ungrounded one falls back to Reachy's own phrase. The adapter
+misses its 0.9-second deadline. Simple small talk can still get a cached local
+reply. A failed or ungrounded acknowledgement falls back to Reachy's own phrase. The adapter
 selects the on-robot phrases locally without an additional model request.
 Startup caches their audio. Empty
 recognition does not send a message to Muse. A timed wake opens question capture
@@ -535,13 +541,20 @@ Empty speech does not start a conversation.
 The words still come from Muse. A Piper voice with Muse transcription is not
 supported.
 
-The Pi keeps a warmed recognition worker. Streaming Silero speech detection
+The Pi keeps a recognition worker with its encoder and decoder warmed before
+the ready handshake. The worker uses two inference threads and one BLAS thread
+to leave CPU time for capture, VAD, and camera work. Streaming Silero speech detection
 controls recording endpoints for local recognition; it uses the bundled model
 in the tested `faster-whisper==1.2.1` installation. Silence detection also gates
 recognition in the worker;
 the original waveform is retained so softer words are not removed by cropping.
-Short-turn decoding rejects repetitive or invalid output before falling back
-to the ordinary decoder. Larger local models were slower on the tested Pi and
+An uncertain short decode retries beam search on the existing short encoder
+output before falling back to the ordinary decoder. The fallback does not
+generate unused timestamps. Repetition and confidence checks stay in place,
+and longer turns retain their full waveform. Logs report worker startup,
+audio length, VAD, encoder, decoder, and full-fallback times without transcript
+text. CPU measurements and the CM4 estimate are in
+[the incident report](../bench/companion_hang.md). Larger local models were slower on the tested Pi and
 are not selected automatically.
 
 ### Incremental local recognition

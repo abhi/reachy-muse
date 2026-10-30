@@ -19,10 +19,10 @@ import json
 import logging
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from reachy_muse.companion_server.watchdog import EngineExecutor, watchdog
 from reachy_muse.contract.expressions import Expression
 from reachy_muse.contract.intent import FALLBACK_OPENERS, Intent, guess_intent, maybe_chat, pick
 from reachy_muse.contract.persona import REACHY_PERSONA
@@ -324,7 +324,7 @@ class MlxNarrator:
     def __init__(self, repo: str = DEFAULT_REPO) -> None:
         self.repo = repo
         self.name = repo.split("/")[-1]
-        self._thread = ThreadPoolExecutor(1, thread_name_prefix="narrator")
+        self._thread = EngineExecutor("narrator")
         self._model: Any = None
         self._tokenizer: Any = None
         self._rules_cache: Any = None
@@ -371,6 +371,7 @@ class MlxNarrator:
         raw = ""
         for response in stream_generate(self._model, self._tokenizer, tokens, max_tokens=CLASSIFY_MAX_TOKENS,
                                         prompt_cache=copy.deepcopy(self._rules_cache)):
+            watchdog.progress()
             raw += response.text
             if "\n" in raw:
                 break
@@ -452,6 +453,7 @@ class MlxNarrator:
                 cache = copy.deepcopy(self._opening_cache)
         text = prefix
         for response in stream_generate(self._model, self._tokenizer, tokens, max_tokens=max_tokens, prompt_cache=cache):
+            watchdog.progress()
             text += response.text
             if "}" in response.text and _closed(text):
                 break

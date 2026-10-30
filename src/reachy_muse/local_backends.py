@@ -11,9 +11,9 @@ from itertools import chain
 from typing import Awaitable, Callable, Optional, Tuple
 
 from reachy_muse.contract.expressions import Expression
-from reachy_muse.contract.intent import FALLBACK_OPENERS, Intent, guess_intent, pick
+from reachy_muse.contract.intent import CHAT_PHRASES, FALLBACK_OPENERS, Intent, chat_reply, guess_intent, pick
 from reachy_muse.contract.replies import ReplyStyle, spoken_reply
-from reachy_muse.capabilities import WAKE_CUE, Backends, Endpoint, Heard, HeardAudio, Hold, Mode, Opener, Partial, SpokenLine
+from reachy_muse.capabilities import WAKE_CUE, Backends, Endpoint, Heard, HeardAudio, Hold, LocalReply, Mode, Opener, Partial, SpokenLine
 from reachy_muse.progress import PUBLIC_PROGRESS_PHRASES, ProgressPlan
 
 log = logging.getLogger(__name__)
@@ -281,7 +281,10 @@ class RuleNarrator:
         self._presynthesized = presynthesized
         self._turns = dict.fromkeys(Intent, 0)
 
-    def hold(self, intent: Intent, heard: Heard) -> Hold:
+    def hold(self, intent: Intent, heard: Heard) -> Opener:
+        reply = chat_reply(heard.text) if heard.may_chat and self._presynthesized is not None else None
+        if reply is not None and self._presynthesized(reply):
+            return LocalReply((SpokenLine(reply, None, "answer"),))
         turn = self._turns[intent]
         self._turns[intent] += 1
         phrase = pick(FALLBACK_OPENERS[intent], turn, heard.recently_said)
@@ -319,6 +322,7 @@ def backends_for(mode: Mode, session, *, speech=None, progress_speech=None, tran
         from reachy_muse.failover import companion_backends
         local = backends_for(Mode.ON_ROBOT, session, speech=speech, progress_speech=progress_speech,
                              transcriber=transcriber, stream_replies=stream_replies, wake=wake)
+        local.voice.fixed_phrases += CHAT_PHRASES
         return companion_backends(local, companion)
     if mode is Mode.MUSE_VOICE:
         return Backends(hearing=LocalHearing(), voice=MuseVoice(session), narrator=RuleNarrator(),

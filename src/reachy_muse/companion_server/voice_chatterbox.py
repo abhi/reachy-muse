@@ -10,13 +10,13 @@ import asyncio
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Protocol, Sequence, Tuple
 
 import numpy as np
 
+from reachy_muse.companion_server.watchdog import EngineExecutor, watchdog
 from reachy_muse.contract.expressions import Expression
 from reachy_muse.protocol import VoiceRole
 
@@ -136,7 +136,7 @@ class ChatterboxVoice:
     def __init__(self, loudness: Loudness = Loudness(), *, open_model: Optional[Callable[[], SpeechModel]] = None) -> None:
         self.loudness = loudness
         self._open_model = open_model or _open_turbo
-        self._thread = ThreadPoolExecutor(1, thread_name_prefix="voice-chatterbox")
+        self._thread = EngineExecutor("voice-chatterbox")
         self._model: Any = None
         self._gain = 1.0
         self._seed = 0
@@ -189,6 +189,7 @@ class ChatterboxVoice:
                 self._seed += 1
                 output = _SentencePcm(self._model.sample_rate, out_rate, self._gain, self.loudness)
                 for audio, last in decoded(self._model, text, self._seed, stop):
+                    watchdog.progress()
                     put(Chunk(index, output.feed(audio, last), last))
                 if stop.is_set():
                     return
