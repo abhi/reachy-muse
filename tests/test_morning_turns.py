@@ -35,23 +35,76 @@ class Camera:
     def __init__(self):
         self.arrived = None
         self.calls = []
+        self.watching = False
 
     def start_watching(self, pose):
         self.calls.append("start")
+        self.watching = True
+        self.arrived = None
 
     def stop_watching(self):
         self.calls.append("stop")
+        self.watching = False
+
+    def log_arrival_diagnostics(self):
+        pass
 
     def arrival(self):
         return self.arrived
 
     def arrive(self):
-        self.arrived = time.monotonic()
+        if self.watching:
+            self.arrived = time.monotonic()
 
 
 def morning(camera, **options):
     return MorningRoutine(BriefingSchedule.parse("04:50-06:00"), "Brief me.", camera, DayLedger(None),
                           clock=WallClock(), poll_s=.02, **options)
+
+
+def test_arrival_during_a_muse_reconnect_is_kept_until_the_new_conversation(monkeypatch):
+    from musegadget.service import Service
+    from musegadget.link_client import Outcome
+    from test_pins import PinSession
+
+    rig = rig_with(monkeypatch)
+    camera = Camera()
+    robot = service(rig, briefing, Transcripts(), morning=morning(camera))
+
+    async def reconnecting(sdk):
+        disconnected = asyncio.Event()
+        stop = asyncio.Event()
+
+        async def link(stop_link):
+            await disconnected.wait()
+            return Outcome.CLOSED
+
+        rig.session.run = link
+        first = asyncio.create_task(sdk.serve(rig.session, {"vm_id": "vm-1"}, stop))
+        try:
+            await rig.wait_until_or_timeout(lambda: sent_to_muse(rig.recording.events), 5)
+            await rig.quiet()
+        finally:
+            disconnected.set()
+            assert await asyncio.wait_for(first, 5) is Outcome.CLOSED
+            await asyncio.gather(*rig.session.scripts)
+        assert camera.calls == ["start"]
+        camera.arrive()
+        assert played(rig.recording.events) == []
+        rig.session = PinSession(rig.recording, briefing)
+        second = asyncio.create_task(sdk.serve(rig.session, {"vm_id": "vm-1"}, stop))
+        try:
+            await rig.wait_until_or_timeout(lambda: camera.calls == ["start", "stop"], 10)
+            await rig.quiet()
+        finally:
+            stop.set()
+            await asyncio.wait_for(second, 5)
+            await asyncio.gather(*rig.session.scripts)
+
+    monkeypatch.setattr(Service, "run", reconnecting)
+    asyncio.run(asyncio.wait_for(robot.run(), 20))
+    assert played(rig.recording.events) == SPOKEN
+    assert sent_to_muse(rig.recording.events) == ["Brief me."]
 
 
 def lines_played_without_repeats(events):
@@ -279,6 +332,7 @@ def test_a_link_reconnect_reuses_briefing_state_only_in_the_same_vm_and_chat(mon
     conversation.prepare_chat = prepare_chat
 
     async def check():
+        camera_task = asyncio.create_task(conversation.morning.watch_camera())
         disconnected = asyncio.Event()
         stop = asyncio.Event()
         greeting = asyncio.Event()
@@ -318,14 +372,16 @@ def test_a_link_reconnect_reuses_briefing_state_only_in_the_same_vm_and_chat(mon
                                                        for event in rig.recording.events) == 2, 5)
             await rig.quiet()
             assert played(rig.recording.events) == []
-            assert camera.calls == ["start", "stop", "start"]
+            assert camera.calls == ["start"]
             camera.arrive()
-            await rig.wait_until_or_timeout(lambda: camera.calls == ["start", "stop"] * 2, 10)
+            await rig.wait_until_or_timeout(lambda: camera.calls == ["start", "stop"], 10)
             await rig.quiet()
         finally:
             stop.set()
             await asyncio.wait_for(second, 5)
             await asyncio.gather(*rig.session.scripts)
+            camera_task.cancel()
+            await asyncio.gather(camera_task, return_exceptions=True)
 
     asyncio.run(asyncio.wait_for(check(), 20))
     same_chat = (vm_id, session_id) == ("vm-1", "robot-chat")

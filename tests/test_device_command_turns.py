@@ -79,6 +79,7 @@ def service(rig, muse, transcripts, *, model=None, voice=None, stream_replies=Fa
 def run(rig, service, user, *, rest=("idle",)):
     async def converse():
         stop = asyncio.Event()
+        camera = asyncio.create_task(service.morning.watch_camera()) if service.morning is not None else None
         session = asyncio.create_task(service.serve(rig.session, {"vm_id": "vm-1"}, stop))
         try:
             await rig.quiet()
@@ -88,6 +89,9 @@ def run(rig, service, user, *, rest=("idle",)):
             stop.set()
             await asyncio.wait_for(session, 5)
             await asyncio.gather(*rig.session.scripts)
+            if camera is not None:
+                camera.cancel()
+                await asyncio.gather(camera, return_exceptions=True)
     asyncio.run(asyncio.wait_for(converse(), 20))
     return rig.recording.events
 

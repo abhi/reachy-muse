@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import math
 from pathlib import Path
 import threading
@@ -22,6 +23,8 @@ BACKGROUND_RATE = 0.05
 MOTION_MIN_FRACTION = 0.004
 LIGHTING_CHANGE_FRACTION = 0.5
 LIGHT_JUMP = 10.0
+LIGHT_BURST_S = 8.0
+LIGHT_DETECT_PERIOD_S = 0.25
 SETTLE_S = 1.0
 MOTION_MEMORY_S = 1.0
 BURST_S = 3.0
@@ -35,6 +38,7 @@ CONFIRM_DETECTIONS = 2
 CONFIRM_WINDOW_S = 2.0
 WATCH_HZ = 3.0
 _YOLOX_SIZE = 416
+log = logging.getLogger(__name__)
 
 
 def default_person_model() -> Path:
@@ -53,6 +57,22 @@ class ArrivalCamera(Protocol):
     def stop_watching(self) -> None: ...
 
     def arrival(self) -> float | None: ...
+
+    def log_arrival_diagnostics(self) -> None: ...
+
+
+@dataclass
+class ArrivalStats:
+    frames: int = 0
+    frame_errors: int = 0
+    brightness_total: float = 0.0
+    motion_triggers: int = 0
+    detector_runs: int = 0
+    max_person_confidence: float = 0.0
+
+    @property
+    def brightness(self) -> float:
+        return self.brightness_total / self.frames if self.frames else 0.0
 
 
 @dataclass(frozen=True)
@@ -100,6 +120,7 @@ class GateReading:
     moving: bool
     lighting: bool
     moved_recently: np.ndarray
+    light_on: bool = False
 
 
 class MotionGate:
@@ -130,7 +151,7 @@ class MotionGate:
         if now < self._settle_until:
             self._background = gray
             self._moved_at.fill(-np.inf)
-            return GateReading(False, lighting, np.zeros(gray.shape, dtype=bool))
+            return GateReading(False, lighting, np.zeros(gray.shape, dtype=bool), scene_brightening > LIGHT_JUMP)
         self._background += BACKGROUND_RATE * (gray - self._background)
         moving = fraction >= MOTION_MIN_FRACTION
         if moving:
@@ -153,37 +174,64 @@ class ArrivalDetector:
         self._detector = detector
         self._gate = MotionGate()
         self.arrived_at: float | None = None
+        self.motion_triggered = False
+        self.detector_ran = False
+        self.max_person_confidence = 0.0
         self.reachy_moved()
 
     def reachy_moved(self) -> None:
         self._gate.reset()
         self._burst_until = -math.inf
+        self._light_until = -math.inf
         self._detected_at = -math.inf
         self._hits: list[float] = []
 
     def observe(self, frame, now: float) -> bool:
+        self.motion_triggered = self.detector_ran = False
+        self.max_person_confidence = 0.0
         if self.arrived_at is not None:
             return True
         reading = self._gate.update(frame, now)
+        self.motion_triggered = reading.moving
+        if reading.light_on:
+            self._light_until = now + LIGHT_BURST_S
         if reading.moving or reading.lighting:
             self._burst_until = now + BURST_S
-        if now >= self._burst_until or now - self._detected_at < DETECT_PERIOD_S:
+        light_burst = now < self._light_until
+        period = LIGHT_DETECT_PERIOD_S if light_burst else DETECT_PERIOD_S
+        if (not light_burst and now >= self._burst_until) or now - self._detected_at < period:
             return False
         self._detected_at = now
-        if any(_on_motion(box, reading.moved_recently) for box in self._detector.detect(frame)):
+        if light_burst:
+            frame = _brightened(frame)
+        self.detector_ran = True
+        boxes = self._detector.detect(frame)
+        self.max_person_confidence = max(
+            (box.score for box in boxes), default=getattr(self._detector, "max_person_confidence", 0.0))
+        if any(box.score >= PERSON_SCORE and _on_motion(box, reading.moved_recently) for box in boxes):
             self._hits = [hit for hit in self._hits if now - hit <= CONFIRM_WINDOW_S] + [now]
             if len(self._hits) >= CONFIRM_DETECTIONS:
                 self.arrived_at = now
         return self.arrived_at is not None
 
 
+def _brightened(frame):
+    import numpy as np
+
+    brightness = float(frame.mean())
+    if brightness >= 60:
+        return frame
+    gain = min(3.0, 80.0 / max(1.0, brightness))
+    return np.clip(frame.astype(np.float32) * gain, 0, 255).astype(np.uint8)
+
+
 class YoloxPersonDetector:
     def __init__(self, model: Path) -> None:
+        if not model.is_file():
+            raise FileNotFoundError("Local person detector model was not found")
         import cv2
         import numpy as np
 
-        if not model.is_file():
-            raise FileNotFoundError("Local person detector model was not found")
         self._cv = cv2
         self._np = np
         cv2.setNumThreads(1)
@@ -196,6 +244,7 @@ class YoloxPersonDetector:
             strides.append(np.full((side * side, 1), stride))
         self._grid = np.concatenate(grids).astype(np.float32)
         self._stride = np.concatenate(strides).astype(np.float32)
+        self.max_person_confidence = 0.0
 
     def detect(self, frame) -> list[PersonBox]:
         np, cv = self._np, self._cv
@@ -208,6 +257,7 @@ class YoloxPersonDetector:
         self._net.setInput(cv.dnn.blobFromImage(image))
         rows = self._net.forward().reshape(-1, 85)
         scores = rows[:, 4] * rows[:, 5]
+        self.max_person_confidence = float(scores.max())
         keep = scores >= PERSON_SCORE
         rows, scores = rows[keep], scores[keep]
         stride = self._stride[keep]
@@ -246,6 +296,7 @@ class ArrivalWatcher:
         self._arrival: float | None = None
         self._failure: Exception | None = None
         self._thread: threading.Thread | None = None
+        self._stats = ArrivalStats()
 
     @property
     def failure(self) -> Exception | None:
@@ -263,17 +314,23 @@ class ArrivalWatcher:
 
     def set_watching(self, watching: bool) -> None:
         with self._condition:
-            if self._closed:
+            if self._closed or watching == self._watching:
                 return
             if watching:
                 self._arrival = None
                 self._generation += 1
+                self._stats = ArrivalStats()
             self._watching = watching
             self._condition.notify_all()
 
     def arrival(self) -> float | None:
         with self._condition:
             return self._arrival
+
+    def take_stats(self) -> ArrivalStats:
+        with self._condition:
+            stats, self._stats = self._stats, ArrivalStats()
+            return stats
 
     def close(self, timeout: float = 2.0) -> None:
         with self._condition:
@@ -311,22 +368,41 @@ class ArrivalWatcher:
                 if not self._is_still():
                     decision.reachy_moved()
                 else:
-                    frame = self._read_frame()
+                    try:
+                        frame = self._read_frame()
+                        if frame is not None:
+                            _check_frame(frame)
+                    except Exception:
+                        frame = None
                     if frame is not None:
                         try:
+                            brightness = float(frame.mean())
+                            with self._condition:
+                                self._stats.frames += 1
+                                self._stats.brightness_total += brightness
                             arrived = decision.observe(frame, self._clock())
                         finally:
                             del frame
+                            with self._condition:
+                                self._stats.motion_triggers += int(decision.motion_triggered)
+                                self._stats.detector_runs += int(decision.detector_ran)
+                                self._stats.max_person_confidence = max(
+                                    self._stats.max_person_confidence, decision.max_person_confidence)
                         if arrived:
                             with self._condition:
                                 if self._generation == generation and self._arrival is None:
                                     self._arrival = decision.arrived_at
+                    else:
+                        with self._condition:
+                            self._stats.frame_errors += 1
+                        decision.reachy_moved()
                 with self._condition:
                     if self._closed:
                         return
                     if self._looking() and self._generation == generation:
                         self._condition.wait(max(0.0, self._period - (self._clock() - started)))
         except Exception as exc:
+            log.warning("Arrival watcher failed: %s", type(exc).__name__)
             # A traceback could otherwise retain its camera frame indefinitely.
             exc.__traceback__ = exc.__context__ = exc.__cause__ = None
             with self._condition:

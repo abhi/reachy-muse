@@ -1120,3 +1120,35 @@ def test_the_morning_briefing_flags_build_its_routine_and_camera_detector(tmp_pa
     assert (str(routine.schedule), routine.request, routine.camera, routine.pose, routine.ledger.path) == (
         '05:15-06:30 mon,tue,wed,thu,fri', 'Brief me for {when}.', camera, WatchPose(30.0, 0.0),
         tmp_path / 'morning-briefing.json')
+
+
+@pytest.mark.parametrize('delay', ['-1', 'nan', 'inf', '1441'])
+def test_invalid_test_window_delay_is_rejected(delay):
+    args = reachy_muse.cli.parser().parse_args(['run', '--mode', 'on-robot', '--morning-test-in', delay])
+    with pytest.raises(ValueError, match='between 0 and 1440'):
+        reachy_muse.cli.morning_routine(args)
+
+
+def test_one_off_window_crosses_midnight_without_reading_or_writing_the_daily_ledger(tmp_path, monkeypatch):
+    from datetime import date, datetime
+    from reachy_muse.morning_briefing import SystemClock
+
+    monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
+    path = tmp_path / 'morning-briefing.json'
+    path.write_text('{"version": 1, "briefed": "2026-10-30"}')
+    monkeypatch.setattr(SystemClock, 'now_local', lambda self: datetime(2026, 10, 30, 23, 57, 12))
+    captured = {}
+    monkeypatch.setattr('reachy_muse.hardware.ReachyController', lambda **kwargs: captured.update(kwargs))
+    args = reachy_muse.cli.parser().parse_args([
+        'run', '--mode', 'on-robot', '--morning-test-in', '2', '--morning-briefing', '04:50-06:00'])
+    routine = reachy_muse.cli.morning_routine(args)(object())
+    reachy_muse.cli._hardware(args)
+    assert captured['arrival_model'].name == 'yolox_nano.onnx'
+    assert [routine.schedule.window_date(now) for now in (
+        datetime(2026, 10, 30, 23, 59, 11), datetime(2026, 10, 30, 23, 59, 12),
+        datetime(2026, 10, 31, 0, 5), datetime(2026, 10, 31, 0, 9, 12),
+        datetime(2026, 10, 31, 23, 59, 12))] == [None, date(2026, 10, 30), date(2026, 10, 30), None, None]
+    assert routine.ledger.done(date(2026, 10, 30)) is False
+    routine.ledger.mark(date(2026, 10, 30))
+    assert routine.ledger.done(date(2026, 10, 30)) is True
+    assert path.read_text() == '{"version": 1, "briefed": "2026-10-30"}'

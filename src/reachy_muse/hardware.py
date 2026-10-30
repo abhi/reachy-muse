@@ -508,14 +508,11 @@ class ReachyController:
             return {"ok": False, "error": str(exc) or "Reachy Mini motion queue is full"}
 
     def start_watching(self, pose: WatchPose | None) -> None:
-        angles = {}
-        if pose is not None:
-            requested = {"yaw": pose.yaw_deg, "pitch": pose.pitch_deg}
-            for axis, value in requested.items():
-                low, high = POSE_LIMITS[axis]
-                angles[axis] = max(low, min(high, value))
-            if angles != requested:
-                log.info("Watch pose limited to yaw %.0f, pitch %.0f degrees", angles["yaw"], angles["pitch"])
+        requested = {"yaw": pose.yaw_deg if pose else 0.0, "pitch": pose.pitch_deg if pose else 0.0}
+        angles = {axis: max(POSE_LIMITS[axis][0], min(POSE_LIMITS[axis][1], value))
+                  for axis, value in requested.items()}
+        if angles != requested:
+            log.info("Watch pose limited to yaw %.0f, pitch %.0f degrees", angles["yaw"], angles["pitch"])
         self._watching = True
         self._turn_watch(angles, 1.0)
         failed = self._arrival_watcher
@@ -561,6 +558,25 @@ class ReachyController:
             self._warn_arrival_unavailable(type(failure).__name__)
             return None
         return watcher.arrival()
+
+    def log_arrival_diagnostics(self) -> None:
+        from reachy_muse.arrival import ArrivalStats
+
+        watcher = self._arrival_watcher
+        stats = watcher.take_stats() if watcher is not None else ArrivalStats()
+        yaw, pitch = self._read_head_angles()
+        with self._state_lock:
+            asleep = self._state == "sleeping"
+        log.info("Arrival stats frames=%d frame_errors=%d brightness=%.1f motion_triggers=%d "
+                 "detector_runs=%d max_person_confidence=%.3f pitch=%.1f yaw=%.1f asleep=%d still=%d",
+                 stats.frames, stats.frame_errors, stats.brightness, stats.motion_triggers,
+                 stats.detector_runs, stats.max_person_confidence,
+                 math.degrees(pitch), math.degrees(yaw), asleep, self._camera_still())
+        if self._watching and (watcher is None or watcher.failure is not None):
+            angles = self._watch.angles
+            from reachy_muse.arrival import WatchPose
+            log.info("Arrival watcher restarting: unavailable")
+            self.start_watching(WatchPose(angles["yaw"], angles["pitch"]))
 
     def _start_arrival_watcher(self):
         if self._arrival_model is None or not self._enable_motion or self._robot is None:
@@ -899,7 +915,8 @@ class ReachyController:
                     written = (self._show_clip(now, generated)
                                + self._layers.sway_offset(now, active=state == "speaking"))
                     self._write_vector(written)
-                    settled = (state in ("idle", "sleeping") and not gesture_active
+                    settled = ((state in ("idle", "sleeping") or (state == "error" and self._watching))
+                               and not gesture_active
                                and self._clip is None and self._generated is None and self._deferred is None
                                and previous_written is not None
                                and self._np.abs(written - previous_written)[CAMERA_AXES].max()
@@ -1028,7 +1045,7 @@ class ReachyController:
             antennas = neutral + (self._np.asarray(antennas) - neutral) * strength
             return self._head(**coordinates), self._np.deg2rad(antennas)
         if state == "error":
-            return self._head(pitch=8, z=-3), self._np.deg2rad([-35, 35])
+            return self._head(**self._watched({"pitch": 8, "z": -3})), self._np.deg2rad([-35, 35])
         if state == "sleeping":
             return self._head(**self._watched({"pitch": 15, "z": -10})), self._np.deg2rad([-80, 80])
         return self._head(**self._watched({})), self._np.deg2rad([-10, 10])

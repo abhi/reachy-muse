@@ -7,6 +7,44 @@ The video is not in the repository; pass its path.
 
     python bench/arrival.py path/to/vtest.avi
 
+## Arrival reliability check, 2026-10-30
+
+Run `python bench/arrival.py path/to/vtest.avi --conditions-only` to repeat these
+checks with the packaged model. The input is the public
+[OpenCV vtest sample](https://github.com/opencv/opencv/blob/4.x/samples/data/vtest.avi).
+This comparison uses OpenCV 5.0.0 and numpy 2.5.3 on the local Mac, with `d3c15cf`
+as the baseline. No robot camera frames were collected.
+
+| Scene | Baseline arrival | Updated arrival |
+| --- | --- | --- |
+| Walking | 1.80 s | 1.80 s |
+| Light on, walking, 20% exposure | 3.90 s | 3.60 s |
+| Light on, walking, 50% exposure | 3.90 s | 3.60 s |
+| Light on, walking, 100% exposure | 3.90 s | 3.60 s |
+| One frame repeated for 60 s | None | None |
+| Light on, static frame, 20%, 50%, or 100% exposure | None in all 3 | None in all 3 |
+
+The light-on scenes begin with about 2 seconds at 1% exposure. Arrival times
+include that prefix. The four negative scenes produce zero false arrivals in
+both versions. This is a fixture check, not an estimate of false positives in a
+real room. The video contains people throughout, so its walking results do not
+measure recall against labeled arrivals.
+
+The existing synthetic tests and added dim-light cases also reject all eight
+negative scenes: a poster beside a moving curtain, light on beside a poster,
+a camera turn, a single detection flicker, and four stationary person-box
+scenes at different brightness levels. The synthetic light-on walker improves
+from 4.0 to 3.33 seconds. A camera turn without the stillness reset remains an
+intentional false-positive counterexample in the tests.
+
+The confidence threshold remains 0.4. A light-on event now opens an 8-second
+burst with a 0.25-second minimum detector interval, bounded by the 3 Hz camera
+sampling rate. Dim frames in that burst receive at most 3x brightness gain.
+The recorded static light-on scenes run the detector 27 times instead of 5
+at the bench's 3.33 Hz input rate. At the watcher's 3 Hz rate, the synthetic
+light-only fixture runs it 24 times. This increases short-lived CPU work after
+a light switch. Robot throughput still needs an operator check.
+
 ## Results
 
 | Step | Median ms | p90 ms | Samples |

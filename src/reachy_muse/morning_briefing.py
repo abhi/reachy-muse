@@ -61,6 +61,18 @@ class BriefingSchedule:
         return f"{self.start:%H:%M}-{self.end:%H:%M} {days}"
 
 
+@dataclass(frozen=True)
+class TestWindow:
+    start: datetime
+    end: datetime
+
+    def window_date(self, now_local: datetime) -> date | None:
+        return self.start.date() if self.start <= now_local < self.end else None
+
+    def __str__(self) -> str:
+        return f"test {self.start:%Y-%m-%d %H:%M:%S} to {self.end:%Y-%m-%d %H:%M:%S}"
+
+
 def _clock_time(text: str) -> wall_time:
     hours, minutes = text.strip().split(":")
     if len(minutes) != 2:
@@ -177,7 +189,7 @@ class MorningVoice(Protocol):
 
 
 class MorningRoutine:
-    def __init__(self, schedule: BriefingSchedule, request: str, camera: ArrivalCamera, ledger: DayLedger, *,
+    def __init__(self, schedule: BriefingSchedule | TestWindow, request: str, camera: ArrivalCamera, ledger: DayLedger, *,
                  pose: WatchPose | None = None, clock: Clock = SystemClock(),
                  refresh_after_s: float = 2400.0, poll_s: float = 0.25) -> None:
         self.schedule = schedule
@@ -195,6 +207,38 @@ class MorningRoutine:
         self._ready: Lines | None = None
         self._ready_at = 0.0
         self._refreshed = False
+        self._camera_day: date | None = None
+
+    async def watch_camera(self) -> None:
+        diagnostics_at = self.clock.monotonic() + 60
+        try:
+            while True:
+                day = self.schedule.window_date(self.clock.now_local())
+                reason = "window closed"
+                if day is not None and self.ledger.done(day):
+                    day = None
+                    reason = "briefing completed"
+                if day != self._camera_day:
+                    if self._camera_day is not None:
+                        self.camera.stop_watching()
+                        log.info("Arrival watcher stopped: %s", reason)
+                    self._camera_day = day
+                    if day is not None:
+                        self.camera.start_watching(self.pose)
+                        diagnostics_at = self.clock.monotonic() + 60
+                        log.info("Arrival watcher started: window opened")
+                if day is not None and self.clock.monotonic() >= diagnostics_at:
+                    self.camera.log_arrival_diagnostics()
+                    diagnostics_at = self.clock.monotonic() + 60
+                await self.clock.sleep(self.poll_s if day is not None else IDLE_POLL_S)
+        except Exception as exc:
+            log.warning("Arrival watcher supervision failed: %s", type(exc).__name__)
+            raise
+        finally:
+            if self._camera_day is not None:
+                self.camera.stop_watching()
+                self._camera_day = None
+                log.info("Arrival watcher stopped: service shutdown")
 
     def select_chat(self, vm_id: str, session_id: str | None) -> None:
         chat = (vm_id, session_id)
@@ -232,7 +276,6 @@ class MorningRoutine:
                 await self._brief(day, voice, self._ready, None)
             return
         self._arrived = False
-        self.camera.start_watching(self.pose)
         log.info("Reachy morning briefing: watching for arrival")
         pending = self._fetch(day, voice, attended=lambda: self._arrived) if first_watch else None
         fetch_started = self.clock.monotonic()
@@ -243,7 +286,11 @@ class MorningRoutine:
                     lines, pending = pending.result(), None
                     if lines:
                         log.info("Reachy morning briefing: prefetched in %.1f s", now - fetch_started)
-                if self.camera.arrival() is not None:
+                if self.schedule.window_date(self.clock.now_local()) != day:
+                    self._ready = None
+                    log.info("Reachy morning briefing: window closed without an arrival")
+                    return
+                if self._camera_day == day and self.camera.arrival() is not None:
                     self._arrived = True
                     self._arrived_on = day
                     if self._ready is not None and pending is not None:
@@ -253,10 +300,6 @@ class MorningRoutine:
                     log.info("Reachy morning briefing: arrival detected at %s", f"{self.clock.now_local():%H:%M}")
                     await self._brief(day, voice, self._ready, pending)
                     return
-                if self.schedule.window_date(self.clock.now_local()) != day:
-                    self._ready = None
-                    log.info("Reachy morning briefing: window closed without an arrival")
-                    return
                 if (self._ready is not None and not self._refreshed and pending is None
                         and now - self._ready_at >= self.refresh_after_s):
                     self._refreshed = True
@@ -264,7 +307,6 @@ class MorningRoutine:
                     fetch_started = now
                 await self.clock.sleep(self.poll_s)
         finally:
-            self.camera.stop_watching()
             if pending is not None:
                 pending.cancel()
                 await asyncio.gather(pending, return_exceptions=True)

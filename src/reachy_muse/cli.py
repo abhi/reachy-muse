@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from dataclasses import dataclass
+from datetime import timedelta
 import functools
 import getpass
 import hashlib
@@ -348,6 +349,9 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--morning-briefing", metavar="HH:MM-HH:MM",
                               help="Each morning in this local-time window, greet the first person who walks in "
                                    "and speak Muse's briefing; camera frames stay on the robot")
+            item.add_argument("--morning-test-in", type=float, metavar="MINUTES",
+                              help="Run one 10-minute arrival test window after this delay, without the daily ledger; "
+                                   "replaces --morning-briefing for this run")
             item.add_argument("--morning-days", help="Days with a morning briefing: daily (default), mon-fri, "
                                                      "or a list such as mon,wed,sat")
             item.add_argument("--morning-request", type=Path,
@@ -436,7 +440,7 @@ def _hardware(args, *, motion=True):
     if getattr(args, "face_follow", False) and motion and not args.no_motion:
         face_model = args.face_follow_model or default_face_model()
     watcher = {}
-    if getattr(args, "morning_briefing", None):
+    if getattr(args, "morning_briefing", None) or getattr(args, "morning_test_in", None) is not None:
         from reachy_muse.arrival import default_person_model
         watcher["arrival_model"] = default_person_model()
     return ReachyController(host=args.host, port=args.port,
@@ -458,9 +462,10 @@ SHORT_UTTERANCE_SILENCE_S = 1.2
 def morning_routine(args):
     from reachy_muse.arrival import WatchPose
     from reachy_muse.contract.prompts import MORNING_BRIEFING_REQUEST
-    from reachy_muse.morning_briefing import BriefingSchedule, DayLedger, MorningRoutine
+    from reachy_muse.morning_briefing import BriefingSchedule, DayLedger, MorningRoutine, SystemClock, TestWindow
 
-    if args.morning_briefing is None:
+    delay = args.morning_test_in
+    if args.morning_briefing is None and delay is None:
         if any(value is not None for value in (args.morning_days, args.morning_request,
                                                args.morning_watch_yaw, args.morning_watch_pitch)):
             raise ValueError("--morning-days, --morning-request and --morning-watch-* need --morning-briefing")
@@ -469,7 +474,15 @@ def morning_routine(args):
         raise ValueError("--morning-briefing requires motion to be enabled")
     if Mode(args.mode) is Mode.MUSE_VOICE:
         raise ValueError("--morning-briefing needs --mode on-robot or companion")
-    schedule = BriefingSchedule.parse(args.morning_briefing, args.morning_days)
+    if delay is not None:
+        if not math.isfinite(delay) or not 0 <= delay <= 1440:
+            raise ValueError("--morning-test-in must be between 0 and 1440 minutes")
+        start = SystemClock().now_local() + timedelta(minutes=delay)
+        schedule = TestWindow(start, start + timedelta(minutes=10))
+        ledger = DayLedger(None)
+    else:
+        schedule = BriefingSchedule.parse(args.morning_briefing, args.morning_days)
+        ledger = DayLedger(config.state_dir() / MORNING_LEDGER_FILE)
     request = MORNING_BRIEFING_REQUEST
     if args.morning_request is not None:
         request = args.morning_request.expanduser().read_text(encoding="utf-8").strip()
@@ -481,7 +494,7 @@ def morning_routine(args):
     pose = None if angles == (None, None) else WatchPose(*(angle or 0.0 for angle in angles))
     logging.getLogger(__name__).info("Reachy morning briefing: on, %s", schedule)
     return functools.partial(MorningRoutine, schedule, request,
-                             ledger=DayLedger(config.state_dir() / MORNING_LEDGER_FILE), pose=pose)
+                             ledger=ledger, pose=pose)
 
 
 def end_of_turn_silence(mode: Mode, given: float | None) -> float:

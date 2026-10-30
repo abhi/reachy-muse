@@ -98,8 +98,10 @@ def test_reconnecting_preserves_sleep_until_a_wake_or_morning_arrival(monkeypatc
             assert await asyncio.wait_for(first, 5) is Outcome.CLOSED
             await asyncio.gather(*rig.session.scripts)
 
+        camera_task = None
         if wake == "arrival":
             conversation.morning = morning(camera)
+            camera_task = asyncio.create_task(conversation.morning.watch_camera())
         rig.session = PinSession(rig.recording, briefing if wake == "arrival" else never_asked)
         states_before = len(rig.states())
         second = asyncio.create_task(conversation.serve(rig.session, {"vm_id": "vm-1"}, stop))
@@ -127,6 +129,9 @@ def test_reconnecting_preserves_sleep_until_a_wake_or_morning_arrival(monkeypatc
             stop.set()
             await asyncio.wait_for(second, 5)
             await asyncio.gather(*rig.session.scripts)
+            if camera_task is not None:
+                camera_task.cancel()
+                await asyncio.gather(camera_task, return_exceptions=True)
 
         stop.clear()
         rig.session = PinSession(rig.recording, never_asked)

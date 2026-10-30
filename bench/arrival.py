@@ -118,15 +118,39 @@ def first_arrival(frames, detector, step: float):
     return None
 
 
+def condition_rows(frames, fps, detector):
+    stride = max(1, round(fps / WATCH_HZ))
+    step = stride / fps
+    still = [frames[0]] * round(60 / step)
+    dark = (frames[0] * 0.01).astype(np.uint8)
+    prefix = [dark] * round(2 / step)
+    scenes = [("static, 60 s", still), ("walking", frames[::stride])]
+    for exposure in (0.2, 0.5, 1.0):
+        lit = (frames[0] * exposure).astype(np.uint8)
+        walking = [(frame * exposure).astype(np.uint8) for frame in frames[::stride]]
+        scenes.extend([(f"light on, static, exposure {exposure}", prefix + [lit] * len(still)),
+                       (f"light on, walking, exposure {exposure}", prefix + walking)])
+    for name, scene in scenes:
+        counted = Counting(detector)
+        arrived = first_arrival(scene, counted, step)
+        result = "none" if arrived is None else f"{arrived:.2f} s"
+        yield f"| {name} | {result} | {counted.calls} |"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("video")
+    parser.add_argument("--conditions-only", action="store_true")
     args = parser.parse_args()
     cv2.setNumThreads(1)
     frames, fps = read_video(args.video)
     print(f"{len(frames)} frames, {frames[0].shape[1]}x{frames[0].shape[0]} at {fps:g} fps, "
           f"OpenCV {cv2.__version__}, numpy {np.__version__}")
     detector = YoloxPersonDetector(default_person_model())
+    if args.conditions_only:
+        print("| scene | arrival | detector runs |\n|---|---|---|")
+        print("\n".join(condition_rows(frames, fps, detector)))
+        return
     print("| step | median ms | p90 ms | samples |\n|---|---|---|---|")
     for row in gate_rows(frames):
         print(row)

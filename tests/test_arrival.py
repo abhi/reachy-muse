@@ -89,12 +89,43 @@ def test_a_photo_of_a_person_never_counts_even_while_a_curtain_moves_elsewhere()
 def test_a_light_switching_on_with_only_a_photo_of_a_person_in_the_room_is_not_an_arrival():
     detector = MarkedPeople(PersonBox(0.1, 0.2, 0.15, 0.5, 0.95))
     assert first_arrival(empty_room(2, brightness=LAMP_OFF) + empty_room(10), detector) is None
-    assert detector.calls == 5
+    assert detector.calls == 24
 
 
 def test_a_light_switching_on_then_a_person_walking_in_is_an_arrival_once_exposure_settles():
     walk = [with_person(room(), -12 + 8 * step) for step in range(20)]
-    assert first_arrival(empty_room(2, brightness=LAMP_OFF) + walk, MarkedPeople()) == pytest.approx(4)
+    assert first_arrival(empty_room(2, brightness=LAMP_OFF) + walk, MarkedPeople()) == pytest.approx(10 / 3)
+
+
+def test_a_dim_light_on_burst_brightens_detection_but_still_requires_local_motion():
+    class DimPeople:
+        def __init__(self):
+            self.brightness = []
+
+        def detect(self, frame):
+            self.brightness.append(round(float(frame.mean()), 1))
+            return [PersonBox(0.25, 0.25, 0.125, 0.5, 0.8)] if frame.mean() >= 60 else []
+
+    dark = np.full((HEIGHT, WIDTH, 3), 5, dtype=np.uint8)
+    dim = np.full((HEIGHT, WIDTH, 3), 30, dtype=np.uint8)
+    detector = DimPeople()
+    frames = [dark] * 6 + [dim] * 6
+    assert first_arrival(frames, detector) is None
+    assert detector.brightness == [80.0] * 6
+    walk = []
+    for step in range(6):
+        frame = dim.copy()
+        frame[30:90, 40 + 4 * step:60 + 4 * step] = 90
+        walk.append(frame)
+    assert first_arrival(frames + walk, DimPeople()) == pytest.approx(13 / 3)
+
+
+@pytest.mark.parametrize("brightness", [0.2, 0.5, 1.0])
+def test_light_on_with_a_stationary_person_box_never_triggers_at_different_exposures(brightness):
+    detector = MarkedPeople(PersonBox(0.1, 0.2, 0.15, 0.5, 0.95))
+    frames = empty_room(2, brightness=0.01) + empty_room(12, brightness=brightness)
+    assert first_arrival(frames, detector) is None
+    assert detector.calls == 24
 
 
 def test_reachy_turning_its_head_is_not_an_arrival_and_the_gate_starts_over():
@@ -183,7 +214,7 @@ def test_watcher_reads_no_frames_until_watching_nor_while_reachy_moves():
         watcher.close()
 
 
-def test_watcher_failure_is_reported_without_retaining_the_frame():
+def test_watcher_failure_is_reported_without_retaining_the_frame(caplog):
     import gc
     import weakref
 
@@ -211,6 +242,41 @@ def test_watcher_failure_is_reported_without_retaining_the_frame():
     assert str(watcher.failure) == "Detection unavailable"
     assert watcher.failure.__traceback__ is None and watcher.failure.__context__ is None
     assert all(reference() is None for reference in references)
+    assert [record.getMessage() for record in caplog.records] == ["Arrival watcher failed: RuntimeError"]
+
+
+def test_frame_read_errors_recover_and_diagnostics_contain_only_interval_numbers(caplog):
+    base = np.full((HEIGHT, WIDTH, 3), 20, dtype=np.uint8)
+    frames = [base] * 6 + [with_person(base, -12 + 8 * step) for step in range(3)]
+    read_script, clock, _ = camera_with_frame_clock(frames)
+    reads = 0
+
+    def read():
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            raise OSError("private camera details")
+        return None if reads == 2 else read_script()
+
+    watcher = ArrivalWatcher(read, lambda: True, sample_hz=10, clock=clock,
+                             detector_factory=lambda model: MarkedPeople())
+    try:
+        watcher.start()
+        watcher.set_watching(True)
+        wait_for(lambda: watcher.arrival() is not None)
+        watcher.set_watching(True)
+        assert watcher.arrival() == pytest.approx(8 / 3)
+        stats = watcher.take_stats()
+        assert (stats.frames, stats.frame_errors, stats.motion_triggers, stats.detector_runs,
+                stats.max_person_confidence) == (9, 2, 3, 2, 0.9)
+        assert stats.brightness == pytest.approx(23.5138889)
+        reset = watcher.take_stats()
+        assert (reset.frames, reset.frame_errors, reset.brightness, reset.detector_runs,
+                reset.motion_triggers, reset.max_person_confidence) == (0, 0, 0.0, 0, 0, 0.0)
+        assert watcher.failure is None
+        assert "private camera details" not in caplog.text
+    finally:
+        watcher.close()
 
 
 def test_a_missing_person_model_is_a_watcher_failure_not_a_crash(tmp_path):

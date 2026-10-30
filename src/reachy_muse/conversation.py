@@ -2120,7 +2120,17 @@ class ReachyService(Service):
     _hardware_error: Exception | None = field(default=None, init=False, repr=False)
 
     async def run(self) -> None:
-        await super().run()
+        camera = asyncio.create_task(self.morning.watch_camera()) if self.morning is not None else None
+        service = asyncio.create_task(super().run())
+        tasks = {service} | ({camera} if camera is not None else set())
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                task.result()
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
         if self._hardware_error is not None:
             raise self._hardware_error
 

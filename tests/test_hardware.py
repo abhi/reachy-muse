@@ -26,7 +26,7 @@ import pytest
 np = pytest.importorskip("numpy")
 
 import reachy_muse.hardware
-from reachy_muse.arrival import WatchPose
+from reachy_muse.arrival import ArrivalStats, WatchPose
 from reachy_muse.hardware import EMOTIONS_DATASET, ReachyController, ReachyHardwareError
 from reachy_muse.motion import MotionStyle
 
@@ -1620,6 +1620,9 @@ class FakeWatcher:
     def arrival(self):
         return self.seen_at
 
+    def take_stats(self):
+        return ArrivalStats(12, 2, 360.0, 3, 4, 0.375)
+
     def close(self):
         self.closed = True
 
@@ -1695,6 +1698,24 @@ def test_sleeping_while_watching_keeps_the_bow_height_and_folded_antennas_but_fa
                                atol=1e-12)
 
 
+def test_sleeping_without_a_configured_watch_pose_levels_the_head_then_restores_sleep(monkeypatch):
+    controller = ReachyController(pose_factory=pose_factory)
+    controller._np = np
+    controller.set_state("sleeping")
+    clock = [100.0]
+    monkeypatch.setattr(reachy_muse.hardware.time, "monotonic", lambda: clock[0])
+    controller.start_watching(None)
+    clock[0] += 4.0
+    pose, antennas = controller._state_pose("sleeping", 10.0)
+    np.testing.assert_allclose(pose, pose_factory(pitch=0, yaw=0, z=-10), atol=1e-12)
+    np.testing.assert_allclose(np.rad2deg(antennas), [-80, 80])
+    assert controller._state == "sleeping"
+    controller.stop_watching()
+    clock[0] += 4.0
+    np.testing.assert_allclose(controller._state_pose("sleeping", 14.0)[0],
+                               pose_factory(pitch=15, z=-10), atol=1e-12)
+
+
 def wait_until(condition, timeout=3.0):
     deadline = time.monotonic() + timeout
     while not condition():
@@ -1709,6 +1730,10 @@ def test_camera_is_still_only_while_resting_without_a_gesture_or_speech():
         controller.start_watching(None)
         still = watchers[0].is_still
         wait_until(still)
+        controller.set_state("error")
+        time.sleep(.1)
+        assert not still()
+        wait_until(still, timeout=6.0)
         controller.gesture("nod")
         time.sleep(.1)
         assert not still()
@@ -1770,3 +1795,25 @@ def test_a_failed_camera_watcher_is_replaced_the_next_time_reachy_watches(caplog
     assert (len(watchers), watchers[0].closed, watchers[1].watching, arrived) == (2, True, [True], 99.0)
     assert caplog.text.count("Arrival detection is unavailable: RuntimeError") == 1
     assert caplog.text.count("Arrival detection is unavailable: OSError") == 1
+
+
+def test_minute_diagnostics_are_numeric_and_restart_a_failed_watcher(caplog):
+    caplog.set_level("INFO", logger="reachy_muse.hardware")
+    robot = FakeRobot()
+    controller, watchers = watched_controller(robot)
+    try:
+        controller.start_watching(None)
+        controller.set_state("sleeping")
+        controller._read_head_angles = lambda: (math.radians(-12), math.radians(3))
+        controller._camera_still = lambda: True
+        watchers[0].failure = RuntimeError("private camera details")
+        controller.log_arrival_diagnostics()
+        watchers[1].seen_at = 99.0
+        assert controller.arrival() == 99.0
+        assert watchers[0].closed is True
+    finally:
+        controller.close()
+    lines = [record.getMessage() for record in caplog.records if record.getMessage().startswith("Arrival stats")]
+    assert lines == ["Arrival stats frames=12 frame_errors=2 brightness=30.0 motion_triggers=3 "
+                     "detector_runs=4 max_person_confidence=0.375 pitch=3.0 yaw=-12.0 asleep=1 still=1"]
+    assert "private camera details" not in caplog.text

@@ -105,6 +105,11 @@ class FakeClock:
         return self.elapsed
 
     async def sleep(self, seconds):
+        if asyncio.current_task().get_name() == "camera":
+            until = self.elapsed + seconds
+            while self.elapsed < until:
+                await asyncio.sleep(0)
+            return
         await asyncio.sleep(0)
         self.elapsed += seconds
 
@@ -122,6 +127,9 @@ class FakeCamera:
 
     def stop_watching(self):
         self.calls.append(("stop",))
+
+    def log_arrival_diagnostics(self):
+        pass
 
     def arrival(self):
         if self.arrive_after_s is None or self.clock.elapsed < self.watching_since + self.arrive_after_s:
@@ -157,11 +165,13 @@ class FakeVoice:
 
 def drive(routine, until_s):
     async def main():
+        camera = asyncio.create_task(routine.watch_camera(), name="camera")
         task = asyncio.create_task(routine.run(routine.voice))
         while routine.clock.elapsed < until_s and not task.done():
             await asyncio.sleep(0)
         task.cancel()
-        result, = await asyncio.gather(task, return_exceptions=True)
+        camera.cancel()
+        result, _ = await asyncio.gather(task, camera, return_exceptions=True)
         if not isinstance(result, asyncio.CancelledError):
             raise AssertionError(result)
     asyncio.run(main())
@@ -311,19 +321,21 @@ def test_a_disconnect_while_cancelling_a_refresh_preserves_the_arrival():
                     raise
 
         routine.voice = CancellableVoice(routine.clock, (30, BRIEFING), (600, REFRESHED))
+        camera = asyncio.create_task(routine.watch_camera(), name="camera")
         task = asyncio.create_task(routine.run(routine.voice))
         try:
             await asyncio.wait_for(cancelling.wait(), 5)
         finally:
             task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            camera.cancel()
+            await asyncio.gather(task, camera, return_exceptions=True)
 
     asyncio.run(check())
     routine.camera.arrive_after_s = None
     routine.voice = FakeVoice(routine.clock)
     drive(routine, 2700)
     assert routine.voice.said == [("greet", 2500, False), ("brief", 2500, BRIEFING)]
-    assert routine.camera.calls == [("start", None), ("stop",)]
+    assert routine.camera.calls == [("start", None), ("stop",)] * 2
     assert routine.ledger.done(date(2026, 10, 10)) is True
 
 
@@ -344,7 +356,7 @@ def test_a_reconnect_after_arrival_still_briefs_that_morning_once(answers):
     routine.voice = FakeVoice(routine.clock, (20, REFRESHED))
     drive(routine, 1800)
     assert routine.voice.said == [("greet", 400, False), ("brief", 400, BRIEFING)]
-    assert routine.camera.calls == [("start", None), ("stop",)]
+    assert routine.camera.calls == [("start", None), ("stop",)] * 2
     assert routine.ledger.done(date(2026, 10, 10)) is True
 
 
@@ -366,7 +378,7 @@ def test_a_reconnect_after_arrival_refreshes_an_expired_briefing(answer, spoken)
     assert [entry for entry in routine.voice.said if entry[0] == "fetch"] == [
         ("fetch", 3600, "Brief me for Saturday, October 10, 05:50 local time.")]
     assert routine.voice.said[0] == ("greet", 3600, True)
-    assert routine.camera.calls == [("start", None), ("stop",)]
+    assert routine.camera.calls == [("start", None), ("stop",)] * 2
     assert routine.ledger.done(date(2026, 10, 10)) is True
 
 
@@ -449,13 +461,15 @@ def test_cancelling_a_live_retry_finishes_the_fetch_before_returning():
     async def check():
         routine = routine_with(arrive_at=5)
         routine.voice = CancellableVoice(routine.clock, (0, None), (600, BRIEFING))
+        camera = asyncio.create_task(routine.watch_camera(), name="camera")
         task = asyncio.create_task(routine.run(routine.voice))
         try:
             while kinds(routine).count("fetch") < 2:
                 await asyncio.sleep(0)
         finally:
             task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            camera.cancel()
+            await asyncio.gather(task, camera, return_exceptions=True)
         assert kinds(routine) == ["fetch", "fetched", "greet", "fetch", "fetch_cancelled"]
 
     asyncio.run(check())
@@ -514,3 +528,48 @@ def test_a_new_window_does_not_reuse_an_unspoken_reply_from_yesterday():
     assert routine.voice.said[-4:] == [
         ("fetch", 86400, "Brief me for Sunday, October 11, 04:50 local time."),
         ("fetched", 86430, False), ("greet", 86460, False), ("brief", 86460, REFRESHED)]
+
+
+def test_camera_opens_offline_logs_each_minute_and_closes_at_the_window_boundary(caplog):
+    caplog.set_level("INFO", logger="reachy_muse.morning_briefing")
+
+    async def check():
+        class SteppedClock(FakeClock):
+            changed = asyncio.Event()
+
+            async def sleep(self, seconds):
+                await self.changed.wait()
+
+            async def advance(self, elapsed):
+                self.elapsed = elapsed
+                event, self.changed = self.changed, asyncio.Event()
+                event.set()
+                await asyncio.sleep(0)
+
+        clock = SteppedClock(SATURDAY - timedelta(minutes=1))
+        camera = FakeCamera(clock)
+        diagnostics = []
+        camera.log_arrival_diagnostics = lambda: diagnostics.append(clock.elapsed)
+        routine = MorningRoutine(WINDOW, "Brief me.", camera, DayLedger(None), clock=clock)
+        task = asyncio.create_task(routine.watch_camera())
+        try:
+            await asyncio.sleep(0)
+            assert camera.calls == []
+            await clock.advance(60)
+            assert camera.calls == [("start", None)]
+            await clock.advance(119)
+            assert diagnostics == []
+            await clock.advance(120)
+            await clock.advance(180)
+            assert diagnostics == [120, 180]
+            await clock.advance(4260)
+            assert camera.calls == [("start", None), ("stop",)]
+            assert routine.ledger.done(date(2026, 10, 10)) is False
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(check())
+    assert [record.getMessage() for record in caplog.records] == [
+        "Arrival watcher started: window opened",
+        "Arrival watcher stopped: window closed"]

@@ -657,10 +657,13 @@ fetched again once.
 
 Reachy looks for a person, not a face, so it notices you from the side or from
 behind. It reads three camera frames a second, and only while its head is
-still: idle or asleep, with no gesture or clip playing. A cheap motion check
+still: idle, asleep, or waiting for a failed Muse link, with no gesture or clip playing. A cheap motion check
 compares each small grayscale frame with the recent scene. When something
 moves, or a light switches on, a person detector (YOLOX-nano, Apache-2.0) runs
-on the frame twice a second for 3 seconds. An arrival needs two person
+on the frame at most twice a second for 3 seconds. A light-on event extends
+the burst to 8 seconds at up to 3 frames per second. During that burst, dim
+frames get a bounded brightness gain for detection. The confidence threshold
+stays at 0.4. An arrival needs two person
 detections within 2 seconds, each on a part of the frame that moved. A light
 switching on starts the detector but never counts as an arrival by itself.
 
@@ -672,8 +675,9 @@ still count. Point the camera away from a TV with the watch flags.
 Reachy sees only where its head points. `--morning-watch-yaw` and
 `--morning-watch-pitch` turn the head toward the door over 4 seconds at the
 window start, also in the sleep pose, and turn it back after the briefing or at
-the window end. Without them, Reachy watches from its resting pose. In the sleep
-pose the head is bowed, so set a watch pose if Reachy sleeps at night. Idle
+the window end. Without them, Reachy levels its head at zero yaw and pitch,
+including when asleep. It keeps the sleep state and folded antennas, raises
+the head silently, and restores the sleeping pitch afterwards. Idle
 breathing pauses while Reachy watches, because the camera must stay still.
 
 The briefing behaves like any other answer. "Stop talking" ends it, speech
@@ -687,20 +691,23 @@ Reachy briefs once a day. Once the briefing is spoken, Reachy records the day
 in `morning-briefing.json` in the state directory, so a restart does not brief
 again. If the Muse link reconnects to the same VM and chat during the window,
 Reachy keeps the held briefing and its age, reusing it when you arrive or
-replaying it after an interrupted delivery. A different VM or chat clears
-the held briefing and arrival, so Reachy fetches a new briefing and watches
-for a new arrival. If nobody arrives before
+replaying it after an interrupted delivery. Camera watching continues during
+reconnection, chat setup, and speech warm-up. An arrival during the outage
+remains available when the conversation returns within the window.
+A different VM or chat clears the held briefing, so Reachy fetches a new one.
+If nobody arrives before
 the window ends, Reachy discards the briefing and never speaks it.
 
 | Flag | Effect |
 | --- | --- |
 | `--morning-briefing HH:MM-HH:MM` | Turns the briefing on for this local-time window. Off by default. |
+| `--morning-test-in MINUTES` | Replaces the daily schedule with one 10-minute window after a delay of 0 to 1440 minutes. Does not read or write the daily ledger. |
 | `--morning-days DAYS` | `daily` (default), a range such as `mon-fri`, or a list such as `mon,wed,sat`. |
 | `--morning-request FILE` | Replaces the request sent to Muse with the text of `FILE`. `{when}` in the text becomes the local day and time. |
 | `--morning-watch-yaw DEG` | Turns the head toward the door while watching. Positive turns left. |
 | `--morning-watch-pitch DEG` | Tilts the head while watching. Positive looks down. |
 
-Without a watch flag, Reachy watches from its resting pose. The briefing needs
+Without a watch flag, Reachy watches with a level head. The briefing needs
 motion, so `--no-motion` is refused. It needs `--mode on-robot` or
 `--mode companion`; `--mode muse-voice` is refused.
 
@@ -710,21 +717,36 @@ Camera frames stay in memory on Reachy. They are not saved and not sent to Muse
 or to the companion. Any person who walks in triggers the briefing. Reachy does
 not recognize faces or identify people. Muse receives only the briefing request,
 which carries nothing from the camera. Logs record the arrival time and how long
-the briefing took. They never contain the briefing text, the request or an
-image.
+the briefing took. During watching, one `Arrival stats` line per minute reports
+frame reads, frame errors, mean brightness from 0 to 255, motion triggers,
+detector runs, maximum person confidence, head pitch and yaw in degrees, and
+numeric sleep and camera-still states. Counts cover the preceding interval.
+Zero frames means brightness and confidence are also zero, not measured darkness.
+Start, stop, failure, and retry logs give the reason. Failed watchers retry at
+the next minute; individual frame-read errors retry at the normal sample rate.
+Logs never contain the briefing text, the request, or an image.
 
 ### Test outside the window
 
 Start Reachy with a window that opens in two minutes:
 
 ```bash
-muse-reachy run ... --morning-briefing "$(date -d '+2 min' +%H:%M)-$(date -d '+20 min' +%H:%M)"
+muse-reachy run ... --morning-test-in 2
 ```
 
 Walk in after the window opens. The log shows
 `Reachy morning briefing: arrival detected at HH:MM` and then
-`Reachy morning briefing: spoke briefing (N s)`. To test again on the same day,
-stop Reachy and delete `morning-briefing.json` from the state directory.
+`Reachy morning briefing: spoke briefing (N s)`. The test window lasts 10 minutes
+and can cross midnight. It replaces any `--morning-briefing` schedule for this
+process and ignores `--morning-days`. Restart with the test flag to repeat it.
+The daily ledger stays unchanged.
+
+Check that a sleeping head rises silently and returns after the window.
+In the minute diagnostics, confirm that frames increase, frame errors stay low,
+and `still=1` appears once the head settles. Brightness should increase when the
+light comes on. Switching the light on in an empty room must not greet anyone.
+Walk into view and confirm that detector runs and person confidence increase
+before the arrival log. Also check an arrival during a Muse reconnect.
 
 ## Expressivity
 
