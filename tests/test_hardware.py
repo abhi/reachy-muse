@@ -1750,6 +1750,64 @@ def test_camera_is_still_only_while_resting_without_a_gesture_or_speech():
     assert not still()
 
 
+def test_disconnect_during_a_request_restores_camera_stillness(monkeypatch):
+    import asyncio
+
+    from musegadget.link_client import Outcome
+    from test_device_command_turns import SpeakerHardware, rig_with, sent_to_muse, service
+    from test_pins import Transcripts
+
+    controller, watchers = watched_controller(FakeRobot())
+
+    class Hardware(SpeakerHardware):
+        def set_state(self, state, *, expression=None):
+            super().set_state(state, expression=expression)
+            controller.set_state(state, expression=expression)
+
+    rig = rig_with(monkeypatch)
+    rig.hardware = Hardware(rig.recording)
+
+    async def check():
+        disconnected = asyncio.Event()
+        stop = asyncio.Event()
+
+        async def pending(session, request):
+            await disconnected.wait()
+
+        async def link(stop_link):
+            await disconnected.wait()
+            return Outcome.CLOSED
+
+        conversation = service(rig, pending, Transcripts("What's the weather tomorrow?"))
+        rig.session.run = link
+        serving = asyncio.create_task(conversation.serve(rig.session, {"vm_id": "vm-1"}, stop))
+        try:
+            await rig.quiet()
+            await rig.wait_until_or_timeout(watchers[0].is_still, 5)
+            assert watchers[0].is_still()
+            rig.say()
+            await rig.wait_until_or_timeout(lambda: sent_to_muse(rig.recording.events), 5)
+            assert sent_to_muse(rig.recording.events) == ["What's the weather tomorrow?"]
+            assert controller._state == "thinking"
+            await rig.wait_until_or_timeout(lambda: not watchers[0].is_still())
+            assert not watchers[0].is_still()
+            disconnected.set()
+            assert await asyncio.wait_for(serving, 5) is Outcome.CLOSED
+            await rig.wait_until_or_timeout(watchers[0].is_still, 6)
+            assert watchers[0].is_still() is True
+            assert watchers[0].watching == [True]
+        finally:
+            disconnected.set()
+            await asyncio.wait_for(serving, 5)
+            await asyncio.gather(*rig.session.scripts)
+
+    try:
+        controller.start_watching(None)
+        asyncio.run(asyncio.wait_for(check(), 20))
+    finally:
+        controller.close()
+
+
 def test_arrival_is_none_with_one_warning_when_there_is_no_person_model(caplog):
     robot = FakeRobot()
     controller = start_controller(robot)

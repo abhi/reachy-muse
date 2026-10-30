@@ -98,6 +98,7 @@ def test_reconnecting_preserves_sleep_until_a_wake_or_morning_arrival(monkeypatc
             assert await asyncio.wait_for(first, 5) is Outcome.CLOSED
             await asyncio.gather(*rig.session.scripts)
 
+        assert rig.states()[-1] == "sleeping"
         camera_task = None
         if wake == "arrival":
             conversation.morning = morning(camera)

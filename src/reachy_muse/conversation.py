@@ -2185,7 +2185,6 @@ class ReachyService(Service):
             raise
         except Exception as exc:
             log.warning("Reachy conversation ended: %s: %s", type(exc).__name__, exc)
-            await asyncio.to_thread(hardware.set_state, "error")
         finally:
             stop_link.set()
             voice_task.cancel()
@@ -2193,4 +2192,6 @@ class ReachyService(Service):
             await asyncio.gather(voice_task, stop_task, return_exceptions=True)
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(link_task, 5)
+        if outcome is not Outcome.STOPPED:
+            await asyncio.to_thread(hardware.set_state, "sleeping" if self._asleep else "error")
         return outcome
