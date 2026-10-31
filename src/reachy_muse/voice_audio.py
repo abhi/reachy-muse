@@ -179,6 +179,9 @@ class TurnRecorder:
         events, self._audio_events = self._audio_events, []
         return events
 
+    def enable_streaming(self) -> None:
+        self._stream_audio = True
+
     def finish_initial_capture(self) -> None:
         """Restore the normal speech minimum without losing buffered samples."""
         self._initial_capture = False

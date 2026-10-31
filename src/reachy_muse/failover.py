@@ -172,13 +172,14 @@ class FailoverHearingTurn:
         return heard
 
     def _switch(self, *, on_companion: bool) -> None:
+        options = dict(self._options, recorder=self._turn.recorder) if on_companion else self._options
         self._turn.abort()
         self._kept.clear()
         self._kept_samples = 0
         self._on_companion = on_companion
         self._turn_start_sample = self._fed
         hearing = self._hearing.companion if on_companion else self._hearing.local
-        self._turn = hearing.open_turn(self._rate, **self._options)
+        self._turn = hearing.open_turn(self._rate, **options)
 
     def finish_initial_capture(self) -> None:
         self._turn.finish_initial_capture()

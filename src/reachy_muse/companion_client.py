@@ -628,11 +628,15 @@ class CompanionHearing:
         # The link connects independently; local hearing works while it connects.
         pass
 
-    def open_turn(self, sample_rate: int, *, silence_s: float, vad=None, **options) -> CompanionHearingTurn:
+    def open_turn(self, sample_rate: int, *, silence_s: float, vad=None, recorder=None,
+                  **options) -> CompanionHearingTurn:
         from reachy_muse.voice_audio import TurnRecorder
 
-        recorder = TurnRecorder(sample_rate, silence_s=silence_s, max_s=60.0, stream_audio=True,
-                                **({"vad": vad} if vad is not None else {}), **options)
+        if recorder is None:
+            recorder = TurnRecorder(sample_rate, silence_s=silence_s, max_s=60.0, stream_audio=True,
+                                    **({"vad": vad} if vad is not None else {}), **options)
+        else:
+            recorder.enable_streaming()
         return CompanionHearingTurn(self.link, recorder)
 
     async def transcribe(self, wav: bytes) -> str:

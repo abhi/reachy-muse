@@ -68,6 +68,10 @@ class LocalHearingTurn:
         self._wav = None
 
     @property
+    def recorder(self):
+        return self._recorder
+
+    @property
     def active(self) -> bool:
         return self._recorder.active
 

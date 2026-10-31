@@ -78,7 +78,8 @@ def test_a_late_endpoint_keeps_the_next_utterances_opening_for_a_replay():
 
 
 @pytest.mark.parametrize("opening_samples", [160, 320, 640])
-def test_a_connecting_companion_preserves_the_opening_before_vad_activation(opening_samples):
+@pytest.mark.parametrize("silence_samples", [0, 11200])
+def test_a_connecting_companion_preserves_the_opening_before_vad_activation(opening_samples, silence_samples):
     pytest.importorskip("av")
 
     class Vad:
@@ -88,6 +89,7 @@ def test_a_connecting_companion_preserves_the_opening_before_vad_activation(open
     link = CompanionLink("ws://localhost:9", token="test", out_rate=16000, insecure=True)
     hearing = FailoverHearing(CompanionHearing(link), LocalHearing(), CompanionRoute(link).hearing)
     turn = hearing.open_turn(16000, silence_s=.1, vad=Vad())
+    turn.feed(np.zeros(silence_samples, dtype=np.float32))
     turn.feed(np.full(opening_samples, .25, dtype=np.float32))
     assert turn.take().ended is None
     assert link.state is LinkState.CONNECTING
@@ -106,7 +108,8 @@ def test_a_connecting_companion_preserves_the_opening_before_vad_activation(open
     endpoint = asyncio.run(ended.endpoint())
     with wave.open(io.BytesIO(endpoint.audio), "rb") as wav:
         recorded = np.frombuffer(wav.readframes(wav.getnframes()), dtype="<i2")
-    np.testing.assert_array_equal(recorded, [8192] * 640 + [16384] * 7360 + [0] * 1600)
+    pre_roll = [0] * 2240 if silence_samples else []
+    np.testing.assert_array_equal(recorded, pre_roll + [8192] * 640 + [16384] * 7360 + [0] * 1600)
 
     assert turn.take().ended is None
     turn.feed(np.full(8000, .75, dtype=np.float32))
