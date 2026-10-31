@@ -182,14 +182,12 @@ class CapabilityUnavailable(Exception):
 
 class LinkHealth(Protocol):
     def begin_turn(self) -> bool: ...    # True: the companion voices and narrates the turn starting now
-    def take_outage(self) -> bool: ...   # True once for each outage worth announcing
+    def take_outage(self) -> bool: ...   # True once for each outage to log
 
 
 # What a spoken line must not contain: markup, links, list markers and emoji.
 MARKUP = re.compile(r"[*#`_~|<>\[\]{}]|https?://|www\.|^\s*(?:[-•]|\d+[.)])\s")
 EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF]")
-
-COMPANION_NOTICE = "Using my own voice."
 
 
 @dataclass(frozen=True)
@@ -208,12 +206,6 @@ class Backends:
         if self.companion is not None and self.companion.begin_turn():
             return ReplyStyle.PLAIN_SHORT
         return self.local_style
-
-    def take_notice(self) -> Optional[str]:
-        """What Reachy must say about its own parts; once per companion outage."""
-        if self.companion is not None and self.companion.take_outage():
-            return COMPANION_NOTICE
-        return None
 
 
 _UNITS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "

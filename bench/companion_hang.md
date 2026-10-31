@@ -113,7 +113,7 @@ seconds. The incident audio and stage timings were not available, so neither an
 exact explanation of its 20.7 seconds nor a guaranteed sub-three-second result
 can be established without a permitted CM4 measurement.
 
-## Local replies and notice
+## Local replies and silent fallback
 
 When companion narration is unavailable or late, cached grammar replies handle
 greetings, thanks, and "how are you". They respect `maybe_chat` and
@@ -121,9 +121,11 @@ greetings, thanks, and "how are you". They respect `maybe_chat` and
 Muse. Companion mode caches seven extra phrases at startup. Repeated greetings
 reuse that audio and send no Muse request.
 
-The notice remains once per outage and is now four words: "Using my own voice."
-It explains the voice change without spending another 4.3 seconds on the original
-sentence. Further turns during the outage stay quiet about the failure.
+Reachy never announces an outage or voice switch. The current request
+continues in the robot's own voice, repeating an interrupted line if needed.
+Later turns also use the local fallback without a notice. The fallback is logged
+once per outage, including when the companion repeatedly reconnects and drops.
+After a healthy session, another outage can produce a new log entry.
 
 ## Verification
 
@@ -131,11 +133,14 @@ Behavior tests cover actual subprocess exit 70 for a blocked loop, cancelled
 native work, and a cancelled Chatterbox stream; long loads, queued work, idle
 workers, and progressing narration; silent sockets and working pongs with stuck
 hearing; recovery only after an endpoint; retained local audio; cached small talk
-without Muse requests; notice deduplication; and short beam retries without a
-second encoding. All model-related suite tests use fakes. The existing `real`
-marker remains excluded from the full suite.
+without Muse requests; silent fallback and outage log deduplication; and short beam
+retries without a second encoding. All model-related suite tests use fakes.
+The existing `real` marker remains excluded from the full suite.
 
-The requested full suite passed: **2,005 passed, 2 skipped, 6 deselected** in
+The original stall-fix full suite passed: **2,005 passed, 2 skipped, 6 deselected** in
 704.32 seconds. This adds 18 behavior cases to the deployed baseline. The
 separate CPU benchmark completed 30 recognitions; all six baseline comparisons
 returned unchanged text.
+
+The silent fallback update passed the requested full suite: **2,041 passed,
+3 skipped, 6 deselected** in 776.79 seconds.

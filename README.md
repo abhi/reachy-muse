@@ -15,7 +15,7 @@ The repository has two programs:
 
 - `muse-voice` is the default. The robot records what you say and sends the audio to Muse. Muse writes the answer and speaks it. The robot needs no speech models.
 - `on-robot` keeps speech on the robot. Whisper turns your words into text, and Piper speaks Muse's answer.
-- `companion` lets the Mac hear, speak and narrate for the robot. If the Mac stops answering, the robot falls back to its own `on-robot` models.
+- `companion` lets the Mac hear, speak and narrate for the robot. If the Mac stops answering, the robot continues with its own `on-robot` models without announcing the outage or voice switch. It logs the fallback once per outage.
 
 In `on-robot` and `companion` modes, the robot handles requests about itself without Muse.
 "Go to sleep" and "stop listening" return it to the wake word, "louder" and "quieter" step its speaker volume, "look at me" and "stop looking at me" switch face tracking, and "stop talking" cuts off an answer that is still playing.

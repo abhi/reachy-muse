@@ -204,7 +204,7 @@ class CompanionLink:
         self._session: Optional[asyncio.Future] = None
         self._settled: Optional[asyncio.Event] = None
         self._outages = 0
-        self._announced = 0
+        self._reported_outages = 0
         self._narrate_id = 0
         self._up_since: Optional[float] = None
         self._last_session_healthy = False
@@ -230,9 +230,9 @@ class CompanionLink:
                 and not self._connection.closed and op in self._connection.ops)
 
     def take_outage(self) -> bool:
-        if self._outages == self._announced:
+        if self._outages == self._reported_outages:
             return False
-        self._announced = self._outages
+        self._reported_outages = self._outages
         return True
 
     async def settled(self) -> None:
@@ -243,7 +243,7 @@ class CompanionLink:
             await self._settled.wait()
 
     def _set(self, state: LinkState) -> None:
-        """Record a state change. Only the first outage, or one after a healthy session, is announced."""
+        """Record a state change. Only the first outage, or one after a healthy session, is counted."""
         if state is self.state:
             return
         if state is LinkState.UP:

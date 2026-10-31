@@ -139,10 +139,12 @@ Then start with `--mode companion` and the usual `on-robot` flags.
   credentials never do.
 
 The connection is TLS, pinned to the companion's certificate, with the pairing
-token. If the companion stops answering, Reachy says once per outage:
-"Using my own voice." It finishes the current turn with its own models,
-from the audio it already heard. A socket that stops answering pings fails
-within about two seconds, including the close handshake. Hearing also fails
+token. If the companion stops answering, Reachy logs the fallback once per outage.
+It never announces the outage or voice switch aloud, on the current or later turns.
+It finishes the current request with its own voice, using the audio it already
+heard if recognition was interrupted. If speech was interrupted, it repeats that
+line in its own voice and continues the reply. A socket that stops answering pings
+fails within about two seconds, including the close handshake. Hearing also fails
 if an open stream goes two seconds without a partial, or if no endpoint arrives
 within two seconds of the robot closing the stream. These deadlines measure
 elapsed time, including during buffered wake replay. Reachy then keeps new turns on
@@ -150,8 +152,8 @@ the robot until the pending endpoint arrives or the companion reconnects.
 If that pending stream ends with an error, Reachy closes the socket and
 reconnects. Speech returns to the companion on a turn boundary after it has
 been back for 10 seconds.
-A companion that keeps dropping right after it connects is announced once, not
-on every reconnect.
+A companion that keeps dropping right after it connects produces only one fallback
+log entry for that outage.
 
 With local chat enabled, the robot answers simple greetings, thanks, and
 "how are you" from fixed phrases when the companion cannot narrate them.
