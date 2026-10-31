@@ -716,7 +716,10 @@ def test_streaming_option_reaches_the_conversation_service(tmp_path, monkeypatch
     monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
     monkeypatch.setattr(reachy_muse.cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
     monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: Hardware())
-    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model: next(speech_backends))
+    def piper(model, *, cache_dir):
+        assert cache_dir == tmp_path / 'cache' / 'piper'
+        return next(speech_backends)
+    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', piper)
     monkeypatch.setattr('reachy_muse.speech_gate.SileroSpeechGate', object)
     monkeypatch.setattr('reachy_muse.local_transcription.WhisperTranscriber', lambda model: Speech('transcriber'))
     monkeypatch.setattr('reachy_muse.conversation.ReachyService', Service)
@@ -727,8 +730,7 @@ def test_streaming_option_reaches_the_conversation_service(tmp_path, monkeypatch
     assert backends.reply_style() is ReplyStyle.EXPRESSIVE_JSON
     assert backends.voice.speech is speech
     assert backends.progress_voice.speech is progress_speech
-    assert calls == ['hardware started', 'speech started', 'progress speech started', 'transcriber started',
-                     'service ran', 'hardware closed', 'speech closed', 'progress speech closed',
+    assert calls == ['hardware started', 'service ran', 'hardware closed', 'speech closed', 'progress speech closed',
                      'transcriber closed']
 
 
@@ -803,7 +805,7 @@ def test_wake_model_phrase_and_idle_timeout_reach_the_service(tmp_path, monkeypa
     for name, factory in factories.items():
         monkeypatch.setattr(factory, recognize if name == stt_backend else
                             lambda model: pytest.fail('wrong transcription backend selected'))
-    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model: Transcriber())
+    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model, **kwargs: Transcriber())
     speech_gate = object()
     monkeypatch.setattr('reachy_muse.speech_gate.SileroSpeechGate', lambda: speech_gate)
     if backend == 'vosk':
@@ -843,7 +845,7 @@ def test_vosk_backend_requires_a_model_before_hardware(tmp_path, monkeypatch, ca
 
 @pytest.mark.parametrize('operation, failed_resource', [
     ('setup', 'service'),
-    ('start', 'hardware'), ('start', 'speech'), ('start', 'progress'), ('start', 'transcriber'),
+    ('start', 'hardware'),
     ('close', 'hardware'), ('close', 'speech'), ('close', 'progress'),
     ('close', 'transcriber'), ('close', 'wake'),
 ])
@@ -911,7 +913,7 @@ def test_startup_and_cleanup_failures_attempt_all_resource_cleanup(
     monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
     monkeypatch.setattr(reachy_muse.cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
     monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: hardware)
-    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model: next(speech_backends))
+    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model, **kwargs: next(speech_backends))
     factory = {
         'whisper': 'reachy_muse.local_transcription.WhisperTranscriber',
         'moonshine': 'reachy_muse.local_transcription.MoonshineTranscriber',
@@ -955,7 +957,7 @@ def test_missing_speech_gate_stops_before_capture_and_closes_prepared_resources(
     monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
     monkeypatch.setattr(reachy_muse.cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
     monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: Hardware())
-    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model: Speech())
+    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model, **kwargs: Speech())
     monkeypatch.setattr('reachy_muse.speech_gate.SileroSpeechGate', missing_gate)
     assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'on-robot',
                            '--tts-model', str(tmp_path / 'voice.onnx'),
@@ -1081,7 +1083,7 @@ def test_each_mode_starts_the_conversation_with_its_reply_style_and_voice(tmp_pa
                         lambda name, *args: companion if name == reachy_muse.cli.COMPANION_FILE else {'paired': True})
     monkeypatch.setattr(reachy_muse.cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
     monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: Hardware())
-    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model: Model())
+    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model, **kwargs: Model())
     monkeypatch.setattr('reachy_muse.local_transcription.WhisperTranscriber', lambda model: Model())
     monkeypatch.setattr('reachy_muse.speech_gate.SileroSpeechGate', object)
     monkeypatch.setattr('reachy_muse.conversation.ReachyService', Service)

@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from importlib.metadata import PackageNotFoundError, version
 import json
+import logging
 from pathlib import Path
 import struct
 import sys
@@ -15,6 +17,10 @@ from typing import AsyncIterator, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import numpy as np
+
+log = logging.getLogger(__name__)
+# Bump when PCM16 conversion, resampling, or chunk post-processing changes.
+PCM_PROCESSING_VERSION = 1
 
 
 class PreparedSpeech:
@@ -71,7 +77,7 @@ class PiperSpeech:
     The caller supplies the playback and conversation timeout.
     """
 
-    def __init__(self, model_path: Path):
+    def __init__(self, model_path: Path, *, cache_dir: Path | None = None):
         self.model_path = Path(model_path).expanduser().resolve()
         if not self.model_path.is_file():
             raise ValueError(f"Piper voice model is missing: {self.model_path}")
@@ -85,10 +91,103 @@ class PiperSpeech:
         if isinstance(rate, bool) or not isinstance(rate, int) or not 8000 <= rate <= 192_000:
             raise ValueError("Piper voice configuration needs a valid audio.sample_rate")
         self.sample_rate = rate
+        self._config = config
+        self._cache_dir = cache_dir
+        self._disk_cache = None
         self._process = None
         self._lock = asyncio.Lock()
+        self._warming_lock = asyncio.Lock()
+        self._warming = None
+        self._preempt_warming = asyncio.Event()
+        self._foreground = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
         # Fixed recordings live as long as this voice, across Muse reconnects.
         self.phrase_cache: dict[int, dict[str, tuple[np.ndarray, ...]]] = {}
+
+    def _load_phrases(self, texts: tuple[str, ...], output_rate: int) -> dict:
+        from reachy_muse.phrase_cache import PhraseCache
+
+        if self._cache_dir is None:
+            return {}
+        if self._disk_cache is None:
+            # Piper uses the sidecar's inference/phoneme settings and its default
+            # synthesis arguments. Library upgrades can change those defaults.
+            libraries = {}
+            for package in ("piper-tts", "onnxruntime", "av"):
+                try:
+                    libraries[package] = version(package)
+                except PackageNotFoundError:
+                    libraries[package] = None
+            try:
+                self._disk_cache = PhraseCache(
+                    self._cache_dir, self.model_path,
+                    synthesis={"config": self._config, "libraries": libraries},
+                    processing_version=PCM_PROCESSING_VERSION)
+            except OSError:
+                log.warning("Reachy fixed speech cache model could not be hashed; synthesizing instead")
+                return {}
+        return {text: audio for text in texts
+                if (audio := self._disk_cache.load(text, output_rate)) is not None}
+
+    async def load_phrases(self, texts: tuple[str, ...], output_rate: int) -> dict:
+        return await asyncio.to_thread(self._load_phrases, texts, output_rate)
+
+    async def save_phrase(self, text: str, output_rate: int, chunks) -> None:
+        if self._disk_cache is not None:
+            await asyncio.to_thread(self._disk_cache.save, text, output_rate, chunks)
+
+    async def warm_phrase(self, text: str, output_rate: int) -> tuple:
+        """Retry interrupted cache work after live speech releases the worker."""
+        async def record():
+            stream = self.stream(text, output_rate)
+            try:
+                return tuple([chunk async for chunk in stream])
+            finally:
+                await stream.aclose()
+
+        async with self._warming_lock:
+            while True:
+                await self._idle.wait()
+                self._preempt_warming.clear()
+                self._warming = asyncio.create_task(record())
+                interrupted = asyncio.create_task(self._preempt_warming.wait())
+                try:
+                    done, _ = await asyncio.wait({self._warming, interrupted}, timeout=60,
+                                                 return_when=asyncio.FIRST_COMPLETED)
+                    if self._warming in done:
+                        return self._warming.result()
+                    if interrupted not in done:
+                        raise TimeoutError("Piper fixed phrase synthesis timed out")
+                finally:
+                    self._warming.cancel()
+                    interrupted.cancel()
+                    cleanup = asyncio.gather(self._warming, interrupted, return_exceptions=True)
+                    cancelled = False
+                    while not cleanup.done():
+                        try:
+                            await asyncio.shield(cleanup)
+                        except asyncio.CancelledError:
+                            cancelled = True
+                    self._warming = None
+                    if cancelled:
+                        raise asyncio.CancelledError
+
+    @contextlib.asynccontextmanager
+    async def _synthesis_slot(self):
+        foreground = asyncio.current_task() is not self._warming
+        if foreground:
+            self._foreground += 1
+            self._idle.clear()
+            self._preempt_warming.set()
+        try:
+            async with self._lock:
+                yield
+        finally:
+            if foreground:
+                self._foreground -= 1
+                if not self._foreground:
+                    self._idle.set()
 
     async def start(self) -> None:
         """Load the model once and wait until its worker is ready."""
@@ -159,7 +258,7 @@ class PiperSpeech:
             import numpy as np
         except ImportError as exc:
             raise RuntimeError("Local speech requires the Muse Reachy audio dependencies") from exc
-        async with self._lock:
+        async with self._synthesis_slot():
             succeeded = False
             try:
                 await self._ensure_worker()

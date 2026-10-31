@@ -15,7 +15,7 @@ from musegadget.link_client import Outcome
 from reachy_muse.capabilities import Backends, Mode, SpokenLine
 from reachy_muse.contract.replies import ReplyStyle
 from reachy_muse.conversation import ReachyService, VoiceConversation
-from reachy_muse.local_backends import LocalVoice, backends_for
+from reachy_muse.local_backends import LocalHearing, LocalVoice, backends_for
 from reachy_muse.local_speech import PiperSpeech
 from test_local_speech import worker  # noqa: F401
 
@@ -45,7 +45,7 @@ def test_reconnection_reaches_ready_with_baseline_audio_and_no_new_synthesis(mod
     asyncio.run(scenario())
 
 
-def test_cancelled_speech_restarts_worker_before_reconnect_is_ready(model, worker):
+def test_cached_reconnect_restarts_a_cancelled_worker_only_when_live_speech_needs_it(model, worker):
     async def scenario():
         speech, progress = PiperSpeech(model), PiperSpeech(model)
         stream = None
@@ -59,8 +59,8 @@ def test_cancelled_speech_restarts_worker_before_reconnect_is_ready(model, worke
             await stream.aclose()
             assert process.returncode == -9
             _, after = await startup(speech, progress)
-            assert len(worker[1]) == 3
-            assert worker[1][-1].returncode is None
+            assert len(worker[1]) == 2
+            assert speech._process is None
             assert worker[2].read_text() == "Cancelled reply."
             assert after == PIPER_PCM_SHA256
             stream = speech.stream("An uncached answer.", 48000)
@@ -228,7 +228,7 @@ def test_cancelled_warmup_reaps_worker_spawned_during_sibling_cleanup(model, wor
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", delayed)
         speech = PiperSpeech(model)
-        voice, progress = LocalVoice(speech), ClosingVoice()
+        voice, progress = LocalVoice(speech, ("Yes?",)), ClosingVoice()
         if piper_voice == "progress":
             voice, progress = progress, voice
         backends = Backends(hearing=None, voice=voice, narrator=None, progress_voice=progress,
@@ -295,14 +295,15 @@ def test_service_shutdown_during_failed_warmup_reaps_spawning_worker(model, work
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", delayed)
         speech = PiperSpeech(model)
-        piper, failing = SpawningVoice(speech), BlockedVoice()
+        piper, failing = SpawningVoice(speech, ("Yes?",)), BlockedVoice()
         failing.error = ValueError("synthesis failed")
         voice, progress = (piper, failing) if piper_voice == "main" else (failing, piper)
-        backends = Backends(hearing=None, voice=voice, narrator=None, progress_voice=progress,
+        backends = Backends(hearing=LocalHearing(), voice=voice, narrator=None, progress_voice=progress,
                             local_style=ReplyStyle.MARKER)
         session = OfflineLink()
         service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=SilentHardware(),
-                               backends=lambda session: backends)
+                               backends=lambda session: backends, session_id="existing-chat",
+                               owns_chat=True)
         serving = asyncio.create_task(service.serve(session, {"vm_id": "vm-1"}, stop))
 
         async def wait_for_cleanup():
@@ -337,30 +338,20 @@ def test_service_shutdown_during_failed_warmup_reaps_spawning_worker(model, work
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("fail", [False, True])
-def test_subscribe_overlaps_warmup_and_is_closed_if_startup_stops(fail):
-    class NoCaptureHardware(SilentHardware):
-        def read_audio(self):
-            raise AssertionError("capture started before warm-up finished")
-
+def test_subscription_failure_cancels_capture_without_starting_cache_work():
     async def scenario():
-        session, voice = OfflineSession(), BlockedVoice()
-        backends = Backends(hearing=None, voice=voice, narrator=None, local_style=ReplyStyle.MARKER)
-        conversation = VoiceConversation(session, NoCaptureHardware(), backends=backends, owns_chat=True)
+        session, voice = OfflineSession(subscription_delay_s=60), BlockedVoice()
+        backends = Backends(hearing=LocalHearing(), voice=voice, narrator=None, local_style=ReplyStyle.MARKER)
+        conversation = VoiceConversation(session, SilentHardware(), backends=backends, owns_chat=True)
         running = asyncio.create_task(conversation.run())
         try:
             await asyncio.wait_for(session.subscription_started.wait(), 1)
-            await asyncio.wait_for(voice.started.wait(), 1)
-            assert not running.done()
-            if fail:
-                voice.error = ValueError("synthesis failed")
-                voice.finish.set()
-            else:
-                running.cancel()
-            with pytest.raises(ValueError if fail else asyncio.CancelledError):
+            running.cancel()
+            with pytest.raises(asyncio.CancelledError):
                 await running
             assert session.subscription_closed.is_set()
-            assert voice.closed.is_set()
+            assert not voice.started.is_set()
+            assert not conversation._ready.is_set()
         finally:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)

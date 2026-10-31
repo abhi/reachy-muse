@@ -299,7 +299,8 @@ For example, "Muse is preparing a reply. Its last reported step was searching
 the web." If only a generic phase is available, Reachy reports that phase;
 it does not infer a search from the question. If neither phase nor milestone
 is available, it says that no detailed progress update has arrived.
-Fixed cues are synthesized and cached at startup. A specific stage requires an
+Fixed cues are loaded from disk after the microphone becomes ready. Missing
+recordings are synthesized in the background. A specific stage requires an
 explicit public update belonging to this turn; older stages are stated as history.
 Reachy's dedicated side chat can attribute a status update with its exact chat
 ID to the current acknowledged request. Main chats and explicitly selected
@@ -545,8 +546,9 @@ Empty speech does not start a conversation.
 The words still come from Muse. A Piper voice with Muse transcription is not
 supported.
 
-The Pi keeps a recognition worker with its encoder and decoder warmed before
-the ready handshake. The worker uses two inference threads and one BLAS thread
+The Pi loads the batch recognition worker on the first transcription and keeps
+it for later turns. Streaming recognition starts before microphone readiness
+because it must accept audio as the user speaks. The batch worker uses two inference threads and one BLAS thread
 to leave CPU time for capture, VAD, and camera work. Streaming Silero speech detection
 controls recording endpoints for local recognition; it uses the bundled model
 in the tested `faster-whisper==1.2.1` installation with `av==16.1.0`.
@@ -615,6 +617,33 @@ confirm audible continuity on the physical device before claiming a playback fix
 Piper is a separate GPL-licensed program, invoked as a subprocess. Its model is
 not bundled with reachy-muse. Use `--mode muse-voice` to request Muse's native
 voice output and stream its MP3 response once your VM supports it.
+
+Fixed Piper recordings persist in `cache/piper/` inside `--state-dir`. The key
+includes the model file's SHA-256, the exact phrase, the output sample rate,
+the complete voice JSON configuration, the Piper, ONNX Runtime, and PyAV
+versions, and `PCM_PROCESSING_VERSION` in `local_speech.py`. Bump that version
+when changing PCM conversion or resampling. Paths and file modification times
+do not identify a voice.
+
+After "Reachy is ready", background work loads those recordings and synthesizes
+only missing phrases. An uncached phrase uses live synthesis, which interrupts
+background synthesis on that voice. The interrupted recording retries after
+live speech finishes. Ordinary conversation replies stay out of the disk cache.
+Each file contains mono float32 PCM and an integrity checksum. Writes use a
+temporary file and atomic replacement. Corrupt files are ignored; an unwritable
+cache leaves completed recordings available in memory. Deleting `cache/piper/`
+causes regeneration on the next start.
+
+`Reachy startup` logs report each stage's elapsed and total seconds through
+`microphone_ready`. The stages cover configuration, the speech gate, the wake
+detector, hardware, Muse registration, dedicated-chat setup, subscription, and
+hearing. Hardware includes audio setup, the initial motion, and optional face
+tracking initialization. Registration, chat setup, and streaming hearing must
+finish before conversation input starts. Main-chat mode without a wake detector
+also finishes its initial spoken setup turn before the ready message.
+Companion connection attempts and
+fixed-phrase warming run independently of readiness. The first uncached live
+request can still pay the cost of loading its speech model.
 
 ## Local face following
 

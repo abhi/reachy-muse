@@ -110,6 +110,16 @@ async def startup(speech, progress_speech, *, subscription_delay_s=0):
         if ready not in done:
             raise TimeoutError("offline conversation never became ready")
         elapsed = time.perf_counter() - started
+        # Measure readiness separately from background cache completion, then
+        # verify every recording and reuse the completed cache on reconnect.
+        async def recordings_complete():
+            while not all(voice.is_presynthesized(text)
+                          for voice in (backends.voice, backends.progress_voice)
+                          for text in voice.fixed_phrases):
+                if running.done():
+                    running.result()
+                await asyncio.sleep(.001)
+        await asyncio.wait_for(recordings_complete(), 10)
     finally:
         running.cancel()
         ready.cancel()

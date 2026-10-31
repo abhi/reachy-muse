@@ -38,6 +38,7 @@ from reachy_muse.progress import BackendStatus, ProgressPlan, ProgressUpdate, ba
 from musegadget.service import Service
 from reachy_muse.speech_playback import PCMPlayer, SpeechPlayback
 from reachy_muse.turn_timeline import TurnTimeline
+from reachy_muse.startup import StartupTimeline
 
 log = logging.getLogger(__name__)
 REPLY_TIMEOUT_S = 180.0
@@ -389,10 +390,12 @@ class VoiceConversation:
                  owns_chat: bool = False, speech_gate=None, local_chat: bool = True,
                  arbitration_shadow: bool = False,
                  audio_diagnostics: bool = False, short_utterance_silence_s: float | None = None,
-                 morning: MorningRoutine | None = None) -> None:
+                 morning: MorningRoutine | None = None, startup: StartupTimeline | None = None) -> None:
         if not math.isfinite(wake_timeout_s) or wake_timeout_s < 0:
             raise ValueError("wake timeout must be a finite, nonnegative number")
         self.session = session
+        self._startup = startup or StartupTimeline()
+        self._ready = asyncio.Event()
         self.hardware = hardware
         self.session_id = session_id
         self.owns_chat = owns_chat
@@ -559,12 +562,12 @@ class VoiceConversation:
         subscriber = asyncio.create_task(self._subscribe())
         tasks = {subscriber}
         try:
-            await self.warm_up()
             microphone = asyncio.create_task(self._microphone())
+            warming = asyncio.create_task(self._warm_after_ready())
             moments = asyncio.create_task(self._moments.keep_ready())
             morning = asyncio.create_task(self._morning.run(self)) if self._morning is not None else None
             watched = {subscriber, microphone} | ({morning} if morning is not None else set())
-            tasks.update(watched, {moments})
+            tasks.update(watched, {moments, warming})
             done, _ = await asyncio.wait(watched, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 task.result()
@@ -575,6 +578,14 @@ class VoiceConversation:
             await asyncio.gather(*tasks, return_exceptions=True)
             await self._moments.close()
             await asyncio.to_thread(self.hardware.clear_audio)
+
+    async def _warm_after_ready(self) -> None:
+        await self._ready.wait()
+        try:
+            await self.warm_up()
+        except Exception as exc:
+            log.warning("Reachy fixed speech warm-up failed (%s); live synthesis remains available",
+                        type(exc).__name__)
 
     async def warm_up(self) -> None:
         rate = self.hardware.output_sample_rate
@@ -709,7 +720,9 @@ class VoiceConversation:
     async def _microphone(self) -> None:
         hearing = self.backends.hearing
         await self.session.chat_subscribed.wait()
+        self._startup.mark("chat_subscription")
         await hearing.start()
+        self._startup.mark("hearing")
         drain_until = time.monotonic() + 0.25
         for _ in range(1000):
             if time.monotonic() >= drain_until or await asyncio.to_thread(self.hardware.read_audio) is None:
@@ -994,6 +1007,8 @@ class VoiceConversation:
                              else "playback echo gate")
                     log.info("Reachy is ready. %s", "Say Hey Muse to open the microphone." if wake is not None
                              else "Speak naturally; pause to send your turn to Muse.")
+                    self._startup.mark("microphone_ready")
+                    self._ready.set()
                     ready = True
                 if (wake is not None and not self._input_blocked() and turn_task is None
                         and follow_up_task is None and held is None
@@ -2151,6 +2166,7 @@ class ReachyService(Service):
     speech_gate: object | None = None
     short_utterance_silence_s: float | None = None
     morning: MorningRoutine | None = None
+    startup: StartupTimeline | None = None
     _asleep: bool = field(default=False, init=False, repr=False)
     _hardware_error: Exception | None = field(default=None, init=False, repr=False)
 
@@ -2179,14 +2195,17 @@ class ReachyService(Service):
         from reachy_muse.hardware import ReachyHardwareError
 
         hardware = self.executor
+        startup, self.startup = self.startup or StartupTimeline(), None
         stop_link = asyncio.Event()
         async def converse():
             await session.registered.wait()
+            startup.mark("registered")
             session_id = self.session_id
             if self.prepare_chat is not None:
                 session_id = await self.prepare_chat(session, vm["vm_id"] or vm["vm_name"])
             if self.owns_chat and (not isinstance(session_id, str) or not session_id):
                 raise ValueError("Reachy's dedicated side chat was not selected")
+            startup.mark("chat_setup")
             if self.morning is not None:
                 self.morning.select_chat(vm["vm_id"] or vm["vm_name"], session_id)
             voice = VoiceConversation(session, hardware, backends=self.backends(session),
@@ -2196,7 +2215,7 @@ class ReachyService(Service):
                                       local_chat=self.local_chat, audio_diagnostics=self.audio_diagnostics,
                                       arbitration_shadow=self.arbitration_shadow,
                                       short_utterance_silence_s=self.short_utterance_silence_s,
-                                      morning=self.morning)
+                                      morning=self.morning, startup=startup)
             voice._wake_window = WakeWindow.ASLEEP if self._asleep else WakeWindow.AWAKE
             try:
                 await voice.run()

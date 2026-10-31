@@ -309,3 +309,49 @@ All six rejected-turn replay commands completed with their behavior assertions i
 All 12 result files parse as JSON, and every warm-up replay has the same PCM digest.
 The journal hash is unchanged. `git diff --check` passes. Only `conversation.py`,
 `local_backends.py`, and `local_speech.py` changed in production source.
+
+## Cold process startup and persistent phrases
+
+`perf/cold-start` moves fixed-phrase work after microphone readiness and stores
+completed PCM under the configured state directory. A fresh Piper instance
+loads the same recordings without starting a model worker. The cache identifies
+model contents, synthesis configuration, phrase text, output rate, library
+versions, and the PCM processing version. Corrupt entries miss the cache;
+atomic replacement prevents readers from seeing partial writes. Live synthesis
+preempts background work on that voice, and interrupted warming retries later.
+
+The startup audit also found eager loading of both Piper workers and the batch
+transcriber in `cli.run()`, plus a wait for the companion's first connection
+attempt in `CompanionHearing.start()`. These waits no longer precede readiness.
+Streaming recognition still loads before it can receive microphone audio.
+Hardware startup still includes the daemon audio connection, the initial motion,
+and optional face tracking. Muse registration, dedicated-chat setup, and chat
+subscription still precede conversation input. Without a wake detector, main-chat
+mode also completes its initial spoken setup turn before reporting ready.
+
+The supplied `robot-turns-since-1026.txt` excerpt contains no readiness or startup
+milestones. It cannot measure the remaining cold-start stages. The historical
+journal table above also combines several model loads into one interval.
+New `Reachy startup` logs report both stage and cumulative elapsed seconds from
+`cli.run()` through `microphone_ready`, including those waits. No new CM4 startup
+time is claimed; the robot was not accessed.
+
+The offline replay now records readiness before waiting for background warming
+and checking the PCM digest. With a 150 ms subscription delay and 10 ms of fake
+inference per phrase, seven runs measured 151.646 ms cold readiness p50 and
+151.465 ms reconnect readiness p50. Their p95 values were 211.243 ms and
+151.698 ms. Each cold run synthesized 49 phrases after readiness; each reconnect
+synthesized zero. The PCM digest remains
+`604e5162d4d9936bd0d096bbf4c55348ad89947006ff966efd7578d2a298968f`.
+These numbers exclude CLI startup, hardware, and real model inference.
+
+Reproduce from the repository root:
+
+```sh
+PYTHONPATH=src python -m bench.latency_replay --runs 7 --subscription-delay-ms 150
+```
+
+Raw results are in `latency_rsi_runs/cold-background.json`. Behavior tests in
+`test_phrase_cache.py` cover restart reuse, invalidation, corruption, atomic
+replacement, and live preemption. `test_startup.py` verifies wake detection
+while warming stalls or fails and local hearing while the companion connects.

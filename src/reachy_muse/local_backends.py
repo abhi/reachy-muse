@@ -209,38 +209,54 @@ class LocalVoice:
         self.speech = speech
         self.fixed_phrases = fixed_phrases
         self.phrases = {}
+        self._phrase_rate = None
         self._phrase_cache = getattr(speech, "phrase_cache", {})
 
     async def warm(self, output_rate: int) -> None:
         started = time.monotonic()
-        if callable(getattr(self.speech, "start", None)):
-            await self.speech.start()
         self.phrases = self._phrase_cache.setdefault(output_rate, {})
+        self._phrase_rate = output_rate
+        if callable(getattr(self.speech, "load_phrases", None)):
+            pending = tuple(phrase for phrase in self.fixed_phrases if not self.is_presynthesized(phrase))
+            if pending:
+                self.phrases.update(await self.speech.load_phrases(pending, output_rate))
         missing = [phrase for phrase in self.fixed_phrases if not self.is_presynthesized(phrase)]
         log.info("Reachy fixed speech warm-up: %d cached, %d to synthesize at %d Hz",
                  len(self.fixed_phrases) - len(missing), len(missing), output_rate)
         for phrase in missing:
-            stream = self.speech.stream(phrase, output_rate)
-            audio = []
-            try:
-                async for chunk in stream:
-                    audio.append(chunk)
-            finally:
-                await stream.aclose()
+            if callable(getattr(self.speech, "warm_phrase", None)):
+                audio = await self.speech.warm_phrase(phrase, output_rate)
+            else:
+                stream = self.speech.stream(phrase, output_rate)
+                audio = []
+                try:
+                    async for chunk in stream:
+                        audio.append(chunk)
+                finally:
+                    await stream.aclose()
             self.phrases[phrase] = tuple(audio)
+            if callable(getattr(self.speech, "save_phrase", None)):
+                await self.speech.save_phrase(phrase, output_rate, self.phrases[phrase])
         log.info("Reachy fixed speech warm-up finished in %.3fs", time.monotonic() - started)
 
     def is_presynthesized(self, text: str) -> bool:
         return bool(self.phrases.get(text))
 
+    def _recording(self, text: str, output_rate: int):
+        if self._phrase_rate in (None, output_rate) and text in self.phrases:
+            return self.phrases[text]
+        return self._phrase_cache.get(output_rate, {}).get(text)
+
     def stream(self, line: SpokenLine, output_rate: int):
-        if self.is_presynthesized(line.text):
-            return _Replay(self.phrases[line.text])
+        audio = self._recording(line.text, output_rate)
+        if audio:
+            return _Replay(audio)
         return self.speech.stream(line.text, output_rate)
 
     def prepare(self, line: SpokenLine, output_rate: int):
-        if self.is_presynthesized(line.text):
-            return _Replay(self.phrases[line.text])
+        audio = self._recording(line.text, output_rate)
+        if audio:
+            return _Replay(audio)
         if not callable(getattr(self.speech, "prepare", None)):
             return None
         return self.speech.prepare(line.text, output_rate)

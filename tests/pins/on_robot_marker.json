@@ -22,6 +22,7 @@
   {"robot": "clear_audio"}
  ],
  "synthesized": [
+  "tts:Ready to talk.",
   "tts:Hmm, good question.",
   "tts:Ooh, let me think.",
   "tts:Give me a second on that.",
@@ -70,7 +71,6 @@
   "progress_tts:Still looking into that.",
   "progress_tts:Hang tight, still on that.",
   "progress_tts:Still here.",
-  "tts:Ready to talk.",
   "tts:You are doing great."
  ]
 }

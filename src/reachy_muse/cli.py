@@ -507,6 +507,9 @@ def end_of_turn_silence(mode: Mode, given: float | None) -> float:
 
 
 async def run(args) -> int:
+    from reachy_muse.startup import StartupTimeline
+
+    startup = StartupTimeline()
     from reachy_muse.local_backends import backends_for
     from reachy_muse.conversation import ReachyService
 
@@ -552,15 +555,19 @@ async def run(args) -> int:
     wake_detector = None
     speech_gate = None
     link_task = None
+    startup.mark("configuration")
     try:
         if args.tts_model is not None:
             from reachy_muse.local_speech import PiperSpeech
-            speech = PiperSpeech(args.tts_model)
-            progress_speech = PiperSpeech(args.tts_model)
+            cache_dir = config.state_dir() / "cache" / "piper"
+            speech = PiperSpeech(args.tts_model, cache_dir=cache_dir)
+            progress_speech = PiperSpeech(args.tts_model, cache_dir=cache_dir)
+        startup.mark("speech_configuration")
         if args.stt_model is not None:
             from reachy_muse.speech_gate import SileroSpeechGate
             speech_gate = await asyncio.to_thread(SileroSpeechGate)
             logging.getLogger(__name__).info("Reachy speech gate ready: Silero")
+            startup.mark("speech_gate")
             if args.stt_backend == "sherpa-streaming":
                 from reachy_muse.streaming_transcription import SherpaStreamingTranscriber
                 transcriber = SherpaStreamingTranscriber(args.stt_model)
@@ -570,6 +577,7 @@ async def run(args) -> int:
             else:
                 from reachy_muse.local_transcription import WhisperTranscriber
                 transcriber = WhisperTranscriber(args.stt_model)
+        startup.mark("transcriber_configuration")
         if args.wake_model is not None:
             if args.wake_backend == "vosk":
                 from reachy_muse.vosk_wake import VoskWakeWordDetector
@@ -581,6 +589,7 @@ async def run(args) -> int:
                                                    phrase=args.wake_phrase)
             if getattr(wake_detector, "timing_supported", False):
                 logging.getLogger(__name__).info("Reachy timed wake handoff ready")
+        startup.mark("wake_detector")
         link = None
 
         def backends(session):
@@ -597,24 +606,21 @@ async def run(args) -> int:
                                arbitration_shadow=args.arbitration_shadow,
                                audio_diagnostics=args.audio_diagnostics, wake_detector=wake_detector,
                                wake_timeout_s=args.wake_timeout, speech_gate=speech_gate,
+                               startup=startup,
                                morning=morning(robot) if morning is not None else None)
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, service.stop)
         await asyncio.to_thread(robot.start)
+        startup.mark("hardware")
         if companion is not None:
             from reachy_muse.companion_client import CompanionLink
             # The companion speaks at the speaker's rate, which Reachy knows only once it has started.
             link = CompanionLink.from_config(companion, out_rate=robot.output_sample_rate)
             link_task = asyncio.ensure_future(link.run())
-        if speech is not None:
-            await asyncio.wait_for(speech.start(), 30)
-        if progress_speech is not None:
-            await asyncio.wait_for(progress_speech.start(), 30)
-        if transcriber is not None:
-            await asyncio.wait_for(transcriber.start(), 30)
         logging.getLogger(__name__).info("Using Reachy's microphone and speaker; chat %s",
                                          "Reachy's dedicated side chat" if dedicated_chat else session_id or "main")
+        startup.mark("service_connect")
         await service.run()
     finally:
         if link_task is not None:
