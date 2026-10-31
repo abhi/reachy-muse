@@ -119,6 +119,58 @@ def test_a_connecting_companion_preserves_the_opening_before_vad_activation(open
     turn.abort()
 
 
+@pytest.mark.parametrize("ended_first_turn", [False, True])
+@pytest.mark.parametrize("ended_local_turn", [False, True])
+def test_a_disconnect_after_handoff_replays_all_unfinished_audio(ended_first_turn, ended_local_turn):
+    pytest.importorskip("av")
+
+    class Vad:
+        def is_speech(self, pcm, rate):
+            return bool(np.any(np.frombuffer(pcm, dtype="<i2")))
+
+    link = CompanionLink("ws://localhost:9", token="test", out_rate=16000, insecure=True)
+    hearing = FailoverHearing(CompanionHearing(link), LocalHearing(), CompanionRoute(link).hearing)
+    turn = hearing.open_turn(16000, silence_s=.1, vad=Vad())
+    if ended_local_turn:
+        turn.feed(np.full(8000, .75, dtype=np.float32))
+        assert turn.take().ended is None
+        turn.feed(np.zeros(1600, dtype=np.float32))
+        assert turn.take().ended is not None
+    turn.feed(np.zeros(11200, dtype=np.float32))
+    turn.feed(np.full(160, .25, dtype=np.float32))
+    assert turn.take().ended is None
+    assert link.state is LinkState.CONNECTING
+    link._connection = _Connection(None, (Op.HEAR,))
+    link._set(LinkState.UP)
+    assert turn.take().ended is None
+    turn.feed(np.concatenate((np.full(480, .25, dtype=np.float32),
+                              np.full(7360, .5, dtype=np.float32))))
+    assert turn.take().ended is None
+    stream, = link._connection.hearing.values()
+    expected = [0] * 2240 + [8192] * 640 + [16384] * 7360
+    np.testing.assert_array_equal(np.frombuffer(stream.audio, dtype="<i2"), expected)
+    if ended_first_turn:
+        turn.feed(np.zeros(1600, dtype=np.float32))
+        assert turn.take().ended is None
+        turn.feed(np.full(8000, .75, dtype=np.float32))
+        assert turn.take().ended is None
+        link._receive(link._connection, encode(HearEndpoint(stream.id, "first", True)))
+        assert turn.take().ended is not None
+        expected = [24576] * 8000
+    link._connection.fail("disconnected")
+    link._set(LinkState.DOWN)
+    assert turn.take().ended is None
+    turn.feed(np.zeros(1920, dtype=np.float32))
+    ended = turn.take().ended
+    assert ended is not None
+    endpoint = asyncio.run(ended.endpoint())
+    with wave.open(io.BytesIO(endpoint.audio), "rb") as wav:
+        recorded = np.frombuffer(wav.readframes(wav.getnframes()), dtype="<i2")
+    assert np.count_nonzero(recorded == 8192) == (0 if ended_first_turn else 640)
+    np.testing.assert_array_equal(recorded, expected + [0] * 1600)
+    turn.abort()
+
+
 class Connection:
     closed = False
     probe = None

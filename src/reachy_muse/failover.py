@@ -119,11 +119,10 @@ class FailoverHearingTurn:
 
     def feed(self, samples) -> None:
         self._fed += len(samples)
+        self._keep(samples)
         if self._replay is not None:
             import numpy as np
             samples, self._replay = np.concatenate([*self._replay, samples]), None
-        elif self._on_companion:
-            self._keep(samples)
         self._turn.feed(samples)
 
     def _keep(self, samples) -> None:
@@ -151,6 +150,10 @@ class FailoverHearingTurn:
     def take(self) -> HeardAudio:
         if not self._on_companion:
             heard = self._turn.take()
+            if heard.ended is not None:
+                self._forget_until(self._fed)
+            elif not self._turn.active:
+                self._trim(IDLE_KEEP_S)
             if (self._hearing.companion_ready and heard.ended is None and self._replay is None
                     and not self._turn.active and self._turn.quiet_s >= self._options["silence_s"]):
                 self._switch(on_companion=True)
@@ -174,8 +177,9 @@ class FailoverHearingTurn:
     def _switch(self, *, on_companion: bool) -> None:
         options = dict(self._options, recorder=self._turn.recorder) if on_companion else self._options
         self._turn.abort()
-        self._kept.clear()
-        self._kept_samples = 0
+        if not on_companion:
+            self._kept.clear()
+            self._kept_samples = 0
         self._on_companion = on_companion
         self._turn_start_sample = self._fed
         hearing = self._hearing.companion if on_companion else self._hearing.local
