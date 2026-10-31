@@ -152,7 +152,7 @@ class FailoverHearingTurn:
         if not self._on_companion:
             heard = self._turn.take()
             if (self._hearing.companion_ready and heard.ended is None and self._replay is None
-                    and not self._turn.active):
+                    and not self._turn.active and self._turn.quiet_s >= self._options["silence_s"]):
                 self._switch(on_companion=True)
             return heard
         try:

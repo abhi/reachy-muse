@@ -1,6 +1,8 @@
 """The failover wrappers against scripted companion and on-robot parts."""
 
 import asyncio
+import io
+import wave
 
 import pytest
 
@@ -8,9 +10,12 @@ import reachy_muse.failover
 from reachy_muse.contract.intent import Intent
 from reachy_muse.companion_client import CompanionOpening
 from reachy_muse.capabilities import Heard, Hold, CapabilityUnavailable, HeardAudio, SpokenLine
-from reachy_muse.companion_client import CompanionHearingTurn, _HearStream
-from reachy_muse.protocol import HearEndpoint
+from reachy_muse.companion_client import (
+    CompanionHearing, CompanionHearingTurn, CompanionLink, LinkState, _Connection, _HearStream,
+)
+from reachy_muse.protocol import HearEndpoint, Op, encode
 from reachy_muse.failover import CompanionRoute, FailoverHearing, FailoverNarrator
+from reachy_muse.local_backends import LocalHearing
 from reachy_muse.voice_audio import SpeechAudio, SpeechEnd
 
 np = pytest.importorskip("numpy")
@@ -70,6 +75,45 @@ def test_a_late_endpoint_keeps_the_next_utterances_opening_for_a_replay():
     turn.feed(np.full(100, 10, dtype=np.float32))
     replayed, = local.opened[0].fed
     assert replayed.tolist() == [float(n // 100) for n in range(500, 1100)]
+
+
+@pytest.mark.parametrize("opening_samples", [160, 320, 640])
+def test_a_connecting_companion_preserves_the_opening_before_vad_activation(opening_samples):
+    pytest.importorskip("av")
+
+    class Vad:
+        def is_speech(self, pcm, rate):
+            return bool(np.any(np.frombuffer(pcm, dtype="<i2")))
+
+    link = CompanionLink("ws://localhost:9", token="test", out_rate=16000, insecure=True)
+    hearing = FailoverHearing(CompanionHearing(link), LocalHearing(), CompanionRoute(link).hearing)
+    turn = hearing.open_turn(16000, silence_s=.1, vad=Vad())
+    turn.feed(np.full(opening_samples, .25, dtype=np.float32))
+    assert turn.take().ended is None
+    assert link.state is LinkState.CONNECTING
+    link._connection = _Connection(None, (Op.HEAR,))
+    link._set(LinkState.UP)
+    assert turn.take().ended is None
+    turn.feed(np.concatenate((np.full(640 - opening_samples, .25, dtype=np.float32),
+                              np.full(7360, .5, dtype=np.float32))))
+    assert turn.take().ended is None
+    turn.feed(np.zeros(1600, dtype=np.float32))
+    ended = turn.take().ended
+    if ended is None:
+        stream, = link._connection.hearing
+        link._receive(link._connection, encode(HearEndpoint(stream, "first", True)))
+        ended = turn.take().ended
+    endpoint = asyncio.run(ended.endpoint())
+    with wave.open(io.BytesIO(endpoint.audio), "rb") as wav:
+        recorded = np.frombuffer(wav.readframes(wav.getnframes()), dtype="<i2")
+    np.testing.assert_array_equal(recorded, [8192] * 640 + [16384] * 7360 + [0] * 1600)
+
+    assert turn.take().ended is None
+    turn.feed(np.full(8000, .75, dtype=np.float32))
+    assert turn.take().ended is None
+    stream, = link._connection.hearing.values()
+    assert bytes(stream.audio) == b"\x00\x60" * 8000
+    turn.abort()
 
 
 class Connection:
