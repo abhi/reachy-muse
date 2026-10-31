@@ -1,0 +1,80 @@
+{
+  "source": "robot-turns-since-1026.txt",
+  "sha256": "2285b101edf0afd927559a157bade85825a0697ef56d76acfc6b8429e541d590",
+  "samples": [
+    {
+      "line": 11,
+      "kind": "morning briefing",
+      "first_text_ms": 28163.0
+    },
+    {
+      "line": 14,
+      "kind": "morning briefing",
+      "first_text_ms": 19365.0
+    },
+    {
+      "line": 19,
+      "kind": "morning briefing",
+      "first_text_ms": 32474.0
+    },
+    {
+      "line": 22,
+      "kind": "morning briefing",
+      "first_text_ms": 12632.0
+    },
+    {
+      "line": 25,
+      "kind": "morning briefing",
+      "first_text_ms": 26783.0
+    },
+    {
+      "line": 28,
+      "kind": "morning briefing",
+      "first_text_ms": 10366.0
+    },
+    {
+      "line": 31,
+      "kind": "morning briefing",
+      "first_text_ms": 20416.0
+    },
+    {
+      "line": 34,
+      "kind": "morning briefing",
+      "first_text_ms": 5664.0
+    },
+    {
+      "line": 50,
+      "kind": "Muse question",
+      "hearing_ms": 22755.0,
+      "dispatch_ms": 21.0,
+      "first_text_ms": 21127.0,
+      "first_audio_ms": 28220.0
+    },
+    {
+      "line": 78,
+      "kind": "Muse question",
+      "hearing_ms": 4846.0,
+      "dispatch_ms": 32.0,
+      "first_text_ms": 17609.0,
+      "first_audio_ms": 18946.0
+    },
+    {
+      "line": 84,
+      "kind": "Muse question",
+      "hearing_ms": 1188.0,
+      "dispatch_ms": 34.0,
+      "first_text_ms": 13819.0,
+      "first_audio_ms": 18727.0
+    },
+    {
+      "line": 90,
+      "kind": "morning briefing",
+      "first_text_ms": 28153.0
+    },
+    {
+      "line": 93,
+      "kind": "morning briefing",
+      "first_text_ms": 10628.0
+    }
+  ]
+}

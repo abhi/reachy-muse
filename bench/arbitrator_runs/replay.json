@@ -1,0 +1,302 @@
+{
+  "cases": 324,
+  "partial_revisions": 23,
+  "route_changes_at_final": 13,
+  "revoked_partial_decisions": 23,
+  "traces": [
+    {
+      "id": "M01",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "LOCAL_REPLY",
+          "template": "morning"
+        },
+        {
+          "at_ms": 750,
+          "phase": "provisional",
+          "kind": "MUSE"
+        },
+        {
+          "at_ms": 1000,
+          "phase": "final",
+          "kind": "MUSE"
+        }
+      ],
+      "model_status": "invalid"
+    },
+    {
+      "id": "M02",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "LOCAL_REPLY",
+          "template": "thanks"
+        },
+        {
+          "at_ms": 800,
+          "phase": "provisional",
+          "kind": "MUSE"
+        },
+        {
+          "at_ms": 1000,
+          "phase": "final",
+          "kind": "MUSE"
+        }
+      ],
+      "model_status": "accepted"
+    },
+    {
+      "id": "M03",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "MUSE"
+        },
+        {
+          "at_ms": 750,
+          "phase": "provisional",
+          "kind": "MUSE"
+        },
+        {
+          "at_ms": 1000,
+          "phase": "final",
+          "kind": "MUSE"
+        }
+      ],
+      "model_status": "accepted"
+    },
+    {
+      "id": "M04",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "MUSE"
+        },
+        {
+          "at_ms": 750,
+          "phase": "provisional",
+          "kind": "MUSE"
+        },
+        {
+          "at_ms": 1000,
+          "phase": "final",
+          "kind": "MUSE"
+        }
+      ],
+      "model_status": "accepted"
+    },
+    {
+      "id": "M89",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "LOCAL_DEVICE",
+          "command": "volume_down"
+        },
+        {
+          "at_ms": 800,
+          "phase": "provisional",
+          "kind": "MUSE"
+        },
+        {
+          "at_ms": 1000,
+          "phase": "final",
+          "kind": "MUSE"
+        }
+      ],
+      "model_status": "accepted"
+    },
+    {
+      "id": "E21",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "LOCAL_REPLY",
+          "template": "morning"
+        },
+        {
+          "at_ms": 500,
+          "phase": "provisional",
+          "kind": "MUSE"
+        },
+        {
+          "at_ms": 1200,
+          "phase": "final",
+          "kind": "MUSE"
+        }
+      ],
+      "model_status": "accepted"
+    },
+    {
+      "id": "E22",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "LOCAL_DEVICE",
+          "command": "stop_talking"
+        },
+        {
+          "at_ms": 500,
+          "phase": "provisional",
+          "kind": "MUSE"
+        },
+        {
+          "at_ms": 1200,
+          "phase": "final",
+          "kind": "MUSE"
+        }
+      ],
+      "model_status": "accepted"
+    },
+    {
+      "id": "E23",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "MUSE_CANCEL",
+          "target": "bus-audit"
+        },
+        {
+          "at_ms": 1200,
+          "phase": "final",
+          "kind": "MUSE"
+        }
+      ],
+      "model_status": "accepted"
+    },
+    {
+      "id": "E24",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "LOCAL_REPLY",
+          "template": "thanks"
+        },
+        {
+          "at_ms": 500,
+          "phase": "provisional",
+          "kind": "MUSE"
+        },
+        {
+          "at_ms": 1200,
+          "phase": "final",
+          "kind": "MUSE"
+        }
+      ],
+      "model_status": "accepted"
+    },
+    {
+      "id": "E25",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "LOCAL_REPLY",
+          "template": "pleased"
+        },
+        {
+          "at_ms": 1200,
+          "phase": "final",
+          "kind": "MUSE"
+        }
+      ],
+      "model_status": "accepted"
+    },
+    {
+      "id": "E26",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "LOCAL_DEVICE",
+          "command": "sleep"
+        },
+        {
+          "at_ms": 1200,
+          "phase": "final",
+          "kind": "MUSE"
+        }
+      ],
+      "model_status": "accepted"
+    },
+    {
+      "id": "E27",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "MUSE_CANCEL",
+          "target": "weather-audit"
+        },
+        {
+          "at_ms": 1200,
+          "phase": "final",
+          "kind": "MUSE"
+        }
+      ],
+      "model_status": "accepted"
+    },
+    {
+      "id": "E28",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "LOCAL_REPLY",
+          "template": "empathy"
+        },
+        {
+          "at_ms": 1200,
+          "phase": "final",
+          "kind": "MUSE"
+        }
+      ],
+      "model_status": "accepted"
+    },
+    {
+      "id": "E29",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "LOCAL_REPLY",
+          "template": "morning"
+        },
+        {
+          "at_ms": 1200,
+          "phase": "final",
+          "kind": "MUSE"
+        }
+      ],
+      "model_status": "accepted"
+    },
+    {
+      "id": "E30",
+      "stages": [
+        {
+          "at_ms": 200,
+          "phase": "provisional",
+          "kind": "LOCAL_DEVICE",
+          "command": "stop_talking"
+        },
+        {
+          "at_ms": 1200,
+          "phase": "final",
+          "kind": "LOCAL_DEVICE",
+          "command": "face_tracking_off"
+        }
+      ],
+      "model_status": "rule"
+    }
+  ]
+}

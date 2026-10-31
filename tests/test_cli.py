@@ -532,9 +532,13 @@ def test_nested_creation_ack_is_accepted(tmp_path, monkeypatch):
 def test_cli_selects_owned_side_chat_by_default_and_preserves_explicit_routes(
         tmp_path, monkeypatch, selection, expected_session, owned):
     from musegadget.identity import Identity
+    from reachy_muse.conversation import VoiceConversation
+    from reachy_muse.turn_timeline import TurnTimeline
+    from test_conversation import FakeHardware, FakeSession
 
     captured = {}
-    class Hardware:
+    sent = []
+    class Hardware(FakeHardware):
         def start(self):
             pass
 
@@ -549,7 +553,16 @@ def test_cli_selects_owned_side_chat_by_default_and_preserves_explicit_routes(
             pass
 
         async def run(self):
-            pass
+            if owned:
+                return
+            session = FakeSession()
+            conversation = VoiceConversation(
+                session, captured['executor'], backends=captured['backends'](session),
+                session_id=captured['session_id'], owns_chat=captured['owns_chat'])
+            await conversation._dispatch(
+                b'wav', "Good morning, don't cancel my café booking at 6:30.",
+                started=0, defer_playback=False, timeline=TurnTimeline())
+            sent.extend(session.setup_messages)
 
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
     monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
@@ -569,6 +582,7 @@ def test_cli_selects_owned_side_chat_by_default_and_preserves_explicit_routes(
         assert "one JSON object per line" not in prepare.__self__.setup_message
         assert "Both antennas are enabled" in prepare.__self__.setup_message
     else:
+        assert sent == [("Good morning, don't cancel my café booking at 6:30.", expected_session)]
         assert not (tmp_path / reachy_muse.cli.CHAT_STATE_FILE).exists()
 
 

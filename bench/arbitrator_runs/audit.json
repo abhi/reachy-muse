@@ -1,0 +1,281 @@
+{
+  "engine": "rules",
+  "split": "audit",
+  "decisions": {
+    "accuracy": {
+      "correct": 60,
+      "total": 60,
+      "rate": 1.0
+    },
+    "per_class": {
+      "LOCAL_DEVICE": {
+        "correct": 5,
+        "total": 5,
+        "rate": 1.0
+      },
+      "LOCAL_REPLY": {
+        "correct": 8,
+        "total": 8,
+        "rate": 1.0
+      },
+      "MUSE": {
+        "correct": 28,
+        "total": 28,
+        "rate": 1.0
+      },
+      "MUSE_FOLLOW_UP": {
+        "correct": 3,
+        "total": 3,
+        "rate": 1.0
+      },
+      "MUSE_CANCEL": {
+        "correct": 2,
+        "total": 2,
+        "rate": 1.0
+      },
+      "IGNORE": {
+        "correct": 14,
+        "total": 14,
+        "rate": 1.0
+      }
+    },
+    "confusion": {
+      "LOCAL_DEVICE": {
+        "LOCAL_DEVICE": 5,
+        "LOCAL_REPLY": 0,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "LOCAL_REPLY": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 8,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "MUSE": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 28,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "MUSE_FOLLOW_UP": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 3,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "MUSE_CANCEL": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 2,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "IGNORE": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 14,
+        "INVALID": 0
+      }
+    },
+    "false_local_reply": {
+      "errors": 0,
+      "total": 42,
+      "rate": 0.0
+    },
+    "local_reply_precision": {
+      "correct": 8,
+      "total": 8,
+      "rate": 1.0
+    },
+    "local_reply_recall": {
+      "correct": 8,
+      "total": 8,
+      "rate": 1.0
+    },
+    "unsafe_effects": 0,
+    "release_gate": true,
+    "errors": []
+  },
+  "transcript_fidelity": {
+    "correct": 31,
+    "total": 31
+  },
+  "proposals_before_validation": {
+    "accuracy": {
+      "correct": 60,
+      "total": 60,
+      "rate": 1.0
+    },
+    "per_class": {
+      "LOCAL_DEVICE": {
+        "correct": 5,
+        "total": 5,
+        "rate": 1.0
+      },
+      "LOCAL_REPLY": {
+        "correct": 8,
+        "total": 8,
+        "rate": 1.0
+      },
+      "MUSE": {
+        "correct": 28,
+        "total": 28,
+        "rate": 1.0
+      },
+      "MUSE_FOLLOW_UP": {
+        "correct": 3,
+        "total": 3,
+        "rate": 1.0
+      },
+      "MUSE_CANCEL": {
+        "correct": 2,
+        "total": 2,
+        "rate": 1.0
+      },
+      "IGNORE": {
+        "correct": 14,
+        "total": 14,
+        "rate": 1.0
+      }
+    },
+    "confusion": {
+      "LOCAL_DEVICE": {
+        "LOCAL_DEVICE": 5,
+        "LOCAL_REPLY": 0,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "LOCAL_REPLY": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 8,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "MUSE": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 28,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "MUSE_FOLLOW_UP": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 3,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "MUSE_CANCEL": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 2,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "IGNORE": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 14,
+        "INVALID": 0
+      }
+    },
+    "false_local_reply": {
+      "errors": 0,
+      "total": 42,
+      "rate": 0.0
+    },
+    "local_reply_precision": {
+      "correct": 8,
+      "total": 8,
+      "rate": 1.0
+    },
+    "local_reply_recall": {
+      "correct": 8,
+      "total": 8,
+      "rate": 1.0
+    },
+    "unsafe_effects": 0,
+    "release_gate": true,
+    "errors": []
+  },
+  "model_outcomes": {
+    "rule": 60
+  },
+  "offline_cpu_ms": {
+    "LOCAL_DEVICE": {
+      "n": 5,
+      "p50": 0.0118,
+      "p95": 0.0141,
+      "p99": 0.0141,
+      "max": 0.0141
+    },
+    "LOCAL_REPLY": {
+      "n": 8,
+      "p50": 0.1237,
+      "p95": 7.5985,
+      "p99": 7.5985,
+      "max": 7.5985
+    },
+    "MUSE": {
+      "n": 28,
+      "p50": 0.0293,
+      "p95": 0.2723,
+      "p99": 0.576,
+      "max": 0.576
+    },
+    "MUSE_FOLLOW_UP": {
+      "n": 3,
+      "p50": 0.0207,
+      "p95": 0.0233,
+      "p99": 0.0233,
+      "max": 0.0233
+    },
+    "MUSE_CANCEL": {
+      "n": 2,
+      "p50": 0.0152,
+      "p95": 0.3882,
+      "p99": 0.3882,
+      "max": 0.3882
+    },
+    "IGNORE": {
+      "n": 14,
+      "p50": 0.0053,
+      "p95": 0.0106,
+      "p99": 0.0106,
+      "max": 0.0106
+    }
+  }
+}

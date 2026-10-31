@@ -1,0 +1,863 @@
+{
+  "engine": "rules",
+  "split": "all",
+  "decisions": {
+    "accuracy": {
+      "correct": 295,
+      "total": 324,
+      "rate": 0.910494
+    },
+    "per_class": {
+      "LOCAL_DEVICE": {
+        "correct": 41,
+        "total": 41,
+        "rate": 1.0
+      },
+      "LOCAL_REPLY": {
+        "correct": 48,
+        "total": 48,
+        "rate": 1.0
+      },
+      "MUSE": {
+        "correct": 139,
+        "total": 139,
+        "rate": 1.0
+      },
+      "MUSE_FOLLOW_UP": {
+        "correct": 10,
+        "total": 39,
+        "rate": 0.25641
+      },
+      "MUSE_CANCEL": {
+        "correct": 19,
+        "total": 19,
+        "rate": 1.0
+      },
+      "IGNORE": {
+        "correct": 38,
+        "total": 38,
+        "rate": 1.0
+      }
+    },
+    "confusion": {
+      "LOCAL_DEVICE": {
+        "LOCAL_DEVICE": 41,
+        "LOCAL_REPLY": 0,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "LOCAL_REPLY": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 48,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "MUSE": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 139,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "MUSE_FOLLOW_UP": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 29,
+        "MUSE_FOLLOW_UP": 10,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "MUSE_CANCEL": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 19,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "IGNORE": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 38,
+        "INVALID": 0
+      }
+    },
+    "false_local_reply": {
+      "errors": 0,
+      "total": 241,
+      "rate": 0.0
+    },
+    "local_reply_precision": {
+      "correct": 48,
+      "total": 48,
+      "rate": 1.0
+    },
+    "local_reply_recall": {
+      "correct": 48,
+      "total": 48,
+      "rate": 1.0
+    },
+    "unsafe_effects": 0,
+    "release_gate": false,
+    "errors": [
+      {
+        "id": "F01",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F02",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F03",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F04",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F05",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F06",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F07",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "train-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F08",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "train-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F09",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "train-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F10",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "train-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F11",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "train-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F12",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "train-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F13",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "email-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F14",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "email-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F15",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "email-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F16",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "email-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F17",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "email-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F18",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "email-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F19",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "reminder-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F20",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "reminder-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F26",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "comparison-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F29",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "comparison-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F30",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "reminder-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F31",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "reminder-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F32",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "email-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "T01",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "T02",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "weather-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "T03",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "T04",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "weather-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      }
+    ]
+  },
+  "transcript_fidelity": {
+    "correct": 178,
+    "total": 178
+  },
+  "proposals_before_validation": {
+    "accuracy": {
+      "correct": 295,
+      "total": 324,
+      "rate": 0.910494
+    },
+    "per_class": {
+      "LOCAL_DEVICE": {
+        "correct": 41,
+        "total": 41,
+        "rate": 1.0
+      },
+      "LOCAL_REPLY": {
+        "correct": 48,
+        "total": 48,
+        "rate": 1.0
+      },
+      "MUSE": {
+        "correct": 139,
+        "total": 139,
+        "rate": 1.0
+      },
+      "MUSE_FOLLOW_UP": {
+        "correct": 10,
+        "total": 39,
+        "rate": 0.25641
+      },
+      "MUSE_CANCEL": {
+        "correct": 19,
+        "total": 19,
+        "rate": 1.0
+      },
+      "IGNORE": {
+        "correct": 38,
+        "total": 38,
+        "rate": 1.0
+      }
+    },
+    "confusion": {
+      "LOCAL_DEVICE": {
+        "LOCAL_DEVICE": 41,
+        "LOCAL_REPLY": 0,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "LOCAL_REPLY": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 48,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "MUSE": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 139,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "MUSE_FOLLOW_UP": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 29,
+        "MUSE_FOLLOW_UP": 10,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "MUSE_CANCEL": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 19,
+        "IGNORE": 0,
+        "INVALID": 0
+      },
+      "IGNORE": {
+        "LOCAL_DEVICE": 0,
+        "LOCAL_REPLY": 0,
+        "MUSE": 0,
+        "MUSE_FOLLOW_UP": 0,
+        "MUSE_CANCEL": 0,
+        "IGNORE": 38,
+        "INVALID": 0
+      }
+    },
+    "false_local_reply": {
+      "errors": 0,
+      "total": 241,
+      "rate": 0.0
+    },
+    "local_reply_precision": {
+      "correct": 48,
+      "total": 48,
+      "rate": 1.0
+    },
+    "local_reply_recall": {
+      "correct": 48,
+      "total": 48,
+      "rate": 1.0
+    },
+    "unsafe_effects": 0,
+    "release_gate": false,
+    "errors": [
+      {
+        "id": "F01",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F02",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F03",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F04",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F05",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F06",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F07",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "train-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F08",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "train-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F09",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "train-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F10",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "train-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F11",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "train-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F12",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "train-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F13",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "email-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F14",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "email-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F15",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "email-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F16",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "email-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F17",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "email-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F18",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "email-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F19",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "reminder-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F20",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "reminder-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F26",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "comparison-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F29",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "comparison-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F30",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "reminder-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F31",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "reminder-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "F32",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "email-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "T01",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "T02",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "weather-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "T03",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "recipe-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      },
+      {
+        "id": "T04",
+        "expected": {
+          "kind": "MUSE_FOLLOW_UP",
+          "target": "weather-1"
+        },
+        "actual": {
+          "kind": "MUSE"
+        }
+      }
+    ]
+  },
+  "model_outcomes": {
+    "rule": 324
+  },
+  "offline_cpu_ms": {
+    "LOCAL_DEVICE": {
+      "n": 41,
+      "p50": 0.0083,
+      "p95": 0.0143,
+      "p99": 0.1925,
+      "max": 0.1925
+    },
+    "LOCAL_REPLY": {
+      "n": 48,
+      "p50": 0.1255,
+      "p95": 0.2336,
+      "p99": 8.1616,
+      "max": 8.1616
+    },
+    "MUSE": {
+      "n": 168,
+      "p50": 0.019,
+      "p95": 0.0367,
+      "p99": 0.0867,
+      "max": 0.13
+    },
+    "MUSE_FOLLOW_UP": {
+      "n": 10,
+      "p50": 0.0157,
+      "p95": 0.0218,
+      "p99": 0.0218,
+      "max": 0.0218
+    },
+    "MUSE_CANCEL": {
+      "n": 19,
+      "p50": 0.0114,
+      "p95": 0.4842,
+      "p99": 0.4842,
+      "max": 0.4842
+    },
+    "IGNORE": {
+      "n": 38,
+      "p50": 0.0046,
+      "p95": 0.0084,
+      "p99": 0.0088,
+      "max": 0.0088
+    }
+  }
+}

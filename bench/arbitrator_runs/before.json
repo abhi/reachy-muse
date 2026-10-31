@@ -1,0 +1,1266 @@
+{
+  "revision": "8d15448",
+  "engine": "rules",
+  "audit": {
+    "decisions": {
+      "accuracy": {
+        "correct": 57,
+        "total": 60,
+        "rate": 0.95
+      },
+      "per_class": {
+        "LOCAL_DEVICE": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        },
+        "LOCAL_REPLY": {
+          "correct": 8,
+          "total": 8,
+          "rate": 1.0
+        },
+        "MUSE": {
+          "correct": 27,
+          "total": 28,
+          "rate": 0.964286
+        },
+        "MUSE_FOLLOW_UP": {
+          "correct": 1,
+          "total": 3,
+          "rate": 0.333333
+        },
+        "MUSE_CANCEL": {
+          "correct": 2,
+          "total": 2,
+          "rate": 1.0
+        },
+        "IGNORE": {
+          "correct": 14,
+          "total": 14,
+          "rate": 1.0
+        }
+      },
+      "confusion": {
+        "LOCAL_DEVICE": {
+          "LOCAL_DEVICE": 5,
+          "LOCAL_REPLY": 0,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "LOCAL_REPLY": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 8,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "MUSE": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 27,
+          "MUSE_FOLLOW_UP": 1,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "MUSE_FOLLOW_UP": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 2,
+          "MUSE_FOLLOW_UP": 1,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "MUSE_CANCEL": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 2,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "IGNORE": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 14,
+          "INVALID": 0
+        }
+      },
+      "false_local_reply": {
+        "errors": 0,
+        "total": 42,
+        "rate": 0.0
+      },
+      "local_reply_precision": {
+        "correct": 8,
+        "total": 8,
+        "rate": 1.0
+      },
+      "local_reply_recall": {
+        "correct": 8,
+        "total": 8,
+        "rate": 1.0
+      },
+      "unsafe_effects": 1,
+      "release_gate": false,
+      "errors": [
+        {
+          "id": "E54",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "briefing-audit"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "E58",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "briefing-audit"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "E60",
+          "expected": {
+            "kind": "MUSE"
+          },
+          "actual": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "briefing-audit"
+          }
+        }
+      ]
+    },
+    "transcript_fidelity": {
+      "correct": 31,
+      "total": 31
+    },
+    "proposals_before_validation": {
+      "accuracy": {
+        "correct": 57,
+        "total": 60,
+        "rate": 0.95
+      },
+      "per_class": {
+        "LOCAL_DEVICE": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        },
+        "LOCAL_REPLY": {
+          "correct": 8,
+          "total": 8,
+          "rate": 1.0
+        },
+        "MUSE": {
+          "correct": 27,
+          "total": 28,
+          "rate": 0.964286
+        },
+        "MUSE_FOLLOW_UP": {
+          "correct": 1,
+          "total": 3,
+          "rate": 0.333333
+        },
+        "MUSE_CANCEL": {
+          "correct": 2,
+          "total": 2,
+          "rate": 1.0
+        },
+        "IGNORE": {
+          "correct": 14,
+          "total": 14,
+          "rate": 1.0
+        }
+      },
+      "confusion": {
+        "LOCAL_DEVICE": {
+          "LOCAL_DEVICE": 5,
+          "LOCAL_REPLY": 0,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "LOCAL_REPLY": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 8,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "MUSE": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 27,
+          "MUSE_FOLLOW_UP": 1,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "MUSE_FOLLOW_UP": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 2,
+          "MUSE_FOLLOW_UP": 1,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "MUSE_CANCEL": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 2,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "IGNORE": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 14,
+          "INVALID": 0
+        }
+      },
+      "false_local_reply": {
+        "errors": 0,
+        "total": 42,
+        "rate": 0.0
+      },
+      "local_reply_precision": {
+        "correct": 8,
+        "total": 8,
+        "rate": 1.0
+      },
+      "local_reply_recall": {
+        "correct": 8,
+        "total": 8,
+        "rate": 1.0
+      },
+      "unsafe_effects": 1,
+      "release_gate": false,
+      "errors": [
+        {
+          "id": "E54",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "briefing-audit"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "E58",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "briefing-audit"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "E60",
+          "expected": {
+            "kind": "MUSE"
+          },
+          "actual": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "briefing-audit"
+          }
+        }
+      ]
+    },
+    "model_outcomes": {
+      "rule": 60
+    },
+    "offline_cpu_ms": {
+      "LOCAL_DEVICE": {
+        "n": 5,
+        "p50": 0.0107,
+        "p95": 0.0131,
+        "p99": 0.0131,
+        "max": 0.0131
+      },
+      "LOCAL_REPLY": {
+        "n": 8,
+        "p50": 0.1195,
+        "p95": 10.3521,
+        "p99": 10.3521,
+        "max": 10.3521
+      },
+      "MUSE": {
+        "n": 29,
+        "p50": 0.0277,
+        "p95": 0.303,
+        "p99": 0.6215,
+        "max": 0.6215
+      },
+      "MUSE_FOLLOW_UP": {
+        "n": 2,
+        "p50": 0.0168,
+        "p95": 0.0594,
+        "p99": 0.0594,
+        "max": 0.0594
+      },
+      "MUSE_CANCEL": {
+        "n": 2,
+        "p50": 0.0144,
+        "p95": 0.365,
+        "p99": 0.365,
+        "max": 0.365
+      },
+      "IGNORE": {
+        "n": 14,
+        "p50": 0.0052,
+        "p95": 0.0098,
+        "p99": 0.0098,
+        "max": 0.0098
+      }
+    }
+  },
+  "all": {
+    "decisions": {
+      "accuracy": {
+        "correct": 292,
+        "total": 324,
+        "rate": 0.901235
+      },
+      "per_class": {
+        "LOCAL_DEVICE": {
+          "correct": 41,
+          "total": 41,
+          "rate": 1.0
+        },
+        "LOCAL_REPLY": {
+          "correct": 48,
+          "total": 48,
+          "rate": 1.0
+        },
+        "MUSE": {
+          "correct": 138,
+          "total": 139,
+          "rate": 0.992806
+        },
+        "MUSE_FOLLOW_UP": {
+          "correct": 8,
+          "total": 39,
+          "rate": 0.205128
+        },
+        "MUSE_CANCEL": {
+          "correct": 19,
+          "total": 19,
+          "rate": 1.0
+        },
+        "IGNORE": {
+          "correct": 38,
+          "total": 38,
+          "rate": 1.0
+        }
+      },
+      "confusion": {
+        "LOCAL_DEVICE": {
+          "LOCAL_DEVICE": 41,
+          "LOCAL_REPLY": 0,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "LOCAL_REPLY": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 48,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "MUSE": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 138,
+          "MUSE_FOLLOW_UP": 1,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "MUSE_FOLLOW_UP": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 31,
+          "MUSE_FOLLOW_UP": 8,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "MUSE_CANCEL": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 19,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "IGNORE": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 38,
+          "INVALID": 0
+        }
+      },
+      "false_local_reply": {
+        "errors": 0,
+        "total": 241,
+        "rate": 0.0
+      },
+      "local_reply_precision": {
+        "correct": 48,
+        "total": 48,
+        "rate": 1.0
+      },
+      "local_reply_recall": {
+        "correct": 48,
+        "total": 48,
+        "rate": 1.0
+      },
+      "unsafe_effects": 1,
+      "release_gate": false,
+      "errors": [
+        {
+          "id": "F01",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F02",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F03",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F04",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F05",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F06",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F07",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "train-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F08",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "train-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F09",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "train-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F10",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "train-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F11",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "train-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F12",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "train-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F13",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "email-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F14",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "email-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F15",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "email-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F16",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "email-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F17",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "email-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F18",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "email-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F19",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "reminder-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F20",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "reminder-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F26",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "comparison-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F29",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "comparison-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F30",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "reminder-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F31",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "reminder-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F32",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "email-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "T01",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "T02",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "weather-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "T03",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "T04",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "weather-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "E54",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "briefing-audit"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "E58",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "briefing-audit"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "E60",
+          "expected": {
+            "kind": "MUSE"
+          },
+          "actual": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "briefing-audit"
+          }
+        }
+      ]
+    },
+    "transcript_fidelity": {
+      "correct": 178,
+      "total": 178
+    },
+    "proposals_before_validation": {
+      "accuracy": {
+        "correct": 292,
+        "total": 324,
+        "rate": 0.901235
+      },
+      "per_class": {
+        "LOCAL_DEVICE": {
+          "correct": 41,
+          "total": 41,
+          "rate": 1.0
+        },
+        "LOCAL_REPLY": {
+          "correct": 48,
+          "total": 48,
+          "rate": 1.0
+        },
+        "MUSE": {
+          "correct": 138,
+          "total": 139,
+          "rate": 0.992806
+        },
+        "MUSE_FOLLOW_UP": {
+          "correct": 8,
+          "total": 39,
+          "rate": 0.205128
+        },
+        "MUSE_CANCEL": {
+          "correct": 19,
+          "total": 19,
+          "rate": 1.0
+        },
+        "IGNORE": {
+          "correct": 38,
+          "total": 38,
+          "rate": 1.0
+        }
+      },
+      "confusion": {
+        "LOCAL_DEVICE": {
+          "LOCAL_DEVICE": 41,
+          "LOCAL_REPLY": 0,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "LOCAL_REPLY": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 48,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "MUSE": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 138,
+          "MUSE_FOLLOW_UP": 1,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "MUSE_FOLLOW_UP": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 31,
+          "MUSE_FOLLOW_UP": 8,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "MUSE_CANCEL": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 19,
+          "IGNORE": 0,
+          "INVALID": 0
+        },
+        "IGNORE": {
+          "LOCAL_DEVICE": 0,
+          "LOCAL_REPLY": 0,
+          "MUSE": 0,
+          "MUSE_FOLLOW_UP": 0,
+          "MUSE_CANCEL": 0,
+          "IGNORE": 38,
+          "INVALID": 0
+        }
+      },
+      "false_local_reply": {
+        "errors": 0,
+        "total": 241,
+        "rate": 0.0
+      },
+      "local_reply_precision": {
+        "correct": 48,
+        "total": 48,
+        "rate": 1.0
+      },
+      "local_reply_recall": {
+        "correct": 48,
+        "total": 48,
+        "rate": 1.0
+      },
+      "unsafe_effects": 1,
+      "release_gate": false,
+      "errors": [
+        {
+          "id": "F01",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F02",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F03",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F04",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F05",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F06",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F07",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "train-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F08",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "train-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F09",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "train-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F10",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "train-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F11",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "train-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F12",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "train-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F13",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "email-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F14",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "email-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F15",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "email-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F16",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "email-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F17",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "email-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F18",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "email-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F19",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "reminder-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F20",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "reminder-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F26",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "comparison-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F29",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "comparison-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F30",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "reminder-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F31",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "reminder-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "F32",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "email-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "T01",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "T02",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "weather-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "T03",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "recipe-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "T04",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "weather-1"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "E54",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "briefing-audit"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "E58",
+          "expected": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "briefing-audit"
+          },
+          "actual": {
+            "kind": "MUSE"
+          }
+        },
+        {
+          "id": "E60",
+          "expected": {
+            "kind": "MUSE"
+          },
+          "actual": {
+            "kind": "MUSE_FOLLOW_UP",
+            "target": "briefing-audit"
+          }
+        }
+      ]
+    },
+    "model_outcomes": {
+      "rule": 324
+    },
+    "offline_cpu_ms": {
+      "LOCAL_DEVICE": {
+        "n": 41,
+        "p50": 0.0067,
+        "p95": 0.0118,
+        "p99": 0.0138,
+        "max": 0.0138
+      },
+      "LOCAL_REPLY": {
+        "n": 48,
+        "p50": 0.112,
+        "p95": 0.1612,
+        "p99": 0.2169,
+        "max": 0.2169
+      },
+      "MUSE": {
+        "n": 169,
+        "p50": 0.0184,
+        "p95": 0.0349,
+        "p99": 0.0386,
+        "max": 0.0387
+      },
+      "MUSE_FOLLOW_UP": {
+        "n": 9,
+        "p50": 0.0134,
+        "p95": 0.0185,
+        "p99": 0.0185,
+        "max": 0.0185
+      },
+      "MUSE_CANCEL": {
+        "n": 19,
+        "p50": 0.0103,
+        "p95": 0.174,
+        "p99": 0.174,
+        "max": 0.174
+      },
+      "IGNORE": {
+        "n": 38,
+        "p50": 0.0048,
+        "p95": 0.0079,
+        "p99": 0.0236,
+        "max": 0.0236
+      }
+    }
+  }
+}

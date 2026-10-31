@@ -387,6 +387,7 @@ class VoiceConversation:
                  silence_s: float = 2.0, reply_timeout_s: float = REPLY_TIMEOUT_S,
                  wake_detector=None, wake_timeout_s: float = 10.0,
                  owns_chat: bool = False, speech_gate=None, local_chat: bool = True,
+                 arbitration_shadow: bool = False,
                  audio_diagnostics: bool = False, short_utterance_silence_s: float | None = None,
                  morning: MorningRoutine | None = None) -> None:
         if not math.isfinite(wake_timeout_s) or wake_timeout_s < 0:
@@ -400,6 +401,8 @@ class VoiceConversation:
         self.reply_timeout_s = reply_timeout_s
         self.backends = backends
         self.local_chat = local_chat
+        self.arbitration_shadow = arbitration_shadow
+        self._shadow_turn = 0
         self._recent = Recent()
         self._prepared_speech = {}
         self._closing_speech = set()
@@ -1296,7 +1299,8 @@ class VoiceConversation:
 
     async def _hear(self, wav: bytes, recognized_text: str | None, wake_strip_required: bool | None, *,
                     started: float, defer_playback: bool,
-                    heard_over: tuple[str, ...] = (), woken: bool = False) -> str | None | TurnOutcome:
+                    heard_over: tuple[str, ...] = (), woken: bool = False,
+                    held: _HeldRequest | None = None) -> str | None | TurnOutcome:
         """The request's words with the wake phrase removed; None when Muse hears only the audio.
 
         The wake phrase alone gets "Yes?", or the wake-up greeting when it just woke Reachy.
@@ -1311,6 +1315,7 @@ class VoiceConversation:
         if wake_strip_required is None:
             self._wake_strip_required = False
         if not text.strip():
+            self._observe_arbitration(text, held)
             log.info("Speech recognition outcome empty")
             if self.wake_detector is not None and strip_required:
                 self._moments.cue(Moment.GREETING)
@@ -1328,9 +1333,11 @@ class VoiceConversation:
             else:
                 text = strip_wake_prefix(text, self.wake_detector.phrase)
             if not text:
+                self._observe_arbitration(text, held)
                 self._moments.cue(Moment.GREETING)
                 await self._announce(cue, started=started, defer_playback=defer_playback)
                 return TurnOutcome.WAKE_CUE
+        self._observe_arbitration(text, held)
         # "Stop" or "be quiet" said over Reachy's own line is a barge-in even when the line used those words.
         if is_echo(text, heard_over) and classify_follow_up(text) not in (FollowUp.SILENCE, FollowUp.CANCEL):
             log.info("Reachy ignored %d characters heard over its own speech that only repeat it", len(text))
@@ -1339,6 +1346,38 @@ class VoiceConversation:
         await self._plan(plan.Working(output=self._has_output(),
                                       user_speaking=self._playback.user_speaking))
         return text
+
+    def _observe_arbitration(self, text: str, held: _HeldRequest | None) -> None:
+        if not self.arbitration_shadow:
+            return
+        from reachy_muse.arbitration import Snapshot, Target, TextRef, bounded_target
+        from reachy_muse.arbitration_shadow import observe
+
+        self._shadow_turn += 1
+        try:
+            job = self.job
+            active = None
+            if job is not None and job.request is not None and not job.dropped:
+                ref = f"job-{id(job)}"
+                active = bounded_target(Target(ref, TextRef(ref + ":request", "user", job.request),
+                                               state="completed" if job.turn.task_finished else "running",
+                                               omitted=True))
+            waiting = None
+            if held is not None and held.text is not None:
+                ref = f"held-{id(held)}"
+                waiting = bounded_target(Target(ref, TextRef(ref + ":request", "user", held.text),
+                                                state="held", omitted=True))
+            output = self._has_output()
+            observe(Snapshot(str(self._shadow_turn), text, context_epoch=self._shadow_turn,
+                             admission="follow_up" if job is not None else "wake",
+                             capabilities=executable(
+                                 wake=self.wake_detector is not None, output=output,
+                                 face=getattr(self.hardware, "face_tracking_enabled", False) is True,
+                                 volume=callable(getattr(self.hardware, "change_volume", None))),
+                             local_chat=self.local_chat, output=output, owns_chat=self.owns_chat,
+                             active=active, held=waiting))
+        except Exception:
+            log.info("Reachy arbitration shadow status=invalid_snapshot")
 
     async def _dispatch(self, wav: bytes | None, text: str | None, *, started: float,
                         defer_playback: bool, timeline: TurnTimeline, opening=None,
@@ -1600,7 +1639,8 @@ class VoiceConversation:
         Cancel and added detail apply to the newest request: the held one if any, else the running job.
         """
         text = await self._hear(endpoint.audio, endpoint.text, request.wake_strip_required,
-                                started=time.monotonic(), defer_playback=True, heard_over=request.heard_over)
+                                started=time.monotonic(), defer_playback=True, heard_over=request.heard_over,
+                                held=held)
         if isinstance(text, TurnOutcome):
             return held
         kind = FollowUp.NEW if text is None else classify_follow_up(text)
@@ -2104,6 +2144,7 @@ class ReachyService(Service):
     # Required: Python 3.9 dataclasses cannot follow inherited defaults with a field that has none.
     backends: Callable[[LinkSession], Backends] = field(default_factory=_backends_required)
     local_chat: bool = True
+    arbitration_shadow: bool = False
     audio_diagnostics: bool = False
     wake_detector: object | None = None
     wake_timeout_s: float = 10.0
@@ -2153,6 +2194,7 @@ class ReachyService(Service):
                                       wake_detector=self.wake_detector, wake_timeout_s=self.wake_timeout_s,
                                       owns_chat=self.owns_chat, speech_gate=self.speech_gate,
                                       local_chat=self.local_chat, audio_diagnostics=self.audio_diagnostics,
+                                      arbitration_shadow=self.arbitration_shadow,
                                       short_utterance_silence_s=self.short_utterance_silence_s,
                                       morning=self.morning)
             voice._wake_window = WakeWindow.ASLEEP if self._asleep else WakeWindow.AWAKE

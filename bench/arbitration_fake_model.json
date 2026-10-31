@@ -1,0 +1,20 @@
+{
+  "kind": "handwritten_fake",
+  "description": "Synthetic model outputs for parser, target, deadline, and rejection tests. These are not measured model predictions.",
+  "default": {"text": "MUSE", "elapsed_ms": 1},
+  "responses": {
+    "F01": {"text": "MUSE_FOLLOW_UP recipe-1", "elapsed_ms": 12},
+    "F02": {"text": "MUSE_FOLLOW_UP recipe-1", "elapsed_ms": 15},
+    "F07": {"text": "MUSE_FOLLOW_UP train-1", "elapsed_ms": 19},
+    "F13": {"text": "MUSE_FOLLOW_UP email-1", "elapsed_ms": 25},
+    "F30": {"text": "MUSE_FOLLOW_UP reminder-1", "elapsed_ms": 15},
+    "T01": {"text": "MUSE_FOLLOW_UP recipe-1", "elapsed_ms": 12},
+    "T02": {"text": "MUSE_FOLLOW_UP weather-1", "elapsed_ms": 12},
+    "T03": {"text": "MUSE_FOLLOW_UP recipe-1", "elapsed_ms": 12},
+    "T04": {"text": "MUSE_FOLLOW_UP weather-1", "elapsed_ms": 12},
+    "M01": {"text": "LOCAL_REPLY morning", "elapsed_ms": 5},
+    "M25": {"text": "MUSE", "elapsed_ms": 250},
+    "M26": {"text": "not a route", "elapsed_ms": 5},
+    "M88": {"text": "MUSE_CANCEL invented-target", "elapsed_ms": 5}
+  }
+}

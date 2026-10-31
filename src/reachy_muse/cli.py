@@ -331,6 +331,8 @@ def parser() -> argparse.ArgumentParser:
                               help="Speak incoming Muse chunks with per-chunk expressions")
             item.add_argument("--local-chat", choices=("on", "off"), default="on",
                               help="Let Reachy answer pure social chat itself instead of sending it to Muse")
+            item.add_argument("--arbitration-shadow", action="store_true",
+                              help="Log content-free arbitration decisions without changing live routing")
             item.add_argument("--audio-diagnostics", action="store_true",
                               help="Log playback timing counters without audio or transcript content")
             item.add_argument("--wake-model", type=Path,
@@ -592,6 +594,7 @@ async def run(args) -> int:
                                silence_s=silence_s, short_utterance_silence_s=SHORT_UTTERANCE_SILENCE_S,
                                backends=backends,
                                local_chat=args.local_chat == "on",
+                               arbitration_shadow=args.arbitration_shadow,
                                audio_diagnostics=args.audio_diagnostics, wake_detector=wake_detector,
                                wake_timeout_s=args.wake_timeout, speech_gate=speech_gate,
                                morning=morning(robot) if morning is not None else None)

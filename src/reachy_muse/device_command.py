@@ -130,10 +130,20 @@ def _words(text: str) -> list[str]:
 
 
 def parse_command(text: str) -> Optional[DeviceCommand]:
+    command = whole_command(text)
+    if command is not None:
+        return command
+    if classify_follow_up(text) is FollowUp.CANCEL:
+        return DeviceCommand.STOP_TALKING
+    return None
+
+
+def whole_command(text: str) -> Optional[DeviceCommand]:
+    """A hardware command, without converting work cancellation into playback control."""
     match = _GRAMMAR.fullmatch(" ".join(_words(text)))
     if match is not None:
         return DeviceCommand(match.lastgroup)
-    if classify_follow_up(text) in (FollowUp.SILENCE, FollowUp.CANCEL):
+    if classify_follow_up(text) is FollowUp.SILENCE:
         return DeviceCommand.STOP_TALKING
     return None
 
