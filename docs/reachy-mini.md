@@ -951,6 +951,10 @@ The device registers as `Reachy Mini` with four commands:
 | `reachy.expression` | Plays neutral, happy, sad, surprised, curious, nod, shake, listening, thinking, or error. An exact name from Pollen's official recorded emotions library loads that move on demand. The move crossfades in from the resting pose over 0.4 seconds while it plays, and back out over 0.4 seconds after it ends. Speech sway continues on top, and the result stays within the `reachy.move` limits. Sound effects stay off during Muse speech. |
 | `reachy.move` | Moves head translation, rotation, body yaw, and antennas smoothly within advertised limits. Invalid or nonfinite values are rejected. |
 
+Speech and presence results use the SDK envelope `{"ok": true, "payload": {...}}`.
+The `spoken`, `reason`, `present`, and `last_seen_seconds` fields belong inside
+`payload`. Invalid parameters return `{"ok": false, "error": "invalid_parameters"}`.
+
 `reachy.say` refuses while asleep, hushed, handling a user turn, or before voice
 readiness. Otherwise it waits for the current line and rechecks before speaking.
 Stop talking interrupts it and blocks further `reachy.say` calls until the next

@@ -11,6 +11,7 @@ from reachy_muse.capabilities import Mode
 from reachy_muse.device_command import WakeWindow
 from reachy_muse.conversation import ReachyService, VoiceConversation
 from reachy_muse.local_backends import backends_for
+from fake_muse_vm import make_session
 from test_conversation import FakeHardware, FakeSession
 
 np = pytest.importorskip("numpy")
@@ -48,13 +49,46 @@ async def wait_until(predicate):
     await asyncio.wait_for(waiting(), 2)
 
 
+@pytest.mark.parametrize("command, hushed, expected", [
+    ("reachy.say", False, {"method": "link.result", "id": "command-1", "ok": True,
+                           "payload": {"spoken": True}}),
+    ("reachy.say", True, {"method": "link.result", "id": "command-1", "ok": True,
+                          "payload": {"spoken": False, "reason": "hushed"}}),
+    ("reachy.presence", False, {"method": "link.result", "id": "command-1", "ok": True,
+                                "payload": {"present": True, "last_seen_seconds": 0}}),
+])
+def test_command_results_reach_the_sdk_wire_payload(command, hushed, expected):
+    async def check():
+        service, voice, _ = command_device()
+        voice.hardware.presence = lambda: {"ok": True, "present": True, "last_seen_seconds": 0}
+        if hushed:
+            voice._hush()
+        session, vm = make_session(service.run_command, [])
+        stop = asyncio.Event()
+        running = asyncio.create_task(session.run(stop))
+        try:
+            await vm.handshake()
+            await vm.accept_control_stream()
+            register = await vm.next_message()
+            await vm.send_message({"type": "res", "id": register["id"], "ok": True})
+            await session.registered.wait()
+            await vm.send_message({"method": "link.invoke", "id": "command-1", "command": command,
+                                   "params": {"text": "Lunch is ready."} if command == "reachy.say" else {}})
+            assert await asyncio.wait_for(vm.next_message(), 2) == expected
+        finally:
+            stop.set()
+            await running
+
+    asyncio.run(check())
+
+
 def test_registered_say_uses_normal_playback_without_muse_or_text_logs(caplog):
     caplog.set_level(logging.INFO)
 
     async def check():
         service, voice, speech = command_device()
         result = await invoke(service, "A private reminder.")
-        assert result == {"ok": True, "spoken": True}
+        assert result == {"ok": True, "payload": {"spoken": True}}
         assert speech.words == ["A private reminder."]
         assert sum(len(samples) for samples in voice.hardware.played) == 320
         assert voice.hardware.play_expressions == [("speaking", None)]
@@ -87,7 +121,7 @@ def test_say_refuses_before_synthesis(blocked):
         else:
             service._voice = None
         reason = "busy" if blocked in ("hearing", "user_speaking") else blocked
-        assert await invoke(service) == {"ok": True, "spoken": False, "reason": reason}
+        assert await invoke(service) == {"ok": True, "payload": {"spoken": False, "reason": reason}}
         assert speech.words == voice.hardware.played == []
 
     asyncio.run(check())
@@ -97,15 +131,15 @@ def test_say_from_a_muse_turn_refuses_instead_of_waiting_for_its_caller():
     async def check():
         service, voice, speech = command_device()
         voice.job = object()
-        assert await invoke(service) == {"ok": True, "spoken": False, "reason": "busy"}
+        assert await invoke(service) == {"ok": True, "payload": {"spoken": False, "reason": "busy"}}
         assert speech.words == []
     asyncio.run(check())
 
 
-@pytest.mark.parametrize("change, expected", [(None, {"ok": True, "spoken": True}),
-    ("sleep", {"ok": True, "spoken": False, "reason": "asleep"}),
-    ("hush", {"ok": True, "spoken": False, "reason": "hushed"}),
-    ("turn", {"ok": True, "spoken": False, "reason": "busy"})])
+@pytest.mark.parametrize("change, expected", [(None, {"ok": True, "payload": {"spoken": True}}),
+    ("sleep", {"ok": True, "payload": {"spoken": False, "reason": "asleep"}}),
+    ("hush", {"ok": True, "payload": {"spoken": False, "reason": "hushed"}}),
+    ("turn", {"ok": True, "payload": {"spoken": False, "reason": "busy"}})])
 def test_say_waits_for_current_line_and_rechecks_admission(change, expected):
     async def check():
         service, voice, speech = command_device()
@@ -129,7 +163,7 @@ def test_waiting_say_times_out_and_never_plays_later():
     async def check():
         service, voice, speech = command_device()
         async with voice._speaker_lock:
-            assert await invoke(service, timeout_ms=20) == {"ok": True, "spoken": False, "reason": "timeout"}
+            assert await invoke(service, timeout_ms=20) == {"ok": True, "payload": {"spoken": False, "reason": "timeout"}}
         assert voice._speech_pending == 0
         assert speech.words == voice.hardware.played == []
     asyncio.run(check())
@@ -152,7 +186,7 @@ def test_hush_then_wake_cannot_revive_a_command_waiting_for_its_speaker_task():
         voice._hush()
         await voice._wake_up(WakeWindow.AWAKE)
         resume.set()
-        assert await pending == {"ok": True, "spoken": False, "reason": "interrupted"}
+        assert await pending == {"ok": True, "payload": {"spoken": False, "reason": "interrupted"}}
         assert speech.words == voice.hardware.played == []
     asyncio.run(check())
 
@@ -173,12 +207,12 @@ def test_hush_stops_playback_and_refuses_new_say_until_wake():
         await wait_until(lambda: bool(voice.hardware.played))
         voice._hush()
         resume.set()
-        assert await pending == {"ok": True, "spoken": False, "reason": "hushed"}
+        assert await pending == {"ok": True, "payload": {"spoken": False, "reason": "hushed"}}
         assert voice.hardware.cleared == 1
         assert all(float(samples.max()) < .15 for samples in voice.hardware.played)
-        assert await invoke(service) == {"ok": True, "spoken": False, "reason": "hushed"}
+        assert await invoke(service) == {"ok": True, "payload": {"spoken": False, "reason": "hushed"}}
         await voice._wake_up(WakeWindow.AWAKE)
-        assert await invoke(service) == {"ok": True, "spoken": True}
+        assert await invoke(service) == {"ok": True, "payload": {"spoken": True}}
     asyncio.run(check())
 
 
@@ -199,7 +233,7 @@ def test_cancelled_command_flushes_output_and_reports_disconnection():
         await wait_until(lambda: bool(voice.hardware.played))
         for task in tuple(voice._command_tasks):
             task.cancel()
-        assert await pending == {"ok": True, "spoken": False, "reason": "disconnected"}
+        assert await pending == {"ok": True, "payload": {"spoken": False, "reason": "disconnected"}}
         assert closed.is_set() and voice.hardware.cleared == 1
         assert not voice._command_tasks
     asyncio.run(check())
@@ -208,7 +242,7 @@ def test_cancelled_command_flushes_output_and_reports_disconnection():
 def test_muse_voice_cannot_synthesize_command_text_and_never_contacts_muse():
     async def check():
         service, voice, _ = command_device(mode=Mode.MUSE_VOICE)
-        assert await invoke(service) == {"ok": True, "spoken": False, "reason": "speech_unavailable"}
+        assert await invoke(service) == {"ok": True, "payload": {"spoken": False, "reason": "speech_unavailable"}}
         assert voice.session.sent == voice.session.setup_messages == voice.session.tts_requests == []
     asyncio.run(check())
 
@@ -239,7 +273,7 @@ def test_sleep_and_hush_survive_service_reconnect(monkeypatch):
             if not reconnect:
                 voice._wake_window = WakeWindow.ASLEEP
                 voice._hush()
-            assert await invoke(service) == {"ok": True, "spoken": False, "reason": "asleep"}
+            assert await invoke(service) == {"ok": True, "payload": {"spoken": False, "reason": "asleep"}}
             assert voice._say_hushed is True
             stop.set()
             assert await serving is Outcome.STOPPED
@@ -268,6 +302,7 @@ def test_registered_presence_returns_only_the_coarse_result_and_logs_the_outcome
         def presence(self):
             return {"ok": True, "present": True, "last_seen_seconds": 0}
     service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=Camera(), backends=lambda _: None)
-    assert service.run_command("reachy.presence", {}) == {"ok": True, "present": True, "last_seen_seconds": 0}
+    assert service.run_command("reachy.presence", {}) == {
+        "ok": True, "payload": {"present": True, "last_seen_seconds": 0}}
     assert [record.message for record in caplog.records] == [
         "Reachy command name=reachy.presence outcome=present"]

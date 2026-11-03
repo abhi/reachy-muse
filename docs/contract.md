@@ -19,8 +19,8 @@ briefing request asks for its own 60 to 90 seconds, roughly 150 to 220 words.
 
 | Command | Parameters and result |
 | --- | --- |
-| `reachy.say` | Required `text`, 1 to 240 UTF-8 bytes. Uses the normal local or companion speaker path. Returns `{"ok": true, "spoken": true}` after complete playback, or `spoken: false` with a `reason`. The default timeout is 30 seconds. |
-| `reachy.presence` | No parameters. Returns `ok`, `present` as true, false, or null, and `last_seen_seconds` as a rounded age or null. It returns no images or identity. |
+| `reachy.say` | Required `text`, 1 to 240 UTF-8 bytes. Uses the normal local or companion speaker path. Returns `{"ok": true, "payload": {"spoken": true}}` after complete playback, or `{"ok": true, "payload": {"spoken": false, "reason": "..."}}` on refusal. The default timeout is 30 seconds. |
+| `reachy.presence` | No parameters. Returns `{"ok": true, "payload": {"present": true, "last_seen_seconds": 0}}`. `present` is true, false, or null; `last_seen_seconds` is a rounded age or null. It returns no images or identity. |
 | `reachy.expression` | Required expression `name`, optional `intensity` and `duration`. Built-in or recorded motions remain bounded and serialized. |
 | `reachy.move` | Optional head, body, and antenna coordinates, plus `duration` and `hold`. At least one coordinate is required. `POSE_LIMITS` defines the bounds. |
 

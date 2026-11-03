@@ -2245,6 +2245,8 @@ class ReachyService(Service):
             outcome = ("spoken" if name == "reachy.say" else
                        {True: "present", False: "absent", None: "unknown"}[result["present"]])
         log.info("Reachy command name=%s outcome=%s", name, outcome)
+        if result["ok"]:
+            return {"ok": True, "payload": {key: value for key, value in result.items() if key != "ok"}}
         return result
 
     async def serve(self, session: LinkSession, vm: dict, stop: asyncio.Event) -> Outcome:
