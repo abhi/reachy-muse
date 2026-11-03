@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+import threading
 
 import pytest
 
@@ -280,6 +281,34 @@ def test_sleep_and_hush_survive_service_reconnect(monkeypatch):
             assert service._voice is None
             assert session.sent == session.setup_messages == []
         assert speech.words == []
+    asyncio.run(check())
+
+
+def test_say_uses_one_voice_snapshot_during_disconnect():
+    class DisconnectingService(ReachyService):
+        def __getattribute__(self, name):
+            value = super().__getattribute__(name)
+            if name == "_voice" and value is not None:
+                loop, voice = value
+                disconnected = threading.Event()
+
+                def disconnect():
+                    voice._closed = True
+                    self._voice = None
+                    disconnected.set()
+
+                loop.call_soon_threadsafe(disconnect)
+                assert disconnected.wait(2)
+            return value
+
+    async def check():
+        original, voice, speech = command_device()
+        service = DisconnectingService(identity=original.identity, executor=original.executor,
+                                       backends=original.backends)
+        service._voice = original._voice
+        assert await invoke(service) == {"ok": True, "payload": {"spoken": False, "reason": "disconnected"}}
+        assert speech.words == voice.hardware.played == []
+
     asyncio.run(check())
 
 

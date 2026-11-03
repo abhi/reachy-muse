@@ -2220,12 +2220,13 @@ class ReachyService(Service):
         except ValueError:
             result = {"ok": False, "error": "invalid_parameters"}
         else:
+            active_voice = self._voice
             if name == "reachy.presence":
                 result = self.executor.presence()
-            elif self._voice is None:
+            elif active_voice is None:
                 result = {"ok": True, "spoken": False, "reason": "disconnected"}
             else:
-                loop, voice = self._voice
+                loop, voice = active_voice
                 speech = voice.say(command.params["text"], command.timeout_s)
                 try:
                     future = asyncio.run_coroutine_threadsafe(speech, loop)
