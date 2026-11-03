@@ -8,12 +8,13 @@ import threading
 import pytest
 
 from musegadget.identity import Identity
-from reachy_muse.capabilities import Mode
+from reachy_muse.capabilities import Endpoint, Mode
 from reachy_muse.device_command import WakeWindow
-from reachy_muse.conversation import ReachyService, VoiceConversation
+from reachy_muse.conversation import ReachyService, VoiceConversation, _HeldRequest, _QueuedTurn
 from reachy_muse.local_backends import backends_for
+from reachy_muse.turn_timeline import TurnTimeline
 from fake_muse_vm import make_session
-from test_conversation import FakeHardware, FakeSession
+from test_conversation import FakeHardware, FakeSession, reply_job
 
 np = pytest.importorskip("numpy")
 
@@ -259,6 +260,46 @@ def test_hush_interrupts_stalled_synthesis_and_flushes_before_the_next_reply():
         assert speech.words == ["Lunch is ready.", "A later reply."]
         assert voice.hardware.cleared == 1 and not voice._speaker_lock.locked()
         assert not voice._command_tasks
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("text, waiting", [("okay", False), ("thanks", False), ("also", False),
+                                           ("Find tomorrow's weather.", True)])
+def test_ignored_follow_up_keeps_later_room_commands_hushed(text, waiting):
+    async def check():
+        service, voice, speech = command_device()
+        timeline = TurnTimeline()
+        timeline.mark("endpoint")
+        request = _QueuedTurn(None, False, 0, timeline, ())
+        held = _HeldRequest(b"wav", "Find lunch options.", 0, timeline) if waiting else None
+        voice.job = reply_job()
+        voice._hush()
+        assert await voice._follow_up(Endpoint(b"wav", text), request, held) is held
+        voice.job = None
+        assert await invoke(service) == {"ok": True, "payload": {"spoken": False, "reason": "hushed"}}
+        assert speech.words == voice.session.sent == voice.session.setup_messages == []
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("text, waiting, expected", [
+    ("Find tomorrow's weather.", False, "Find tomorrow's weather."),
+    ("Also make it vegetarian.", True, "Find lunch options. Also make it vegetarian."),
+])
+def test_accepted_follow_up_allows_later_room_commands(text, waiting, expected):
+    async def check():
+        service, voice, _ = command_device()
+        timeline = TurnTimeline()
+        timeline.mark("endpoint")
+        request = _QueuedTurn(None, False, 0, timeline, ())
+        held = _HeldRequest(b"wav", "Find lunch options.", 0, timeline) if waiting else None
+        voice.job = reply_job()
+        voice._hush()
+        accepted = await voice._follow_up(Endpoint(b"wav", text), request, held)
+        assert accepted.text == expected
+        voice.job = None
+        assert await invoke(service) == {"ok": True, "payload": {"spoken": True}}
 
     asyncio.run(check())
 

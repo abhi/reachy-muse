@@ -1652,12 +1652,13 @@ class VoiceConversation:
                                 held=held)
         if isinstance(text, TurnOutcome):
             return held
-        self._say_hushed = False
         kind = FollowUp.NEW if text is None else classify_follow_up(text)
         # A one-word command ("goodnight", "louder") is obeyed before one-word asides are dropped.
         command = (await self._obey(text, request.timeline.marks["endpoint"], request.timeline)
                    if kind is FollowUp.NEW and text is not None else None)
         if command is not None:
+            if not COMMANDS[command].silence_speech:
+                self._say_hushed = False
             return None if COMMANDS[command].wake_window in (WakeWindow.DISMISSED, WakeWindow.ASLEEP) else held
         if kind in (FollowUp.NEW, FollowUp.ADD_DETAIL) and text is not None and too_short_for_follow_up(text):
             log.info("Reachy ignored a one-word follow-up while Muse worked")
@@ -1667,6 +1668,8 @@ class VoiceConversation:
         log.info("Reachy heard a %s follow-up while Muse worked", kind.value)
         if kind is FollowUp.SILENCE:
             self._hush()
+        elif kind in (FollowUp.CANCEL, FollowUp.ADD_DETAIL):
+            self._say_hushed = False
         if kind is FollowUp.SILENCE and running is not None and running.answered:
             await self._drop(running)
             return held
@@ -1688,6 +1691,7 @@ class VoiceConversation:
             if job is not None:
                 job.turned_away = True
             return held
+        self._say_hushed = False
         await self._plan(plan.RequestHeld())
         return _HeldRequest(endpoint.audio, text, request.wake_epoch, request.timeline)
 
