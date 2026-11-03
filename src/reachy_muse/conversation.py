@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import CancelledError as CommandCancelled
 import itertools
 import logging
 import math
@@ -22,7 +23,7 @@ from reachy_muse import __version__
 from reachy_muse import expression_plan as plan
 from musegadget.link_client import DeviceDescription, LinkSession, Outcome, acknowledgement
 from musegadget.muse_turn import AgentStatus, MuseTurn, ReplayScope, Reply, TaskFinished, TurnEvent
-from reachy_muse.contract.commands import COMMAND_SPECS
+from reachy_muse.contract.commands import COMMAND_SPECS, parse_command
 from reachy_muse.contract.expressions import Expression
 from reachy_muse.contract.prompts import SETUP_REQUEST, STOP_REQUEST, muse_request, voice_context
 from reachy_muse.contract.replies import ReplyProtocolError, ReplyRevisionError, ReplyStyle, SentenceStream
@@ -423,6 +424,10 @@ class VoiceConversation:
         # local style; a shared wake chat learns it from the first request.
         self._muse_style: ReplyStyle | None = (
             None if wake_detector is not None and not owns_chat else backends.local_style)
+        self._say_hushed = False
+        self._turn_active = False
+        self._command_tasks: set[asyncio.Task] = set()
+        self._closed = False
         self.job: MuseJob | None = None
         self._stop_sent_at: float | None = None
         # True while the user is mid-utterance or Reachy is still acting on what they said.
@@ -573,6 +578,8 @@ class VoiceConversation:
                 task.result()
             raise ConnectionError("Muse voice stream ended")
         finally:
+            self._closed = True
+            tasks.update(self._command_tasks)
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -1206,6 +1213,7 @@ class VoiceConversation:
                    timeline: TurnTimeline | None = None, heard_over: tuple[str, ...] = ()) -> TurnOutcome:
         if wav is None and self.wake_detector is not None:
             return TurnOutcome.EMPTY
+        self._turn_active = True
         timeline = timeline or TurnTimeline()
         woken = self._wake_window is WakeWindow.WOKEN
         if woken:
@@ -1226,6 +1234,7 @@ class VoiceConversation:
                 if isinstance(text, TurnOutcome):
                     completed = True
                     return text
+                self._say_hushed = False
                 if text is not None and await self._obey(text, started, timeline) is not None:
                     completed = True
                     return TurnOutcome.ACCEPTED
@@ -1255,6 +1264,7 @@ class VoiceConversation:
             turn_cancelled = True
             raise
         finally:
+            self._turn_active = False
             if opening is not None and not opening.done():
                 opening.cancel()
                 await asyncio.gather(opening, return_exceptions=True)
@@ -1658,6 +1668,7 @@ class VoiceConversation:
                                 held=held)
         if isinstance(text, TurnOutcome):
             return held
+        self._say_hushed = False
         kind = FollowUp.NEW if text is None else classify_follow_up(text)
         # A one-word command ("goodnight", "louder") is obeyed before one-word asides are dropped.
         command = (await self._obey(text, request.timeline.marks["endpoint"], request.timeline)
@@ -1740,6 +1751,7 @@ class VoiceConversation:
     def _hush(self) -> None:
         self._moments.stop()
         self._hush_floor = next(_SPEECH_SERIALS)
+        self._say_hushed = True
 
     async def _wake_up(self, window: WakeWindow) -> None:
         """Leave the sleep pose; the wake phrase and "wake up" both come here.
@@ -1747,6 +1759,7 @@ class VoiceConversation:
         The motion loop lifts the head and unfolds the antennas when the state leaves sleeping.
         """
         self._wake_window = window
+        self._say_hushed = False
         await self._plan(plan.Sleep(False, output=self._has_output()))
 
     async def _drop(self, job: MuseJob, *, stop_motion: bool = True) -> None:
@@ -1848,7 +1861,7 @@ class VoiceConversation:
         self._speech_pending += 1
         try:
             async with self._speaker_lock:
-                if speech_serial <= self._hush_floor:
+                if speech_serial <= self._hush_floor or (is_current is not None and not is_current()):
                     raise _SpeechSuperseded
                 try:
                     await self._speak_owned(message_id, text=text, state=state,
@@ -1866,6 +1879,50 @@ class VoiceConversation:
                     raise
         finally:
             self._speech_pending -= 1
+
+    def _say_blocked(self) -> str | None:
+        if self._closed:
+            return "disconnected"
+        if not self._ready.is_set():
+            return "not_ready"
+        if self._wake_window is WakeWindow.ASLEEP:
+            return "asleep"
+        if self._say_hushed:
+            return "hushed"
+        if self._turn_active or self.job is not None or self._hearing_open() or self._playback.user_speaking:
+            return "busy"
+        if not self.backends.voice.speaks_text:
+            return "speech_unavailable"
+        return None
+
+    async def say(self, text: str, timeout_s: float) -> dict:
+        """Queue one bounded line with the same speaker ownership as replies."""
+        task = asyncio.current_task()
+        self._command_tasks.add(task)
+        try:
+            reason = self._say_blocked()
+            if reason is None:
+                try:
+                    await asyncio.wait_for(self._speak(
+                        None, text=text, stream_segment=True,
+                        speech_serial=next(_SPEECH_SERIALS),
+                        is_current=lambda: self._say_blocked() is None), timeout_s)
+                except _SpeechSuperseded:
+                    reason = self._say_blocked() or "interrupted"
+                except asyncio.TimeoutError:
+                    reason = "timeout"
+                except asyncio.CancelledError:
+                    reason = "disconnected"
+                except Exception:
+                    reason = "speech_failed"
+                finally:
+                    if not self._has_output():
+                        await self._plan(plan.OutputIdle(user_speaking=self._playback.user_speaking,
+                                                         turn_open=self.job is not None or self._turn_active,
+                                                         wake_open=self._wake_deadline is not None))
+            return {"ok": True, "spoken": False, "reason": reason} if reason else {"ok": True, "spoken": True}
+        finally:
+            self._command_tasks.discard(task)
 
     async def _clear_owned_audio(self, *, propagate_cancel: bool = True) -> None:
         """Flush under speaker ownership, joining any physical clear on cancellation."""
@@ -2168,6 +2225,8 @@ class ReachyService(Service):
     morning: MorningRoutine | None = None
     startup: StartupTimeline | None = None
     _asleep: bool = field(default=False, init=False, repr=False)
+    _say_hushed: bool = field(default=False, init=False, repr=False)
+    _voice: tuple[asyncio.AbstractEventLoop, VoiceConversation] | None = field(default=None, init=False, repr=False)
     _hardware_error: Exception | None = field(default=None, init=False, repr=False)
 
     async def run(self) -> None:
@@ -2189,7 +2248,39 @@ class ReachyService(Service):
         return DeviceDescription(self.identity.node_id, "Reachy Mini", __version__, COMMAND_SPECS)
 
     def run_command(self, name: str, params: dict, timeout_ms: int | None = None) -> dict:
-        return self.executor.run_command(name, params, timeout_ms)
+        if name not in ("reachy.say", "reachy.presence"):
+            return self.executor.run_command(name, params, timeout_ms)
+        try:
+            command = parse_command(name, params, timeout_ms=timeout_ms)
+        except ValueError:
+            result = {"ok": False, "error": "invalid_parameters"}
+        else:
+            if name == "reachy.presence":
+                result = self.executor.presence()
+            elif self._voice is None:
+                result = {"ok": True, "spoken": False, "reason": "disconnected"}
+            else:
+                loop, voice = self._voice
+                speech = voice.say(command.params["text"], command.timeout_s)
+                try:
+                    future = asyncio.run_coroutine_threadsafe(speech, loop)
+                except RuntimeError:
+                    speech.close()
+                    result = {"ok": True, "spoken": False, "reason": "disconnected"}
+                else:
+                    try:
+                        result = future.result(command.timeout_s + 1)
+                    except CommandCancelled:
+                        result = {"ok": True, "spoken": False, "reason": "disconnected"}
+                    except TimeoutError:
+                        future.cancel()
+                        result = {"ok": True, "spoken": False, "reason": "timeout"}
+        outcome = result.get("reason") or result.get("error")
+        if outcome is None:
+            outcome = ("spoken" if name == "reachy.say" else
+                       {True: "present", False: "absent", None: "unknown"}[result["present"]])
+        log.info("Reachy command name=%s outcome=%s", name, outcome)
+        return result
 
     async def serve(self, session: LinkSession, vm: dict, stop: asyncio.Event) -> Outcome:
         from reachy_muse.hardware import ReachyHardwareError
@@ -2217,10 +2308,14 @@ class ReachyService(Service):
                                       short_utterance_silence_s=self.short_utterance_silence_s,
                                       morning=self.morning, startup=startup)
             voice._wake_window = WakeWindow.ASLEEP if self._asleep else WakeWindow.AWAKE
+            voice._say_hushed = self._say_hushed
+            self._voice = (asyncio.get_running_loop(), voice)
             try:
                 await voice.run()
             finally:
+                self._voice = None
                 self._asleep = voice._wake_window is WakeWindow.ASLEEP
+                self._say_hushed = voice._say_hushed
         link_task = asyncio.create_task(session.run(stop_link))
         voice_task = asyncio.create_task(converse())
         stop_task = asyncio.create_task(stop.wait())

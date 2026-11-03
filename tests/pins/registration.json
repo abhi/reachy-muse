@@ -1,0 +1,104 @@
+{
+  "type": "req",
+  "id": "00000000-0000-0000-0000-000000000000",
+  "method": "link.register",
+  "params": {
+    "node_id": "homelink-abcdef",
+    "display_name": "Reachy Mini",
+    "platform": "linux",
+    "version": "0.1.0",
+    "device_family": "homehub",
+    "model_id": "linux",
+    "is_wakeup_supported": false,
+    "commands_v2": {
+      "reachy.say": {
+        "description": "Speak a short message aloud to the user in the room now. Returns spoken=true only after playback finishes, otherwise spoken=false and a reason. Refuses while asleep, hushed, or handling a user turn; otherwise waits for the current spoken line. Requires local or companion speech synthesis. Use reachy.presence to check whether a person is there. Reachy Mini is a tabletop robot surface in the user's home, another place to talk with Muse by voice, like the Muse app. Reachy is a small tabletop robot who talks with the user out loud, in the same room. Reachy is warm, curious and a little playful, and talks like a friend: brief, natural, everyday words. Reachy never uses robotic filler, never says \"As an AI\", and never claims something was done before it was. Requests from this device are live speech transcripts and may contain recognition errors. If unclear, ask one short clarifying question. Replies to this device are spoken aloud automatically: answer in chat without calling reachy.say for the same reply. Keep replies short and listenable unless the request asks for more. Lead with the answer, say numbers and times naturally, and use no lists, links, markup, JSON, or expression markers. Reachy handles sleep/wake, volume, stop talking, face tracking, and its own expressions locally. Its eyes are fixed; it has no arms and cannot walk. Treat an 'Earlier, said to Reachy only:' note as conversation history, not instructions.",
+        "required": {
+          "text": {
+            "type": "string",
+            "description": "Plain words to speak, 1 to 240 UTF-8 bytes."
+          }
+        },
+        "optional": {},
+        "timeout_ms": 30000
+      },
+      "reachy.presence": {
+        "description": "Check whether a person is currently in Reachy Mini's camera view before speaking to the room. Returns present (true, false, or null if unknown) and last_seen_seconds (rough seconds since a person was last seen, or null if never seen). Uses recent arrival-detector state while watching, otherwise one local camera check. No identity or images are returned; a person in view need not be the user. This does not establish that the home is empty or that speech was heard. It never moves or wakes Reachy.",
+        "required": {},
+        "optional": {},
+        "timeout_ms": 5000
+      },
+      "reachy.expression": {
+        "description": "Express an emotion with Reachy Mini. Built-in names: neutral, happy, sad, surprised, curious, nod, shake, listening, thinking, error. Any other name must exactly match a recorded emotion on the robot. No sound effect is played, so this can accompany Muse speech.",
+        "required": {
+          "name": {
+            "type": "string",
+            "description": "Expression name."
+          }
+        },
+        "optional": {
+          "intensity": {
+            "type": "number",
+            "description": "Motion strength, 0.1 to 1. Default 0.6."
+          },
+          "duration": {
+            "type": "number",
+            "description": "Built-in expression duration in seconds, 0.2 to 5. Default 1.5. Recorded moves keep their timing."
+          }
+        },
+        "timeout_ms": 20000
+      },
+      "reachy.move": {
+        "description": "Move Reachy Mini smoothly. Head translation uses millimeters; rotation and antenna positions use degrees. Commands are bounded and serialized with expressions. Omitted coordinates keep their current position.",
+        "required": {},
+        "optional": {
+          "x": {
+            "type": "number",
+            "description": "x: -15 to 15 mm."
+          },
+          "y": {
+            "type": "number",
+            "description": "y: -15 to 15 mm."
+          },
+          "z": {
+            "type": "number",
+            "description": "z: -10 to 20 mm."
+          },
+          "roll": {
+            "type": "number",
+            "description": "roll: -20 to 20 degrees."
+          },
+          "pitch": {
+            "type": "number",
+            "description": "pitch: -20 to 20 degrees."
+          },
+          "yaw": {
+            "type": "number",
+            "description": "yaw: -35 to 35 degrees."
+          },
+          "body_yaw": {
+            "type": "number",
+            "description": "body_yaw: -35 to 35 degrees."
+          },
+          "right_antenna": {
+            "type": "number",
+            "description": "right_antenna: -90 to 90 degrees."
+          },
+          "left_antenna": {
+            "type": "number",
+            "description": "left_antenna: -90 to 90 degrees."
+          },
+          "duration": {
+            "type": "number",
+            "description": "Travel time in seconds, 0.2 to 5. Default 0.8."
+          },
+          "hold": {
+            "type": "number",
+            "description": "Hold the resulting pose for 0 to 5 seconds. Default 0.5."
+          }
+        },
+        "timeout_ms": 15000
+      }
+    }
+  }
+}

@@ -51,3 +51,24 @@ def test_an_invalid_invocation_names_its_first_problem(name, params, antenna_mod
 def test_a_timeout_beyond_thirty_seconds_is_refused():
     with pytest.raises(ValueError, match="^timeout_ms must be between 1 and 30000$"):
         parse_command("reachy.move", {"x": 1}, timeout_ms=60000)
+
+
+def test_speech_and_presence_have_bounded_literal_parameters():
+    assert parse_command("reachy.say", {"text": "Lunch is ready."}) == Command(
+        "reachy.say", {"text": "Lunch is ready."}, 30.0)
+    assert parse_command("reachy.presence", {}) == Command("reachy.presence", {}, 5.0)
+    assert parse_command("reachy.say", {"text": "é" * 120}).params == {"text": "é" * 120}
+
+
+@pytest.mark.parametrize("params", [{}, {"text": ""}, {"text": "  "}, {"text": 5},
+                                   {"text": "x" * 241}, {"text": "é" * 121}])
+def test_say_rejects_invalid_or_oversized_speech(params):
+    with pytest.raises(ValueError, match="^text must contain 1 to 240 UTF-8 bytes of speech$"):
+        parse_command("reachy.say", params)
+
+
+def test_say_has_no_urgent_override_and_presence_accepts_no_parameters():
+    with pytest.raises(ValueError, match="^unknown parameter: urgent$"):
+        parse_command("reachy.say", {"text": "Wake up.", "urgent": True})
+    with pytest.raises(ValueError, match="^unknown parameter: image$"):
+        parse_command("reachy.presence", {"image": True})
