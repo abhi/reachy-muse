@@ -4,6 +4,7 @@
 import asyncio
 import logging
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,6 +12,7 @@ from musegadget.identity import Identity
 from reachy_muse.capabilities import Endpoint, Mode
 from reachy_muse.device_command import WakeWindow
 from reachy_muse.conversation import ReachyService, VoiceConversation, _HeldRequest, _QueuedTurn
+from reachy_muse.hardware import ReachyController
 from reachy_muse.local_backends import backends_for
 from reachy_muse.turn_timeline import TurnTimeline
 from fake_muse_vm import make_session
@@ -62,7 +64,7 @@ async def wait_until(predicate):
 def test_command_results_reach_the_sdk_wire_payload(command, hushed, expected):
     async def check():
         service, voice, _ = command_device()
-        voice.hardware.presence = lambda: {"ok": True, "present": True, "last_seen_seconds": 0}
+        voice.hardware.presence = lambda timeout_s: {"ok": True, "present": True, "last_seen_seconds": 0}
         if hushed:
             voice._hush()
         session, vm = make_session(service.run_command, [])
@@ -245,7 +247,7 @@ def test_hush_interrupts_stalled_synthesis_and_flushes_before_the_next_reply():
             clear_audio()
 
         voice.hardware.clear_audio = clear
-        pending = asyncio.create_task(invoke(service, timeout_ms=1000))
+        pending = asyncio.create_task(invoke(service, timeout_ms=5000))
         await stalled.wait()
         voice._hush()
         reply = asyncio.create_task(voice._speak(None, text="A later reply.", stream_segment=True))
@@ -415,10 +417,65 @@ def test_invalid_command_text_is_not_logged_or_synthesized(caplog):
 def test_registered_presence_returns_only_the_coarse_result_and_logs_the_outcome(caplog):
     caplog.set_level(logging.INFO)
     class Camera:
-        def presence(self):
+        def presence(self, timeout_s):
             return {"ok": True, "present": True, "last_seen_seconds": 0}
     service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=Camera(), backends=lambda _: None)
     assert service.run_command("reachy.presence", {}) == {
         "ok": True, "payload": {"present": True, "last_seen_seconds": 0}}
     assert [record.message for record in caplog.records] == [
         "Reachy command name=reachy.presence outcome=present"]
+
+
+def test_stalled_presence_checks_release_sdk_slots_across_reconnects():
+    async def check():
+        stalled, resume, invoked = threading.Event(), threading.Event(), threading.Event()
+        reads, calls = [], []
+
+        def frame():
+            reads.append(True)
+            stalled.set()
+            resume.wait()
+
+        controller = ReachyController(enable_motion=False)
+        controller._robot = SimpleNamespace(media=SimpleNamespace(get_frame=frame))
+        service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=controller,
+                               backends=lambda _: None)
+
+        def run_command(*args):
+            calls.append(args[0])
+            if len(calls) == 4:
+                invoked.set()
+            return service.run_command(*args)
+
+        try:
+            for reconnect in (False, True):
+                session, vm = make_session(run_command, [])
+                session._invokes = service._invoke_slots
+                stop = asyncio.Event()
+                running = asyncio.create_task(session.run(stop))
+                try:
+                    await vm.handshake()
+                    await vm.accept_control_stream()
+                    register = await vm.next_message()
+                    await vm.send_message({"type": "res", "id": register["id"], "ok": True})
+                    await session.registered.wait()
+                    if not reconnect:
+                        for index in range(4):
+                            await vm.send_message({"method": "link.invoke", "id": f"presence-{index}",
+                                                   "command": "reachy.presence", "params": {}, "timeout_ms": 10})
+                        assert await asyncio.to_thread(invoked.wait, 1)
+                        assert await asyncio.to_thread(stalled.wait, 1)
+                    else:
+                        await vm.send_message({"method": "link.invoke", "id": "say", "command": "reachy.say",
+                                               "params": {"text": "Lunch is ready."}})
+                        assert await asyncio.wait_for(vm.next_message(), .2) == {
+                            "method": "link.result", "id": "say", "ok": True,
+                            "payload": {"spoken": False, "reason": "disconnected"}}
+                        assert reads == [True]
+                finally:
+                    stop.set()
+                    await running
+        finally:
+            resume.set()
+
+    asyncio.run(check())

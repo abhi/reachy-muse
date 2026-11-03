@@ -45,8 +45,10 @@ unknown if the last detection is more than two seconds old, the camera is
 moving, or the watcher is unavailable. Motion gating can leave no recent
 observation even when frames are arriving. An old arrival never means that a
 person is still present. Outside watching, one local person-detector check
-reads one frame. Missing frames or detector failures return unknown. Only the
-last observation and last-seen time remain in memory. Presence never moves or
+reads one frame. Missing frames, detector failures, or an expired command
+deadline return unknown. The deadline includes waiting for another check.
+The default timeout is five seconds. Only the last observation and last-seen
+time remain in memory. Presence never moves or
 wakes the robot. Neither new command logs message text, images, or identity;
 command logs contain the name and outcome.
 

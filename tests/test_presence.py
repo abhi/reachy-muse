@@ -1,13 +1,17 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # Licensed under the Apache License, Version 2.0 (the "License").
 
+from concurrent.futures import ThreadPoolExecutor
+import threading
 from types import SimpleNamespace
 
 import pytest
 
 import reachy_muse.arrival
 import reachy_muse.hardware
+from musegadget.identity import Identity
 from reachy_muse.arrival import PersonBox
+from reachy_muse.conversation import ReachyService
 from reachy_muse.hardware import ReachyController
 from reachy_muse.presence import Presence
 
@@ -112,3 +116,52 @@ def test_last_seen_survives_the_end_of_arrival_watching(monkeypatch):
     controller = ReachyController()
     controller._arrival_watcher = SimpleNamespace(presence=lambda: Presence(None, 110, 100))
     assert controller.presence() == {"ok": True, "present": None, "last_seen_seconds": 20}
+
+
+@pytest.mark.parametrize("blocked", ["camera", "detector", "lock"])
+def test_presence_deadline_bounds_camera_detector_and_lock_waits(monkeypatch, blocked):
+    stalled, resume = threading.Event(), threading.Event()
+    reads = []
+    monkeypatch.setattr(reachy_muse.hardware.time, "monotonic", lambda: 120)
+
+    def block():
+        stalled.set()
+        resume.wait()
+
+    def frame():
+        reads.append(True)
+        if blocked == "camera":
+            block()
+        return object()
+
+    class Detector:
+        def __init__(self, model):
+            pass
+
+        def detect(self, image):
+            if blocked == "detector":
+                block()
+            return []
+
+    monkeypatch.setattr(reachy_muse.arrival, "YoloxPersonDetector", Detector)
+    controller = ReachyController(enable_motion=False)
+    controller._robot = SimpleNamespace(media=SimpleNamespace(get_frame=frame))
+    controller._presence = Presence(True, 100, 100)
+    service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=controller,
+                           backends=lambda _: None)
+    if blocked == "lock":
+        controller._presence_lock.acquire()
+        stalled.set()
+    with ThreadPoolExecutor(max_workers=1) as commands:
+        pending = commands.submit(service.run_command, "reachy.presence", {}, 10)
+        try:
+            assert stalled.wait(1)
+            assert pending.result(timeout=.2) == {
+                "ok": True, "payload": {"present": None, "last_seen_seconds": 20}}
+            assert reads == ([] if blocked == "lock" else [True])
+        finally:
+            resume.set()
+            if blocked == "lock":
+                controller._presence_lock.release()
+    assert controller._presence_lock.acquire(timeout=2)
+    controller._presence_lock.release()

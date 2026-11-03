@@ -30,6 +30,7 @@ import queue
 import threading
 import time
 import urllib.request
+from concurrent.futures import Future, TimeoutError as PresenceTimeout
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Collection, NamedTuple
@@ -565,33 +566,56 @@ class ReachyController:
             return None
         return watcher.arrival()
 
-    def presence(self) -> dict:
+    def presence(self, timeout_s: float = 5.0) -> dict:
         """Reuse the watcher or inspect one frame; never move the robot."""
+        deadline = time.monotonic() + timeout_s
+        if self._presence_lock.acquire(timeout=timeout_s):
+            result = Future()
+
+            def inspect():
+                try:
+                    result.set_result(self._check_presence())
+                except Exception as exc:
+                    result.set_exception(exc)
+                finally:
+                    self._presence_lock.release()
+
+            try:
+                threading.Thread(target=inspect, name="muse-reachy-presence", daemon=True).start()
+            except Exception:
+                self._presence_lock.release()
+                raise
+            try:
+                return result.result(max(0.0, deadline - time.monotonic()))
+            except PresenceTimeout:
+                pass
+        return Presence(last_seen_at=self._presence.last_seen_at).result(time.monotonic())
+
+    def _check_presence(self) -> dict:
         from reachy_muse.arrival import YoloxPersonDetector, default_person_model, person_in_view
 
-        with self._presence_lock:
-            observed = self._arrival_watcher.presence() if self._arrival_watcher is not None else Presence()
-            last_seen = max((at for at in (self._presence.last_seen_at, observed.last_seen_at)
-                             if at is not None), default=None)
-            if self._watching:
-                self._presence = Presence(observed.present, observed.observed_at, last_seen)
-            else:
-                present = None
-                try:
-                    if self._robot is not None and not self._stop.is_set():
-                        frame = self._robot.media.get_frame()
-                        try:
-                            if frame is not None:
-                                if self._presence_detector is None:
-                                    self._presence_detector = YoloxPersonDetector(
-                                        self._arrival_model or default_person_model())
-                                present = person_in_view(self._presence_detector.detect(frame))
-                        finally:
-                            del frame
-                except Exception:
-                    pass
-                self._presence = Presence(last_seen_at=last_seen).observe(present, time.monotonic())
-            return self._presence.result(time.monotonic())
+        observed = self._arrival_watcher.presence() if self._arrival_watcher is not None else Presence()
+        last_seen = max((at for at in (self._presence.last_seen_at, observed.last_seen_at)
+                         if at is not None), default=None)
+        if self._watching:
+            self._presence = Presence(observed.present, observed.observed_at, last_seen)
+        else:
+            present = None
+            try:
+                if self._robot is not None and not self._stop.is_set():
+                    frame = self._robot.media.get_frame()
+                    try:
+                        if frame is not None:
+                            if self._presence_detector is None:
+                                self._presence_detector = YoloxPersonDetector(
+                                    self._arrival_model or default_person_model())
+                            present = person_in_view(self._presence_detector.detect(frame))
+                    finally:
+                        del frame
+            except Exception:
+                pass
+            self._presence = Presence(last_seen_at=last_seen).observe(present, time.monotonic())
+        return self._presence.result(time.monotonic())
 
     def log_arrival_diagnostics(self) -> None:
         from reachy_muse.arrival import ArrivalStats

@@ -971,8 +971,10 @@ Replies to Reachy's own requests already play aloud, so Muse need not call
 Presence reuses recent arrival-detector state during watching. A moving camera,
 an unavailable watcher, or an observation older than two seconds returns
 unknown. Outside watching, it makes one local person check if the camera is
-available. It never moves or wakes Reachy. The last-seen age stays in memory,
-without images or identity. A person in view need not be you, and absence in
+available. The command returns unknown when its deadline expires, including
+while waiting for another check. The default timeout is five seconds. It never
+moves or wakes Reachy. The last-seen age stays in memory, without images or
+identity. A person in view need not be you, and absence in
 camera view does not establish that the home is empty. Both command handlers
 log only the command name and outcome.
 

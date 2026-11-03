@@ -2230,7 +2230,7 @@ class ReachyService(Service):
         else:
             active_voice = self._voice
             if name == "reachy.presence":
-                result = self.executor.presence()
+                result = self.executor.presence(command.timeout_s)
             elif active_voice is None:
                 result = {"ok": True, "spoken": False, "reason": "disconnected"}
             else:
