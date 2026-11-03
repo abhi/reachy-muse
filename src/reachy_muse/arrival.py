@@ -13,6 +13,8 @@ import threading
 import time
 from typing import TYPE_CHECKING, Callable, Protocol
 
+from reachy_muse.presence import Presence
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -86,6 +88,11 @@ class PersonBox:
 
 class PersonDetector(Protocol):
     def detect(self, frame) -> list[PersonBox]: ...
+
+
+def person_in_view(boxes: list[PersonBox]) -> bool:
+    return any(box.score >= PERSON_SCORE and box.height >= MIN_BOX_HEIGHT
+               and box.width >= MIN_BOX_WIDTH for box in boxes)
 
 
 def _check_frame(frame) -> None:
@@ -177,6 +184,7 @@ class ArrivalDetector:
         self.motion_triggered = False
         self.detector_ran = False
         self.max_person_confidence = 0.0
+        self.presence = Presence()
         self.reachy_moved()
 
     def reachy_moved(self) -> None:
@@ -206,6 +214,7 @@ class ArrivalDetector:
             frame = _brightened(frame)
         self.detector_ran = True
         boxes = self._detector.detect(frame)
+        self.presence = self.presence.observe(person_in_view(boxes), now)
         self.max_person_confidence = max(
             (box.score for box in boxes), default=getattr(self._detector, "max_person_confidence", 0.0))
         if any(box.score >= PERSON_SCORE and _on_motion(box, reading.moved_recently) for box in boxes):
@@ -297,6 +306,7 @@ class ArrivalWatcher:
         self._failure: Exception | None = None
         self._thread: threading.Thread | None = None
         self._stats = ArrivalStats()
+        self._presence = Presence()
 
     @property
     def failure(self) -> Exception | None:
@@ -320,12 +330,19 @@ class ArrivalWatcher:
                 self._arrival = None
                 self._generation += 1
                 self._stats = ArrivalStats()
+                self._presence = self._presence.observe(None, self._clock())
             self._watching = watching
             self._condition.notify_all()
 
     def arrival(self) -> float | None:
         with self._condition:
             return self._arrival
+
+    def presence(self) -> Presence:
+        with self._condition:
+            if not self._watching or self._failure is not None or not self._is_still():
+                self._presence = self._presence.observe(None, self._clock())
+            return self._presence
 
     def take_stats(self) -> ArrivalStats:
         with self._condition:
@@ -368,6 +385,8 @@ class ArrivalWatcher:
                 started = self._clock()
                 if not self._is_still():
                     decision.reachy_moved()
+                    with self._condition:
+                        self._presence = self._presence.observe(None, self._clock())
                 else:
                     try:
                         frame = self._read_frame()
@@ -386,6 +405,10 @@ class ArrivalWatcher:
                                 self._stats.frames += 1
                                 self._stats.brightness_total += brightness
                             arrived = decision.observe(frame, now)
+                            if decision.detector_ran:
+                                with self._condition:
+                                    if self._generation == generation:
+                                        self._presence = self._presence.observe(decision.presence.present, now)
                         finally:
                             del frame
                             with self._condition:
@@ -400,6 +423,7 @@ class ArrivalWatcher:
                     else:
                         with self._condition:
                             self._stats.frame_errors += 1
+                            self._presence = self._presence.observe(None, self._clock())
                 with self._condition:
                     if self._closed:
                         return

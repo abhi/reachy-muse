@@ -1,0 +1,114 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# Licensed under the Apache License, Version 2.0 (the "License").
+
+from types import SimpleNamespace
+
+import pytest
+
+import reachy_muse.arrival
+import reachy_muse.hardware
+from reachy_muse.arrival import PersonBox
+from reachy_muse.hardware import ReachyController
+from reachy_muse.presence import Presence
+
+
+def test_observations_expire_but_keep_rough_last_seen_age():
+    state = Presence()
+    assert state.result(50) == {"ok": True, "present": None, "last_seen_seconds": None}
+    state = state.observe(True, 50)
+    assert state.result(51) == {"ok": True, "present": True, "last_seen_seconds": 1}
+    assert state.result(53.4) == {"ok": True, "present": None, "last_seen_seconds": 3}
+    state = state.observe(False, 54)
+    assert state.result(55) == {"ok": True, "present": False, "last_seen_seconds": 5}
+    state = state.observe(None, 56)
+    assert state.result(56) == {"ok": True, "present": None, "last_seen_seconds": 6}
+
+
+def test_camera_check_reads_one_frame_and_retains_no_images(monkeypatch):
+    import gc
+    import weakref
+    np = pytest.importorskip("numpy")
+    reads, models, references = [], [], []
+    now = [100.0]
+    monkeypatch.setattr(reachy_muse.hardware.time, "monotonic", lambda: now[0])
+
+    def frame():
+        reads.append(True)
+        image = np.zeros((24, 32, 3), dtype=np.uint8)
+        references.append(weakref.ref(image))
+        return image
+
+    class Detector:
+        def __init__(self, model):
+            models.append(model)
+
+        def detect(self, image):
+            assert image.shape == (24, 32, 3)
+            return [PersonBox(0, 0, .2, .3, .9)] if now[0] == 100 else []
+
+    monkeypatch.setattr(reachy_muse.arrival, "YoloxPersonDetector", Detector)
+    controller = ReachyController(enable_motion=False)
+    controller._robot = SimpleNamespace(media=SimpleNamespace(get_frame=frame))
+    assert controller.presence() == {"ok": True, "present": True, "last_seen_seconds": 0}
+    assert reads == [True]
+    now[0] = 110.2
+    assert controller.presence() == {"ok": True, "present": False, "last_seen_seconds": 10}
+    assert reads == [True, True] and len(models) == 1
+    gc.collect()
+    assert all(reference() is None for reference in references)
+    assert controller._state == "idle" and controller._commands.empty()
+
+
+@pytest.mark.parametrize("failure", ["missing_camera", "no_frame", "read_error", "detector_error"])
+def test_unavailable_camera_never_claims_absence(monkeypatch, failure, caplog):
+    def frame():
+        if failure == "read_error":
+            raise RuntimeError("private camera information")
+        return object() if failure == "detector_error" else None
+
+    class BrokenDetector:
+        def __init__(self, model):
+            raise RuntimeError("private detector information")
+
+    monkeypatch.setattr(reachy_muse.arrival, "YoloxPersonDetector", BrokenDetector)
+    controller = ReachyController()
+    if failure != "missing_camera":
+        controller._robot = SimpleNamespace(media=SimpleNamespace(get_frame=frame))
+    assert controller.presence() == {"ok": True, "present": None, "last_seen_seconds": None}
+    assert "private" not in caplog.text
+
+
+def test_watching_uses_detector_state_without_reading_a_frame_and_keeps_history(monkeypatch):
+    now = [101.0]
+    monkeypatch.setattr(reachy_muse.hardware.time, "monotonic", lambda: now[0])
+    controller = ReachyController()
+    controller._robot = SimpleNamespace(media=SimpleNamespace(
+        get_frame=lambda: pytest.fail("a watching camera must not be read by a command")))
+    controller._watching = True
+    controller._arrival_watcher = SimpleNamespace(presence=lambda: Presence(True, 100, 100))
+    assert controller.presence() == {"ok": True, "present": True, "last_seen_seconds": 1}
+    now[0] = 120
+    assert controller.presence() == {"ok": True, "present": None, "last_seen_seconds": 20}
+    controller._arrival_watcher = None
+    assert controller.presence() == {"ok": True, "present": None, "last_seen_seconds": 20}
+
+
+def test_watcher_invalidates_presence_while_moving_or_failed():
+    still = [True]
+    watcher = reachy_muse.arrival.ArrivalWatcher(lambda: None, lambda: still[0], clock=lambda: 101)
+    watcher.set_watching(True)
+    watcher._presence = Presence(True, 100, 100)
+    assert watcher.presence().result(101) == {"ok": True, "present": True, "last_seen_seconds": 1}
+    still[0] = False
+    assert watcher.presence().result(101) == {"ok": True, "present": None, "last_seen_seconds": 1}
+
+    still[0] = True
+    watcher._failure = RuntimeError("camera failed")
+    assert watcher.presence().result(101) == {"ok": True, "present": None, "last_seen_seconds": 1}
+
+
+def test_last_seen_survives_the_end_of_arrival_watching(monkeypatch):
+    monkeypatch.setattr(reachy_muse.hardware.time, "monotonic", lambda: 120)
+    controller = ReachyController()
+    controller._arrival_watcher = SimpleNamespace(presence=lambda: Presence(None, 110, 100))
+    assert controller.presence() == {"ok": True, "present": None, "last_seen_seconds": 20}

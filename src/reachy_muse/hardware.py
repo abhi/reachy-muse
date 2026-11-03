@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Callable, Collection, NamedTuple
 
 from reachy_muse.contract.commands import POSE_LIMITS, parse_command
 from reachy_muse.motion import MotionStyle
+from reachy_muse.presence import Presence
 
 if TYPE_CHECKING:
     import numpy as np
@@ -221,6 +222,9 @@ class ReachyController:
         self._arrival_watcher_factory = arrival_watcher_factory
         self._arrival_watcher = None
         self._arrival_warned = False
+        self._presence = Presence()
+        self._presence_detector = None
+        self._presence_lock = threading.Lock()
         self._watching = False
         self._watch = _WatchTurn({}, 0.0, 0.0, -math.inf)
         self._still_since = None
@@ -494,6 +498,8 @@ class ReachyController:
     def run_command(self, name: str, params: dict, timeout_ms: int | None = None) -> dict:
         """Wait for a bounded motion command; all motor targets stay on one thread."""
         try:
+            if name not in ("reachy.expression", "reachy.move"):
+                raise ValueError(f"unsupported command: {name}")
             self._require_running()
             if not self._enable_motion:
                 raise RuntimeError("Reachy Mini motion is disabled for this session")
@@ -558,6 +564,34 @@ class ReachyController:
             self._warn_arrival_unavailable(type(failure).__name__)
             return None
         return watcher.arrival()
+
+    def presence(self) -> dict:
+        """Reuse the watcher or inspect one frame; never move the robot."""
+        from reachy_muse.arrival import YoloxPersonDetector, default_person_model, person_in_view
+
+        with self._presence_lock:
+            observed = self._arrival_watcher.presence() if self._arrival_watcher is not None else Presence()
+            last_seen = max((at for at in (self._presence.last_seen_at, observed.last_seen_at)
+                             if at is not None), default=None)
+            if self._watching:
+                self._presence = Presence(observed.present, observed.observed_at, last_seen)
+            else:
+                present = None
+                try:
+                    if self._robot is not None and not self._stop.is_set():
+                        frame = self._robot.media.get_frame()
+                        try:
+                            if frame is not None:
+                                if self._presence_detector is None:
+                                    self._presence_detector = YoloxPersonDetector(
+                                        self._arrival_model or default_person_model())
+                                present = person_in_view(self._presence_detector.detect(frame))
+                        finally:
+                            del frame
+                except Exception:
+                    pass
+                self._presence = Presence(last_seen_at=last_seen).observe(present, time.monotonic())
+            return self._presence.result(time.monotonic())
 
     def log_arrival_diagnostics(self) -> None:
         from reachy_muse.arrival import ArrivalStats

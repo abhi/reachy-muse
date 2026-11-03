@@ -184,6 +184,7 @@ def test_watcher_latches_the_arrival_and_stops_reading_frames_until_watching_sta
         watcher.set_watching(True)
         wait_for(lambda: watcher.arrival() is not None)
         assert watcher.arrival() == pytest.approx(8 / 3)
+        assert watcher.presence().result(clock()) == {"ok": True, "present": True, "last_seen_seconds": 0}
         reads = camera["reads"]
         time.sleep(0.3)
         assert camera["reads"] == reads == 9
