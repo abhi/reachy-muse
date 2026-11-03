@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import threading
 from types import SimpleNamespace
@@ -170,6 +171,19 @@ def test_waiting_say_times_out_and_never_plays_later():
             assert await invoke(service, timeout_ms=20) == {"ok": True, "payload": {"spoken": False, "reason": "timeout"}}
         assert voice._speech_pending == 0
         assert speech.words == voice.hardware.played == []
+    asyncio.run(check())
+
+
+def test_outer_say_timeout_cancels_speech_before_the_loop_resumes():
+    async def check():
+        service, voice, speech = command_device()
+        assert service.run_command("reachy.say", {"text": "An expired reminder."}, 1) == {
+            "ok": True, "payload": {"spoken": False, "reason": "timeout"}}
+        assert await invoke(service, "A new reminder.") == {"ok": True, "payload": {"spoken": True}}
+        assert speech.words == ["A new reminder."]
+        assert sum(len(samples) for samples in voice.hardware.played) == 320
+        assert not voice._command_tasks
+
     asyncio.run(check())
 
 
@@ -397,6 +411,72 @@ def test_say_uses_one_voice_snapshot_during_disconnect():
         service._voice = original._voice
         assert await invoke(service) == {"ok": True, "payload": {"spoken": False, "reason": "disconnected"}}
         assert speech.words == voice.hardware.played == []
+
+    asyncio.run(check())
+
+
+def test_queued_sdk_say_cannot_reach_a_replacement_voice(monkeypatch):
+    from musegadget.link_client import Outcome
+
+    async def check():
+        workers = []
+        resume = threading.Event()
+
+        class CommandExecutor(ThreadPoolExecutor):
+            def submit(self, fn, *args, **kwargs):
+                if args and args[0] == "reachy.say":
+                    def queued():
+                        resume.wait()
+                        return fn(*args, **kwargs)
+                    future = super().submit(queued)
+                    workers.append(future)
+                    return future
+                return super().submit(fn, *args, **kwargs)
+
+        async def running(voice):
+            voice._ready.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                voice._closed = True
+
+        monkeypatch.setattr(VoiceConversation, "run", running)
+        service, _, speech = command_device()
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(CommandExecutor(max_workers=2))
+        try:
+            for reconnect in (False, True):
+                session, vm = make_session(service.run_command, [])
+                stop = asyncio.Event()
+                serving = asyncio.create_task(service.serve(session, {"vm_id": "vm-1"}, stop))
+                try:
+                    await asyncio.wait_for(vm.handshake(), 2)
+                    await vm.accept_control_stream()
+                    register = await vm.next_message()
+                    await vm.send_message({"type": "res", "id": register["id"], "ok": True})
+                    await wait_until(lambda: service._voice is not None
+                                     and service._voice[1].session is session and service._voice[1]._ready.is_set())
+                    if not reconnect:
+                        await vm.send_message({"method": "link.invoke", "id": "old", "command": "reachy.say",
+                                               "params": {"text": "An old reminder."}})
+                        await wait_until(lambda: len(workers) == 1)
+                        await vm.ws.close()
+                        assert await serving is Outcome.CLOSED
+                    else:
+                        resume.set()
+                        assert await asyncio.wait_for(asyncio.wrap_future(workers[0]), 2) == {
+                            "ok": True, "payload": {"spoken": False, "reason": "disconnected"}}
+                        assert speech.words == service.executor.played == []
+                        await vm.send_message({"method": "link.invoke", "id": "new", "command": "reachy.say",
+                                               "params": {"text": "A new reminder."}})
+                        assert await asyncio.wait_for(vm.next_message(), 2) == {
+                            "method": "link.result", "id": "new", "ok": True, "payload": {"spoken": True}}
+                        assert speech.words == ["A new reminder."]
+                finally:
+                    stop.set()
+                    await serving
+        finally:
+            resume.set()
 
     asyncio.run(check())
 

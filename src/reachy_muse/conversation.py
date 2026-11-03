@@ -10,6 +10,7 @@ import contextlib
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import CancelledError as CommandCancelled
+from concurrent.futures import TimeoutError as CommandTimeout
 import itertools
 import logging
 import math
@@ -17,6 +18,7 @@ import re
 import time
 from dataclasses import dataclass, field, replace
 from enum import Enum
+from functools import partial
 from typing import Awaitable, Callable
 
 from reachy_muse import __version__
@@ -2220,7 +2222,8 @@ class ReachyService(Service):
     def describe(self) -> DeviceDescription:
         return DeviceDescription(self.identity.node_id, "Reachy Mini", __version__, COMMAND_SPECS)
 
-    def run_command(self, name: str, params: dict, timeout_ms: int | None = None) -> dict:
+    def run_command(self, name: str, params: dict, timeout_ms: int | None = None, *,
+                    session: LinkSession | None = None) -> dict:
         if name not in ("reachy.say", "reachy.presence"):
             return self.executor.run_command(name, params, timeout_ms)
         try:
@@ -2231,11 +2234,19 @@ class ReachyService(Service):
             active_voice = self._voice
             if name == "reachy.presence":
                 result = self.executor.presence(command.timeout_s)
-            elif active_voice is None:
+            elif active_voice is None or (session is not None and active_voice[1].session is not session):
                 result = {"ok": True, "spoken": False, "reason": "disconnected"}
             else:
                 loop, voice = active_voice
-                speech = voice.say(command.params["text"], command.timeout_s)
+                deadline = time.monotonic() + command.timeout_s
+
+                async def speak():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return {"ok": True, "spoken": False, "reason": "timeout"}
+                    return await voice.say(command.params["text"], remaining)
+
+                speech = speak()
                 try:
                     future = asyncio.run_coroutine_threadsafe(speech, loop)
                 except RuntimeError:
@@ -2246,7 +2257,7 @@ class ReachyService(Service):
                         result = future.result(command.timeout_s + 1)
                     except CommandCancelled:
                         result = {"ok": True, "spoken": False, "reason": "disconnected"}
-                    except TimeoutError:
+                    except CommandTimeout:
                         future.cancel()
                         result = {"ok": True, "spoken": False, "reason": "timeout"}
         outcome = result.get("reason") or result.get("error")
@@ -2261,6 +2272,7 @@ class ReachyService(Service):
     async def serve(self, session: LinkSession, vm: dict, stop: asyncio.Event) -> Outcome:
         from reachy_muse.hardware import ReachyHardwareError
 
+        session._run_command = partial(self.run_command, session=session)
         hardware = self.executor
         startup, self.startup = self.startup or StartupTimeline(), None
         stop_link = asyncio.Event()
