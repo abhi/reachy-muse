@@ -112,6 +112,15 @@ class _SpeechSuperseded(Exception):
     """An unheard sentence was replaced before its audio could be queued."""
 
 
+class _SpeechParams(dict):
+    def __init__(self, params, timeout_ms):
+        received_at = time.monotonic()
+        command = parse_command("reachy.say", params, timeout_ms=timeout_ms)
+        super().__init__(command.params)
+        self.deadline = received_at + command.timeout_s
+        self.serial = next(_SPEECH_SERIALS)
+
+
 @dataclass(frozen=True)
 class _CapturedAudio:
     samples: object
@@ -1868,21 +1877,20 @@ class VoiceConversation:
             return "hushed"
         if self._turn_active or self.job is not None or self._hearing_open() or self._playback.user_speaking:
             return "busy"
-        if not self.backends.voice.speaks_text:
+        if not (self.backends.command_voice or self.backends.voice).speaks_text:
             return "speech_unavailable"
         return None
 
-    async def say(self, text: str, timeout_s: float) -> dict:
+    async def say(self, text: str, timeout_s: float, *, speech_serial: int) -> dict:
         """Queue one bounded line with the same speaker ownership as replies."""
         task = asyncio.current_task()
         self._command_tasks.add(task)
-        speech_serial = next(_SPEECH_SERIALS)
         try:
             reason = self._say_blocked()
             if reason is None:
                 try:
                     await asyncio.wait_for(self._speak(
-                        None, text=text, stream_segment=True,
+                        None, text=text, stream_segment=True, voice=self.backends.command_voice,
                         speech_serial=speech_serial,
                         is_current=lambda: self._say_blocked() is None), timeout_s)
                 except _SpeechSuperseded:
@@ -2227,6 +2235,8 @@ class ReachyService(Service):
         if name not in ("reachy.say", "reachy.presence"):
             return self.executor.run_command(name, params, timeout_ms)
         try:
+            if name == "reachy.say" and not isinstance(params, _SpeechParams):
+                params = _SpeechParams(params, timeout_ms)
             command = parse_command(name, params, timeout_ms=timeout_ms)
         except ValueError:
             result = {"ok": False, "error": "invalid_parameters"}
@@ -2238,13 +2248,13 @@ class ReachyService(Service):
                 result = {"ok": True, "spoken": False, "reason": "disconnected"}
             else:
                 loop, voice = active_voice
-                deadline = time.monotonic() + command.timeout_s
+                deadline = params.deadline
 
                 async def speak():
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         return {"ok": True, "spoken": False, "reason": "timeout"}
-                    return await voice.say(command.params["text"], remaining)
+                    return await voice.say(command.params["text"], remaining, speech_serial=params.serial)
 
                 speech = speak()
                 try:
@@ -2254,7 +2264,7 @@ class ReachyService(Service):
                     result = {"ok": True, "spoken": False, "reason": "disconnected"}
                 else:
                     try:
-                        result = future.result(command.timeout_s + 1)
+                        result = future.result(max(0, deadline - time.monotonic()) + 1)
                     except CommandCancelled:
                         result = {"ok": True, "spoken": False, "reason": "disconnected"}
                     except CommandTimeout:
@@ -2272,6 +2282,17 @@ class ReachyService(Service):
     async def serve(self, session: LinkSession, vm: dict, stop: asyncio.Event) -> Outcome:
         from reachy_muse.hardware import ReachyHardwareError
 
+        def invoke(message):
+            if message.get("command") == "reachy.say":
+                try:
+                    params = _SpeechParams(message.get("params"), message.get("timeout_ms") or None)
+                except ValueError:
+                    pass
+                else:
+                    message = {**message, "params": params}
+            return LinkSession._invoke(session, message)
+
+        session._invoke = invoke
         session._run_command = partial(self.run_command, session=session)
         hardware = self.executor
         startup, self.startup = self.startup or StartupTimeline(), None

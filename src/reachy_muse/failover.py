@@ -222,13 +222,15 @@ class FailoverVoice:
 
     speaks_text = True
 
-    def __init__(self, companion, local, route: CompanionRoute):
+    def __init__(self, companion, local, route: CompanionRoute, *, standalone: bool = False):
         self.companion = companion
         self.local = local
         self.route = route
+        self.standalone = standalone
 
     def _on_companion(self, line: SpokenLine) -> bool:
-        return (self.route.this_turn and self.companion.available and not self.route.speech.resting
+        on_companion = self.route.link.up if self.standalone else self.route.this_turn
+        return (on_companion and self.companion.available and not self.route.speech.resting
                 and (line.text in CHAT_PHRASES or not self.local.is_presynthesized(line.text)))
 
     async def warm(self, output_rate: int) -> None:
@@ -388,6 +390,7 @@ def companion_backends(local: Backends, link) -> Backends:
     return Backends(
         hearing=FailoverHearing(CompanionHearing(link), local.hearing, route.hearing),
         voice=FailoverVoice(CompanionVoice(link), local.voice, route),
+        command_voice=FailoverVoice(CompanionVoice(link), local.voice, route, standalone=True),
         narrator=FailoverNarrator(CompanionNarrator(link), local.narrator, route),
         local_style=local.local_style,
         progress_voice=progress,

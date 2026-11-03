@@ -200,6 +200,7 @@ class Backends:
     companion: Optional[LinkHealth] = None
     commands: Commands = field(default_factory=Commands)
     motion: Optional[MotionSource] = None
+    command_voice: Optional[Voice] = None
 
     def reply_style(self) -> ReplyStyle:
         """The style for the next request; read once per turn, at its boundary."""

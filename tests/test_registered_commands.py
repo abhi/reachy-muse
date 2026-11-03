@@ -3,6 +3,7 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 import logging
 import threading
 from types import SimpleNamespace
@@ -31,10 +32,10 @@ class Speech:
         yield np.full(320, .1, dtype=np.float32)
 
 
-def command_device(*, mode=Mode.ON_ROBOT, speech=None):
+def command_device(*, mode=Mode.ON_ROBOT, speech=None, companion=None):
     session, hardware = FakeSession(), FakeHardware()
     speech = speech or Speech()
-    bundle = backends_for(mode, session, speech=speech)
+    bundle = backends_for(mode, session, speech=speech, companion=companion)
     voice = VoiceConversation(session, hardware, backends=bundle)
     voice._ready.set()
     service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=hardware,
@@ -52,6 +53,32 @@ async def wait_until(predicate):
         while not predicate():
             await asyncio.sleep(.001)
     await asyncio.wait_for(waiting(), 2)
+
+
+@asynccontextmanager
+async def registered_device(service, monkeypatch):
+    async def running(voice):
+        voice._ready.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            voice._closed = True
+
+    monkeypatch.setattr(VoiceConversation, "run", running)
+    session, vm = make_session(service.run_command, [])
+    stop = asyncio.Event()
+    serving = asyncio.create_task(service.serve(session, {"vm_id": "vm-1"}, stop))
+    try:
+        await asyncio.wait_for(vm.handshake(), 2)
+        await vm.accept_control_stream()
+        register = await vm.next_message()
+        await vm.send_message({"type": "res", "id": register["id"], "ok": True})
+        await wait_until(lambda: service._voice is not None
+                         and service._voice[1].session is session and service._voice[1]._ready.is_set())
+        yield session, vm, service._voice[1]
+    finally:
+        stop.set()
+        await serving
 
 
 @pytest.mark.parametrize("command, hushed, expected", [
@@ -183,6 +210,102 @@ def test_outer_say_timeout_cancels_speech_before_the_loop_resumes():
         assert speech.words == ["A new reminder."]
         assert sum(len(samples) for samples in voice.hardware.played) == 320
         assert not voice._command_tasks
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("queue", ["slots", "executor"])
+def test_say_deadline_includes_sdk_dispatch_queue(monkeypatch, queue):
+    async def check():
+        stalled, resume = threading.Event(), threading.Event()
+
+        def frame():
+            stalled.set()
+            resume.wait()
+
+        controller = ReachyController(enable_motion=False)
+        controller._robot = SimpleNamespace(media=SimpleNamespace(get_frame=frame))
+        service, _, speech = command_device()
+        service.executor.presence = controller.presence
+        count = 4 if queue == "slots" else 2
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=count))
+        try:
+            async with registered_device(service, monkeypatch) as (session, vm, voice):
+                for index in range(count):
+                    await vm.send_message({"method": "link.invoke", "id": f"presence-{index}",
+                                           "command": "reachy.presence", "params": {}, "timeout_ms": 500})
+                await wait_until(lambda: stalled.is_set() and session._invokes._value == 4 - count)
+                await vm.send_message({"method": "link.invoke", "id": "expired", "command": "reachy.say",
+                                       "params": {"text": "An expired reminder."}, "timeout_ms": 150})
+                results = [await asyncio.wait_for(vm.next_message(), 2) for _ in range(count + 1)]
+                assert next(result for result in results if result["id"] == "expired") == {
+                    "method": "link.result", "id": "expired", "ok": True,
+                    "payload": {"spoken": False, "reason": "timeout"}}
+                assert speech.words == []
+                assert voice.hardware.played == []
+        finally:
+            resume.set()
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("queue", ["executor", "loop"])
+@pytest.mark.parametrize("reopen", ["wake", "follow_up"])
+def test_hush_invalidates_say_before_its_loop_callback(monkeypatch, queue, reopen):
+    async def check():
+        queued, resume = threading.Event(), threading.Event()
+
+        class CommandExecutor(ThreadPoolExecutor):
+            def submit(self, fn, *args, **kwargs):
+                if queue == "executor" and args and args[0] == "reachy.say":
+                    def waiting():
+                        queued.set()
+                        assert resume.wait(2)
+                        return fn(*args, **kwargs)
+                    return super().submit(waiting)
+                return super().submit(fn, *args, **kwargs)
+
+        schedule = asyncio.run_coroutine_threadsafe
+
+        def waiting(coroutine, loop):
+            queued.set()
+            assert resume.wait(2)
+            return schedule(coroutine, loop)
+
+        if queue == "loop":
+            monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", waiting)
+        asyncio.get_running_loop().set_default_executor(CommandExecutor(max_workers=2))
+        service, _, speech = command_device()
+        try:
+            async with registered_device(service, monkeypatch) as (_, vm, voice):
+                await vm.send_message({"method": "link.invoke", "id": "old", "command": "reachy.say",
+                                       "params": {"text": "An old reminder."}})
+                await wait_until(queued.is_set)
+                voice._hush()
+                if reopen == "wake":
+                    await voice._wake_up(WakeWindow.AWAKE)
+                else:
+                    timeline = TurnTimeline()
+                    timeline.mark("endpoint")
+                    request = _QueuedTurn(None, False, 0, timeline, ())
+                    voice.job = reply_job()
+                    accepted = await voice._follow_up(Endpoint(b"wav", "Find tomorrow's weather."), request, None)
+                    assert accepted.text == "Find tomorrow's weather."
+                    voice.job = None
+                resume.set()
+                assert await asyncio.wait_for(vm.next_message(), 2) == {
+                    "method": "link.result", "id": "old", "ok": True,
+                    "payload": {"spoken": False, "reason": "interrupted"}}
+                assert speech.words == []
+                assert voice.hardware.played == []
+                await vm.send_message({"method": "link.invoke", "id": "new", "command": "reachy.say",
+                                       "params": {"text": "A new reminder."}})
+                assert await asyncio.wait_for(vm.next_message(), 2) == {
+                    "method": "link.result", "id": "new", "ok": True, "payload": {"spoken": True}}
+                assert speech.words == ["A new reminder."]
+                assert sum(len(samples) for samples in voice.hardware.played) == 320
+        finally:
+            resume.set()
 
     asyncio.run(check())
 
@@ -348,6 +471,46 @@ def test_muse_voice_cannot_synthesize_command_text_and_never_contacts_muse():
         service, voice, _ = command_device(mode=Mode.MUSE_VOICE)
         assert await invoke(service) == {"ok": True, "payload": {"spoken": False, "reason": "speech_unavailable"}}
         assert voice.session.sent == voice.session.setup_messages == voice.session.tts_requests == []
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("recovered", [False, True])
+def test_say_selects_companion_without_changing_an_existing_reply_route(recovered):
+    class Companion:
+        up = True
+        out_rate = 8000
+
+        def __init__(self):
+            self.words = []
+
+        def can(self, op):
+            return self.up
+
+        async def speak(self, text, role):
+            self.words.append(text)
+            yield np.full(320, 8192, dtype="<i2").tobytes()
+
+    async def check():
+        companion = Companion()
+        service, voice, speech = command_device(mode=Mode.COMPANION, companion=companion)
+        if recovered:
+            companion.up = False
+            voice.backends.reply_style()
+            await voice._speak(None, text="A local reply.", stream_segment=True)
+            assert speech.words == ["A local reply."]
+            speech.words.clear()
+            voice.hardware.played.clear()
+            companion.up = True
+        assert await invoke(service) == {"ok": True, "payload": {"spoken": True}}
+        assert companion.words == ["Lunch is ready."]
+        assert speech.words == []
+        np.testing.assert_array_equal(np.concatenate(voice.hardware.played), [.25] * 320)
+        if recovered:
+            await voice._speak(None, text="The rest of the local reply.", stream_segment=True)
+            assert speech.words == ["The rest of the local reply."]
+            assert companion.words == ["Lunch is ready."]
+        assert voice.session.sent == voice.session.setup_messages == voice.session.tts_requests == []
+
     asyncio.run(check())
 
 
