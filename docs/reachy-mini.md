@@ -480,14 +480,20 @@ Sherpa and ordinary conversations do not require its optional runtime.
 By default Reachy uses its own Muse side chat. It saves the chat ID in
 `reachy-chat.json` inside `--state-dir`, separately for each Muse VM and bound to
 the robot's identity. Reconnects and restarts resume the same chat.
-The first startup creates it with a visible setup message containing the robot's
-capabilities and sentence/expression format. The setup asks Muse to perform no
-actions and echo a one-time initialization challenge. Reachy consumes that
-response without speaking it, before accepting microphone input. A digest of
-the applied instructions avoids repeating setup on unchanged reconnects.
-Capability or format changes refresh setup in the same chat; interrupted setup
-gets a fresh challenge because the event subscription does not replay history.
-Existing state without an instruction digest is migrated on its original chat ID.
+A missing chat is created with a visible initialization challenge, with no
+persona or reply-format instructions. Reachy consumes the exact response
+without speaking it before accepting microphone input. A UUID alone does not
+create the server chat. Existing initialized chats need no setup message,
+including saved state from earlier versions. Interrupted creation gets a fresh
+challenge because the event subscription does not replay history.
+
+Reachy's identity and speaking guidance live in the registered command
+descriptions, including its persona, local controls, and the fact that requests
+are speech transcripts. Registration is sent on every connection. Each normal
+chat request contains only your words, plus the small local-chat history note
+when needed. Reconnects and companion changes never add a voice prompt.
+The morning briefing states its own requested length.
+
 If a saved chat no longer exists, Reachy recreates that same side-chat ID.
 Creation must confirm the requested ID and `is_thread: true`; errors never
 redirect speech to the main chat. Preserve this state file with the pairing
@@ -639,8 +645,7 @@ causes regeneration on the next start.
 detector, hardware, Muse registration, dedicated-chat setup, subscription, and
 hearing. Hardware includes audio setup, the initial motion, and optional face
 tracking initialization. Registration, chat setup, and streaming hearing must
-finish before conversation input starts. Main-chat mode without a wake detector
-also finishes its initial spoken setup turn before the ready message.
+finish before conversation input starts. There is no initial spoken setup turn.
 Companion connection attempts and
 fixed-phrase warming run independently of readiness. The first uncached live
 request can still pay the cost of loading its speech model.
@@ -937,19 +942,47 @@ happy or sad reply also get the generated motion described in
 Partial antenna mode applies this score to the working antenna and keeps the
 other target at its measured startup position.
 
-The device registers two commands:
+The device registers as `Reachy Mini` with four commands:
 
 | Command | Behavior |
 | --- | --- |
+| `reachy.say` | Speaks a short message in the room through the normal speaker path. Required `text` is 1 to 240 UTF-8 bytes. Returns `spoken: true` after playback, otherwise `spoken: false` and a reason. |
+| `reachy.presence` | Checks whether a person is in camera view and reports roughly how many seconds ago one was last seen. Unknown values are null. No images or identity leave the robot. |
 | `reachy.expression` | Plays neutral, happy, sad, surprised, curious, nod, shake, listening, thinking, or error. An exact name from Pollen's official recorded emotions library loads that move on demand. The move crossfades in from the resting pose over 0.4 seconds while it plays, and back out over 0.4 seconds after it ends. Speech sway continues on top, and the result stays within the `reachy.move` limits. Sound effects stay off during Muse speech. |
 | `reachy.move` | Moves head translation, rotation, body yaw, and antennas smoothly within advertised limits. Invalid or nonfinite values are rejected. |
 
-Try asking Muse, "Give me a happy nod when you finish answering."
-Some Muse runtimes accept device registration but do not expose custom commands
-to their conversational planner. The local speech adapter gives Muse an
-expression channel without requiring tool discovery.
+`reachy.say` refuses while asleep, hushed, handling a user turn, or before voice
+readiness. Otherwise it waits for the current line and rechecks before speaking.
+Stop talking interrupts it and blocks further `reachy.say` calls until the next
+user request or wake. Sleep and hush survive reconnects. It preserves volume
+and motion settings. This version has no quiet-hours schedule. A timeout or
+disconnect cancels the pending line; partial playback can precede a refusal.
+There is no urgent override or deferred delivery.
 
-With `--stream-replies`, Muse sends one JSON object per spoken chunk:
+The command needs local or companion text synthesis. In `muse-voice` mode it
+returns `speech_unavailable`; ordinary voice turns continue to use Muse's TTS.
+Replies to Reachy's own requests already play aloud, so Muse need not call
+`reachy.say` for the same answer.
+
+Presence reuses recent arrival-detector state during watching. A moving camera,
+an unavailable watcher, or an observation older than two seconds returns
+unknown. Outside watching, it makes one local person check if the camera is
+available. It never moves or wakes Reachy. The last-seen age stays in memory,
+without images or identity. A person in view need not be you, and absence in
+camera view does not establish that the home is empty. Both command handlers
+log only the command name and outcome.
+
+The full registration is 4,176 JSON bytes, or 4,180 bytes with the SDK's length
+prefix, under the 8,192-byte cap. The exact registration and byte counts are
+pinned in `tests/pins/registration.json` and `tests/test_registration.py`.
+See [the contract](contract.md) for command results and refusal reasons.
+
+Muse is asked for plain spoken replies. The companion narrator assigns
+expressions to the lines it speaks. Some Muse runtimes do not expose custom
+commands to their conversational planner, even after registration succeeds.
+
+With `--stream-replies`, Reachy streams plain sentences as they arrive. It also
+continues to parse legacy JSON frames if Muse emits them, for example:
 
 ```json
 {"text":"Wow!","expression":"surprised"}
@@ -986,9 +1019,10 @@ Progress frames are excluded from final-answer reconciliation, so they are not
 replayed with the completed answer. Local backend phase updates use the same
 progress timing and thinking motion.
 
-Without streaming, Muse appends a marker such as `[reachy:nod]` to its answer.
+Legacy replies can also contain a marker such as `[reachy:nod]`.
 The adapter removes it before speaking and executes the expression through
-the same bounded Reachy controller. Both channels accept the built-in names
+the same bounded Reachy controller. Reachy no longer asks Muse for markers or
+JSON frames. Both legacy formats accept the built-in names
 listed above, excluding error.
 Recorded moves remain available through the registered command path.
 Recorded moves come from
