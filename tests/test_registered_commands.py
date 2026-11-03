@@ -11,11 +11,13 @@ from types import SimpleNamespace
 import pytest
 
 from musegadget.identity import Identity
+from reachy_muse.arrival import PersonBox
 from reachy_muse.capabilities import Endpoint, Mode
 from reachy_muse.device_command import WakeWindow
 from reachy_muse.conversation import ReachyService, VoiceConversation, _HeldRequest, _QueuedTurn
 from reachy_muse.hardware import ReachyController
 from reachy_muse.local_backends import backends_for
+from reachy_muse.presence import Presence
 from reachy_muse.turn_timeline import TurnTimeline
 from fake_muse_vm import make_session
 from test_conversation import FakeHardware, FakeSession, reply_job
@@ -245,6 +247,62 @@ def test_say_deadline_includes_sdk_dispatch_queue(monkeypatch, queue):
                 assert voice.hardware.played == []
         finally:
             resume.set()
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("queue", ["slots", "executor"])
+@pytest.mark.parametrize("params", [{}, None])
+def test_presence_deadline_includes_sdk_dispatch_queue(monkeypatch, queue, params):
+    now = [100.0]
+    monkeypatch.setattr("reachy_muse.conversation.time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr("reachy_muse.hardware.time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    async def check():
+        stalled, resume = threading.Event(), threading.Event()
+        reads = []
+
+        def block():
+            stalled.set()
+            resume.wait()
+
+        def frame():
+            reads.append(True)
+            return object()
+
+        controller = ReachyController(enable_motion=False)
+        controller._robot = SimpleNamespace(media=SimpleNamespace(get_frame=frame))
+        controller._presence_detector = SimpleNamespace(detect=lambda image: [PersonBox(0, 0, .2, .3, .9)])
+        controller._presence = Presence(True, 90, 90)
+        service, _, _ = command_device()
+        service.executor.presence = controller.presence
+        executor = ThreadPoolExecutor(max_workers=1)
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(executor)
+        async with registered_device(service, monkeypatch) as (session, vm, _):
+            if queue == "slots":
+                for _ in range(4):
+                    await session._invokes.acquire()
+            else:
+                blocker = loop.run_in_executor(None, block)
+                await wait_until(stalled.is_set)
+            try:
+                await vm.send_message({"method": "link.invoke", "id": "expired", "command": "reachy.presence",
+                                       "params": params, "timeout_ms": 20})
+                await wait_until(lambda: bool(session._invokes._waiters) if queue == "slots"
+                                 else executor._work_queue.qsize() == 1)
+                now[0] += .08
+            finally:
+                if queue == "slots":
+                    for _ in range(4):
+                        session._invokes.release()
+                else:
+                    resume.set()
+                    await blocker
+            assert await asyncio.wait_for(vm.next_message(), 2) == {
+                "method": "link.result", "id": "expired", "ok": True,
+                "payload": {"present": None, "last_seen_seconds": 10}}
+            assert reads == []
 
     asyncio.run(check())
 

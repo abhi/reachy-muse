@@ -569,11 +569,13 @@ class ReachyController:
     def presence(self, timeout_s: float = 5.0) -> dict:
         """Reuse the watcher or inspect one frame; never move the robot."""
         deadline = time.monotonic() + timeout_s
-        if self._presence_lock.acquire(timeout=timeout_s):
+        if timeout_s > 0 and self._presence_lock.acquire(timeout=timeout_s):
             result = Future()
 
             def inspect():
                 try:
+                    if time.monotonic() >= deadline:
+                        raise PresenceTimeout()
                     result.set_result(self._check_presence())
                 except Exception as exc:
                     result.set_exception(exc)

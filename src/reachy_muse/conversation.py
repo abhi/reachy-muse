@@ -112,13 +112,14 @@ class _SpeechSuperseded(Exception):
     """An unheard sentence was replaced before its audio could be queued."""
 
 
-class _SpeechParams(dict):
-    def __init__(self, params, timeout_ms):
+class _CommandParams(dict):
+    def __init__(self, name, params, timeout_ms):
         received_at = time.monotonic()
-        command = parse_command("reachy.say", params, timeout_ms=timeout_ms)
+        command = parse_command(name, params, timeout_ms=timeout_ms)
         super().__init__(command.params)
         self.deadline = received_at + command.timeout_s
-        self.serial = next(_SPEECH_SERIALS)
+        if name == "reachy.say":
+            self.serial = next(_SPEECH_SERIALS)
 
 
 @dataclass(frozen=True)
@@ -2235,15 +2236,15 @@ class ReachyService(Service):
         if name not in ("reachy.say", "reachy.presence"):
             return self.executor.run_command(name, params, timeout_ms)
         try:
-            if name == "reachy.say" and not isinstance(params, _SpeechParams):
-                params = _SpeechParams(params, timeout_ms)
+            if not isinstance(params, _CommandParams):
+                params = _CommandParams(name, params, timeout_ms)
             command = parse_command(name, params, timeout_ms=timeout_ms)
         except ValueError:
             result = {"ok": False, "error": "invalid_parameters"}
         else:
             active_voice = self._voice
             if name == "reachy.presence":
-                result = self.executor.presence(command.timeout_s)
+                result = self.executor.presence(max(0, params.deadline - time.monotonic()))
             elif active_voice is None or (session is not None and active_voice[1].session is not session):
                 result = {"ok": True, "spoken": False, "reason": "disconnected"}
             else:
@@ -2283,9 +2284,12 @@ class ReachyService(Service):
         from reachy_muse.hardware import ReachyHardwareError
 
         def invoke(message):
-            if message.get("command") == "reachy.say":
+            name = message.get("command")
+            if name in ("reachy.say", "reachy.presence"):
+                params = message.get("params")
                 try:
-                    params = _SpeechParams(message.get("params"), message.get("timeout_ms") or None)
+                    params = _CommandParams(name, params if isinstance(params, dict) else {},
+                                            message.get("timeout_ms") or None)
                 except ValueError:
                     pass
                 else:
