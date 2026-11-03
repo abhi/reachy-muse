@@ -217,6 +217,52 @@ def test_hush_stops_playback_and_refuses_new_say_until_wake():
     asyncio.run(check())
 
 
+def test_hush_interrupts_stalled_synthesis_and_flushes_before_the_next_reply():
+    async def check():
+        stalled, closed = asyncio.Event(), asyncio.Event()
+        flushing, finish_flush = threading.Event(), threading.Event()
+
+        class StalledSpeech(Speech):
+            async def stream(self, text, rate):
+                self.words.append(text)
+                if text == "Lunch is ready.":
+                    try:
+                        yield np.full(3200, .1, dtype=np.float32)
+                        stalled.set()
+                        await asyncio.Event().wait()
+                    finally:
+                        closed.set()
+                else:
+                    yield np.full(320, .2, dtype=np.float32)
+
+        service, voice, speech = command_device(speech=StalledSpeech())
+        clear_audio = voice.hardware.clear_audio
+
+        def clear():
+            flushing.set()
+            assert finish_flush.wait(2)
+            clear_audio()
+
+        voice.hardware.clear_audio = clear
+        pending = asyncio.create_task(invoke(service, timeout_ms=1000))
+        await stalled.wait()
+        voice._hush()
+        reply = asyncio.create_task(voice._speak(None, text="A later reply.", stream_segment=True))
+        try:
+            await wait_until(flushing.is_set)
+            assert closed.is_set() and voice._speaker_lock.locked()
+            assert speech.words == ["Lunch is ready."] and not reply.done()
+        finally:
+            finish_flush.set()
+            await asyncio.gather(pending, reply)
+        assert pending.result() == {"ok": True, "payload": {"spoken": False, "reason": "hushed"}}
+        assert speech.words == ["Lunch is ready.", "A later reply."]
+        assert voice.hardware.cleared == 1 and not voice._speaker_lock.locked()
+        assert not voice._command_tasks
+
+    asyncio.run(check())
+
+
 def test_cancelled_command_flushes_output_and_reports_disconnection():
     async def check():
         closed = asyncio.Event()

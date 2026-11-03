@@ -1736,6 +1736,8 @@ class VoiceConversation:
         self._moments.stop()
         self._hush_floor = next(_SPEECH_SERIALS)
         self._say_hushed = True
+        for task in self._command_tasks:
+            task.cancel()
 
     async def _wake_up(self, window: WakeWindow) -> None:
         """Leave the sleep pose; the wake phrase and "wake up" both come here.
@@ -1868,20 +1870,22 @@ class VoiceConversation:
         """Queue one bounded line with the same speaker ownership as replies."""
         task = asyncio.current_task()
         self._command_tasks.add(task)
+        speech_serial = next(_SPEECH_SERIALS)
         try:
             reason = self._say_blocked()
             if reason is None:
                 try:
                     await asyncio.wait_for(self._speak(
                         None, text=text, stream_segment=True,
-                        speech_serial=next(_SPEECH_SERIALS),
+                        speech_serial=speech_serial,
                         is_current=lambda: self._say_blocked() is None), timeout_s)
                 except _SpeechSuperseded:
                     reason = self._say_blocked() or "interrupted"
                 except asyncio.TimeoutError:
                     reason = "timeout"
                 except asyncio.CancelledError:
-                    reason = "disconnected"
+                    reason = ((self._say_blocked() or "interrupted")
+                              if speech_serial <= self._hush_floor else "disconnected")
                 except Exception:
                     reason = "speech_failed"
                 finally:
