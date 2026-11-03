@@ -1098,6 +1098,7 @@ class VoiceConversation:
                         detected, wake_tail = await detects_wake(sample)
                         if not detected:
                             continue
+                        self._say_hushed = False
                         wake_epoch += 1
                         self._wake_at = now
                         self._wake_deadline = now + (self.wake_timeout_s or 10.0)

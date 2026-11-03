@@ -7,11 +7,12 @@ import wave
 
 import pytest
 
+from musegadget.identity import Identity
 from reachy_muse import voice_audio
 import reachy_muse.conversation
 from reachy_muse.capabilities import Mode
 from reachy_muse.local_backends import backends_for
-from reachy_muse.conversation import VoiceConversation
+from reachy_muse.conversation import ReachyService, VoiceConversation, _SpeechJob
 from test_conversation import FakeHardware, FakeSession, bounded, cancel_task
 
 
@@ -85,7 +86,8 @@ def handoff(monkeypatch):
                 )
             return True
 
-    async def scenario(run, *, trusted=True, invalid=None, recognized=None, pause_asr=False, delayed=False):
+    async def scenario(run, *, trusted=True, invalid=None, recognized=None, pause_asr=False, delayed=False,
+                       speech=None):
         incoming = asyncio.Queue()
         accepted = asyncio.Event()
         consumer_ready = asyncio.Event()
@@ -117,7 +119,7 @@ def handoff(monkeypatch):
         wake = Wake(trusted=trusted, invalid=invalid, delayed=delayed)
         recognition = Recognition()
         conversation = VoiceConversation(session, hardware,
-                                         backends=backends_for(Mode.ON_ROBOT, session, speech=object(),
+                                         backends=backends_for(Mode.ON_ROBOT, session, speech=speech or object(),
                                                                transcriber=recognition),
                                          wake_detector=wake, silence_s=.14)
         conversation.backends.voice.phrases["Yes?"] = (np.full(80, .1, np.float32),)
@@ -177,6 +179,37 @@ def test_trusted_wake_and_quiet_movement_noise_do_not_start_wake_asr(handoff):
         assert 16384 in recordings[0] and 8192 not in recordings[0]
 
     asyncio.run(bounded(handoff(run)))
+
+
+def test_wake_only_after_hush_allows_new_room_commands_but_discards_old_speech(handoff):
+    np = pytest.importorskip("numpy")
+    words = []
+
+    class Speech:
+        async def stream(self, text, rate):
+            words.append(text)
+            yield np.full(320, .1, dtype=np.float32)
+
+    async def run(conversation, session, hardware, wake, recognition, recordings, accepted, feed):
+        service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=hardware,
+                               backends=lambda _: conversation.backends)
+        service._voice = (asyncio.get_running_loop(), conversation)
+        old = _SpeechJob(None, "An old reminder.")
+        conversation._hush()
+        assert await asyncio.to_thread(service.run_command, "reachy.say", {"text": "A hushed reminder."}) == {
+            "ok": True, "payload": {"spoken": False, "reason": "hushed"}}
+        await feed((.25, 14), (0, 7))
+        assert conversation._wake_deadline is not None
+        assert not recognition.entered.is_set() and recordings == []
+        await conversation._output_queue.put(old)
+        await conversation._output_queue.join()
+        assert await asyncio.to_thread(service.run_command, "reachy.say", {"text": "A new reminder."}) == {
+            "ok": True, "payload": {"spoken": True}}
+        assert words == ["A new reminder."]
+        assert sum(len(samples) for samples in hardware.played) == 320
+        assert session.sent == session.setup_messages == []
+
+    asyncio.run(bounded(handoff(run, speech=Speech())))
 
 
 def test_same_breath_request_keeps_first_word_and_removes_all_prewake_pcm(handoff):
