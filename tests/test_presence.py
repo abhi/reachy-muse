@@ -63,6 +63,23 @@ def test_camera_check_reads_one_frame_and_retains_no_images(monkeypatch):
     assert controller._state == "idle" and controller._commands.empty()
 
 
+@pytest.mark.parametrize("found, last_seen_seconds", [(True, 4), (False, 14)])
+def test_delayed_detection_expires_the_frame_and_keeps_its_last_seen_age(monkeypatch, found, last_seen_seconds):
+    now = [100.0]
+    monkeypatch.setattr(reachy_muse.hardware.time, "monotonic", lambda: now[0])
+
+    class Detector:
+        def detect(self, image):
+            now[0] = 103.5
+            return [PersonBox(0, 0, .2, .3, .9)] if found else []
+
+    controller = ReachyController(enable_motion=False)
+    controller._robot = SimpleNamespace(media=SimpleNamespace(get_frame=object))
+    controller._presence_detector = Detector()
+    controller._presence = Presence(True, 90, 90)
+    assert controller.presence() == {"ok": True, "present": None, "last_seen_seconds": last_seen_seconds}
+
+
 @pytest.mark.parametrize("failure", ["missing_camera", "no_frame", "read_error", "detector_error"])
 def test_unavailable_camera_never_claims_absence(monkeypatch, failure, caplog):
     def frame():

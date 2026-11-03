@@ -600,6 +600,7 @@ class ReachyController:
         if self._watching:
             self._presence = Presence(observed.present, observed.observed_at, last_seen)
         else:
+            observed_at = time.monotonic()
             present = None
             try:
                 if self._robot is not None and not self._stop.is_set():
@@ -614,7 +615,7 @@ class ReachyController:
                         del frame
             except Exception:
                 pass
-            self._presence = Presence(last_seen_at=last_seen).observe(present, time.monotonic())
+            self._presence = Presence(last_seen_at=last_seen).observe(present, observed_at)
         return self._presence.result(time.monotonic())
 
     def log_arrival_diagnostics(self) -> None:
