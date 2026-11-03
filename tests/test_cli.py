@@ -15,7 +15,7 @@ from musegadget import config
 import reachy_muse.cli
 from musegadget.link_client import HttpStreamError, SideChat
 from reachy_muse.speaker_eq import COMPANION_SPEAKER_EQ_GAINS, SPEAKER_EQ_GAINS
-from reachy_muse.contract.prompts import CHAT_SETUP_MESSAGE
+from reachy_muse.contract.prompts import CHAT_BOOTSTRAP
 from reachy_muse.contract.replies import ReplyStyle
 
 
@@ -27,12 +27,9 @@ def fixed_setup_nonce(monkeypatch):
     monkeypatch.setattr(reachy_muse.cli.secrets, "token_hex", lambda size: SETUP_NONCE)
 
 
-def setup_wire_message(message=CHAT_SETUP_MESSAGE):
-    return f"{message}\n\nInitialization challenge: reply exactly Ready {SETUP_NONCE}"
-
-
-def first_setup_hash():
-    return reachy_muse.cli.ReachySideChat("reachy-1").setup_sha256
+def setup_wire_message():
+    return ("Initialize Reachy's dedicated voice chat. Do not use tools or take external actions."
+            f"\n\nInitialization challenge: reply exactly Ready {SETUP_NONCE}")
 
 
 @pytest.mark.parametrize('options, enabled', [([], False), (['--face-follow'], True),
@@ -144,8 +141,7 @@ def test_dedicated_chat_is_created_once_and_resumed_after_restart(tmp_path):
         assert first.subscription_closed
         saved = json.loads((tmp_path / reachy_muse.cli.CHAT_STATE_FILE).read_text())
         assert saved == {'version': 2, 'device_id': 'reachy-1',
-                         'chats': {'vm-1': {'session_id': selected, 'initialized': True,
-                                          'applied_setup_sha256': first_setup_hash()}}}
+                         'chats': {'vm-1': {'session_id': selected, 'initialized': True}}}
         assert (tmp_path / reachy_muse.cli.CHAT_STATE_FILE).stat().st_mode & 0o777 == 0o600
         reconnect = ChatSession(200)
         assert await reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(reconnect, 'vm-1') == selected
@@ -157,52 +153,32 @@ def test_dedicated_chat_is_created_once_and_resumed_after_restart(tmp_path):
     asyncio.run(check())
 
 
-def test_v1_initialized_chat_migrates_in_place_with_current_setup(tmp_path):
+@pytest.mark.parametrize('version, fields', [(1, {}), (2, {'applied_setup_sha256': 'a' * 64})])
+def test_existing_initialized_chat_needs_no_new_instructions(tmp_path, version, fields):
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
     config.save_json(reachy_muse.cli.CHAT_STATE_FILE, {
-        'version': 1, 'device_id': 'reachy-1',
-        'chats': {'vm-1': {'session_id': selected, 'initialized': True}},
+        'version': version, 'device_id': 'reachy-1',
+        'chats': {'vm-1': {'session_id': selected, 'initialized': True, **fields}},
     }, tmp_path)
     session = ChatSession(200)
     assert asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(
         session, 'vm-1')) == selected
-    assert session.posts == [(setup_wire_message(), selected)]
-    saved = json.loads((tmp_path / reachy_muse.cli.CHAT_STATE_FILE).read_text())
-    assert saved['version'] == 2
-    assert saved['chats']['vm-1'] == {
-        'session_id': selected, 'initialized': True,
-        'applied_setup_sha256': first_setup_hash(),
-    }
+    assert session.posts == []
 
 
-def test_changed_setup_refreshes_same_chat_once(tmp_path):
-    async def check():
-        original = reachy_muse.cli.ReachySideChat('reachy-1', tmp_path, setup_message='first setup')
-        selected = await original.prepare(ChatSession(), 'vm-1')
-        changed_session = ChatSession(200)
-        changed = reachy_muse.cli.ReachySideChat('reachy-1', tmp_path, setup_message='second setup')
-        assert await changed.prepare(changed_session, 'vm-1') == selected
-        assert changed_session.posts == [(setup_wire_message('second setup'), selected)]
-        assert changed_session.timeline[:2] == ['subscribe', 'post']
-        reconnect = ChatSession(200)
-        assert await changed.prepare(reconnect, 'vm-1') == selected
-        assert reconnect.posts == []
-    asyncio.run(check())
-
-
-def test_pending_newer_setup_prevents_old_applied_digest_from_skipping(tmp_path):
+def test_old_pending_setup_finishes_with_only_the_creation_challenge(tmp_path):
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
-    old = reachy_muse.cli.ReachySideChat('reachy-1', tmp_path, setup_message='old setup')
     config.save_json(reachy_muse.cli.CHAT_STATE_FILE, {
         'version': 2, 'device_id': 'reachy-1', 'chats': {'vm-1': {
-            'session_id': selected,
-            'initialized': False,
-            'applied_setup_sha256': old.setup_sha256,
-            'pending_setup_sha256': 'f' * 64,
+            'session_id': selected, 'initialized': False,
+            'applied_setup_sha256': 'a' * 64, 'pending_setup_sha256': 'b' * 64,
         }}}, tmp_path)
     session = ChatSession(200)
-    assert asyncio.run(old.prepare(session, 'vm-1')) == selected
-    assert session.posts == [(setup_wire_message('old setup'), selected)]
+    assert asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1')) == selected
+    assert session.posts == [(setup_wire_message(), selected)]
+    assert session.timeline[:2] == ['subscribe', 'post']
+    saved = json.loads((tmp_path / reachy_muse.cli.CHAT_STATE_FILE).read_text())
+    assert saved['chats']['vm-1'] == {'session_id': selected, 'initialized': True}
 
 
 def test_dedicated_chat_waits_for_registration_before_any_http_or_state_write(tmp_path):
@@ -291,14 +267,14 @@ def test_setup_drain_rejects_completed_turn_with_stale_challenge(tmp_path, monke
     with pytest.raises(RuntimeError, match='did not finish'):
         asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
     saved = json.loads((tmp_path / reachy_muse.cli.CHAT_STATE_FILE).read_text())
-    assert 'applied_setup_sha256' not in saved['chats']['vm-1']
+    assert saved['chats']['vm-1']['initialized'] is False
 
 
 def test_exact_challenge_in_final_response_succeeds_without_task_metadata(tmp_path):
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
     config.save_json(reachy_muse.cli.CHAT_STATE_FILE, {
         'version': 1, 'device_id': 'reachy-1',
-        'chats': {'vm-1': {'session_id': selected, 'initialized': True}},
+        'chats': {'vm-1': {'session_id': selected, 'initialized': False}},
     }, tmp_path)
     session = ChatSession(200, events=[
         {'event': 'message.assistant', 'payload': {
@@ -308,6 +284,7 @@ def test_exact_challenge_in_final_response_succeeds_without_task_metadata(tmp_pa
     ])
     assert asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(
         session, 'vm-1')) == selected
+    assert session.posts == [(setup_wire_message(), selected)]
 
 
 @pytest.mark.parametrize('completion', ['root-task', 'assistant-final'])
@@ -371,7 +348,7 @@ def test_failed_setup_task_is_never_marked_applied(tmp_path, status):
     with pytest.raises(RuntimeError, match='did not apply'):
         asyncio.run(reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(session, 'vm-1'))
     saved = json.loads((tmp_path / reachy_muse.cli.CHAT_STATE_FILE).read_text())
-    assert 'applied_setup_sha256' not in saved['chats']['vm-1']
+    assert saved['chats']['vm-1']['initialized'] is False
 
 
 def test_setup_without_terminal_event_times_out_and_closes_subscription(tmp_path, monkeypatch):
@@ -411,7 +388,6 @@ def test_cancelled_setup_closes_subscription_and_keeps_persisted_id(tmp_path):
         saved = json.loads((tmp_path / reachy_muse.cli.CHAT_STATE_FILE).read_text())
         assert saved['chats']['vm-1'] == {
             'session_id': session.posts[0][1], 'initialized': False,
-            'pending_setup_sha256': first_setup_hash(),
         }
         resumed = ChatSession(200)
         assert await reachy_muse.cli.ReachySideChat('reachy-1', tmp_path).prepare(resumed, 'vm-1') == session.posts[0][1]
@@ -425,8 +401,7 @@ def test_existing_uninitialized_chat_reapplies_setup_before_accepting_completion
     config.save_json(reachy_muse.cli.CHAT_STATE_FILE, {
         'version': 2, 'device_id': 'reachy-1', 'chats': {
             'vm-1': {'session_id': selected, 'initialized': False,
-                     'pending_setup_sha256': first_setup_hash(),
-                     'setup_ack': {'message_id': 'setup-user'}},
+                              'setup_ack': {'message_id': 'setup-user'}},
         },
     }, tmp_path)
     session = ChatSession(200, events=[
@@ -475,7 +450,7 @@ def test_existing_chat_subscription_failure_is_reported_without_waiting_for_read
     selected = '9dc752fa-9df0-4e28-a554-dc737e29cc74'
     config.save_json(reachy_muse.cli.CHAT_STATE_FILE, {
         'version': 1, 'device_id': 'reachy-1',
-        'chats': {'vm-1': {'session_id': selected, 'initialized': True}},
+        'chats': {'vm-1': {'session_id': selected, 'initialized': False}},
     }, tmp_path)
 
     class ClosedBeforeReady(ChatSession):
@@ -579,8 +554,6 @@ def test_cli_selects_owned_side_chat_by_default_and_preserves_explicit_routes(
         reconnect = ChatSession(200)
         assert asyncio.run(prepare(reconnect, 'vm-1')) == selected
         assert reconnect.posts == []
-        assert "one JSON object per line" not in prepare.__self__.setup_message
-        assert "Both antennas are enabled" in prepare.__self__.setup_message
     else:
         assert sent == [("Good morning, don't cancel my café booking at 6:30.", expected_session)]
         assert not (tmp_path / reachy_muse.cli.CHAT_STATE_FILE).exists()

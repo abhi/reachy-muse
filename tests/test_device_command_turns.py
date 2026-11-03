@@ -224,7 +224,7 @@ def test_stop_talking_while_an_earlier_answer_plays_cuts_the_rest_of_it(monkeypa
 
 
 @pytest.mark.parametrize("reply", ["Hello there.", "Hello there. [reachy:happy]"])
-def test_hushing_the_shared_chat_startup_reply_keeps_the_session_open(monkeypatch, reply):
+def test_hushing_a_shared_chat_reply_keeps_the_session_open(monkeypatch, reply):
     from musegadget.link_client import Outcome
 
     rig = rig_with(monkeypatch, chunk_s=.1)
@@ -234,12 +234,14 @@ def test_hushing_the_shared_chat_startup_reply_keeps_the_session_open(monkeypatc
         await session.answer(request, reply if request == 1 else "Sunny tomorrow. [reachy:happy]")
 
     conversation = rig.service(muse, owned=False, speech=LongVoice(rig.recording, chunks=20),
-                               transcriber=Transcripts("Stop talking.", "What's the weather tomorrow?"))
+                               transcriber=Transcripts("Say hello.", "Stop talking.", "What's the weather tomorrow?"))
 
     async def check():
         stop = asyncio.Event()
         session = asyncio.create_task(conversation.serve(rig.session, {"vm_id": "vm-1"}, stop))
         try:
+            await rig.session.chat_subscribed.wait()
+            rig.say()
             await rig.wait_until_or_timeout(lambda: played(rig.recording.events) == ["tts:Hello there."], 5)
             assert played(rig.recording.events) == ["tts:Hello there."]
             rig.say()
@@ -250,7 +252,7 @@ def test_hushing_the_shared_chat_startup_reply_keeps_the_session_open(monkeypatc
             rig.say()
             await rig.quiet()
             assert played(rig.recording.events) == ["tts:Hello there.", "tts:Sunny tomorrow."]
-            assert sent_to_muse(rig.recording.events)[1:] == ["What's the weather tomorrow?"]
+            assert sent_to_muse(rig.recording.events) == ["Say hello.", "What's the weather tomorrow?"]
         finally:
             stop.set()
             outcome = await asyncio.wait_for(session, 5)

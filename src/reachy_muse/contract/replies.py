@@ -25,12 +25,12 @@ from reachy_muse.contract.expressions import Expression
 
 
 class ReplyStyle(Enum):
-    """The Muse prompt a request was sent with, which also picks its reply parser."""
+    """Local reply handling; these choices do not change the request sent to Muse."""
 
-    MUSE_VOICE = "muse_voice"      # Muse speaks; a trailing [reachy:NAME] picks the expression
-    MARKER = "marker"              # local speech of a reply with a trailing [reachy:NAME]
-    EXPRESSIVE_JSON = "json"       # local speech of one JSON sentence frame per line
-    PLAIN_SHORT = "plain"          # one to three plain spoken sentences
+    MUSE_VOICE = "muse_voice"      # Muse speaks its own TTS; legacy markers are accepted
+    MARKER = "marker"              # local speech of a complete reply; legacy markers are accepted
+    EXPRESSIVE_JSON = "json"       # stream plain sentences or legacy JSON frames
+    PLAIN_SHORT = "plain"          # companion narration of a complete reply
 
 
 _MARKER = re.compile(r"\[reachy:([a-zA-Z0-9_-]{1,80})\]")
@@ -345,6 +345,10 @@ class SentenceStream:
 
 def spoken_reply(text: str) -> tuple[str, str | None]:
     """Remove expression controls from speech and return the last requested move."""
+    if text.lstrip().startswith(("{", "```")):
+        answers = [sentence for sentence in SentenceStream().finish(text) if sentence.kind == "answer"]
+        return (" ".join(sentence.text for sentence in answers),
+                next((sentence.expression for sentence in reversed(answers) if sentence.expression), None))
     if _TOOL_CONTROL.search(text):
         raise ReplyProtocolError("Assistant tool controls are not spoken content")
     markers = _MARKER.findall(text)

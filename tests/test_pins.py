@@ -348,11 +348,11 @@ def test_muse_voice_turn_sends_wav_and_plays_muse_mp3_with_marker_expression(mon
     check("muse_voice", run_scenario(rig, service, user))
 
 
-def test_on_robot_marker_turn_sets_up_main_chat_then_speaks_reply(monkeypatch):
+def test_on_robot_marker_turn_sends_only_words_then_speaks_reply(monkeypatch):
     rig = Rig(monkeypatch)
 
     async def muse(session, request):
-        reply = "Ready to talk. [reachy:nod]" if request == 1 else "You are doing great. [reachy:happy]"
+        reply = "You are doing great. [reachy:happy]"
         await session.answer(request, reply)
 
     service = rig.service(muse, owned=False, speech=rig.voice(), progress_speech=rig.voice("progress_tts"),
@@ -367,7 +367,7 @@ def test_task_status_trailing_the_answer_still_ends_idle_without_a_thinking_flas
     rig = Rig(monkeypatch)
 
     async def muse(session, request):
-        reply = "Ready to talk. [reachy:nod]" if request == 1 else "You are doing great. [reachy:happy]"
+        reply = "You are doing great. [reachy:happy]"
         await session.emit("delta.message_done", f"reply-{request}", request=request, content=reply)
         await asyncio.sleep(.01)
         await session.emit("task.status", request=request, status="completed")
@@ -398,7 +398,7 @@ def test_on_robot_json_turn_speaks_each_sentence_with_its_expression(monkeypatch
     check("on_robot_json", run_scenario(rig, service, user))
 
 
-def test_wake_turn_strips_wake_phrase_and_prefixes_voice_context(monkeypatch):
+def test_wake_turn_strips_wake_phrase_and_sends_only_words(monkeypatch):
     rig = Rig(monkeypatch)
 
     async def muse(session, request):
@@ -664,18 +664,16 @@ def test_stop_talking_before_the_answer_cancels_the_request(monkeypatch):
     assert "tts:Robots learned to fold laundry." not in plays
 
 
-@pytest.mark.parametrize("stop_reply_parent", [None, "user-3"])
+@pytest.mark.parametrize("stop_reply_parent", [None, "user-2"])
 def test_muse_reply_to_the_stop_request_is_not_spoken_as_the_next_answer(monkeypatch, stop_reply_parent):
     rig = Rig(monkeypatch)
 
     async def muse(session, request):
-        if request == 1:
-            await session.answer(request, "Ready to talk. [reachy:nod]")
-        elif request == 3:
-            await rig.wait_until_or_timeout(lambda: session.requests == 4, 10)
+        if request == 2:
+            await rig.wait_until_or_timeout(lambda: session.requests == 3, 10)
             await session.emit("delta.message_done", "stopped", request=request, parent=stop_reply_parent,
                                content="Okay, I've stopped. [reachy:nod]")
-        elif request == 4:
+        elif request == 3:
             await asyncio.sleep(1)
             await session.answer(request, "It is nine in the morning there. [reachy:nod]")
 
@@ -687,12 +685,12 @@ def test_muse_reply_to_the_stop_request_is_not_spoken_as_the_next_answer(monkeyp
         rig.say()
         await rig.quiet("thinking")
         rig.say()
-        await rig.wait_until_or_timeout(lambda: rig.session.requests == 3, 5)
+        await rig.wait_until_or_timeout(lambda: rig.session.requests == 2, 5)
         await rig.quiet()
         rig.say()
     record = run_scenario(rig, service, user)
-    assert [event["text"].rsplit(": ", 1)[-1] for event in record["events"]
-            if event.get("muse") == "send_chat"][1:] == [
+    assert [event["text"] for event in record["events"]
+            if event.get("muse") == "send_chat"] == [
         "Can you search for the latest robot news?", "Please stop working on my previous request.", "What time is it in Tokyo?"]
     plays = [event["audio"] for event in record["events"] if event.get("robot") == "play"]
     assert "tts:Okay, I've stopped." not in plays

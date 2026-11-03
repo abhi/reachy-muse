@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 import functools
 import getpass
-import hashlib
 import json
 import logging
 import math
@@ -24,9 +23,7 @@ import time
 import uuid
 
 from musegadget import config, identity
-from reachy_muse.contract.prompts import (CHAT_SETUP_MESSAGE, CHAT_SETUP_PREFIX, CHAT_SETUP_SUFFIX, setup_challenge_reply,
-                                      voice_context, with_setup_challenge)
-from reachy_muse.contract.replies import ReplyStyle
+from reachy_muse.contract.prompts import CHAT_BOOTSTRAP, setup_challenge_reply, with_setup_challenge
 from reachy_muse.capabilities import Mode
 
 
@@ -43,14 +40,9 @@ class _SetupResponseLost(ConnectionError, RuntimeError):
 class ReachySideChat:
     """Keep one dedicated chat per Muse VM in this robot's protected state."""
 
-    def __init__(self, node_id: str, directory: Path | None = None,
-                 setup_message: str = CHAT_SETUP_MESSAGE):
+    def __init__(self, node_id: str, directory: Path | None = None):
         self.node_id = node_id
         self.directory = directory or config.state_dir()
-        if not isinstance(setup_message, str) or not setup_message.strip():
-            raise ValueError("Reachy's side-chat setup message is required")
-        self.setup_message = setup_message
-        self.setup_sha256 = hashlib.sha256(setup_message.encode("utf-8")).hexdigest()
 
     def _state(self) -> dict:
         try:
@@ -79,11 +71,6 @@ class ReachySideChat:
                    or not isinstance(value, str) or not value or len(value) > 512
                    for key, value in chat.get("setup_ack", {}).items()):
                 raise ValueError("Reachy's saved setup acknowledgement is invalid")
-            for key in ("applied_setup_sha256", "pending_setup_sha256"):
-                digest = chat.get(key)
-                if digest is not None and (not isinstance(digest, str) or len(digest) != 64
-                                           or any(c not in "0123456789abcdef" for c in digest)):
-                    raise ValueError("Reachy's saved setup digest is invalid")
         state["version"] = 2
         return state
 
@@ -101,13 +88,12 @@ class ReachySideChat:
             config.save_json(CHAT_STATE_FILE, state, self.directory)
         session_id = chat["session_id"]
         exists = (await session.open_side_chat(session_id)).exists
-        if (exists and chat.get("applied_setup_sha256") == self.setup_sha256
-                and "pending_setup_sha256" not in chat):
+        if exists and chat.get("initialized", False):
             return session_id
         # A subscription is forward-only in the observed API. Even with a saved
         # acknowledgement, a reply completed during an outage cannot be drained
         # after reconnect, so repeat the identical setup and await its fresh turn.
-        chat.update(initialized=False, pending_setup_sha256=self.setup_sha256)
+        chat["initialized"] = False
         chat.pop("setup_ack", None)
         config.save_json(CHAT_STATE_FILE, state, self.directory)
         try:
@@ -128,7 +114,7 @@ class ReachySideChat:
     async def _apply_setup(self, session, session_id: str, *, subscribe_first: bool) -> dict:
         nonce = secrets.token_hex(16)
         expected = setup_challenge_reply(nonce)
-        message = with_setup_challenge(self.setup_message, nonce)
+        message = with_setup_challenge(CHAT_BOOTSTRAP, nonce)
         armed = asyncio.Event()
         drain = None
         if subscribe_first:
@@ -176,9 +162,10 @@ class ReachySideChat:
                 await asyncio.gather(drain, return_exceptions=True)
             raise
 
-    def _mark_applied(self, chat: dict) -> None:
+    @staticmethod
+    def _mark_applied(chat: dict) -> None:
         chat["initialized"] = True
-        chat["applied_setup_sha256"] = self.setup_sha256
+        chat.pop("applied_setup_sha256", None)
         chat.pop("pending_setup_sha256", None)
         chat.pop("setup_ack", None)
 
@@ -541,14 +528,7 @@ async def run(args) -> int:
     robot = _hardware(args)
     dedicated_chat = None
     if not args.main_chat and not args.session_id:
-        context = voice_context(
-            ReplyStyle.EXPRESSIVE_JSON if args.stream_replies else ReplyStyle.MARKER,
-            motion_enabled=getattr(robot, "motion_enabled", True),
-            antenna_mode=getattr(robot, "antenna_mode", "both"),
-            face_tracking_enabled=getattr(robot, "face_tracking_enabled", False),
-        )
-        dedicated_chat = ReachySideChat(
-            ident.node_id, setup_message=CHAT_SETUP_PREFIX + context + CHAT_SETUP_SUFFIX)
+        dedicated_chat = ReachySideChat(ident.node_id)
     speech = None
     progress_speech = None
     transcriber = None

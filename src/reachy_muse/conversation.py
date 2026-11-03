@@ -25,7 +25,7 @@ from musegadget.link_client import DeviceDescription, LinkSession, Outcome, ackn
 from musegadget.muse_turn import AgentStatus, MuseTurn, ReplayScope, Reply, TaskFinished, TurnEvent
 from reachy_muse.contract.commands import COMMAND_SPECS, parse_command
 from reachy_muse.contract.expressions import Expression
-from reachy_muse.contract.prompts import SETUP_REQUEST, STOP_REQUEST, muse_request, voice_context
+from reachy_muse.contract.prompts import STOP_REQUEST, muse_request
 from reachy_muse.contract.replies import ReplyProtocolError, ReplyRevisionError, ReplyStyle, SentenceStream
 from reachy_muse.capabilities import WAKE_CUE, Backends, EndedTurn, Endpoint, Heard, LocalReply, SpokenLine
 from reachy_muse.device_command import COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow, executable
@@ -343,8 +343,8 @@ class ReplyReader:
 class MuseJob:
     """One request Muse works on, from dispatch until its answer is delivered or dropped."""
 
-    request: str | None            # the words Muse was sent; "" for audio only, None for Reachy's setup message
-    style: ReplyStyle              # the reply style it was sent with, which picks its parser
+    request: str | None            # the words Muse was sent; "" for audio only
+    style: ReplyStyle              # the local parser and narration for this reply
     turn: MuseTurn
     started: float                 # when the voice turn that asked it began
     defer_playback: bool           # answers go through the speaker queue instead of being spoken inline
@@ -420,10 +420,6 @@ class VoiceConversation:
         self._wake_first_request_pending = False
         self._wake_window = WakeWindow.AWAKE
         self._hush_floor = 0
-        # The style Muse was last told to answer in. A dedicated chat was set up with the
-        # local style; a shared wake chat learns it from the first request.
-        self._muse_style: ReplyStyle | None = (
-            None if wake_detector is not None and not owns_chat else backends.local_style)
         self._say_hushed = False
         self._turn_active = False
         self._command_tasks: set[asyncio.Task] = set()
@@ -866,9 +862,7 @@ class VoiceConversation:
             await self._plan(plan.Sleep(True, output=self._has_output()))
         else:
             await self._plan(plan.Started())
-        turn_task = (asyncio.create_task(self.turn(None))
-                     if self.backends.local_style is not ReplyStyle.MUSE_VOICE
-                     and wake is None and not self.owns_chat else None)
+        turn_task = None
         pending_turns = deque()
         turns_awaiting_transcript = set()
         wake_epoch = 0
@@ -1211,7 +1205,7 @@ class VoiceConversation:
     async def turn(self, wav: bytes | None, *, wake_strip_required: bool | None = None,
                    recognized_text: str | None = None, defer_playback: bool = False,
                    timeline: TurnTimeline | None = None, heard_over: tuple[str, ...] = ()) -> TurnOutcome:
-        if wav is None and self.wake_detector is not None:
+        if wav is None:
             return TurnOutcome.EMPTY
         self._turn_active = True
         timeline = timeline or TurnTimeline()
@@ -1404,13 +1398,13 @@ class VoiceConversation:
         except Exception:
             log.info("Reachy arbitration shadow status=invalid_snapshot")
 
-    async def _dispatch(self, wav: bytes | None, text: str | None, *, started: float,
+    async def _dispatch(self, wav: bytes, text: str | None, *, started: float,
                         defer_playback: bool, timeline: TurnTimeline, opening=None,
                         style: ReplyStyle | None = None) -> MuseJob:
         """Send one request to Muse; the returned job is ``self.job`` until its answer is delivered."""
         style = style or self.backends.reply_style()
         job = self.job = MuseJob(
-            None if wav is None else text or "", style,
+            text or "", style,
             MuseTurn(self.session_id, owns_chat=self.owns_chat, replay_scope=self._replay_scope,
                      ignore_parentless_until=(0.0 if self._stop_sent_at is None
                                               else self._stop_sent_at + STOP_REPLY_WINDOW_S)),
@@ -1427,15 +1421,10 @@ class VoiceConversation:
             job.aside = asyncio.create_task(self._acknowledge(job, opening))
         elif opening is not None:
             opening.cancel()
-        note, count = self._recent.chat_note() if text is not None and wav is not None else ("", 0)
-        if wav is not None:
-            self._moments.cue(Moment.THINKING)
-        if wav is None:
-            message = self._voice_context(style) + SETUP_REQUEST[style]
-            timeline.mark("dispatch")
-            ack = await self.session.send_chat(message, self.session_id)
-        elif text is not None:
-            message = self._ensure_muse_style(style, text, note=note)
+        note, count = self._recent.chat_note() if text is not None else ("", 0)
+        self._moments.cue(Moment.THINKING)
+        if text is not None:
+            message = muse_request(text, note=note)
             timeline.mark("dispatch")
             ack = await self.session.send_chat(message, self.session_id, **options)
         else:
@@ -1443,19 +1432,14 @@ class VoiceConversation:
             ack = await self.session.send_voice(wav, self.session_id, **options)
         response = acknowledgement(ack)
         self._recent.forget_chat(count)
-        if text is not None and wav is not None:
+        if text is not None:
             self._recent.asked(text)
         timeline.mark("muse_ack")
-        if text is not None or wav is None:
-            self._muse_style = style
-        if wav is not None and self.backends.progress_voice is not None:
+        if self.backends.progress_voice is not None:
             job.progress = self.backends.narrator.progress(job.request, time.monotonic(), job.intent)
         await self._queue_replies(job.reader.read(job.turn.acknowledge(response)), job)
         self._log_backend_activity()
-        if wav is None:
-            log.info("Muse accepted Reachy's expression setup")
-        else:
-            log.info("Muse accepted a %.1f-second voice turn", max(0, len(wav) - 44) / 32000)
+        log.info("Muse accepted a %.1f-second voice turn", max(0, len(wav) - 44) / 32000)
         return job
 
     async def _end_asides(self, job: MuseJob, *, let_playing_finish: bool, keep_progress: bool = False,
@@ -1834,21 +1818,6 @@ class VoiceConversation:
                               expression=line.expression.value if line.expression else None,
                               stream_segment=index < len(lines) - 1, on_start=on_start)
 
-    def _ensure_muse_style(self, style: ReplyStyle, text: str, *, note: str = "") -> str:
-        """The request, prefixed with the voice setup when Muse last heard another style."""
-        if style is self._muse_style:
-            return muse_request(text, note=note)
-        log.info("Reachy switched Muse's reply style to %s", style.value)
-        return muse_request(text, note=note, context=self._voice_context(style))
-
-    def _voice_context(self, style: ReplyStyle | None = None) -> str:
-        return voice_context(
-            style or self.backends.local_style,
-            motion_enabled=getattr(self.hardware, "motion_enabled", True),
-            antenna_mode=getattr(self.hardware, "antenna_mode", "both"),
-            face_tracking_enabled=getattr(self.hardware, "face_tracking_enabled", False),
-        )
-
     async def _speak(self, message_id: str | None, *, text: str | None = None,
                      state: str = "speaking",
                      expression: str | None = None, stream_segment: bool = False,
@@ -2154,12 +2123,8 @@ class VoiceConversation:
         shown = False
         try:
             timeline.mark("dispatch")
-            message = request
-            if style is not self._muse_style:
-                message = self._voice_context(style) + "\n\n" + request
-            response = acknowledgement(await self.session.send_chat(message, self.session_id))
+            response = acknowledgement(await self.session.send_chat(request, self.session_id))
             timeline.mark("muse_ack")
-            self._muse_style = style
             await self._queue_replies(job.reader.read(job.turn.acknowledge(response)), job)
             log.info("Muse accepted Reachy's morning briefing request")
             heard: list[tuple[str, int, SpokenLine]] = []

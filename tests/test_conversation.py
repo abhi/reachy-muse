@@ -1143,47 +1143,6 @@ def test_cancelling_streaming_closes_active_speech_before_capture_resumes(stream
     asyncio.run(bounded(scenario()))
 
 
-@pytest.mark.parametrize("mode,expected", [("both", "Both antennas are enabled"),
-                                         ("left", "Only the left antenna is enabled"),
-                                         ("right", "Only the right antenna is enabled"),
-                                         ("none", "Antenna movement is disabled")])
-def test_muse_robot_awareness_reflects_antenna_settings_without_capture_mechanics(mode, expected):
-    hardware = FakeHardware()
-    hardware.antenna_mode = mode
-    hardware.motion_enabled = True
-    wake = type("Wake", (), {"phrase": "hey muse"})()
-    session = FakeSession()
-    conversation = VoiceConversation(session, hardware,
-                                     backends=backends_for(Mode.ON_ROBOT, session, speech=object(), transcriber=object()),
-                                     wake_detector=wake, wake_timeout_s=10)
-    context = conversation._voice_context()
-    assert expected in context
-    assert "hey muse" not in context
-    assert "idle seconds" not in context
-    assert "silence" not in context
-    assert "echo-cancelled" not in context
-    assert "six degrees of freedom" in context and "does not send camera images" in context
-
-
-def test_muse_robot_awareness_reports_disabled_movement():
-    hardware = FakeHardware()
-    hardware.motion_enabled = False
-    session = FakeSession()
-    context = VoiceConversation(session, hardware, backends=backends_for(Mode.MUSE_VOICE, session))._voice_context()
-    assert "Movement is disabled in this session" in context
-    assert "Both antennas are enabled" not in context
-
-
-def test_muse_knows_local_face_follow_does_not_supply_camera_vision_or_identity():
-    hardware = FakeHardware()
-    hardware.face_tracking_enabled = True
-    session = FakeSession()
-    context = VoiceConversation(session, hardware, backends=backends_for(Mode.MUSE_VOICE, session))._voice_context()
-    assert "Local face tracking is enabled" in context
-    assert "camera images stay on Reachy" in context
-    assert "no visual information or identity recognition" in context
-
-
 @pytest.fixture
 def prepared_speech():
     from reachy_muse.local_speech import PreparedSpeech
@@ -1533,38 +1492,17 @@ def test_local_voice_speaks_muse_text_and_executes_its_expression(monkeypatch):
     asyncio.run(bounded(scenario()))
 
 
-def test_expression_setup_uses_a_separate_text_turn_and_speaks_readiness(monkeypatch):
-    np = pytest.importorskip("numpy")
-    monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
-    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
-    spoken = []
-
-    class LocalSpeech:
-        async def stream(self, text, output_rate):
-            spoken.append(text)
-            yield np.full(80, 0.1, dtype=np.float32)
-
+def test_startup_never_sends_a_spoken_setup_turn():
     async def scenario():
-        async def reply(session):
-            await session.events.put(chat_event("delta.message_done", "reply-1",
-                                                content="Ready to talk. [reachy:nod]"))
-            await session.delivered.get()
-
-        session = FakeSession(send_hook=reply)
+        session = FakeSession()
         hardware = FakeHardware()
         conversation = VoiceConversation(session, hardware,
-                                         backends=backends_for(Mode.ON_ROBOT, session, speech=LocalSpeech()))
-        subscriber = asyncio.create_task(conversation._subscribe())
-        await session.chat_subscribed.wait()
-        await conversation.turn(None)
+                                         backends=backends_for(Mode.ON_ROBOT, session, speech=object()))
+        assert await conversation.turn(None) is TurnOutcome.EMPTY
         assert session.sent == []
-        assert "subsequent spoken messages" in session.setup_messages[0][0]
-        assert spoken == ["Ready to talk."]
-        assert hardware.commands == []
-        assert hardware.play_expressions == [("speaking", "nod")]
-        await cancel_task(subscriber)
-
-    asyncio.run(bounded(scenario()))
+        assert session.setup_messages == []
+        assert hardware.played == []
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("recognized", ["Please say pineapple sunshine and nod.", ""])
@@ -1883,7 +1821,7 @@ def test_wake_and_contextual_cues_are_cached_without_overlapping_synthesis(monke
 
 
 @pytest.mark.parametrize("recognized", ["Hey, Muse!", "Private background words without a recognized invocation"])
-def test_wake_only_or_unconfirmed_boundary_is_local_then_clean_followup_gets_context_once(monkeypatch, recognized):
+def test_wake_only_or_unconfirmed_boundary_is_local_then_followups_send_only_words(monkeypatch, recognized):
     np = pytest.importorskip("numpy")
     monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
     monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0)
@@ -1920,8 +1858,7 @@ def test_wake_only_or_unconfirmed_boundary_is_local_then_clean_followup_gets_con
         await session.chat_subscribed.wait()
         await conversation.turn(b"question")
         assert len(session.setup_messages) == 1
-        assert session.setup_messages[0][0].endswith("The user's spoken request is: Say hello.")
-        assert "sentence" in session.setup_messages[0][0].casefold()
+        assert session.setup_messages[0][0] == "Say hello."
         await conversation.turn(b"followup")
         assert session.setup_messages[1][0] == "Say hello."
         assert not conversation._muted
@@ -1960,7 +1897,7 @@ def test_same_breath_wake_question_strips_pre_wake_words_and_sends_one_request(m
         await conversation.turn(b"question")
         assert len(session.setup_messages) == 1
         request = session.setup_messages[0][0]
-        assert request.endswith("The user's spoken request is: say pineapple sunshine.")
+        assert request == "say pineapple sunshine."
         assert "Private background chatter" not in request
         assert len(hardware.played) == 1
         await cancel_task(subscriber)

@@ -39,5 +39,3 @@ def test_muse_request_has_no_per_turn_overhead_without_history_or_setup():
     assert muse_request("Why is the sky blue?") == "Why is the sky blue?"
     assert len(muse_request("Hello").encode()) == 5
     assert muse_request("Why?", note="Earlier.") == "Earlier.\nThe user's spoken request is: Why?"
-    assert muse_request("Why?", context="Context.", note="Earlier.") == (
-        "Context.\n\nEarlier.\nThe user's spoken request is: Why?")

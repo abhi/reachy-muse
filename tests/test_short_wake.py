@@ -145,7 +145,7 @@ def test_confirmed_short_wake_keeps_the_next_question(wake_scenario):
         await feed(.25, 14)
         await feed(.5, 20)
 
-        sent = [message.split("The user's spoken request is: ")[-1]
+        sent = [message
                 for message, _ in session.setup_messages]
         assert sent == ["What is two plus two?"]
         assert recognition == ["Hey Muse.", "What is two plus two?"]
@@ -160,7 +160,7 @@ def test_short_followup_still_requires_ordinary_sustained_speech(wake_scenario):
         assert recognition == ["Hey Muse."]
         assert session.setup_messages == []
         await feed(.5, 20)
-        assert session.setup_messages[0][0].endswith("The user's spoken request is: What is two plus two?")
+        assert session.setup_messages[0][0] == "What is two plus two?"
 
     asyncio.run(bounded(wake_scenario(run)))
 
@@ -171,7 +171,7 @@ def test_first_wake_capture_gap_keeps_fresh_question_authorized(wake_scenario):
         assert await feed(.5, 20, gap=True)
         assert recognition == ["What is two plus two?"]
         assert conversation._wake_deadline is not None
-        assert session.setup_messages[0][0].endswith("The user's spoken request is: What is two plus two?")
+        assert session.setup_messages[0][0] == "What is two plus two?"
 
     asyncio.run(bounded(wake_scenario(run)))
 
@@ -182,7 +182,7 @@ def test_followup_gap_preserves_authorization_and_normal_minimum(wake_scenario):
         assert not await feed(.5, 14, gap=True)
         assert recognition == ["Hey Muse."]
         await feed(.5, 20)
-        assert session.setup_messages[0][0].endswith("The user's spoken request is: What is two plus two?")
+        assert session.setup_messages[0][0] == "What is two plus two?"
 
     asyncio.run(bounded(wake_scenario(run)))
 
@@ -195,7 +195,7 @@ def test_expired_pending_wake_requires_a_fresh_invocation(wake_scenario):
         assert not await feed(.5, 20)
         assert recognition == [] and session.setup_messages == []
         await feed(.5, 20, wake_frames=14)
-        assert session.setup_messages[0][0].endswith("The user's spoken request is: What is two plus two?")
+        assert session.setup_messages[0][0] == "What is two plus two?"
         assert recognition == ["Hey Muse, What is two plus two?"]
 
     asyncio.run(bounded(wake_scenario(run, timeout=.03)))
@@ -215,7 +215,7 @@ def test_same_breath_request_is_not_truncated_by_short_wake_capture(wake_scenari
     async def run(conversation, session, hardware, recognition, feed):
         await feed(.5, 20, wake_frames=14)
         assert recognition == ["Hey Muse, What is two plus two?"]
-        assert session.setup_messages[0][0].endswith("The user's spoken request is: What is two plus two?")
+        assert session.setup_messages[0][0] == "What is two plus two?"
 
     asyncio.run(bounded(wake_scenario(run)))
 

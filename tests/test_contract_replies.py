@@ -22,6 +22,14 @@ from reachy_muse.contract.replies import (
 )
 
 
+def test_complete_legacy_json_reply_keeps_controls_and_progress_out_of_speech():
+    assert spoken_reply(
+        '{"text":"Looking it up.","expression":"thinking","kind":"progress"}\n'
+        '{"text":"Hello.","expression":"happy"}\n'
+        '{"text":"How are you?","expression":"curious"}') == ("Hello. How are you?", "curious")
+    assert spoken_reply('```json\n{"text":"Hello.","expression":"happy"}\n```') == ("Hello.", "happy")
+
+
 def test_expression_controls_move_without_being_spoken():
     assert spoken_reply("Yes, I can nod. [reachy:nod]") == ("Yes, I can nod.", "nod")
     assert spoken_reply("Hello there.") == ("Hello there.", None)

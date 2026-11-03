@@ -172,7 +172,7 @@ def test_trusted_wake_and_quiet_movement_noise_do_not_start_wake_asr(handoff):
         assert hardware.played == [] and not conversation._muted
         await feed((.5, 20), (0, 7))
         await accepted.wait()
-        assert session.setup_messages[0][0].endswith("The user's spoken request is: Find flights from Boston to Paris.")
+        assert session.setup_messages[0][0] == "Find flights from Boston to Paris."
         assert len(recordings) == 1
         assert 16384 in recordings[0] and 8192 not in recordings[0]
 
@@ -187,7 +187,7 @@ def test_same_breath_request_keeps_first_word_and_removes_all_prewake_pcm(handof
         assert recordings[0][:960].tolist() == [20480] * 960
         assert 16384 in recordings[0]
         assert 4096 not in recordings[0] and 8192 not in recordings[0]
-        assert session.setup_messages[0][0].endswith("The user's spoken request is: Find flights from Boston to Paris.")
+        assert session.setup_messages[0][0] == "Find flights from Boston to Paris."
         assert hardware.played == []
 
     asyncio.run(bounded(handoff(run)))
@@ -205,7 +205,7 @@ def test_wake_only_never_blocks_the_first_question_on_delayed_asr(handoff):
         assert 8192 not in recordings[0] and hardware.played == []
         recognition.proceed.set()
         await accepted.wait()
-        assert session.setup_messages[0][0].endswith("The user's spoken request is: Find flights from Boston to Paris.")
+        assert session.setup_messages[0][0] == "Find flights from Boston to Paris."
 
     asyncio.run(bounded(handoff(run, pause_asr=True)))
 
@@ -219,7 +219,7 @@ def test_delayed_keyword_hit_keeps_question_start_from_an_earlier_capture_chunk(
         assert len(recordings) == 1
         assert recordings[0][:960].tolist() == [20480] * 960
         assert 4096 not in recordings[0] and 8192 not in recordings[0]
-        assert session.setup_messages[0][0].endswith("The user's spoken request is: Find flights from Boston to Paris.")
+        assert session.setup_messages[0][0] == "Find flights from Boston to Paris."
 
     asyncio.run(bounded(handoff(run, delayed=True)))
 
@@ -268,7 +268,7 @@ def test_capture_gap_after_wake_keeps_listening_and_discards_incomplete_audio(ha
         assert all(marker not in recordings[0] for marker in (4096, 8192, 12288))
         assert conversation._wake_deadline == deadline
         assert hardware.states.count("idle") == 1
-        assert session.setup_messages[0][0].endswith("The user's spoken request is: Find flights from Boston to Paris.")
+        assert session.setup_messages[0][0] == "Find flights from Boston to Paris."
 
     asyncio.run(bounded(handoff(run, trusted=trusted)))
 
@@ -301,7 +301,7 @@ def test_next_authorized_utterance_is_captured_separately_while_first_asr_waits(
         # Muse remains serialized: the second recognized request waits for the
         # first backend owner even though its audio and ASR are already safe.
         assert len(session.setup_messages) == 1
-        assert session.setup_messages[0][0].endswith("The user's spoken request is: Find flights from Boston to Paris.")
+        assert session.setup_messages[0][0] == "Find flights from Boston to Paris."
 
     asyncio.run(bounded(handoff(run, pause_asr=True)))
 
@@ -317,8 +317,7 @@ def test_waking_from_sleep_by_the_keyword_alone_greets_and_a_question_goes_to_mu
         if question:
             await feed((.25, 14), (.5, 20), (0, 7))
             await accepted.wait()
-            assert session.setup_messages[0][0].endswith(
-                "The user's spoken request is: Find flights from Boston to Paris.")
+            assert session.setup_messages[0][0] == "Find flights from Boston to Paris."
         else:
             await feed((.25, 14), (0, 7))
             while not hardware.played:

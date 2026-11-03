@@ -23,8 +23,6 @@ VM_TOKEN = "vm-secret-7f3a91"
 IDENTITY = Identity("02:00:00:ab:cd:ef")
 QUESTION = "tell me about the old castles and dragons"
 PARTIALS = ("tell me about", "tell me about the old castles", QUESTION)
-PLAIN_PROMPT = ("By default, unless a request specifies a different length, answer in one to three short, "
-                "plain spoken sentences")
 SLOW_S = reachy_muse.conversation.ACK_GRACE_S + .5
 OUTAGE_LOG = "Reachy's companion stopped answering; using on-robot speech"
 
@@ -170,9 +168,7 @@ def test_happy_turn_nods_along_to_partials_and_speaks_condensed_lines_with_their
             robot = Conversation(monkeypatch, companion.url[:-3],
                                  answer("Castles kept dragons out. They had tall walls. Moats kept them dry.", SLOW_S))
             await robot.run(lambda: robot.turns(1))
-            prompt, request = robot.requests()[0].rsplit("\n\n", 1)
-            assert (len(robot.requests()), request) == (1, f"The user's spoken request is: {QUESTION}")
-            assert PLAIN_PROMPT in prompt
+            assert robot.requests() == ["tell me about the old castles and dragons"]
             assert spoken_by_companion(companion) == [QUESTION, "Castles kept dragons out.", "They had tall walls.",
                                                       "Moats kept them dry."]
             assert narrated_by_companion(companion) == ["acknowledge", "lines"]
@@ -234,7 +230,7 @@ def test_a_companion_that_animates_moves_reachy_while_muse_works_and_an_older_on
     scenario(run())
 
 
-def test_unreachable_companion_is_only_logged_once_and_muse_is_set_up_for_on_robot_speech_once(monkeypatch, caplog):
+def test_unreachable_companion_is_logged_once_and_startup_sends_nothing_to_muse(monkeypatch, caplog):
     async def run():
         robot = Conversation(monkeypatch, f"ws://127.0.0.1:{free_port()}",
                              answer("Ready to talk. [reachy:nod]"), owned=False)
@@ -242,10 +238,8 @@ def test_unreachable_companion_is_only_logged_once_and_muse_is_set_up_for_on_rob
         async def user():
             await asyncio.sleep(1)
         await robot.run(user)
-        setup, = robot.requests()
-        assert setup.endswith(" For setup, say 'Ready to talk' and append [reachy:nod]. "
-                              "Keep using this expression channel for subsequent spoken messages.")
-        assert robot.spoken() == ["tts:Ready to talk."]
+        assert robot.requests() == []
+        assert robot.spoken() == []
         assert outage_logs(caplog) == [OUTAGE_LOG]
         assert robot.link.transitions[:2] == [LinkState.CONNECTING, LinkState.DOWN]
         assert LinkState.UP not in robot.link.transitions
@@ -330,7 +324,7 @@ def test_a_fabricated_figure_is_replaced_by_the_robots_own_split_of_the_reply(mo
     scenario(run())
 
 
-def test_recovered_companion_gets_the_plain_setup_at_the_next_turn_not_the_running_one(monkeypatch):
+def test_recovered_companion_changes_local_handling_without_adding_any_muse_prompt(monkeypatch):
     async def run():
         port = free_port()
         started = {}
@@ -357,11 +351,10 @@ def test_recovered_companion_gets_the_plain_setup_at_the_next_turn_not_the_runni
             await robot.run(user)
         finally:
             await started["companion"].__aexit__(None, None, None)
-        first, second = robot.requests()
-        assert first == QUESTION
-        assert PLAIN_PROMPT in second and second.endswith(f"The user's spoken request is: {QUESTION}")
-        # The first reply was requested with the marker prompt, so the marker parser reads it and the
-        # robot's voice speaks it, even though the companion is back by the time it is spoken.
+        assert robot.requests() == ["tell me about the old castles and dragons",
+                                    "tell me about the old castles and dragons"]
+        # Local reply handling is chosen at dispatch. The first reply keeps the robot's voice
+        # even though the companion is back by the time it is spoken.
         assert {"robot": "set_state", "state": "speaking", "expression": "happy"} in robot.recording.events
         assert robot.spoken() == ["tts:Castles kept dragons out.", "companion", "companion"]
         assert spoken_by_companion(started["companion"]) == [QUESTION, "They had tall walls."]
@@ -411,7 +404,7 @@ def test_three_ungrounded_narrations_rest_only_the_narrator(monkeypatch):
             assert narrated_by_companion(companion) == ["acknowledge", "lines", "acknowledge"]
             assert spoken_by_companion(companion) == ["Castles kept dragons out.", "They had tall walls.",
                                                       "Moats kept them dry."] * 3
-            assert [request.endswith(QUESTION) for request in robot.requests()] == [True] * 3
+            assert robot.requests() == ["tell me about the old castles and dragons"] * 3
             assert set(robot.spoken()) == {"companion", "tts:Hmm, good question.", "tts:Ooh, let me think.",
                                           "tts:Give me a second on that."}
             assert robot.transitions_before_stop == [LinkState.CONNECTING, LinkState.UP]
@@ -436,9 +429,6 @@ def test_companion_speech_that_never_starts_rests_only_the_companion_voice(monke
     scenario(run())
 
 
-LOCAL_REQUEST = "The user's spoken request is: what the robot heard"
-
-
 def test_a_turn_the_companion_never_ends_is_finished_on_the_robot_within_the_deadline(monkeypatch):
     from reachy_muse.companion_client import ENDPOINT_WAIT_S
 
@@ -456,7 +446,7 @@ def test_a_turn_the_companion_never_ends_is_finished_on_the_robot_within_the_dea
                 waited["s"] = asyncio.get_running_loop().time() - stopped
             await robot.run(user)
             assert waited["s"] < ENDPOINT_WAIT_S + 1
-            assert [request.endswith("what the robot heard") for request in robot.requests()] == [True]
+            assert robot.requests() == ["what the robot heard"]
     scenario(run())
 
 
@@ -475,7 +465,7 @@ def test_a_companion_that_hears_nothing_mid_utterance_is_replaced_by_the_robot(m
                 waited["s"] = asyncio.get_running_loop().time() - stopped
             await robot.run(user)
             assert waited["s"] < 1
-            assert [request.endswith("what the robot heard") for request in robot.requests()] == [True]
+            assert robot.requests() == ["what the robot heard"]
     scenario(run())
 
 
@@ -498,7 +488,7 @@ def test_a_companion_that_never_ends_a_turn_stays_quarantined_across_later_turns
                 await robot.turns(4)
             await robot.run(user)
             assert hear_streams_opened(companion) == [1]
-            assert [request.endswith("what the robot heard") for request in robot.requests()] == [True] * 4
+            assert robot.requests() == ["what the robot heard"] * 4
             assert spoken_by_companion(companion) == []
             assert robot.spoken() == ["tts:Castles kept dragons out."] * 4
             assert outage_logs(caplog) == [OUTAGE_LOG]
@@ -652,7 +642,7 @@ def test_an_acknowledgement_the_companion_narrates_too_late_is_skipped_not_repla
                                  narrate_delay_s={NarrateOp.ACKNOWLEDGE: 1.5}) as companion:
             robot = Conversation(monkeypatch, companion.url[:-3], answer("It is sunny in Paris.", SLOW_S))
             await robot.run(lambda: robot.turns(1))
-            assert robot.requests()[0].endswith(question)
+            assert robot.requests() == [question]
             assert spoken_by_companion(companion) == ["It is sunny in Paris."]
             assert robot.spoken() == ["companion"]
     scenario(run())
