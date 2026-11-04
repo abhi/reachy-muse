@@ -763,7 +763,7 @@ def test_answer_held_for_ongoing_talk_is_spoken_after_the_hold_limit_and_turns_t
     assert first_job.count("tts:" + reachy_muse.conversation.BUSY_CUE) == 1
 
 
-def test_late_answer_is_introduced_with_the_requests_own_words(monkeypatch):
+def test_late_answer_without_intervening_talk_starts_with_the_answer(monkeypatch):
     rig = Rig(monkeypatch)
     monkeypatch.setattr(reachy_muse.conversation, "LATE_ANSWER_S", .5)
 

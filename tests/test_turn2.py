@@ -31,6 +31,33 @@ def test_companion_synthesizes_the_next_sentence_during_playback():
     assert result["sentence_gap_ms"] < 150
 
 
+def test_a_slow_answer_does_not_queue_a_redundant_introduction():
+    result = asyncio.run(answer_replay(late=True))
+    assert result["spoken"] == [
+        "A light workout is a good option.", "Take a rest day if you feel worn out.",
+    ]
+    assert result["first_sentence_to_audio_ms"] < 600
+
+
+def test_late_answer_still_names_its_topic_after_intervening_talk():
+    from reachy_muse.capabilities import Mode
+    from reachy_muse.conversation import VoiceConversation
+    from reachy_muse.local_backends import backends_for
+    from test_conversation import FakeHardware
+
+    async def scenario():
+        conversation = VoiceConversation(None, FakeHardware(), backends=backends_for(Mode.ON_ROBOT, None))
+        job = plain_job()
+        job.request = "Should I work out today?"
+        job.dispatched_at = 0
+        job.defer_playback = True
+        job.context_changed = True
+        await conversation._answer_begins(job)
+        assert conversation._output_queue.get_nowait().text == "About Should I work out today:"
+        await conversation._moments.close()
+    asyncio.run(scenario())
+
+
 def test_plain_prefix_keeps_final_remainder_for_narration_once():
     job = plain_job()
     assert feed(job, chat_event("delta.text_append", "reply-1", text="Rest today. You")) == [

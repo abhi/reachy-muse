@@ -414,6 +414,7 @@ class MuseJob:
     answered: bool = False
     dropped: bool = False          # the user cancelled it; nothing more of it is spoken
     turned_away: bool = False      # Reachy already told the user a further request must wait
+    context_changed: bool = False  # another utterance arrived while this request was pending
     last_expression: Expression | None = None  # picks the closing motion
     timeline: TurnTimeline = field(default_factory=TurnTimeline)
     reader: ReplyReader = field(init=False)
@@ -1687,7 +1688,8 @@ class VoiceConversation:
         self._moments.stop_cue()
         await self._plan(plan.AnswerArrived(output=self._has_output()))
         topic = request_topic(job.request or "")
-        if not topic or not self.backends.voice.speaks_text or time.monotonic() - job.dispatched_at <= LATE_ANSWER_S:
+        if (not job.context_changed or not topic or not self.backends.voice.speaks_text
+                or time.monotonic() - job.dispatched_at <= LATE_ANSWER_S):
             return
         # A late answer can follow other talk; name what it answers, in the user's own words.
         intro = f"About {topic}:"
@@ -1723,6 +1725,8 @@ class VoiceConversation:
             return held
         job = self.job
         running = job if job is not None and job.request is not None and not job.dropped else None
+        if running is not None:
+            running.context_changed = True
         log.info("Reachy heard a %s follow-up while Muse worked", kind.value)
         if kind is FollowUp.SILENCE:
             self._hush()

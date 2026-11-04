@@ -11,8 +11,6 @@
   {"expression": null, "robot": "set_state", "state": "thinking"},
   {"audio": "tts:Hmm, good question.", "robot": "play"},
   {"name": "nod", "robot": "gesture"},
-  {"expression": null, "robot": "set_state", "state": "speaking"},
-  {"audio": "tts:About the latest robot news:", "robot": "play"},
   {"expression": "happy", "robot": "set_state", "state": "speaking"},
   {"audio": "tts:Robots learned to fold laundry.", "robot": "play"},
   {"expression": null, "robot": "set_state", "state": "idle"},
@@ -67,7 +65,6 @@
   "progress_tts:Still looking into that.",
   "progress_tts:Hang tight, still on that.",
   "progress_tts:Still here.",
-  "tts:About the latest robot news:",
   "tts:Robots learned to fold laundry."
  ]
 }

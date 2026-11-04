@@ -113,3 +113,16 @@ closes both producers, and preparation retains the usual local voice fallback.
 250 ms synthesis and 500 ms playback per sentence. The inter-sentence gap fell
 from **301.95 ms to 50.74 ms**. First audio remained 252.38 versus 251.20 ms.
 The remaining gap is the existing 50 ms output drain allowance.
+
+## Avoid introducing an uninterrupted answer
+
+A slow answer now names its original topic only if another accepted utterance
+arrived while it was pending. The late-answer introduction still disambiguates
+intervening talk. Waiting on a single question no longer adds a spoken "About"
+line before the answer.
+
+`python -m bench.turn2 late-answer` marks the pending request 32 seconds old,
+without actually waiting or sending anything externally. With streaming and
+lookahead already enabled, first sentence to answer audio fell from
+**802.60 ms to 252.11 ms**. Only the two answer sentences are spoken. A separate
+behavior test retains the contextual introduction after intervening talk.
