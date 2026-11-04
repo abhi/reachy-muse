@@ -912,7 +912,9 @@ def streaming_speech(monkeypatch):
     return Speech
 
 
-async def streaming_turn(script, speech, hardware, *, before_ack=False):
+async def streaming_turn(script, speech, hardware, *, before_ack=False, style=ReplyStyle.EXPRESSIVE_JSON):
+    from dataclasses import replace
+
     producers = []
     conversation = None
 
@@ -936,7 +938,8 @@ async def streaming_turn(script, speech, hardware, *, before_ack=False):
 
     session = FakeSession(send_hook=send)
     conversation = VoiceConversation(session, hardware,
-                                     backends=backends_for(Mode.ON_ROBOT, session, speech=speech, stream_replies=True),
+                                     backends=replace(backends_for(Mode.ON_ROBOT, session, speech=speech),
+                                                      local_style=style),
                                      session_id="robot-chat", reply_timeout_s=3)
     subscriber = asyncio.create_task(conversation._subscribe())
     try:
@@ -952,6 +955,21 @@ async def streaming_turn(script, speech, hardware, *, before_ack=False):
         await asyncio.gather(*producers, return_exceptions=True)
         await cancel_task(subscriber)
     return conversation
+
+
+@pytest.mark.parametrize("empty", ["", "  "])
+def test_plain_empty_completion_keeps_later_display_text_for_playback(streaming_speech, empty):
+    async def scenario():
+        hardware = FakeHardware()
+        speech = streaming_speech(hardware)
+        await streaming_turn([
+            chat_event("delta.message_done", "reply-1", content=empty),
+            chat_event("message.assistant", "reply-1", display_text="Take a rest day.", display_text_ready=True),
+            chat_event("message.assistant", "reply-1", display_text="Take a rest day.", display_text_ready=True),
+        ], speech, hardware, style=ReplyStyle.PLAIN_SHORT)
+        assert speech.requests == ["Take a rest day."]
+        assert len(hardware.played) == 1
+    asyncio.run(bounded(scenario()))
 
 
 def test_protocol_segments_are_immutable_indexed_and_final_prefix_does_not_repeat():

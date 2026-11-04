@@ -322,6 +322,8 @@ class ReplyReader:
             if stream.closed:
                 continue
             if stream.reply.done:
+                if not stream.reply.text.strip():
+                    continue
                 stream.closed = True
                 if stream.plain_prefix:
                     final, _ = spoken_reply(stream.reply.text)
