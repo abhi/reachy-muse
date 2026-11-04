@@ -16,11 +16,12 @@ import time
 from musegadget import config, identity, muse_api
 from musegadget.link_client import DeviceDescription, LinkSession, acknowledgement
 from musegadget.muse_turn import MuseTurn
-from musegadget.service import DEFAULT_NOISE_HOST, Service
+from musegadget.service import DEFAULT_NOISE_HOST
 
 from reachy_muse import __version__
 from reachy_muse.contract.commands import COMMAND_SPECS
 from reachy_muse.contract.prompts import REACHY_INTRODUCTION
+from reachy_muse.pairing import PairedService
 
 
 INTRODUCTION_VERSION = hashlib.sha256(REACHY_INTRODUCTION.encode("utf-8")).hexdigest()
@@ -212,9 +213,10 @@ async def introduce_paired() -> None:
         vms, status = await asyncio.to_thread(
             muse_api.fetch_vms_with_status, pairing["access_token"], api)
         if status == 401:
-            service = Service(identity=ident, executor=None, sdk_token=config.sdk_token())
+            service = PairedService(identity=ident, executor=None, sdk_token=config.sdk_token())
             pairing = await service._maybe_refresh(pairing, force=True)
             if pairing is not None:
+                api = muse_api.api_root(pairing.get("api_url_v2", ""))
                 vms, status = await asyncio.to_thread(
                     muse_api.fetch_vms_with_status, pairing["access_token"], api)
         if status != 200 or not vms:

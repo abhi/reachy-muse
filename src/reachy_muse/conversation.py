@@ -38,7 +38,7 @@ from reachy_muse.morning_briefing import MorningRoutine, briefing_lines
 from reachy_muse.recent import Recent
 from reachy_muse.motion.moments import Moment, MomentDirector
 from reachy_muse.progress import BackendStatus, ProgressPlan, ProgressUpdate, backend_status_from_event
-from musegadget.service import Service
+from reachy_muse.pairing import PairedService
 from reachy_muse.speech_playback import PCMPlayer, SpeechPlayback
 from reachy_muse.turn_timeline import TurnTimeline
 from reachy_muse.startup import StartupTimeline
@@ -2193,7 +2193,7 @@ def _backends_required():
 
 
 @dataclass
-class ReachyService(Service):
+class ReachyService(PairedService):
     session_id: str | None = None
     prepare_chat: Callable[[LinkSession, str], Awaitable[str]] | None = None
     owns_chat: bool = False
