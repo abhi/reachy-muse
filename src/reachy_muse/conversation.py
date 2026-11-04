@@ -2308,7 +2308,7 @@ class ReachyService(Service):
             startup.mark("registered")
             if self.introduce_to_muse:
                 from reachy_muse.introduction import introduce_once
-                await introduce_once(session)
+                await introduce_once(session, vm_id=vm["vm_id"] or vm["vm_name"], node_id=self.identity.node_id)
             session_id = self.session_id
             if self.prepare_chat is not None:
                 session_id = await self.prepare_chat(session, vm["vm_id"] or vm["vm_name"])

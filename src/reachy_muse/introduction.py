@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # Licensed under the Apache License, Version 2.0 (the "License").
 
-"""Introduce Reachy in the user's main Muse chat, once per text version."""
+"""Introduce Reachy in the user's main Muse chat, once per destination and text version."""
 
 from __future__ import annotations
 
@@ -27,6 +27,10 @@ INTRODUCTION_VERSION = hashlib.sha256(REACHY_INTRODUCTION.encode("utf-8")).hexdi
 INTRODUCTION_STATE_FILE = "reachy-introduction.json"
 INTRODUCTION_TIMEOUT_S = 180
 log = logging.getLogger(__name__)
+
+
+class _UncertainIntroduction(RuntimeError):
+    pass
 
 
 class _IntroductionTurn(MuseTurn):
@@ -56,19 +60,48 @@ class _IntroductionTurn(MuseTurn):
         return []
 
 
-def introduction_sent(directory: Path) -> bool:
+def _receipts(directory: Path) -> list[dict]:
     try:
         state = json.loads((directory / INTRODUCTION_STATE_FILE).read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return False
+        return []
     except (OSError, ValueError) as exc:
         raise ValueError("Reachy's saved introduction could not be read") from exc
-    if not isinstance(state, dict) or not isinstance(state.get("version"), str):
+    if isinstance(state, dict) and isinstance(state.get("version"), str):
+        raise _UncertainIntroduction(
+            "Reachy's saved introduction has no destination. Check your main Muse chat "
+            "before replacing the legacy receipt in reachy-introduction.json.")
+    receipts = state.get("receipts") if isinstance(state, dict) else None
+    if not isinstance(receipts, list) or any(
+            not isinstance(receipt, dict)
+            or any(not isinstance(receipt.get(key), str)
+                   for key in ("version", "vm_id", "node_id", "username", "api"))
+            or receipt.get("status") not in ("pending", "sent") for receipt in receipts):
         raise ValueError("Reachy's saved introduction is invalid")
-    return state["version"] == INTRODUCTION_VERSION
+    return receipts
 
 
-async def introduce_once(session: LinkSession, directory: Path | None = None) -> None:
+def _receipt(directory: Path, vm_id: str, node_id: str) -> dict:
+    pairing = config.load_json(config.PAIRING_FILE, directory) or {}
+    return {"version": INTRODUCTION_VERSION, "vm_id": vm_id, "node_id": node_id,
+            "username": pairing.get("username", ""),
+            "api": muse_api.api_root(pairing.get("api_url_v2", ""))}
+
+
+def introduction_sent(directory: Path, *, vm_id: str, node_id: str) -> bool:
+    expected = _receipt(directory, vm_id, node_id)
+    for receipt in _receipts(directory):
+        if all(receipt.get(key) == value for key, value in expected.items()):
+            if receipt["status"] == "pending":
+                raise _UncertainIntroduction(
+                    "Reachy's introduction outcome is unknown. Check your main Muse chat "
+                    "before resolving its pending receipt in reachy-introduction.json.")
+            return True
+    return False
+
+
+async def introduce_once(session: LinkSession, directory: Path | None = None, *,
+                         vm_id: str, node_id: str) -> None:
     directory = directory or config.state_dir()
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     # The CLI and a running service may opt in at the same time.
@@ -77,16 +110,17 @@ async def introduce_once(session: LinkSession, directory: Path | None = None) ->
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise RuntimeError("Reachy's introduction is already in progress") from exc
-        if introduction_sent(directory):
+        if introduction_sent(directory, vm_id=vm_id, node_id=node_id):
             return
+        receipt = _receipt(directory, vm_id, node_id)
         try:
-            await asyncio.wait_for(_send_and_consume(session, directory), INTRODUCTION_TIMEOUT_S)
+            await asyncio.wait_for(_send_and_consume(session, directory, receipt), INTRODUCTION_TIMEOUT_S)
         except Exception as exc:
             # Network errors can contain reply text or credentials.
             raise RuntimeError("Reachy's introduction did not finish") from exc
 
 
-async def _send_and_consume(session: LinkSession, directory: Path) -> None:
+async def _send_and_consume(session: LinkSession, directory: Path, receipt: dict) -> None:
     await session.wait_transport_ready()
     turn = _IntroductionTurn()
     armed = asyncio.Event()
@@ -96,10 +130,18 @@ async def _send_and_consume(session: LinkSession, directory: Path) -> None:
         done, _ = await asyncio.wait({drain, subscribed}, return_when=asyncio.FIRST_COMPLETED)
         if drain in done:
             drain.result()
+        receipts = _receipts(directory)
+        receipt["status"] = "pending"
+        receipts.append(receipt)
+        config.save_json(INTRODUCTION_STATE_FILE, {"receipts": receipts}, directory)
         armed.set()
-        turn.acknowledge(acknowledgement(await session.send_chat(REACHY_INTRODUCTION)))
-        # A lost reply must not cause another post on reconnect or restart.
-        config.save_json(INTRODUCTION_STATE_FILE, {"version": INTRODUCTION_VERSION}, directory)
+        result = await session.send_chat(REACHY_INTRODUCTION)
+        if result.get("ok") is False:
+            receipts.remove(receipt)
+            config.save_json(INTRODUCTION_STATE_FILE, {"receipts": receipts}, directory)
+        turn.acknowledge(acknowledgement(result))
+        receipt["status"] = "sent"
+        config.save_json(INTRODUCTION_STATE_FILE, {"receipts": receipts}, directory)
         log.info("introduction sent version=%s", INTRODUCTION_VERSION)
         await drain
     finally:
@@ -134,8 +176,6 @@ async def _consume_reply(subscription, turn: MuseTurn, armed: asyncio.Event) -> 
 
 async def introduce_paired() -> None:
     """Use the saved pairing without starting robot hardware or voice playback."""
-    if introduction_sent(config.state_dir()):
-        return
     pairing = config.load_json(config.PAIRING_FILE)
     if not pairing:
         raise ValueError("Reachy is not paired with Muse. Run `muse-reachy pair` on the robot first.")
@@ -153,15 +193,18 @@ async def introduce_paired() -> None:
         if status != 200 or not vms:
             raise RuntimeError("Muse is unavailable")
         vm = next((vm for vm in vms if vm["is_default"]), vms[0])
+        vm_id = vm["vm_id"] or vm["vm_name"]
+        if introduction_sent(config.state_dir(), vm_id=vm_id, node_id=ident.node_id):
+            return
         session = LinkSession(
             noise_host=pairing.get("noise_host") or DEFAULT_NOISE_HOST,
-            vm_id=vm["vm_id"] or vm["vm_name"], vm_auth_token=vm["vm_auth_token"],
+            vm_id=vm_id, vm_auth_token=vm["vm_auth_token"],
             device=DeviceDescription(ident.node_id, "Reachy Mini", __version__, COMMAND_SPECS),
             register_device=False,
             run_command=lambda *args: {"ok": False, "error": "Reachy is not running"})
         stop = asyncio.Event()
         connection = asyncio.create_task(session.run(stop))
-        introduction = asyncio.create_task(introduce_once(session))
+        introduction = asyncio.create_task(introduce_once(session, vm_id=vm_id, node_id=ident.node_id))
         try:
             done, _ = await asyncio.wait({connection, introduction}, return_when=asyncio.FIRST_COMPLETED)
             if introduction not in done:
@@ -172,5 +215,7 @@ async def introduce_paired() -> None:
             introduction.cancel()
             connection.cancel()
             await asyncio.gather(introduction, connection, return_exceptions=True)
+    except _UncertainIntroduction:
+        raise
     except Exception as exc:
         raise RuntimeError("Reachy's introduction did not finish") from exc

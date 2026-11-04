@@ -542,10 +542,20 @@ to remember your Reachy Mini at home, its spoken replies, and how to use
 
 You can also add `--introduce-to-muse` to `muse-reachy run`. This is off by
 default and always posts to the main chat, regardless of the voice chat selection.
-Both commands record the sent text version in `reachy-introduction.json` inside
-`--state-dir`. Restarts and reconnects do not resend it. A changed introduction
-text sends once more when you opt in. Keep this file with your pairing state.
+Both commands record the text version, Muse account and VM, and device identity
+in `reachy-introduction.json` inside `--state-dir`. Restarts and reconnects do
+not resend it. A new destination or changed introduction text sends once more
+when you opt in. Keep this file with your pairing state.
 Reachy consumes Muse's reply without speaking it or logging its contents.
+
+If a send loses its acknowledgement, its receipt stays `pending` and blocks
+automatic retries. Check the main Muse chat for that destination before editing
+the receipt. If the introduction arrived, set that receipt's `status` to `sent`.
+To retry deliberately, remove that receipt from the `receipts` list and run
+`muse-reachy introduce --yes` again. Do not edit receipts during an introduction.
+Older receipts containing only `version` also require this check because they
+do not identify the recipient. Remove the old file only when you intend to send
+again to the currently paired destination.
 
 ## Muse response compatibility
 
