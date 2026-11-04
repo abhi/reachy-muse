@@ -86,7 +86,7 @@ class LocalHearingTurn:
 
     @property
     def supports_partials(self) -> bool:
-        return self._recognizer is not None
+        return self._recognizer is not None and not self._failed
 
     @property
     def partial(self) -> Optional[Partial]:

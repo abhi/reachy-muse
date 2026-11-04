@@ -10,6 +10,7 @@ import pytest
 from reachy_muse.capabilities import Mode, Partial
 from reachy_muse.conversation import VoiceConversation
 from reachy_muse.local_backends import LocalHearing, backends_for
+from reachy_muse.streaming_transcription import StreamingBufferOverflow
 from test_conversation import FakeHardware, FakeSession
 from test_duplex_voice import duplex
 from test_streaming_input import StreamingRecognizer
@@ -55,7 +56,7 @@ def test_residual_voice_activity_needs_distinct_words_to_pause(duplex, text, pau
     asyncio.run(duplex(run, speech=Speech(), transcriber=recognizer, real_turn=True))
 
 
-@pytest.mark.parametrize("hearing_mode", ["batch", "muse", "fallback"])
+@pytest.mark.parametrize("hearing_mode", ["batch", "muse", "fallback", "streaming_failure"])
 def test_hearing_without_live_partials_pauses_playback_on_voice_activity(duplex, hearing_mode):
     from reachy_muse.companion_client import CompanionHearing, CompanionLink, LinkState, _Connection
     from reachy_muse.failover import CompanionRoute, FailoverHearing
@@ -70,7 +71,8 @@ def test_hearing_without_live_partials_pauses_playback_on_voice_activity(duplex,
             yield np.full(rate // 2, .25, np.float32)
 
     async def scenario():
-        hearing = LocalHearing(None if hearing_mode == "muse" else BatchRecognizer())
+        recognizer = StreamingRecognizer() if hearing_mode == "streaming_failure" else BatchRecognizer()
+        hearing = LocalHearing(None if hearing_mode == "muse" else recognizer)
         if hearing_mode == "fallback":
             link = CompanionLink("ws://localhost:9", token="test", out_rate=16000, insecure=True)
             link._connection = _Connection(None, (Op.HEAR,))
@@ -89,6 +91,16 @@ def test_hearing_without_live_partials_pauses_playback_on_voice_activity(duplex,
                     link._set(LinkState.DOWN)
                     await ctx.feed((.1, 1))
                     await ctx.feed((.1, 1))
+                elif hearing_mode == "streaming_failure":
+                    assert not ctx.conversation._playback.user_speaking
+                    stream, = recognizer.turns
+
+                    def overflow(pcm):
+                        raise StreamingBufferOverflow("test inference backlog")
+
+                    stream.feed = overflow
+                    await ctx.feed((.1, 1))
+                    assert stream.aborted
                 assert ctx.conversation._playback.user_speaking
                 played = len(ctx.hardware.played)
                 await asyncio.sleep(.02)
