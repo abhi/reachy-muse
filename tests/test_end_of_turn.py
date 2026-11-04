@@ -68,9 +68,43 @@ def test_a_hesitation_after_a_short_fragment_waits_for_the_rest_of_the_request()
 @pytest.mark.parametrize("mode, given, expected", [
     (Mode.ON_ROBOT, None, .8),
     (Mode.MUSE_VOICE, None, .8),
-    (Mode.COMPANION, None, 2.0),
+    (Mode.COMPANION, None, 1.2),
     (Mode.ON_ROBOT, 1.5, 1.5),
     (Mode.COMPANION, .8, .8),
 ])
 def test_the_default_end_of_turn_silence_depends_on_who_decides_the_turn_is_over(mode, given, expected):
     assert end_of_turn_silence(mode, given) == expected
+
+
+def test_companion_vad_fallback_keeps_recorded_corrections_and_one_second_pauses():
+    import asyncio
+    from bench.turn2 import endpoint_replay
+
+    assert asyncio.run(endpoint_replay()) == {
+        "reminder": [(4.2, 4.08)],
+        "correction": [(5.4, 5.28)],
+        "negation": [(4.46, 4.34)],
+        "one_second_correction": [(5.2, 5.08)],
+        "short_fragment_hesitation": [(5.2, 5.08)],
+    }
+
+
+def test_smart_turn_endpoint_is_admitted_before_the_robot_silence_limit():
+    import asyncio
+    from reachy_muse import companion_client as client
+    from reachy_muse.protocol import HearEndpoint, Op, encode
+
+    link = client.CompanionLink("ws://offline.invalid", token="offline", out_rate=RATE, insecure=True)
+    link._connection = client._Connection(None, (Op.HEAR,))
+    link._set(client.LinkState.UP)
+    turn = client.CompanionHearing(link).open_turn(RATE, silence_s=2)
+    audio = np.concatenate([speech("reminder"), silence(.52)])
+    for start in range(0, len(audio), 320):
+        turn.feed(audio[start:start + 320])
+        assert turn.take().ended is None
+    assert turn.quiet_s == .52
+    link._receive(link._connection, encode(HearEndpoint(1, "Remind me at eight to call Maya, not at nine.", False)))
+    result = asyncio.run(turn.take().ended.endpoint())
+    assert result.text == "Remind me at eight to call Maya, not at nine."
+    assert result.forced is False
+    assert turn.active is False

@@ -220,11 +220,81 @@ async def answer_replay(*, late=False, streamed=True):
         await conversation._moments.close()
 
 
+async def endpoint_replay():
+    import numpy as np
+    from reachy_muse.capabilities import Mode
+    from reachy_muse.cli import end_of_turn_silence
+    from test_end_of_turn import RATE, silence, speech, turns
+
+    threshold = end_of_turn_silence(Mode.COMPANION, None)
+    clips = {name: speech(name) for name in ("reminder", "correction", "negation")}
+    reminder = clips["reminder"]
+    clips["one_second_correction"] = np.concatenate([
+        reminder[:round(2.04 * RATE)], silence(1), reminder[round(2.04 * RATE):]])
+    clips["short_fragment_hesitation"] = np.concatenate([
+        reminder[:round(.7 * RATE)], silence(1), reminder[round(.7 * RATE):]])
+    return {name: turns(np.concatenate([audio, silence(3)]), threshold, 1.2)
+            for name, audio in clips.items()}
+
+
+async def whisper_replay():
+    import sys
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+    from reachy_muse.local_backends import LocalHearing
+    from reachy_muse.local_transcription import WhisperTranscriber
+
+    worker_code = """
+import json, struct, sys, time
+time.sleep(.3)
+sys.stdout.buffer.write(struct.pack('<I', 0))
+sys.stdout.buffer.flush()
+while header := sys.stdin.buffer.read(4):
+    size, = struct.unpack('<I', header)
+    sys.stdin.buffer.read(size)
+    time.sleep(.02)
+    packet = json.dumps({'text': 'Should I work out today?'}).encode()
+    sys.stdout.buffer.write(struct.pack('<I', len(packet)) + packet)
+    sys.stdout.buffer.flush()
+"""
+    spawn = asyncio.create_subprocess_exec
+
+    async def fake_worker(*args, **kwargs):
+        return await spawn(sys.executable, "-c", worker_code, **kwargs)
+
+    with TemporaryDirectory() as directory:
+        model = Path(directory)
+        for name in ("model.bin", "config.json", "tokenizer.json"):
+            (model / name).touch()
+        transcriber = WhisperTranscriber(model)
+        hearing = LocalHearing(transcriber)
+        wav = b"RIFF" + b"\0" * 4 + b"WAVE" + b"\0" * 32
+        with patch("asyncio.create_subprocess_exec", fake_worker):
+            try:
+                before = time.monotonic()
+                await hearing.start()
+                startup = time.monotonic() - before
+                before = time.monotonic()
+                first = await hearing.transcribe(wav)
+                first_s = time.monotonic() - before
+                pid = transcriber._process.pid
+                before = time.monotonic()
+                second = await hearing.transcribe(wav)
+                return {"startup_ms": round(startup * 1000, 2),
+                        "first_fallback_ms": round(first_s * 1000, 2),
+                        "second_fallback_ms": round((time.monotonic() - before) * 1000, 2),
+                        "worker_reused": transcriber._process.pid == pid,
+                        "transcripts": [first, second]}
+            finally:
+                await transcriber.close()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("experiment", choices=("engine", "jitter", "reconnect", "answer", "late-answer", "pipeline"))
+    parser.add_argument("experiment", choices=("engine", "jitter", "reconnect", "answer", "late-answer", "pipeline", "endpoint", "whisper"))
     args = parser.parse_args()
     experiments = {"engine": engine_replay, "jitter": jitter_replay, "reconnect": reconnect_replay,
                    "answer": answer_replay, "late-answer": lambda: answer_replay(late=True),
-                   "pipeline": lambda: answer_replay(streamed=False)}
+                   "pipeline": lambda: answer_replay(streamed=False), "endpoint": endpoint_replay,
+                   "whisper": whisper_replay}
     print(json.dumps(asyncio.run(experiments[args.experiment]()), indent=2))

@@ -126,3 +126,28 @@ without actually waiting or sending anything externally. With streaming and
 lookahead already enabled, first sentence to answer audio fell from
 **802.60 ms to 252.11 ms**. Only the two answer sentences are spoken. A separate
 behavior test retains the contextual introduction after intervening talk.
+
+## End the fallback capture sooner
+
+The companion-mode VAD cap, also inherited by local fallback, is 1.2 seconds
+instead of 2.0. Explicit silence overrides and the standalone robot's 0.8-second
+default remain. A Smart Turn endpoint still ends capture immediately; a test
+delivers one at 0.52 seconds of silence under a 2-second cap and receives the
+complete unforced transcript on the next poll.
+
+`python -m bench.turn2 endpoint` feeds the existing WAV fixtures through the
+production recorder with WebRTC VAD. Times below are seconds from clip start.
+Every case produces exactly one turn. The one-second correction pause is why
+the companion fallback uses 1.2 rather than 0.8 seconds.
+
+| Recording | Before endpoint | After endpoint | Retained WAV before / after |
+|---|---:|---:|---:|
+| Reminder, including "not at nine" | 5.00 | 4.20 | 4.88 / 4.08 |
+| Correction, including "instead of seven" | 6.20 | 5.40 | 6.08 / 5.28 |
+| Negation | 5.26 | 4.46 | 5.14 / 4.34 |
+| Reminder with a one-second pause before correction | 6.00 | 5.20 | 5.88 / 5.08 |
+| Reminder with a one-second pause after a short fragment | 6.00 | 5.20 | 5.88 / 5.08 |
+
+All five lose only 0.8 seconds of trailing silence. These fixtures establish
+capture continuity, not recognition accuracy on arbitrary pauses. Endpoint,
+CLI, audio and wake-handoff checks: 187 passed.

@@ -454,9 +454,9 @@ def _hardware(args, *, motion=True):
 
 
 ON_ROBOT_SILENCE_S = 0.8
-# In companion mode Smart Turn ends a finished turn about 0.45 s after speech; the robot's
-# silence only caps a turn the companion judges unfinished.
-COMPANION_SILENCE_S = 2.0
+# Smart Turn can finish earlier. This VAD cap also applies during local failover;
+# 1.2 s retains the replay corpus's one-second pauses before corrections.
+COMPANION_SILENCE_S = 1.2
 SHORT_UTTERANCE_SILENCE_S = 1.2
 
 
