@@ -69,7 +69,7 @@ class VoxtralHearing:
     def open(self, pre_roll_frames: int) -> _Session:
         # The pre-roll is transcribed like any other audio: it can hold the start of the request.
         assert self._models is not None, "load() first"
-        return _Session(self, _Utterance(self._models, self.config))
+        return _Session(self)
 
     def _load(self) -> _Models:
         import onnxruntime
@@ -99,14 +99,21 @@ class VoxtralHearing:
 
 
 class _Session:
-    def __init__(self, hearing: VoxtralHearing, utterance: _Utterance) -> None:
+    def __init__(self, hearing: VoxtralHearing) -> None:
         self.hearing = hearing
-        self.utterance = utterance
+        self.utterance: Optional[_Utterance] = None
         self.said = ""
 
     async def feed(self, pcm: bytes) -> Sequence[HearEvent]:
+        return await self.hearing.run(self._feed, pcm)
+
+    def _feed(self, pcm: bytes) -> Sequence[HearEvent]:
+        # Creating a streaming session can evaluate MLX arrays, including after idle.
+        # Construction, inference and release all belong to the same model worker.
+        if self.utterance is None:
+            self.utterance = _Utterance(self.hearing._models, self.hearing.config)
         samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
-        final = await self.hearing.run(self.utterance.feed, samples)
+        final = self.utterance.feed(samples)
         events: List[HearEvent] = []
         if self.utterance.text != self.said:
             self.said = self.utterance.text
@@ -116,10 +123,16 @@ class _Session:
         return events
 
     async def finish(self) -> str:
-        return await self.hearing.run(self.utterance.final)
+        return await self.hearing.run(self._finish)
+
+    def _finish(self) -> str:
+        return self.utterance.final() if self.utterance is not None else ""
 
     async def close(self) -> None:
-        pass
+        await self.hearing.run(self._release)
+
+    def _release(self) -> None:
+        self.utterance = None
 
 
 class _Utterance:
