@@ -26,6 +26,7 @@ from reachy_muse.contract.prompts import REACHY_INTRODUCTION
 INTRODUCTION_VERSION = hashlib.sha256(REACHY_INTRODUCTION.encode("utf-8")).hexdigest()
 INTRODUCTION_STATE_FILE = "reachy-introduction.json"
 INTRODUCTION_TIMEOUT_S = 180
+INTRODUCTION_CLEANUP_S = 2
 log = logging.getLogger(__name__)
 
 
@@ -101,7 +102,7 @@ def introduction_sent(directory: Path, *, vm_id: str, node_id: str) -> bool:
 
 
 async def introduce_once(session: LinkSession, directory: Path | None = None, *,
-                         vm_id: str, node_id: str) -> None:
+                         vm_id: str, node_id: str, stop: asyncio.Event) -> None:
     directory = directory or config.state_dir()
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     # The CLI and a running service may opt in at the same time.
@@ -113,11 +114,31 @@ async def introduce_once(session: LinkSession, directory: Path | None = None, *,
         if introduction_sent(directory, vm_id=vm_id, node_id=node_id):
             return
         receipt = _receipt(directory, vm_id, node_id)
+        sending = asyncio.create_task(_send_and_consume(session, directory, receipt))
         try:
-            await asyncio.wait_for(_send_and_consume(session, directory, receipt), INTRODUCTION_TIMEOUT_S)
+            done, _ = await asyncio.wait({sending}, timeout=INTRODUCTION_TIMEOUT_S)
+            if sending not in done:
+                raise asyncio.TimeoutError
+            sending.result()
         except Exception as exc:
             # Network errors can contain reply text or credentials.
             raise RuntimeError("Reachy's introduction did not finish") from exc
+        finally:
+            if not sending.done():
+                stop.set()
+            await _cancel_tasks(sending)
+
+
+def _retrieve(task: asyncio.Task) -> None:
+    if not task.cancelled():
+        task.exception()
+
+
+async def _cancel_tasks(*tasks: asyncio.Task) -> None:
+    for task in tasks:
+        task.cancel()
+        task.add_done_callback(_retrieve)
+    await asyncio.wait(tasks, timeout=INTRODUCTION_CLEANUP_S)
 
 
 async def _send_and_consume(session: LinkSession, directory: Path, receipt: dict) -> None:
@@ -204,7 +225,8 @@ async def introduce_paired() -> None:
             run_command=lambda *args: {"ok": False, "error": "Reachy is not running"})
         stop = asyncio.Event()
         connection = asyncio.create_task(session.run(stop))
-        introduction = asyncio.create_task(introduce_once(session, vm_id=vm_id, node_id=ident.node_id))
+        introduction = asyncio.create_task(introduce_once(
+            session, vm_id=vm_id, node_id=ident.node_id, stop=stop))
         try:
             done, _ = await asyncio.wait({connection, introduction}, return_when=asyncio.FIRST_COMPLETED)
             if introduction not in done:
@@ -212,9 +234,7 @@ async def introduce_paired() -> None:
             introduction.result()
         finally:
             stop.set()
-            introduction.cancel()
-            connection.cancel()
-            await asyncio.gather(introduction, connection, return_exceptions=True)
+            await _cancel_tasks(introduction, connection)
     except _UncertainIntroduction:
         raise
     except Exception as exc:

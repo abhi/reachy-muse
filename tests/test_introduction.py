@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 
 import asyncio
+import fcntl
 import hashlib
 import json
 import logging
@@ -32,7 +33,10 @@ def event(name, **payload):
 class Session:
     def __init__(self, *, ack=None, reply=True):
         self.registered = asyncio.Event()
+        self.stop = asyncio.Event()
         self.registered.set()
+        self.transport_ready = asyncio.Event()
+        self.transport_ready.set()
         self.chat_subscribed = asyncio.Event()
         self.posted = asyncio.Event()
         self.events = asyncio.Queue()
@@ -51,7 +55,7 @@ class Session:
             self.connection_closed = True
 
     async def wait_transport_ready(self):
-        await self.registered.wait()
+        await self.transport_ready.wait()
 
     async def send_chat(self, message):
         assert self.chat_subscribed.is_set()
@@ -114,7 +118,7 @@ def test_preview_needs_no_pairing_token_state_or_hardware(tmp_path, monkeypatch,
 def test_sent_once_across_restarts_and_again_for_new_text(tmp_path, monkeypatch, caplog):
     async def check():
         first = Session()
-        await introduction.introduce_once(first, tmp_path, **DESTINATION)
+        await introduction.introduce_once(first, tmp_path, **DESTINATION, stop=first.stop)
         assert first.posts == [REACHY_INTRODUCTION]
         assert first.closed and first.events.empty()
         state_file = tmp_path / introduction.INTRODUCTION_STATE_FILE
@@ -123,15 +127,15 @@ def test_sent_once_across_restarts_and_again_for_new_text(tmp_path, monkeypatch,
             "api": introduction.muse_api.api_root(), "status": "sent"}]}
         assert state_file.stat().st_mode & 0o777 == 0o600
         reconnect = Session()
-        await introduction.introduce_once(reconnect, tmp_path, **DESTINATION)
+        await introduction.introduce_once(reconnect, tmp_path, **DESTINATION, stop=reconnect.stop)
         assert reconnect.posts == []
         changed = REACHY_INTRODUCTION + " Thank you."
         monkeypatch.setattr(introduction, "REACHY_INTRODUCTION", changed)
         monkeypatch.setattr(introduction, "INTRODUCTION_VERSION", hashlib.sha256(changed.encode()).hexdigest())
         updated = Session()
-        await introduction.introduce_once(updated, tmp_path, **DESTINATION)
+        await introduction.introduce_once(updated, tmp_path, **DESTINATION, stop=updated.stop)
         assert updated.posts == [changed]
-        await introduction.introduce_once(updated, tmp_path, **DESTINATION)
+        await introduction.introduce_once(updated, tmp_path, **DESTINATION, stop=updated.stop)
         assert updated.posts == [changed]
 
     original_version = introduction.INTRODUCTION_VERSION
@@ -141,14 +145,14 @@ def test_sent_once_across_restarts_and_again_for_new_text(tmp_path, monkeypatch,
                                f"introduction sent version={introduction.INTRODUCTION_VERSION}"]
 
 
-def test_waits_for_registration_and_consumes_whole_reply(tmp_path):
+def test_waits_for_transport_and_consumes_whole_reply(tmp_path):
     async def check():
         session = Session(reply=False)
-        session.registered.clear()
-        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION))
+        session.transport_ready.clear()
+        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=session.stop))
         await asyncio.sleep(0)
         assert session.posts == []
-        session.registered.set()
+        session.transport_ready.set()
         await session.posted.wait()
         session.events.put_nowait(event("task.status", task_id="intro-task", status="running"))
         session.events.put_nowait(event("delta.text_append", message_id="intro-reply", text="Private partial"))
@@ -170,18 +174,18 @@ def test_waits_for_registration_and_consumes_whole_reply(tmp_path):
 def test_rejected_or_invalid_ack_does_not_record_success(tmp_path, ack):
     session = Session(ack=ack)
     with pytest.raises(RuntimeError, match="^Reachy's introduction did not finish$"):
-        asyncio.run(introduction.introduce_once(session, tmp_path, **DESTINATION))
+        asyncio.run(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=session.stop))
     receipts = json.loads((tmp_path / introduction.INTRODUCTION_STATE_FILE).read_text())["receipts"]
     assert session.closed
     retry = Session()
     if ack["ok"]:
         assert receipts[0]["status"] == "pending"
         with pytest.raises(RuntimeError, match="outcome is unknown"):
-            asyncio.run(introduction.introduce_once(retry, tmp_path, **DESTINATION))
+            asyncio.run(introduction.introduce_once(retry, tmp_path, **DESTINATION, stop=retry.stop))
         assert retry.posts == []
     else:
         assert receipts == []
-        asyncio.run(introduction.introduce_once(retry, tmp_path, **DESTINATION))
+        asyncio.run(introduction.introduce_once(retry, tmp_path, **DESTINATION, stop=retry.stop))
         assert retry.posts == [REACHY_INTRODUCTION]
 
 
@@ -191,7 +195,7 @@ def test_accepted_post_is_not_repeated_if_reply_is_lost(tmp_path, monkeypatch, f
 
     async def check():
         session = Session(reply=False)
-        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION))
+        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=session.stop))
         await session.posted.wait()
         await asyncio.sleep(0.02)
         assert introduction.introduction_sent(tmp_path, **DESTINATION)
@@ -203,7 +207,7 @@ def test_accepted_post_is_not_repeated_if_reply_is_lost(tmp_path, monkeypatch, f
             await task
         assert session.closed
         retry = Session()
-        await introduction.introduce_once(retry, tmp_path, **DESTINATION)
+        await introduction.introduce_once(retry, tmp_path, **DESTINATION, stop=retry.stop)
         assert retry.posts == []
 
     asyncio.run(asyncio.wait_for(check(), 2))
@@ -212,15 +216,15 @@ def test_accepted_post_is_not_repeated_if_reply_is_lost(tmp_path, monkeypatch, f
 def test_concurrent_introductions_cannot_both_post(tmp_path):
     async def check():
         first = Session(reply=False)
-        task = asyncio.create_task(introduction.introduce_once(first, tmp_path, **DESTINATION))
+        task = asyncio.create_task(introduction.introduce_once(first, tmp_path, **DESTINATION, stop=first.stop))
         await first.posted.wait()
         second = Session()
         with pytest.raises(RuntimeError, match="already in progress"):
-            await introduction.introduce_once(second, tmp_path, **DESTINATION)
+            await introduction.introduce_once(second, tmp_path, **DESTINATION, stop=second.stop)
         assert second.posts == []
         first.finish_reply()
         await task
-        await introduction.introduce_once(second, tmp_path, **DESTINATION)
+        await introduction.introduce_once(second, tmp_path, **DESTINATION, stop=second.stop)
         assert second.posts == []
 
     asyncio.run(asyncio.wait_for(check(), 2))
@@ -232,7 +236,7 @@ def test_corrupt_state_fails_without_posting(tmp_path, saved):
     (tmp_path / introduction.INTRODUCTION_STATE_FILE).write_text(saved)
     session = Session()
     with pytest.raises(ValueError, match="saved introduction"):
-        asyncio.run(introduction.introduce_once(session, tmp_path, **DESTINATION))
+        asyncio.run(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=session.stop))
     assert session.posts == []
 
 
@@ -241,7 +245,7 @@ def test_legacy_receipt_requires_reconciliation(tmp_path):
         json.dumps({"version": introduction.INTRODUCTION_VERSION}))
     session = Session()
     with pytest.raises(RuntimeError, match="saved introduction has no destination"):
-        asyncio.run(introduction.introduce_once(session, tmp_path, **DESTINATION))
+        asyncio.run(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=session.stop))
     assert session.posts == []
 
 
@@ -283,7 +287,7 @@ def test_standalone_introduction_preserves_running_device_registration(tmp_path,
     config.save_json(config.PAIRING_FILE, {"access_token": "fake-token"}, tmp_path)
     monkeypatch.setattr(introduction.identity, "load_or_create", lambda: Identity("02:00:00:ab:cd:ef"))
     monkeypatch.setattr(introduction.muse_api, "fetch_vms_with_status", lambda *args: ([
-        {"vm_id": "vm-1", "is_default": True, "vm_auth_token": "fake-vm-token"}], 200))
+        {"vm_id": "vm 1&x", "is_default": True, "vm_auth_token": "fake-vm-token"}], 200))
 
     async def check():
         running, running_vm, stop, connection = await registered_session()
@@ -399,7 +403,7 @@ def test_service_consumes_introduction_before_voice_on_every_route(tmp_path, mon
 def test_real_sdk_posts_text_to_main_chat_and_closes_reply_subscription(tmp_path):
     async def check():
         session, vm, stop, connection = await registered_session()
-        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION))
+        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=stop))
         try:
             subscribe = await vm.next_frame()
             assert subscribe.value.path == "/chat/subscribe"
@@ -436,7 +440,7 @@ def test_real_sdk_posts_text_to_main_chat_and_closes_reply_subscription(tmp_path
 def test_real_sdk_parentless_replies_follow_the_acknowledged_user(tmp_path, foreign_turn):
     async def check():
         session, vm, stop, connection = await registered_session()
-        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION))
+        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=stop))
 
         async def publish(*events):
             await vm.send_frame(ServiceFrame.body_chunk(subscribe.stream_id, BodyChunk(
@@ -482,7 +486,7 @@ def test_terminal_task_without_assistant_message_finishes(tmp_path, monkeypatch)
 
     async def check():
         session = Session(reply=False)
-        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION))
+        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=session.stop))
         try:
             await session.posted.wait()
             session.events.put_nowait(event("task.status", task_id="intro-task", status="completed"))
@@ -500,7 +504,7 @@ def test_terminal_task_without_assistant_message_finishes(tmp_path, monkeypatch)
 def test_blank_completion_waits_for_reordered_assistant_text(tmp_path):
     async def check():
         session = Session(reply=False)
-        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION))
+        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=session.stop))
         try:
             await session.posted.wait()
             session.events.put_nowait(event("delta.message_done", message_id="intro-reply", display_text=""))
@@ -588,7 +592,7 @@ def test_receipts_follow_the_destination_across_switches(tmp_path, monkeypatch, 
 def test_real_sdk_lost_acknowledgement_is_not_automatically_reposted(tmp_path):
     async def check():
         session, vm, stop, connection = await registered_session()
-        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION))
+        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=stop))
         try:
             subscribe = await vm.next_frame()
             await vm.send_frame(ServiceFrame.response(subscribe.stream_id, ApplicationResponse(
@@ -601,7 +605,7 @@ def test_real_sdk_lost_acknowledgement_is_not_automatically_reposted(tmp_path):
             retry = Session()
             error = None
             try:
-                await introduction.introduce_once(retry, tmp_path, **DESTINATION)
+                await introduction.introduce_once(retry, tmp_path, **DESTINATION, stop=retry.stop)
             except RuntimeError as exc:
                 error = str(exc)
             assert retry.posts == []
@@ -610,5 +614,95 @@ def test_real_sdk_lost_acknowledgement_is_not_automatically_reposted(tmp_path):
             stop.set()
             task.cancel()
             await asyncio.gather(task, connection, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(check(), 3))
+
+
+@pytest.mark.parametrize("blocked_frame", ["post", "reset"])
+@pytest.mark.parametrize("entrypoint", ["standalone", "service"])
+def test_deadline_closes_transport_under_backpressure(tmp_path, monkeypatch, blocked_frame, entrypoint):
+    monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(introduction, "INTRODUCTION_TIMEOUT_S", 0.05)
+    config.save_json(config.PAIRING_FILE, {"access_token": "fake-token"}, tmp_path)
+    monkeypatch.setattr(introduction.identity, "load_or_create", lambda: Identity("02:00:00:ab:cd:ef"))
+    monkeypatch.setattr(introduction.muse_api, "fetch_vms_with_status", lambda *args: ([
+        {"vm_id": "vm-1", "is_default": True, "vm_auth_token": "fake-vm-token"}], 200))
+
+    async def check():
+        link, vm = make_session(lambda *args: pytest.fail("standalone command"), [])
+        ws = await link._connect("fake", {})
+        blocked, release, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        send, close = ws.send, ws.close
+
+        async def stalled_send(data):
+            blocked.set()
+            await release.wait()
+            if closed.is_set():
+                raise ConnectionError("closed")
+            await send(data)
+
+        async def close_transport():
+            closed.set()
+            release.set()
+            await close()
+
+        monkeypatch.setattr(ws, "close", close_transport)
+        sessions = []
+
+        def connect(**kwargs):
+            session = LinkSession(**kwargs, connect=link._connect)
+            sessions.append(session)
+            return session
+
+        monkeypatch.setattr(introduction, "LinkSession", connect)
+        if entrypoint == "standalone":
+            task = asyncio.create_task(introduction.introduce_paired())
+        else:
+            class Hardware:
+                def set_state(self, state):
+                    assert state == "error"
+
+            service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=Hardware(),
+                                   backends=lambda _: pytest.fail("started voice after a failed introduction"),
+                                   introduce_to_muse=True)
+            sessions.append(link)
+            task = asyncio.create_task(service.serve(link, {"vm_id": "vm-1"}, asyncio.Event()))
+        try:
+            await vm.handshake()
+            if entrypoint == "service":
+                await vm.accept_control_stream()
+                register = await vm.next_message()
+                await vm.send_message({"type": "res", "id": register["id"], "ok": True})
+            subscribe = await vm.next_frame()
+            if blocked_frame == "post":
+                monkeypatch.setattr(ws, "send", stalled_send)
+            await vm.send_frame(ServiceFrame.response(subscribe.stream_id, ApplicationResponse(
+                status=200, end_body=False)))
+            if blocked_frame == "reset":
+                post = await vm.next_frame()
+                await vm.send_frame(ServiceFrame.response(post.stream_id, ApplicationResponse(
+                    status=200, body=b'{"session_id":"main-chat","message_id":"intro-user"}', end_body=True)))
+                monkeypatch.setattr(ws, "send", stalled_send)
+                replies = [event("delta.message_done", message_id="intro-reply", display_text="Remembered."),
+                           event("task.status", status="completed")]
+                await vm.send_frame(ServiceFrame.body_chunk(subscribe.stream_id, BodyChunk(
+                    data=b"".join(json.dumps(reply).encode() + b"\n" for reply in replies))))
+            await blocked.wait()
+            await asyncio.wait({task}, timeout=0.5)
+            assert ("finished" if task.done() else "blocked") == "finished"
+            if entrypoint == "standalone":
+                with pytest.raises(RuntimeError, match="introduction did not finish"):
+                    await task
+            else:
+                assert await task is Outcome.CLOSED
+            assert closed.is_set()
+            assert not sessions[0].chat_subscribed.is_set()
+            assert not [writer for writer in sessions[0]._tasks if not writer.done()]
+            with (tmp_path / "reachy-introduction.lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(asyncio.wait_for(check(), 3))
