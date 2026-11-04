@@ -156,3 +156,65 @@ def test_close_joins_cues_closings_and_generation_and_prevents_refill():
         assert hardware.calls == []
 
     scenario(steps)
+
+
+def test_closing_uses_last_audible_sentence_after_deferred_output_drains():
+    async def steps():
+        class LabeledSource(Source):
+            async def generate(self, intent, duration_s):
+                value = -1.0 if "sorry" in intent else 1.0
+                return Motion(25, ((value,) * 9,) * 3)
+
+        class LabeledHardware(Hardware):
+            def play_motion(self, frames, fps, **kwargs):
+                super().play_motion(frames, fps, **kwargs)
+                self.calls[-1] += (frames[0][0],)
+                played.set()
+
+        played = asyncio.Event()
+        hardware = LabeledHardware()
+        director = MomentDirector(LabeledSource(), hardware)
+        audible = [None]
+        idle = [False]
+        director.finish_turn(lambda: idle[0], expression=lambda: audible[0])
+        audible[0] = Expression.HAPPY
+        director.prepare_closing(audible[0])
+        director.stop_cue()
+        await asyncio.sleep(0)
+        audible[0] = Expression.SAD
+        director.prepare_closing(audible[0])
+        idle[0] = True
+        await played.wait()
+        assert hardware.calls == [("play", ["idle", "listening"], -1.0)]
+        await director.close()
+    scenario(steps)
+
+
+def test_next_turn_cancels_a_closing_waiting_for_generation():
+    async def steps():
+        entered, release, played = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        class WaitingClosing(Source):
+            async def generate(self, intent, duration_s):
+                if intent == "celebrating good news":
+                    entered.set()
+                    await release.wait()
+                return Motion(25, ((0.0,) * 9,) * 3)
+
+        class NotifyingHardware(Hardware):
+            def play_motion(self, frames, fps, **kwargs):
+                super().play_motion(frames, fps, **kwargs)
+                played.set()
+
+        hardware = NotifyingHardware()
+        director = MomentDirector(WaitingClosing(), hardware)
+        director.prepare_closing(Expression.HAPPY)
+        director.finish_turn(lambda: True)
+        await entered.wait()
+        director.cue(Moment.THINKING)
+        release.set()
+        await played.wait()
+        await asyncio.sleep(.1)
+        assert hardware.calls == [("play", ["thinking"])]
+        await director.close()
+    scenario(steps)

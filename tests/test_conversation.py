@@ -3226,8 +3226,8 @@ def test_ack_race_and_multiple_messages_play_real_mp3_once_each(mp3_tone, monkey
         assert session.sent == [(b"voice recording", "robot-chat")]
         assert session.tts_requests == ["reply-1", "reply-2"]
         assert session.tts_closed == ["reply-1", "reply-2"]
-        assert hardware.state_expressions == [("thinking", None), ("speaking", None),
-                                              ("thinking", None), ("speaking", None), ("thinking", None)]
+        assert hardware.state_expressions == [("thinking", None), ("speaking", "neutral"),
+                                              ("thinking", None), ("speaking", "neutral"), ("thinking", None)]
         assert hardware.gestures == ["nod"]
         pcm = np.concatenate(hardware.played)
         assert pcm.ndim == 1
@@ -3559,7 +3559,7 @@ def test_real_noise_voice_note_gets_text_completion_and_paced_tts_burst(mp3_tone
                 data=mp3_tone[offset:offset + 3], end_body=offset + 3 >= len(mp3_tone),
             )))
         await speaking
-        assert hardware.state_expressions == [("thinking", None), ("speaking", None), ("thinking", None)]
+        assert hardware.state_expressions == [("thinking", None), ("speaking", "neutral"), ("thinking", None)]
         assert hardware.gestures == ["nod"]
         assert sum(len(samples) for samples in hardware.played) >= 640
         assert not conversation._muted

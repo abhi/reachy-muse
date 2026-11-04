@@ -125,7 +125,7 @@ def test_registered_say_uses_normal_playback_without_muse_or_text_logs(caplog):
         assert result == {"ok": True, "payload": {"spoken": True}}
         assert speech.words == ["A private reminder."]
         assert sum(len(samples) for samples in voice.hardware.played) == 320
-        assert voice.hardware.play_expressions == [("speaking", None)]
+        assert voice.hardware.play_expressions == [("speaking", "neutral")]
         assert voice.session.sent == voice.session.setup_messages == voice.session.tts_requests == []
         assert voice.hardware.states[-1] == "idle"
         assert not voice._command_tasks

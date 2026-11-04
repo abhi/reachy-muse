@@ -893,8 +893,12 @@ gaze direction for its 1.6-second gesture so tracking does not erase it. Eased
 travel and brief held peaks give the head time to reach each pose: nods use up
 to eight degrees around the gaze direction, and shakes use up to ten. Absolute
 head-angle limits still apply near the edges of the tracking range.
-A reply without an emotion marker uses a neutral speaking pose. Motion smoothing
-uses elapsed time so changes in the update rate do not slow the transitions.
+A sentence without an emotion marker gets a local expression from a bounded
+English lexicon. Questions lean curious, good news and congratulations look
+happy, and apologies look sad. Unmatched text stays neutral. Explicit expressions
+from Muse or the narrator take precedence. This classification does not call a
+model or wait for the companion. Motion smoothing uses elapsed time so changes
+in the update rate do not slow the transitions.
 
 Three expressions also have a recorded clip from Pollen's emotions library,
 `pollen-robotics/reachy-mini-emotions-library`. When a spoken line starts with
@@ -914,15 +918,29 @@ fits sad: `sad1`, `sad2`, and `downcast1` last 5.9 to 9 seconds. Nod and shake
 keep their 1.6-second gestures, because `yes1`, `understanding2`, and `no1`
 reach 144 to 196 degrees per second.
 
-Each spoken line gets one chance at its start. A line that starts while a clip
-still plays keeps the static pose. The clip fades out as soon as Reachy stops
-speaking, and a command waits for that fade before it moves the head. The
+Each sentence carries its expression with its first PCM chunk. After the speaker
+accepts that chunk, the controller schedules motion at its estimated audible
+start, including queued audio and the same 60 ms sink delay as speech sway.
+A new sentence crossfades from the previous clip's rendered pose, including when
+both sentences have the same expression. A microphone pause preserves the
+sentence's expression without replaying its opening clip. The clip fades out as
+soon as Reachy stops speaking, and a command waits for that fade before it moves
+the head. Incoming sentence cues cannot prolong that command's wait. The
 recorded clips sit about 8 mm back and 6 to 9 mm up from Reachy's center, and
 some turn the body up to 5 degrees, so the head shifts slightly while one plays.
 The controller loads the library in the background at startup. Until it loads,
 or when it cannot load, for example offline, every expression keeps its static
 pose. To use only the static poses, start `muse-reachy` with
 `REACHY_MUSE_EXPRESSION_CLIPS=0`.
+
+The accepted audio tail schedules a half-second sentence-end gesture: a nod of
+up to four degrees, or a four-degree tilt for a question. Questions add an
+eight-degree antenna accent, and exclamations add ten degrees. Overlapping
+accents blend for 0.2 seconds. Flushing audio discards pending cues and releases
+an active accent over 0.2 seconds. These offsets join the existing PCM-driven
+sway and syllable accents before the final pose clamp. Exact word timings are
+not available from the TTS stream. The [offline measurements](../bench/expressive_streaming.md)
+cover onset timing, expression coverage, and combined motion limits.
 
 ### Generated motion from the companion
 
@@ -935,9 +953,9 @@ fixed expressions described above, unchanged.
 | Moment | When it plays | Ends |
 | --- | --- | --- |
 | Greeting | "Hey Muse" alone, waking from sleep, and "wake up", after the wake lift | After about 2.5 s, or when the state changes |
-| Thinking | From the moment a request goes to Muse, looping while Muse works | When the answer starts |
-| Celebration | When speech ends, after a reply marked happy or surprised | After about 2.5 s, or when the state changes |
-| Apology | When speech ends, after a reply marked sad or with a shake | After about 2.5 s, or when the state changes |
+| Thinking | From the moment a request goes to Muse, looping while Muse works | When answer audio starts |
+| Celebration | After output drains, if the last audible sentence is happy or surprised | After about 2.5 s, or when the state changes |
+| Apology | After output drains, if the last audible sentence is sad or has a shake | After about 2.5 s, or when the state changes |
 
 Generating one motion takes about a second on the Mac, so the robot asks for one
 of each when it connects and asks for the next one each time it uses one. A

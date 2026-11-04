@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 
     from reachy_muse.arrival import WatchPose
     from reachy_muse.motion.layers import ClipTimeline
+    from reachy_muse.motion.sentence import SentenceMotion
 
 log = logging.getLogger(__name__)
 EMOTIONS_DATASET = "pollen-robotics/reachy-mini-emotions-library"
@@ -244,6 +245,16 @@ class ReachyController:
         self._motion_thread = None
         self._state_lock = threading.Lock()
         self._audio_lock = threading.Lock()
+        from reachy_muse.motion.sentence_timeline import SentenceTimeline
+        self._sentences = SentenceTimeline()
+        self._audio_end = -math.inf
+        self._sentence_terminal = None
+        self._sentence_expression = None
+        self._sentence_paused = False
+        self._sentence_active = False
+        self._sentence_serial = 0
+        self._sentence_epoch = 0
+        self._motion_epoch = 0
         self._state = "idle"
         self._state_started = time.monotonic()
         self._progress_started = None
@@ -263,6 +274,8 @@ class ReachyController:
         self._rest = None
         self._clip = None
         self._clip_line = None
+        self._clip_source = None
+        self._last_written_vector = None
         self._generated = None
         self._pending_motion = None
         self._stop_generated = False
@@ -333,6 +346,12 @@ class ReachyController:
         self._gesture_name = None
         self._clip = None
         self._clip_line = None
+        self._clip_source = None
+        self._last_written_vector = None
+        self._sentences.cancel()
+        self._audio_end = -math.inf
+        self._sentence_terminal = None
+        self._sentence_active = self._sentence_paused = False
         self._generated = None
         self._pending_motion = None
         self._stop_generated = False
@@ -401,7 +420,7 @@ class ReachyController:
         except Exception as exc:
             raise ReachyHardwareError(f"Reachy Mini microphone failed: {exc}") from exc
 
-    def play_audio(self, samples: np.ndarray) -> None:
+    def play_audio(self, samples: np.ndarray, *, sentence: SentenceMotion | None = None) -> None:
         """Queue mono float32 samples at output_sample_rate without waiting."""
         self._require_running()
         audio = self._np.asarray(samples, dtype=self._np.float32)
@@ -414,7 +433,37 @@ class ReachyController:
                     self._robot.media.push_audio_sample(audio)
                 except Exception as exc:
                     raise ReachyHardwareError(f"Reachy Mini speaker failed: {exc}") from exc
-                self._layers.feed_speech(audio, self._output_sample_rate, time.monotonic())
+                at = time.monotonic()
+                from reachy_muse.motion.layers import SWAY_LATENCY_S
+                from reachy_muse.motion.sentence_timeline import SentenceEvent
+                start = max(at, self._audio_end)
+                self._audio_end = start + audio.size / self._output_sample_rate
+                if sentence is not None:
+                    with self._state_lock:
+                        self._sentence_paused = False
+                        self._sentence_active = True
+                        self._sentence_serial += 1
+                        self._sentence_epoch = self._sentences.epoch
+                        self._sentence_terminal = sentence.terminal
+                        self._sentence_expression = sentence.expression.value
+                        self._state = "speaking"
+                        self._reply_expression = None
+                        self._state_started = start + SWAY_LATENCY_S
+                        self._clip_line = self._state_started
+                        self._progress_started = None
+                        self._sentences.offer(SentenceEvent(self._state_started, self._sentence_epoch,
+                                                            "start", (sentence.expression.value, self._sentence_serial)))
+                self._layers.feed_speech(audio, self._output_sample_rate, at)
+
+    def finish_sentence(self) -> None:
+        """Schedule a sentence-end accent at the accepted audio tail."""
+        from reachy_muse.motion.layers import SWAY_LATENCY_S
+        from reachy_muse.motion.sentence_timeline import SentenceEvent
+        with self._audio_lock, self._state_lock:
+            if self._sentence_terminal is not None:
+                self._sentences.offer(SentenceEvent(self._audio_end + SWAY_LATENCY_S, self._sentence_epoch,
+                                                    "end", (self._sentence_terminal, self._sentence_serial)))
+                self._sentence_terminal = None
 
     def clear_audio(self) -> None:
         """Flush queued speech without stopping the shared microphone pipeline."""
@@ -428,7 +477,13 @@ class ReachyController:
                 clear_player()
             except Exception as exc:
                 raise ReachyHardwareError(f"Reachy Mini playback flush failed: {exc}") from exc
-            self._layers.interrupt_speech(time.monotonic())
+            now = time.monotonic()
+            self._layers.interrupt_speech(now)
+            self._audio_end = -math.inf
+            self._sentence_terminal = None
+            with self._state_lock:
+                self._sentence_active = False
+                self._sentences.cancel()
 
     def set_state(self, state: str, *, expression: str | None = None) -> None:
         if state not in STATES:
@@ -439,10 +494,20 @@ class ReachyController:
             self.gesture(expression)
             expression = None
         with self._state_lock:
+            if self._sentence_active:
+                if state == "listening" and self._sentence_terminal is not None:
+                    self._sentence_paused = True
+                elif state == "speaking" and expression is None:
+                    self._sentence_paused = False
             if self._starts_new_pose(state, expression):
                 self._state_started = time.monotonic()
             self._state = state
-            self._reply_expression = expression
+            if state == "speaking" and expression is None and self._sentence_active:
+                self._reply_expression = self._sentence_expression
+            else:
+                self._reply_expression = expression
+            if state == "speaking" and expression is None and self._sentence_active:
+                self._clip_line = self._state_started
             if state != "thinking":
                 self._progress_started = None
 
@@ -773,7 +838,8 @@ class ReachyController:
         self._write(self._head(**dict(zip(AXES[:6], values[:6]))),
                     self._np.radians(values[6:8]), math.radians(values[8]))
 
-    def _cue_clip(self, now: float, state: str, expression: str | None, line: float) -> None:
+    def _cue_clip(self, now: float, state: str, expression: str | None, line: float, *,
+                  replace: bool = False, epoch: int | None = None) -> None:
         """Give each spoken line one chance, at its start, to play its expression's clip.
 
         A spoken clip fades out as soon as Reachy stops speaking.
@@ -781,16 +847,27 @@ class ReachyController:
         clip = self._clip
         if clip is not None and clip.during is not None and state != clip.during:
             clip.timeline.stop(now)
-        if state != "speaking" or line == self._clip_line:
+        if state != "speaking" or line == self._clip_line and not replace:
             return
         self._clip_line = line
         name = EXPRESSION_CLIPS.get(expression)
         moves = self._ready_moves() if self._style.expression_clips and name else None
-        if clip is not None or moves is None or name not in moves.list_moves():
+        if clip is not None and (not replace or clip.request is not None):
             return
+        if moves is None or name not in moves.list_moves():
+            if clip is not None:
+                clip.timeline.stop(now)
+            return
+        source = (self._last_written_vector.copy()
+                  if clip is not None and self._last_written_vector is not None else None)
         from reachy_muse.motion.layers import ClipTimeline
         move = moves.get(name)
-        self._clip = _Clip(move, ClipTimeline(now, float(move.duration)), SPOKEN_CLIP_INTENSITY, during="speaking")
+        incoming = _Clip(move, ClipTimeline(line if replace else now, float(move.duration)),
+                         SPOKEN_CLIP_INTENSITY, during="speaking")
+        with self._state_lock:
+            if epoch is None or epoch == self._sentences.epoch:
+                self._clip_source = source
+                self._clip = incoming
 
     def _cue_generated(self, now: float, state: str) -> None:
         with self._state_lock:
@@ -834,10 +911,16 @@ class ReachyController:
             clip.timeline.stop(now)
         if clip.timeline.finished(now):
             self._clip = None
+            self._clip_source = None
             if request is not None:
                 request.result = clip.result
                 request.done.set()
             return pose
+        if self._clip_source is not None:
+            if now >= clip.timeline.started + clip.timeline.fade_in_s:
+                self._clip_source = None
+            else:
+                pose = self._clip_source
         return self._crossfade(clip, now, pose)
 
     def _crossfade(self, clip: _Clip, now: float, pose, gain: float = 1.0):
@@ -915,6 +998,11 @@ class ReachyController:
                         request = self._commands.get_nowait()
                     except queue.Empty:
                         pass
+                if request is not None or commanded:
+                    with self._state_lock:
+                        self._sentences.cancel()
+                        self._sentence_active = False
+                        self._sentence_terminal = None
                 if request is not None and (self._clip is not None or self._generated is not None):
                     # A command starts from the pose last written, so showing clips fade out first.
                     for clip in (self._clip, self._generated):
@@ -942,7 +1030,46 @@ class ReachyController:
                         self._stop.wait(_MOTION_PERIOD_S)
                 else:
                     self._update_face_tracking(state, commanded=commanded or self._generated is not None)
-                    self._cue_clip(now, state, expression, state_started)
+                    if self._motion_epoch != self._sentences.epoch:
+                        self._motion_epoch = self._sentences.epoch
+                        self._clip_line = state_started
+                        if self._clip is not None and self._clip.request is None and self._clip.during == "speaking":
+                            self._clip.timeline.stop(now)
+                    for event in self._sentences.due(now):
+                        if commanded or self._deferred is not None:
+                            continue
+                        if event.kind == "start":
+                            with self._state_lock:
+                                if event.epoch != self._sentences.epoch:
+                                    continue
+                                expression, serial = event.value
+                                if self._sentence_paused or self._state != "speaking":
+                                    continue
+                                self._reply_expression = expression
+                                state = "speaking"
+                                self._state_started = state_started = event.at
+                                self._progress_started = None
+                            elapsed = max(0.0, now - event.at)
+                            if expression in HEAD_GESTURES:
+                                with self._state_lock:
+                                    self._gesture_name = expression
+                                    self._gesture_started = event.at
+                                gesture = expression
+                                gesture_age = elapsed
+                                gesture_active = gesture_age < GESTURE_DURATION_S
+                            self._cue_clip(now, state, expression, state_started, replace=True, epoch=event.epoch)
+                        else:
+                            with self._state_lock:
+                                if event.epoch != self._sentences.epoch:
+                                    continue
+                                terminal, serial = event.value
+                                if serial == self._sentence_serial:
+                                    self._sentence_active = False
+                                paused = self._sentence_paused
+                            if not paused:
+                                self._sentences.set_accent(event.at, terminal, event.epoch, now)
+                    if not commanded and self._deferred is None:
+                        self._cue_clip(now, state, expression, state_started)
                     pose, antennas = self._state_pose(state, elapsed, expression, progress_age=progress_age)
                     pose = self._face_pose(pose)
                     if gesture_active:
@@ -973,8 +1100,10 @@ class ReachyController:
                         now, active=state in ("idle", "listening") and not gesture_active and not self._watching)
                     accenting = progress_age is not None and 0 <= progress_age < PROGRESS_ACCENT_S
                     generated = self._show_generated(now, resting, yielding=gesture_active or accenting)
-                    written = (self._show_clip(now, generated)
-                               + self._layers.sway_offset(now, active=state == "speaking"))
+                    composed = self._show_clip(now, generated)
+                    self._last_written_vector = self._np.asarray(composed).copy()
+                    written = (composed + self._layers.sway_offset(now, active=state == "speaking")
+                               + self._np.asarray(self._sentences.offset(now)))
                     self._write_vector(written)
                     settled = ((state in ("idle", "sleeping") or (state == "error" and self._watching))
                                and not gesture_active

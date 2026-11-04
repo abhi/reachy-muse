@@ -83,6 +83,7 @@ class MomentDirector:
         self._refill_task: Optional[asyncio.Task] = None
         self._cue: Optional[asyncio.Task] = None
         self._closing: Optional[Tuple[Moment, asyncio.Task]] = None
+        self._finishing: Optional[asyncio.Task] = None
         self._handed = False
         self._closed = False
         self._tasks: Set[asyncio.Task] = set()
@@ -157,12 +158,18 @@ class MomentDirector:
 
     def cue(self, moment: Moment) -> None:
         if self.active:
+            self.stop()
             self._replace_cue(self._play(moment, time.monotonic()))
 
     def prepare_closing(self, expression: Optional[Expression]) -> None:
         """Start readying the closing a reply's expression earns, if any, so it is ready when speech ends."""
         moment = CLOSINGS.get(expression)
-        if moment is not None and self.active and self._closing is None:
+        if self._closing is not None:
+            if self._closing[0] is moment:
+                return
+            self._closing[1].cancel()
+            self._closing = None
+        if moment is not None and self.active:
             self._closing = (moment, self._start(self._take(moment)))
 
     def stop_cue(self) -> None:
@@ -178,25 +185,39 @@ class MomentDirector:
         closing, self._closing = self._closing, None
         if closing is not None:
             closing[1].cancel()
+        if self._finishing is not None:
+            self._finishing.cancel()
+            self._finishing = None
         self.stop_cue()
 
-    def finish_turn(self, output_idle: Callable[[], bool]) -> None:
-        """The turn is done: fade out its thinking motion and play its closing once Reachy stops speaking."""
-        closing, self._closing = self._closing, None
-        self.stop_cue()
-        if closing is not None:
-            self._replace_cue(self._play_closing(*closing, output_idle))
+    def finish_turn(self, output_idle: Callable[[], bool], *,
+                    expression: Optional[Callable[[], Optional[Expression]]] = None) -> None:
+        """Wait for queued speech before selecting the closing for the last audible sentence."""
+        if self._finishing is not None:
+            self._finishing.cancel()
+        if self.active:
+            self._finishing = self._start(self._finish_turn(output_idle, expression))
 
     def _replace_cue(self, play) -> None:
         if self._cue is not None:
             self._cue.cancel()
         self._cue = self._start(play)
 
-    async def _play_closing(self, moment: Moment, making: asyncio.Task, output_idle: Callable[[], bool]) -> None:
+    async def _finish_turn(self, output_idle: Callable[[], bool],
+                           expression: Optional[Callable[[], Optional[Expression]]]) -> None:
+        deadline = time.monotonic() + OUTPUT_WAIT_S
+        while not output_idle():
+            if time.monotonic() >= deadline:
+                return
+            await asyncio.sleep(.05)
+        self.stop_cue()
+        if expression is not None:
+            self.prepare_closing(expression())
+        closing, self._closing = self._closing, None
+        if closing is None:
+            return
+        moment, making = closing
         try:
-            deadline = time.monotonic() + OUTPUT_WAIT_S
-            while not output_idle() and time.monotonic() < deadline:
-                await asyncio.sleep(.05)
             spoken = time.monotonic()
             try:
                 motion = await asyncio.wait_for(asyncio.shield(making), CLOSING_DEADLINE_S)
