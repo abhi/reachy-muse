@@ -1335,6 +1335,51 @@ def test_replacement_clip_fades_continuously_when_interrupted(monkeypatch, inter
         assert request.result["ok"] is True
 
 
+@pytest.mark.parametrize("expression", ["nod", "shake"])
+def test_clear_between_sentence_validation_and_gesture_assignment_cannot_start_gesture(expression):
+    from reachy_muse.contract.expressions import Expression
+    from reachy_muse.motion.sentence import SentenceMotion
+
+    flushed, written = threading.Event(), threading.Event()
+
+    class ObservedRobot(FakeRobot):
+        def set_target(self, **kwargs):
+            super().set_target(**kwargs)
+            if flushed.is_set():
+                written.set()
+
+    robot = ObservedRobot()
+    controller = ReachyController(
+        robot_factory=lambda **kwargs: robot,
+        pose_factory=pose_factory,
+        pose_interpolator=lambda first, last, t: first * (1 - t) + last * t,
+        style=MotionStyle(sway="sdk", breathing=False),
+    )
+    lock = controller._state_lock
+
+    class FlushingLock:
+        def __enter__(self):
+            return lock.__enter__()
+
+        def __exit__(self, *args):
+            lock.__exit__(*args)
+            if controller._reply_expression == expression and not flushed.is_set():
+                flushed.set()
+                controller.clear_audio()
+                controller.set_state("listening")
+
+    controller._state_lock = FlushingLock()
+    controller.start()
+    try:
+        controller.play_audio(np.zeros(1600), sentence=SentenceMotion(Expression(expression)))
+        assert written.wait(2)
+        assert controller._failure is None
+        assert controller._state == "listening"
+        assert controller._gesture_name is None
+    finally:
+        controller.close()
+
+
 def test_sleeping_bows_the_head_and_folds_the_antennas_without_the_idle_bob():
     controller = ReachyController(pose_factory=pose_factory)
     controller._np = np

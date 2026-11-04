@@ -1059,6 +1059,8 @@ class ReachyController:
                             elapsed = max(0.0, now - event.at)
                             if expression in HEAD_GESTURES:
                                 with self._state_lock:
+                                    if event.epoch != self._sentences.epoch:
+                                        continue
                                     self._gesture_name = expression
                                     self._gesture_started = event.at
                                 gesture = expression
