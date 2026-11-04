@@ -481,6 +481,48 @@ def test_real_sdk_parentless_replies_follow_the_acknowledged_user(tmp_path, fore
     asyncio.run(asyncio.wait_for(check(), 3))
 
 
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
+def test_real_sdk_parentless_task_completion_survives_a_phone_message(tmp_path, status):
+    async def check():
+        session, vm, stop, connection = await registered_session()
+        task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=stop))
+
+        async def publish(*events):
+            await vm.send_frame(ServiceFrame.body_chunk(subscribe.stream_id, BodyChunk(
+                data=b"".join(json.dumps(item).encode() + b"\n" for item in events))))
+
+        try:
+            subscribe = await vm.next_frame()
+            await vm.send_frame(ServiceFrame.response(subscribe.stream_id, ApplicationResponse(
+                status=200, end_body=False)))
+            post = await vm.next_frame()
+            await vm.send_frame(ServiceFrame.response(post.stream_id, ApplicationResponse(
+                status=200, body=b'{"session_id":"main-chat","message_id":"intro-user"}', end_body=True)))
+            await publish(
+                event("message.user", message_id="intro-user", reply_to_message_id=None),
+                event("task.status", task_id="intro-task", status="running", reply_to_message_id=None),
+                event("delta.message_start", message_id="intro-reply", reply_to_message_id=None),
+                event("message.user", message_id="phone-user", reply_to_message_id=None),
+                event("task.status", task_id="phone-task", status="completed", reply_to_message_id=None),
+                event("delta.message_done", message_id="intro-reply", display_text="Remembered.",
+                      reply_to_message_id=None))
+            await asyncio.wait({task}, timeout=0.1)
+            assert not task.done(), "the phone task completed the introduction"
+            await publish(event("task.status", task_id="intro-task", status=status, reply_to_message_id=None))
+            await asyncio.wait({task}, timeout=0.5)
+            assert ("finished" if task.done() else "waiting") == "finished"
+            await task
+            reset = await vm.next_frame()
+            assert reset.kind == "reset" and reset.stream_id == subscribe.stream_id
+            assert not session.chat_subscribed.is_set()
+        finally:
+            stop.set()
+            task.cancel()
+            await asyncio.gather(task, connection, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(check(), 3))
+
+
 def test_terminal_task_without_assistant_message_finishes(tmp_path, monkeypatch):
     monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0.02)
 

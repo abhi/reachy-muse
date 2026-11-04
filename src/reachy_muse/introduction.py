@@ -38,6 +38,7 @@ class _IntroductionTurn(MuseTurn):
     def __init__(self):
         super().__init__()
         self._after_user = False
+        self._task_ids: set[str] = set()
 
     def feed(self, event):
         if not self.acknowledged:
@@ -55,8 +56,13 @@ class _IntroductionTurn(MuseTurn):
             return []
         parent = payload.get("reply_to_message_id") or payload.get("parent_message_id")
         parent = parent if isinstance(parent, str) else None
+        task_id = payload.get("task_id") if event.get("event") == "task.status" else None
+        task_id = task_id if isinstance(task_id, str) else None
         if (self._after_user or parent in self._user_ids or message_id in self.replies
-                or parent in self.replies):
+                or parent in self.replies or task_id in self._task_ids):
+            if task_id and (not parent or parent in self._user_ids
+                            or (parent in self.replies and self.replies[parent].bound)):
+                self._task_ids.add(task_id)
             return super().feed(event)
         return []
 
