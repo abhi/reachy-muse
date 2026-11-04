@@ -65,3 +65,20 @@ cannot hide a drop.
 This compares injected jitter, not a prediction of the next 72 hours. Server
 keepalive uses the same new bounds. Tests also prove that a stalled operation
 expires while the connection remains usable for a later speech request.
+
+## Reconnect while idle
+
+The link's existing background owner keeps reconnecting independently of turns.
+Its retry delay now starts at 0.2 seconds and caps at 5 seconds, instead of
+1 and 30 seconds. New turns can use a welcomed link after a 0.1-second grace
+that rejects immediate post-welcome failures. The 10-second health window still
+controls outage logging and backoff reset; it no longer withholds a working
+companion from routing.
+
+`python -m bench.turn2 reconnect` aborts a loopback connection while idle, waits
+for production routing to become ready, and requests a fake narration. Recovery
+fell from **11002.89 ms to 302.03 ms**. Both return the literal line
+"Should I work out today?". The whole-turn replay also disconnects while the
+user speaks and reconnects before their utterance ends. Retained local audio
+produces exactly one unchanged Muse request and one answer; a recovered link
+can voice that answer. Immediate-failure flapping still produces one outage log.

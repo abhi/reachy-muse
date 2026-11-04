@@ -46,8 +46,9 @@ PING_INTERVAL_S = 5.0
 PING_TIMEOUT_S = 10.0
 CLOSE_TIMEOUT_S = 0.1
 HANDSHAKE_TIMEOUT_S = 10.0
-BACKOFF_S = (1.0, 30.0)
+BACKOFF_S = (0.2, 5.0)
 HEALTHY_S = 10.0                   # a session shorter than this is a failed attempt, not a recovery
+READY_S = 0.1                     # reject immediate post-welcome failures before routing new turns
 ENDPOINT_WAIT_S = 2.0              # how long the companion has to end a stream the robot finished
 HEAR_RESPONSE_S = 2.0              # also covers a short utterance that never gets its first partial
 SPEECH_RESPONSE_S = 2.0            # each audio chunk, independently of transport pongs
@@ -221,8 +222,9 @@ class CompanionLink:
 
     @property
     def up(self) -> bool:
-        """Up, and either never down or back for at least ``healthy_s``."""
-        return self.can(Op.NARRATE) and (self._outages == 0 or self._healthy())
+        """Ready for new turns after welcome; outage accounting has a longer health window."""
+        ready = self._up_since is not None and time.monotonic() - self._up_since >= min(READY_S, self._healthy_s)
+        return self.can(Op.NARRATE) and (self._outages == 0 or ready)
 
     def _healthy(self) -> bool:
         return self._up_since is not None and time.monotonic() - self._up_since >= self._healthy_s

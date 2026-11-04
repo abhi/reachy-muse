@@ -118,9 +118,110 @@ async def jitter_replay(scale=.05):
     return {"time_scale": scale, "bursts": rows, "drops": sum(row["drops"] for row in rows)}
 
 
+async def reconnect_replay():
+    from reachy_muse.companion_client import CompanionLink, LinkState
+    from reachy_muse.companion_server.engines import EchoNarrator
+    from reachy_muse.protocol import NarrateOp
+
+    async with CompanionServer(Engines(narrator=EchoNarrator()), "offline-token") as server:
+        link = CompanionLink(server.url[:-3], token="offline-token", out_rate=16000, insecure=True)
+        running = asyncio.create_task(link.run())
+        try:
+            await asyncio.wait_for(link.settled(), 1)
+            started = time.monotonic()
+            next(iter(server._server.connections)).transport.abort()
+            async with asyncio.timeout(15):
+                while link.state is not LinkState.DOWN:
+                    await asyncio.sleep(.001)
+                while not link.up:
+                    await asyncio.sleep(.001)
+            elapsed = time.monotonic() - started
+            reply = await link.narrate(NarrateOp.ACKNOWLEDGE, "Should I work out today?")
+            return {"idle_recovery_ms": round(elapsed * 1000, 2),
+                    "reply": [line.text for line in reply.lines]}
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+
+async def answer_replay(*, late=False):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    import numpy as np
+    from bench.latency_turn_replay import AudibleTimeline, owned_session
+    from reachy_muse.capabilities import Mode
+    from reachy_muse.contract.replies import ReplyStyle
+    from reachy_muse.conversation import VoiceConversation
+    from reachy_muse.failover import FailoverVoice, _Rest
+    from reachy_muse.local_backends import backends_for
+    from test_conversation import FakeHardware, chat_event
+
+    first = "A light workout is a good option."
+    second = "Take a rest day if you feel worn out."
+    requests, starts, generated, producers = [], {}, {}, []
+    first_text = None
+
+    class Voice:
+        available = True
+
+        def is_presynthesized(self, text):
+            return False
+
+        async def stream(self, line, rate):
+            requests.append(line.text)
+            await asyncio.sleep(.25)
+            generated[line.text] = time.monotonic()
+            yield np.full(rate // 2, .1 if line.text == first else .2 if line.text == second else .3,
+                          dtype=np.float32)
+
+    class Hardware(FakeHardware):
+        def play_audio(self, samples):
+            label = round(float(samples[0]), 1)
+            starts.setdefault(label, time.monotonic())
+            super().play_audio(samples)
+
+    async def send(session):
+        async def answer():
+            nonlocal first_text
+            await asyncio.sleep(.02)
+            if late:
+                conversation.job.dispatched_at -= 32
+            first_text = time.monotonic()
+            await session.events.put(chat_event("delta.text_append", "reply-1", text=first + " "))
+            await asyncio.sleep(2)
+            await session.events.put(chat_event("delta.message_done", "reply-1", content=first + " " + second))
+            await session.events.put(chat_event("task.status", seq=200, status="completed"))
+        producers.append(asyncio.create_task(answer()))
+
+    session = owned_session(send_hook=send)
+    route = SimpleNamespace(this_turn=True, speech=_Rest("speech"))
+    backends = replace(backends_for(Mode.ON_ROBOT, session), local_style=ReplyStyle.PLAIN_SHORT,
+                       voice=FailoverVoice(Voice(), Voice(), route))
+    conversation = VoiceConversation(session, Hardware(), backends=backends,
+                                     owns_chat=True, session_id="robot-chat")
+    timeline = AudibleTimeline()
+    subscriber = asyncio.create_task(conversation._subscribe())
+    speaker = asyncio.create_task(conversation._play_output())
+    try:
+        await session.chat_subscribed.wait()
+        await conversation.turn(b"\0" * 32044, recognized_text="Should I work out today?",
+                                timeline=timeline, defer_playback=True)
+        await conversation._output_queue.join()
+        await asyncio.gather(*producers)
+        return {"first_sentence_to_audio_ms": round((starts[.1] - first_text) * 1000, 2),
+                "sentence_gap_ms": round((starts[.2] - starts[.1] - .5) * 1000, 2),
+                "spoken": requests}
+    finally:
+        for task in (subscriber, speaker, *producers):
+            task.cancel()
+        await asyncio.gather(subscriber, speaker, *producers, return_exceptions=True)
+        await conversation._moments.close()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("experiment", choices=("engine", "jitter"))
+    parser.add_argument("experiment", choices=("engine", "jitter", "reconnect", "answer", "late-answer"))
     args = parser.parse_args()
-    experiments = {"engine": engine_replay, "jitter": jitter_replay}
+    experiments = {"engine": engine_replay, "jitter": jitter_replay, "reconnect": reconnect_replay,
+                   "answer": answer_replay, "late-answer": lambda: answer_replay(late=True)}
     print(json.dumps(asyncio.run(experiments[args.experiment]()), indent=2))

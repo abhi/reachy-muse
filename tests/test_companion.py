@@ -246,19 +246,25 @@ def test_unreachable_companion_is_logged_once_and_startup_sends_nothing_to_muse(
     scenario(run())
 
 
-def test_companion_dropping_mid_hearing_finishes_the_turn_on_the_robot_from_replayed_audio(monkeypatch):
+@pytest.mark.parametrize("backoff_s", [(10, 10), (.01, .01)])
+def test_companion_dropping_mid_hearing_finishes_the_turn_on_the_robot_from_replayed_audio(monkeypatch, backoff_s):
     async def run():
         async with FakeCompanion(partials=PARTIALS, frames_per_partial=12,
                                  abort_after_frames_both_ways_since_welcome=20) as companion:
             robot = Conversation(monkeypatch, companion.url[:-3],
-                                 answer("Castles kept dragons out. [reachy:happy]"), backoff_s=(10, 10))
+                                 answer("Castles kept dragons out. [reachy:happy]"), backoff_s=backoff_s)
 
             async def user():
                 await robot.until(lambda: robot.link.state is LinkState.UP)
                 await robot.speak(.8)
             await robot.run(user)
             assert robot.requests() == [QUESTION]
-            assert robot.spoken() == ["tts:Castles kept dragons out."]
+            if backoff_s[0] < 1:
+                assert len(companion.hellos) >= 2
+                assert robot.spoken() == ["companion"]
+                assert spoken_by_companion(companion) == ["Castles kept dragons out."]
+            else:
+                assert robot.spoken() == ["tts:Castles kept dragons out."]
     scenario(run())
 
 

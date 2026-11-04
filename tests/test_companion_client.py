@@ -323,6 +323,14 @@ def test_jitter_bursts_do_not_drop_the_companion_link():
     ]
 
 
+def test_idle_link_reconnects_before_another_turn_needs_it():
+    from bench.turn2 import reconnect_replay
+
+    result = asyncio.run(reconnect_replay())
+    assert result["reply"] == ["Should I work out today?"]
+    assert result["idle_recovery_ms"] < 700
+
+
 def test_a_stalled_classification_expires_while_the_socket_still_speaks():
     from reachy_muse.device_command import DeviceCommand
     from reachy_muse.protocol import Op, VoiceRole
