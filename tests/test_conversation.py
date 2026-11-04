@@ -972,6 +972,61 @@ def test_plain_empty_completion_keeps_later_display_text_for_playback(streaming_
     asyncio.run(bounded(scenario()))
 
 
+@pytest.mark.parametrize("late_text", [False, True])
+def test_plain_opening_waits_for_display_text_after_empty_terminal_reply(streaming_speech, monkeypatch,
+                                                                      late_text):
+    monkeypatch.setattr(muse_turn, "EMPTY_REPLY_GRACE_S", 1)
+
+    async def scenario():
+        hardware = FakeHardware()
+        speech = streaming_speech(hardware)
+
+        async def heard(conversation):
+            while not conversation.job.answered:
+                await asyncio.sleep(.001)
+            assert speech.requests == ["Rest today."]
+
+        async def delayed(conversation):
+            await asyncio.sleep(.3)
+
+        script = [
+            chat_event("delta.text_append", "reply-1", text="Rest today. "),
+            heard,
+            chat_event("delta.message_done", "reply-1", content=""),
+            chat_event("task.status", status="completed"),
+            delayed,
+        ]
+        if late_text:
+            script.append(chat_event("message.assistant", "reply-1",
+                                     display_text="Rest today. Walk tomorrow.", display_text_ready=True))
+        await streaming_turn(script, speech, hardware, style=ReplyStyle.PLAIN_SHORT)
+        assert speech.requests == (["Rest today.", "Walk tomorrow."] if late_text else ["Rest today."])
+        assert len(hardware.played) == len(speech.requests)
+    asyncio.run(bounded(scenario()))
+
+
+@pytest.mark.parametrize("completed, final, expected", [
+    ("Rest today. Draft tail.", "Rest today. Walk tomorrow.", ["Rest today.", "Walk tomorrow."]),
+    ("Rest today. Draft tail.", "Try a short walk.", ["Try a short walk."]),
+    ("Rest today. Draft tail.", "Rest today.", ["Rest today."]),
+    ("Rest today.", "Rest today. Walk tomorrow.", ["Rest today.", "Walk tomorrow."]),
+])
+def test_plain_completed_reply_uses_latest_display_text_before_playback(streaming_speech,
+                                                                      completed, final, expected):
+    async def scenario():
+        hardware = FakeHardware()
+        speech = streaming_speech(hardware)
+        await streaming_turn([
+            chat_event("delta.text_append", "reply-1", text="Rest today. "),
+            chat_event("delta.message_done", "reply-1", content=completed),
+            chat_event("message.assistant", "reply-1", display_text=final, display_text_ready=True),
+            chat_event("message.assistant", "reply-1", display_text=final, display_text_ready=True),
+        ], speech, hardware, before_ack=True, style=ReplyStyle.PLAIN_SHORT)
+        assert speech.requests == expected
+        assert len(hardware.played) == len(expected)
+    asyncio.run(bounded(scenario()))
+
+
 def test_protocol_segments_are_immutable_indexed_and_final_prefix_does_not_repeat():
     job = reply_job("robot-chat", style=ReplyStyle.EXPRESSIVE_JSON)
     acknowledge(job, {"message_id": "user-1"})

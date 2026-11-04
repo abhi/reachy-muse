@@ -263,6 +263,7 @@ class _ReplyStream:
     queued: bool = False
     plain_prefix: str = ""
     remainder: str | None = None
+    narration_queued: bool = False
 
 
 class ReplyReader:
@@ -296,6 +297,10 @@ class ReplyReader:
         return any(stream.queued or (self.style is not ReplyStyle.EXPRESSIVE_JSON and stream.reply.text.strip())
                    for stream in self.streams.values())
 
+    def awaiting_final_text(self) -> bool:
+        return (self.style is ReplyStyle.PLAIN_SHORT
+                and any(not stream.closed for stream in self.streams.values()))
+
     def _reply(self, reply: Reply) -> list[str | SpeechSegment | ProgressSegment]:
         stream = self.streams.get(reply.message_id)
         if stream is None:
@@ -319,13 +324,14 @@ class ReplyReader:
     def _plain_segments(self) -> list[str | SpeechSegment]:
         queued = []
         for message_id, stream in self.streams.items():
-            if stream.closed:
+            if stream.revised:
                 continue
             if stream.reply.done:
+                stream.remainder = stream.reply.text
                 if not stream.reply.text.strip():
                     continue
                 stream.closed = True
-                if stream.plain_prefix:
+                if stream.plain_prefix and not stream.skip_before:
                     final, _ = spoken_reply(stream.reply.text)
                     if final.startswith(stream.plain_prefix):
                         stream.remainder = final[len(stream.plain_prefix):].strip()
@@ -335,8 +341,9 @@ class ReplyReader:
                         continue
                     else:
                         stream.skip_before = stream.index
-                if self.narration_text(message_id).strip():
+                if self.narration_text(message_id).strip() and not stream.narration_queued:
                     stream.queued = True
+                    stream.narration_queued = True
                     queued.append(message_id)
             elif not stream.queued and stream.reply.bound:
                 try:
@@ -1547,7 +1554,8 @@ class VoiceConversation:
             if turn.task_finished:
                 self._moments.prepare_closing(job.last_expression)
                 await self._end_asides(job, let_playing_finish=True)
-            if job.answered and turn.complete(now) and job.replies.empty():
+            if (job.answered and turn.complete(now) and job.replies.empty()
+                    and (not turn.task_finished or not job.reader.awaiting_final_text() or turn.settled(now))):
                 return TurnOutcome.ACCEPTED
             if (not job.answered and job.replies.empty() and turn.settled(now)
                     and not job.reader.has_reply_text()):
@@ -1631,6 +1639,8 @@ class VoiceConversation:
                                        prepared_stream=prepared,
                                        is_current=is_current, on_start=answer_audible(mark_spoken))
             else:
+                if job.reader.streams[reply].revised:
+                    continue
                 await self._end_asides(job, let_playing_finish=True)
                 if not job.answered and job.request is not None:
                     await self._answer_begins(job)
