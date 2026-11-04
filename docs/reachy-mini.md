@@ -533,6 +533,20 @@ restores the motor mode it found at startup. Terminal robot connection errors
 exit so systemd can recreate the hardware controller. Network failures reconnect and
 rotate Muse credentials through the existing Linux service.
 
+## Ask Muse to remember Reachy
+
+Run `muse-reachy introduce` to preview the exact introduction without connecting
+to Muse. Add `--yes` to send it to your main Muse chat. The message asks Muse
+to remember your Reachy Mini at home, its spoken replies, and how to use
+`reachy.say` and `reachy.presence` to reach you in the room.
+
+You can also add `--introduce-to-muse` to `muse-reachy run`. This is off by
+default and always posts to the main chat, regardless of the voice chat selection.
+Both commands record the sent text version in `reachy-introduction.json` inside
+`--state-dir`. Restarts and reconnects do not resend it. A changed introduction
+text sends once more when you opt in. Keep this file with your pairing state.
+Reachy consumes Muse's reply without speaking it or logging its contents.
+
 ## Muse response compatibility
 
 The tested Muse VM handled some isolated `output_modality: "voice"` greetings

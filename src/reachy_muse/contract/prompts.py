@@ -20,6 +20,14 @@ from typing import Sequence, Tuple
 
 CHAT_BOOTSTRAP = "Initialize Reachy's dedicated voice chat. Do not use tools or take external actions."
 
+REACHY_INTRODUCTION = (
+    "I have a Reachy Mini robot at home that talks with you by voice. "
+    "Reachy is one of my persistent surfaces, like the Muse app. "
+    "When I talk through Reachy, your replies are spoken aloud, so keep them short. "
+    "You can speak to me in the room with reachy.say and check whether someone is there "
+    "with reachy.presence, for example to deliver a reminder when I'm home. Please remember this."
+)
+
 
 def setup_challenge_reply(nonce: str) -> str:
     """The exact reply that answers the side-chat setup challenge for ``nonce``."""

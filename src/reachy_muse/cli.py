@@ -23,7 +23,9 @@ import time
 import uuid
 
 from musegadget import config, identity
-from reachy_muse.contract.prompts import CHAT_BOOTSTRAP, setup_challenge_reply, with_setup_challenge
+from reachy_muse.contract.prompts import (
+    CHAT_BOOTSTRAP, REACHY_INTRODUCTION, setup_challenge_reply, with_setup_challenge,
+)
 from reachy_muse.capabilities import Mode
 
 
@@ -287,6 +289,8 @@ def parser() -> argparse.ArgumentParser:
     pair = sub.add_parser("pair", help="Open Bluetooth setup in the Muse phone app")
     pair.add_argument("--force", action="store_true")
     pair.add_argument("--timeout", type=int, default=600)
+    introduce = sub.add_parser("introduce", help="Preview Reachy's introduction to your main Muse chat")
+    introduce.add_argument("--yes", action="store_true", help="Send the introduction once per text version")
     for command in ("run", "doctor"):
         item = sub.add_parser(command, help="Start conversations" if command == "run"
                               else "Check the robot and audio without a Muse connection")
@@ -332,6 +336,8 @@ def parser() -> argparse.ArgumentParser:
                               help="Idle seconds before returning to wake-word detection; excludes thinking and speech")
             item.add_argument("--session-id", help="Existing Muse chat to use instead of Reachy's dedicated side chat")
             item.add_argument("--main-chat", action="store_true", help="Use the main Muse chat instead of Reachy's dedicated side chat")
+            item.add_argument("--introduce-to-muse", action="store_true",
+                              help="Introduce Reachy in your main Muse chat once per text version")
             item.add_argument("--silence", type=float, default=None,
                               help="Seconds of silence that end a spoken turn (default: 0.8, or 2 in "
                                    "companion mode, where the companion ends finished turns sooner)")
@@ -580,6 +586,7 @@ async def run(args) -> int:
                                display_name="Reachy Mini", session_id=session_id,
                                prepare_chat=dedicated_chat.prepare if dedicated_chat else None,
                                owns_chat=dedicated_chat is not None,
+                               introduce_to_muse=args.introduce_to_muse,
                                silence_s=silence_s, short_utterance_silence_s=SHORT_UTTERANCE_SILENCE_S,
                                backends=backends,
                                local_chat=args.local_chat == "on",
@@ -705,6 +712,11 @@ def pair_reachy(args) -> int:
 
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
+    if args.command == "introduce":
+        print(REACHY_INTRODUCTION)
+        if not args.yes:
+            print("\nRun `muse-reachy introduce --yes` to send this to your main Muse chat.")
+            return 0
     problems = mode_problems(args) if args.command == "run" else []
     for problem in problems:
         print(f"Reachy: {problem}", file=sys.stderr)
@@ -726,6 +738,10 @@ def main(argv=None) -> int:
             return doctor(args)
         if args.command == "companion":
             return companion_command(args)
+        if args.command == "introduce":
+            from reachy_muse.introduction import introduce_paired
+            asyncio.run(introduce_paired())
+            return 0
         return asyncio.run(run(args))
     except KeyboardInterrupt:
         return 130

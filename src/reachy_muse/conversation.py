@@ -2197,6 +2197,7 @@ class ReachyService(Service):
     session_id: str | None = None
     prepare_chat: Callable[[LinkSession, str], Awaitable[str]] | None = None
     owns_chat: bool = False
+    introduce_to_muse: bool = False
     silence_s: float = 2.0
     # Required: Python 3.9 dataclasses cannot follow inherited defaults with a field that has none.
     backends: Callable[[LinkSession], Backends] = field(default_factory=_backends_required)
@@ -2305,6 +2306,9 @@ class ReachyService(Service):
         async def converse():
             await session.registered.wait()
             startup.mark("registered")
+            if self.introduce_to_muse:
+                from reachy_muse.introduction import introduce_once
+                await introduce_once(session)
             session_id = self.session_id
             if self.prepare_chat is not None:
                 session_id = await self.prepare_chat(session, vm["vm_id"] or vm["vm_name"])

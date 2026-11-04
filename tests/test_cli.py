@@ -504,8 +504,9 @@ def test_nested_creation_ack_is_accepted(tmp_path, monkeypatch):
     ([], None, True), (['--main-chat'], None, False),
     (['--session-id', 'existing-side-chat'], 'existing-side-chat', False),
 ])
+@pytest.mark.parametrize('introduce', [False, True])
 def test_cli_selects_owned_side_chat_by_default_and_preserves_explicit_routes(
-        tmp_path, monkeypatch, selection, expected_session, owned):
+        tmp_path, monkeypatch, selection, expected_session, owned, introduce):
     from musegadget.identity import Identity
     from reachy_muse.conversation import VoiceConversation
     from reachy_muse.turn_timeline import TurnTimeline
@@ -544,7 +545,9 @@ def test_cli_selects_owned_side_chat_by_default_and_preserves_explicit_routes(
     monkeypatch.setattr(reachy_muse.cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
     monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: Hardware())
     monkeypatch.setattr('reachy_muse.conversation.ReachyService', Service)
-    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', *selection]) == 0
+    options = ['--introduce-to-muse'] if introduce else []
+    assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', *selection, *options]) == 0
+    assert captured['introduce_to_muse'] is introduce
     assert captured['session_id'] == expected_session
     assert captured['owns_chat'] is owned
     prepare = captured['prepare_chat']
