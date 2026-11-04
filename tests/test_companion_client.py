@@ -331,6 +331,16 @@ def test_idle_link_reconnects_before_another_turn_needs_it():
     assert result["idle_recovery_ms"] < 700
 
 
+def test_a_long_outage_does_not_exhaust_the_reconnect_loop():
+    from bench.turn2 import outage_replay
+
+    assert asyncio.run(outage_replay()) == {
+        "attempts": 1101, "max_retry_delay_s": 5.0,
+        "first_retry_delays_s": [.2, .4, .8, 1.6, 3.2, 5.0, 5.0, 5.0],
+        "reply": ["The companion is back."],
+    }
+
+
 def test_a_stalled_classification_expires_while_the_socket_still_speaks():
     from reachy_muse.device_command import DeviceCommand
     from reachy_muse.protocol import Op, VoiceRole

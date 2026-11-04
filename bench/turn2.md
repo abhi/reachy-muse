@@ -192,3 +192,14 @@ prefix while final cleanup removed it. The reader incorrectly classified the
 unchanged final as a revision. Both sides now trim the leading space. A literal
 two-sentence replay changes from **one sentence delivered to two**, retaining
 "Rest today." followed by "Walk tomorrow." without speaking the marker.
+
+## Retry through a long outage
+
+The existing backoff computed an unbounded integer power before applying its
+cap. `python -m bench.turn2 outage` injects 1,100 connection failures and skips
+only the retry sleeps. Before, the background link dies with `OverflowError`
+on attempt **1,025**, with zero recovered replies. The delay now doubles only
+up to its cap. After, attempt **1,101** completes a real loopback handshake and
+returns "The companion is back.". The first delays are 0.2, 0.4, 0.8, 1.6,
+3.2, 5, 5 and 5 seconds; no retry exceeds 5 seconds. No failed attempt contacts
+a real service.

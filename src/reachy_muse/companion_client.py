@@ -264,6 +264,8 @@ class CompanionLink:
         if self._settled is None:
             self._settled = asyncio.Event()
         failures = 0
+        low, high = self._backoff_s
+        delay = low
         while True:
             self._last_session_healthy = False
             self._session = asyncio.ensure_future(self._connect())
@@ -284,8 +286,7 @@ class CompanionLink:
                 error = self._session.exception()
                 (log.warning if failures <= 1 else log.debug)(
                     "Reachy companion link failed: %s: %s", type(error).__name__, error)
-            low, high = self._backoff_s
-            delay = min(high, low * 2 ** max(0, failures - 1))
+            delay = low if failures <= 1 else min(high, delay * 2)
             await asyncio.sleep(max(low, random.uniform(delay / 2, delay)))
 
     def _ssl(self) -> Optional[ssl.SSLContext]:

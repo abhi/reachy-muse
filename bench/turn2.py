@@ -302,12 +302,53 @@ async def progress_replay():
     return {"waiting_seconds": 32, "spoken": spoken, "line_count": len(spoken)}
 
 
+async def outage_replay():
+    from reachy_muse import companion_client as client
+    from reachy_muse.companion_server.engines import EchoNarrator
+    from reachy_muse.protocol import NarrateOp
+
+    attempts, delays = 0, []
+    sleep = asyncio.sleep
+    async with CompanionServer(Engines(narrator=EchoNarrator()), "offline-token") as server:
+        link = client.CompanionLink(server.url[:-3], token="offline-token", out_rate=16000, insecure=True)
+        open_socket = link._open
+
+        async def unavailable():
+            nonlocal attempts
+            attempts += 1
+            if attempts <= 1100:
+                raise ConnectionError("injected outage")
+            return await open_socket()
+
+        async def skip_retry_delay(seconds):
+            if asyncio.current_task().get_name() == "offline-reconnect":
+                delays.append(seconds)
+                return await sleep(0)
+            await sleep(seconds)
+
+        link._open = unavailable
+        with patch("asyncio.sleep", skip_retry_delay), patch.object(client.random, "uniform", lambda low, high: high):
+            running = asyncio.create_task(link.run(), name="offline-reconnect")
+            try:
+                async with asyncio.timeout(3):
+                    while not link.can(Op.NARRATE) and not running.done():
+                        await sleep(.001)
+                    if running.done():
+                        return {"attempts": attempts, "error": type(running.exception()).__name__, "reply": []}
+                    reply = await link.narrate(NarrateOp.ACKNOWLEDGE, "The companion is back.")
+                    return {"attempts": attempts, "max_retry_delay_s": max(delays),
+                            "first_retry_delays_s": delays[:8], "reply": [line.text for line in reply.lines]}
+            finally:
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("experiment", choices=("engine", "jitter", "reconnect", "answer", "late-answer", "pipeline", "endpoint", "whisper", "progress"))
+    parser.add_argument("experiment", choices=("engine", "jitter", "reconnect", "answer", "late-answer", "pipeline", "endpoint", "whisper", "progress", "outage"))
     args = parser.parse_args()
     experiments = {"engine": engine_replay, "jitter": jitter_replay, "reconnect": reconnect_replay,
                    "answer": answer_replay, "late-answer": lambda: answer_replay(late=True),
                    "pipeline": lambda: answer_replay(streamed=False), "endpoint": endpoint_replay,
-                   "whisper": whisper_replay, "progress": progress_replay}
+                   "whisper": whisper_replay, "progress": progress_replay, "outage": outage_replay}
     print(json.dumps(asyncio.run(experiments[args.experiment]()), indent=2))
