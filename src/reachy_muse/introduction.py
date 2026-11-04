@@ -163,7 +163,7 @@ async def _send_and_consume(session: LinkSession, directory: Path, receipt: dict
         config.save_json(INTRODUCTION_STATE_FILE, {"receipts": receipts}, directory)
         armed.set()
         result = await session.send_chat(REACHY_INTRODUCTION)
-        if result.get("ok") is False:
+        if result.get("ok") is False and result.get("status") in (400, 401, 403, 404, 405, 413, 415, 422, 429):
             receipts.remove(receipt)
             config.save_json(INTRODUCTION_STATE_FILE, {"receipts": receipts}, directory)
         turn.acknowledge(acknowledgement(result))

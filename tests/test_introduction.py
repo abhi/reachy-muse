@@ -167,7 +167,7 @@ def test_waits_for_transport_and_consumes_whole_reply(tmp_path):
 
 
 @pytest.mark.parametrize("ack", [
-    {"ok": False, "status": 500, "response": {"secret": "private"}},
+    {"ok": False, "status": 403, "response": {"secret": "private"}},
     {"ok": True, "response": None},
     {"ok": True, "response": {"session_id": "main-chat"}},
 ])
@@ -627,6 +627,42 @@ def test_receipts_follow_the_destination_across_switches(tmp_path, monkeypatch, 
         await run()
         assert [post for session in sessions for post in session.posts] == [
             REACHY_INTRODUCTION, REACHY_INTRODUCTION]
+
+    asyncio.run(asyncio.wait_for(check(), 3))
+
+
+@pytest.mark.parametrize("status", [500, 502, 504])
+def test_real_sdk_committed_post_is_not_repeated_after_a_failed_response(tmp_path, status):
+    async def check():
+        session, vm, stop, connection = await registered_session()
+        posts = []
+
+        async def respond():
+            while True:
+                frame = await vm.next_frame()
+                if frame.kind != "request":
+                    continue
+                if frame.value.path == "/chat/subscribe":
+                    await vm.send_frame(ServiceFrame.response(frame.stream_id, ApplicationResponse(
+                        status=200, end_body=False)))
+                else:
+                    assert frame.value.path == "/chat/stream"
+                    posts.append(json.loads(frame.value.body)["message"])
+                    await vm.send_frame(ServiceFrame.response(frame.stream_id, ApplicationResponse(
+                        status=status, body=b'{"error":"response failed"}', end_body=True)))
+
+        server = asyncio.create_task(respond())
+        try:
+            for _ in range(2):
+                with pytest.raises(RuntimeError):
+                    await introduction.introduce_once(session, tmp_path, **DESTINATION, stop=stop)
+            assert posts == [REACHY_INTRODUCTION]
+            receipts = json.loads((tmp_path / introduction.INTRODUCTION_STATE_FILE).read_text())["receipts"]
+            assert [receipt["status"] for receipt in receipts] == ["pending"]
+        finally:
+            stop.set()
+            server.cancel()
+            await asyncio.gather(server, connection, return_exceptions=True)
 
     asyncio.run(asyncio.wait_for(check(), 3))
 
