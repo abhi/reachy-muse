@@ -3,7 +3,9 @@
 Starting point: deployed `origin/main` at `6f827a2`, branch `perf/turn-2`.
 All new measurements use fake engines, offline fixtures, and ephemeral loopback
 WebSockets. They do not measure live GPU throughput, contact Muse, or control
-the robot. Run the experiments with `PYTHONPATH=src:tests python -m bench.turn2`.
+the robot. Each wall-clock figure below is one replay run; the inputs and
+injected delays are fixed. Run experiments with
+`PYTHONPATH=src:tests python -m bench.turn2 EXPERIMENT` in the test environment.
 
 ## Incident evidence
 
@@ -52,9 +54,9 @@ that operation without declaring the socket dead. The companion's independent
 
 `python -m bench.turn2 jitter` pauses reads on a real loopback WebSocket just
 before a scheduled client ping. Burst lengths are 0, 0.5, 1, 1.5, 2, 3, 4, 6
-and 8 seconds. Network times are scaled by 0.05; no model work runs. Run against
-the parent revision or set the replay's imported client constants to 0.5/1.25
-for the old configuration. Each burst uses a fresh connection so reconnects
+and 8 seconds. Network times are scaled by 0.05; no model work runs. Use the
+source-revision replay described below, or set the replay's imported client
+constants to 0.5/1.25 for the old configuration. Each burst uses a fresh connection so reconnects
 cannot hide a drop.
 
 | Replay result | Before, 0.5/1.25 s | After, 5/10 s |
@@ -185,6 +187,11 @@ on your request." and "Still on it." After: one line at 8 seconds, "Your workout
 answer is taking a little longer." There is no further speech through 32
 seconds. Behavior tests also retain actual new tool reports after that cue.
 
+The startup replay now synthesizes 38 fixed phrases instead of 49, comprising
+14 main-voice phrases and 24 progress phrases. Reconnecting adds zero synthesis
+calls. The cache tests pin the smaller phrase set's audio digest and still
+require identical playback across reconnects.
+
 ## Preserve legacy expression prefixes
 
 Review caught a leading `[reachy:happy]` marker leaving a space in the streamed
@@ -203,3 +210,79 @@ up to its cap. After, attempt **1,101** completes a real loopback handshake and
 returns "The companion is back.". The first delays are 0.2, 0.4, 0.8, 1.6,
 3.2, 5, 5 and 5 seconds; no retry exceeds 5 seconds. No failed attempt contacts
 a real service.
+
+## Keep the streaming replay's audio continuous
+
+A full-suite run exposed a fake microphone issue in the existing streaming
+partial pin. Its queue retained every sample during a scheduling stall, but
+each subsequent read returned only 20 ms. Production capture consequently
+inferred missing audio and reset the turn. This replay now returns its queued
+backlog in one read. Other pin fixtures and production capture are unchanged.
+
+`test_streaming_replay_returns_audio_queued_during_a_delayed_read` holds a read
+for 400 ms while 6,400 samples remain queued. False gap signals fall from
+**one to zero** with buffered reads; both paths return the same 6,400 literal
+samples. The original short-read path still triggers the production gap guard.
+The streaming pin retains its exact tilt, nod, complete request and answer.
+
+## Reproduce the comparisons
+
+Use the same Python environment and dependencies as the requested full-suite
+command. The benchmark driver and tests stay in this worktree. To run that
+driver against an earlier source revision without checking out or changing a
+running service:
+
+```sh
+replay_source="$(mktemp -d)"
+git archive 6f827a2 src | tar -x -C "$replay_source"
+PYTHONPATH="$replay_source/src:tests:." python -m bench.turn2 engine
+PYTHONPATH=src:tests python -m bench.turn2 engine
+```
+
+Use these revisions for the isolated comparisons, substituting the experiment
+name in the command above:
+
+| Experiment | Before source | After source |
+|---|---|---|
+| `engine` | `6f827a2` | `81924d0` |
+| `jitter` | `81924d0` | `301476c` |
+| `reconnect` | `301476c` | `0fdfb1c` |
+| `answer` | `0fdfb1c` | `6ef839f` |
+| `pipeline` | `6ef839f` | `9256d55` |
+| `late-answer` | `9256d55` | `5fa0064` |
+| `endpoint` | `5fa0064` | `2094e2a` |
+| `whisper` | `2094e2a` | `c031e91` |
+| `progress` | `c031e91` | `eaed858` |
+| `outage` | `a1e79e2` | `670ca23` |
+
+The legacy-marker correction has a literal regression test in
+`tests/test_turn2.py`. Muse's server-side 502 responses, disconnects, and roughly
+32 seconds of backend work are outside these offline changes. The incident
+logs do not expose the backend tools or enough native state to attribute that
+wait or prove a Metal idle penalty.
+
+## Validation
+
+Run the requested suite with `REACHY_PYTHON` set to the project's installed
+Python interpreter. The temporary uv cache only avoids a sandbox write
+restriction; test options and dependencies are unchanged.
+
+```sh
+TURN2_UV_CACHE="$(mktemp -d)"
+UV_CACHE_DIR="$TURN2_UV_CACHE" uv run -q --no-project --python "$REACHY_PYTHON" \
+  --with pytest --with pytest-timeout --with 'av>=12' --with 'webrtcvad-wheels>=2.0.14' \
+  env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src \
+  python -m pytest -q -p no:cacheprovider --timeout 120
+```
+
+The baseline suite passed with 2,480 passed, 3 skipped and 6 deselected.
+An intermediate full run found two obsolete cache digests and one wall-clock
+motion-test failure, an 11.3-degree sampled step against a 10-degree bound.
+The cache expectations now match the deliberately smaller phrase set. The
+unchanged motion test passed its isolated rerun; its bound was not relaxed.
+The next full run passed those cases and found the streaming replay's fake
+capture gap described above. Its isolated replay also passed before the
+buffering correction. No pin expectations were relaxed for either timing issue.
+
+Final requested full suite: **2,507 passed, 3 skipped, 6 deselected in 780.20
+seconds**. All production changes and both replay controls are included.

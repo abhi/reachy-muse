@@ -4,6 +4,7 @@ import functools
 import json
 import os
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -53,6 +54,12 @@ class PinHardware(FakeHardware):
     def __init__(self, recording):
         super().__init__()
         self.recording = recording
+
+    def read_buffered_audio(self):
+        chunks = []
+        while (sample := super().read_audio()) is not None:
+            chunks.append(sample)
+        return np.concatenate(chunks) if chunks else None
 
     def run_command(self, name, params, timeout_ms):
         self.recording.add({"robot": "command", "name": name, "params": params})
@@ -475,6 +482,7 @@ def test_rejected_muse_request_ends_the_conversation_in_error(monkeypatch):
 
 def test_streaming_partials_tilt_and_nod_while_the_user_talks_and_never_reach_muse(monkeypatch):
     rig = Rig(monkeypatch)
+    monkeypatch.setattr(rig.hardware, "read_audio", rig.hardware.read_buffered_audio)
     transcriber = ScriptedStreamingTranscriber()
 
     async def muse(session, request):
@@ -490,6 +498,59 @@ def test_streaming_partials_tilt_and_nod_while_the_user_talks_and_never_reach_mu
             ("tell me about the old castles", .4), ("tell me about the old castles and", .8),
             ("tell me about the old castles and dragons", .5)])
     check("streaming_partials", run_scenario(rig, service, user))
+
+
+@pytest.mark.parametrize(("buffered", "expected_gaps"), [(False, 1), (True, 0)])
+def test_streaming_replay_returns_audio_queued_during_a_delayed_read(monkeypatch, buffered, expected_gaps):
+    async def scenario():
+        hardware = PinHardware(Recording())
+        read_audio = hardware.read_buffered_audio if buffered else hardware.read_audio
+        entered, release = threading.Event(), threading.Event()
+        reads = 0
+
+        def delayed_read():
+            nonlocal reads
+            reads += 1
+            if reads == 2:
+                entered.set()
+                release.wait(2)
+            return read_audio()
+
+        monkeypatch.setattr(hardware, "read_audio", delayed_read)
+        conversation = reachy_muse.conversation.VoiceConversation(
+            None, hardware, backends=backends_for(Mode.ON_ROBOT, None))
+        capture = reachy_muse.conversation._CaptureBuffer(16000)
+        hardware.samples.put(np.full(CHUNK, -1, dtype=np.float32))
+        recording = asyncio.create_task(conversation._capture_microphone(capture))
+
+        async def take():
+            while (chunk := await capture.get()) is None:
+                pass
+            return chunk
+
+        try:
+            first = await asyncio.wait_for(take(), 1)
+            np.testing.assert_array_equal(first.samples, np.full(320, -1, dtype=np.float32))
+            assert await asyncio.to_thread(entered.wait, 1)
+            for _ in range(20):
+                hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, dtype=np.float32))
+            await asyncio.sleep(.4)
+            release.set()
+            chunks = []
+            count = gaps = 0
+            while count < 6400:
+                chunk = await asyncio.wait_for(take(), 1)
+                chunks.append(chunk.samples)
+                count += len(chunk.samples)
+                gaps += int(chunk.gap)
+            assert gaps == expected_gaps
+            np.testing.assert_array_equal(np.concatenate(chunks), np.full(6400, .3, dtype=np.float32))
+        finally:
+            release.set()
+            recording.cancel()
+            await asyncio.gather(recording, return_exceptions=True)
+
+    asyncio.run(scenario())
 
 
 class Transcripts:
