@@ -1870,8 +1870,16 @@ class VoiceConversation:
                 await prepared.aclose()
 
     async def _say_progress(self, progress: ProgressUpdate) -> None:
-        await self._speak(None, text=progress.text, state="thinking", stream_segment=True,
-                          voice=self.backends.progress_voice, progress=True)
+        lines = [""]
+        for word in progress.text.split():
+            text = f"{lines[-1]} {word}".strip()
+            if len(text.encode("utf-8")) > MAX_LINE_BYTES:
+                lines.append(word)
+            else:
+                lines[-1] = text
+        for text in lines:
+            await self._speak(None, text=text, state="thinking", stream_segment=True,
+                              voice=self.backends.progress_voice, progress=True)
 
     async def _speak_lines(self, message_id: str, lines, *, on_start: Callable[[], None] | None = None) -> None:
         for index, line in enumerate(lines):

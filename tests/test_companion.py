@@ -159,6 +159,56 @@ def answer(reply, after_s=0.0):
     return muse
 
 
+@pytest.mark.parametrize("report, expected", [
+    (
+        "I checked the published menus and found several restaurants with vegetarian options, outdoor seating, "
+        "and evening availability, and I am comparing their locations and opening hours before recommending "
+        "a place for our dinner.",
+        ["Earlier from Muse: I checked the published menus and found several restaurants with vegetarian options, "
+         "outdoor seating, and evening availability, and I am comparing their locations and opening hours before "
+         "recommending a place for our", "dinner."],
+    ),
+    ("café " * 39 + "café.", ["Earlier from Muse: " + "café " * 36 + "café", "café café café."]),
+    ("é" * 120, ["Earlier from Muse:", "é" * 120]),
+    ("I found a menu.", ["Earlier from Muse: I found a menu."]),
+])
+def test_attributed_progress_fits_companion_speech_requests(report, expected, monkeypatch):
+    from reachy_muse.conversation import VoiceConversation
+    from reachy_muse.progress import ProgressPlan
+    from test_conversation import FakeHardware
+
+    monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
+
+    async def run():
+        async with FakeCompanion(speech_frames=1) as companion:
+            recording = Recording()
+            hardware = FakeHardware()
+            link = CompanionLink(companion.url[:-3], token=TOKEN, insecure=True,
+                                 out_rate=hardware.output_sample_rate)
+            backends = backends_for(Mode.COMPANION, None, companion=link,
+                                    progress_speech=TextCodedVoice(recording, "progress_tts"))
+            conversation = VoiceConversation(None, hardware, backends=backends)
+            running = asyncio.create_task(link.run())
+            try:
+                await asyncio.wait_for(link.settled(), 1)
+                assert backends.companion.begin_turn()
+                progress = ProgressPlan("Find dinner.", 0)
+                assert progress.offer(report, 0)
+                await conversation._say_progress(progress.take(20))
+                spoken = spoken_by_companion(companion)
+                assert spoken == expected
+                assert " ".join(spoken) == "Earlier from Muse: " + report
+                assert all(len(text.encode("utf-8")) <= 240 for text in spoken)
+                assert np.any(np.concatenate(hardware.played))
+                assert recording.events == []
+                assert backends.companion.speech._strikes == 0
+            finally:
+                await conversation._moments.close()
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+    scenario(run())
+
+
 def test_happy_turn_nods_along_to_partials_and_speaks_condensed_lines_with_their_expression(monkeypatch):
     async def run():
         # 7 frames of room tone before the onset, then 40 voiced frames: the companion ends the turn
