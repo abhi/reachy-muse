@@ -22,6 +22,15 @@ def test_plain_opening_plays_before_final_text_without_repeating_it():
     assert result["first_sentence_to_audio_ms"] < 600
 
 
+def test_companion_synthesizes_the_next_sentence_during_playback():
+    result = asyncio.run(answer_replay(streamed=False))
+    assert result["spoken"] == [
+        "A light workout is a good option.", "Take a rest day if you feel worn out.",
+    ]
+    assert result["first_sentence_to_audio_ms"] < 600
+    assert result["sentence_gap_ms"] < 150
+
+
 def test_plain_prefix_keeps_final_remainder_for_narration_once():
     job = plain_job()
     assert feed(job, chat_event("delta.text_append", "reply-1", text="Rest today. You")) == [

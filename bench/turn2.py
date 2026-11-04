@@ -144,7 +144,7 @@ async def reconnect_replay():
             await asyncio.gather(running, return_exceptions=True)
 
 
-async def answer_replay(*, late=False):
+async def answer_replay(*, late=False, streamed=True):
     from dataclasses import replace
     from types import SimpleNamespace
     import numpy as np
@@ -187,8 +187,9 @@ async def answer_replay(*, late=False):
             if late:
                 conversation.job.dispatched_at -= 32
             first_text = time.monotonic()
-            await session.events.put(chat_event("delta.text_append", "reply-1", text=first + " "))
-            await asyncio.sleep(2)
+            if streamed:
+                await session.events.put(chat_event("delta.text_append", "reply-1", text=first + " "))
+                await asyncio.sleep(2)
             await session.events.put(chat_event("delta.message_done", "reply-1", seq=2, content=first + " " + second))
             await session.events.put(chat_event("task.status", seq=200, status="completed"))
         producers.append(asyncio.create_task(answer()))
@@ -221,8 +222,9 @@ async def answer_replay(*, late=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("experiment", choices=("engine", "jitter", "reconnect", "answer", "late-answer"))
+    parser.add_argument("experiment", choices=("engine", "jitter", "reconnect", "answer", "late-answer", "pipeline"))
     args = parser.parse_args()
     experiments = {"engine": engine_replay, "jitter": jitter_replay, "reconnect": reconnect_replay,
-                   "answer": answer_replay, "late-answer": lambda: answer_replay(late=True)}
+                   "answer": answer_replay, "late-answer": lambda: answer_replay(late=True),
+                   "pipeline": lambda: answer_replay(streamed=False)}
     print(json.dumps(asyncio.run(experiments[args.experiment]()), indent=2))

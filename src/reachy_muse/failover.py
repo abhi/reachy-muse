@@ -241,7 +241,8 @@ class FailoverVoice:
 
     def prepare(self, line: SpokenLine, output_rate: int):
         if self._on_companion(line):
-            return None
+            from reachy_muse.local_speech import PreparedSpeech
+            return PreparedSpeech(self.stream(line, output_rate))
         return self.local.prepare(line, output_rate)
 
     async def stream(self, line: SpokenLine, output_rate: int):

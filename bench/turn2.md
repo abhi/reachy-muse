@@ -103,3 +103,13 @@ The post-change 1500 ms gap is waiting for the second sentence's final text in
 this fixture. It is not synthesis overhead. The live 0.6-second target still
 depends on actual TTS and transport performance, which this offline run does
 not establish.
+
+## Pipeline companion speech
+
+Companion speech now implements the existing bounded preparation path. The
+speaker owns one playing sentence and one prepared sentence; cancellation
+closes both producers, and preparation retains the usual local voice fallback.
+`python -m bench.turn2 pipeline` supplies both final sentences together, with
+250 ms synthesis and 500 ms playback per sentence. The inter-sentence gap fell
+from **301.95 ms to 50.74 ms**. First audio remained 252.38 versus 251.20 ms.
+The remaining gap is the existing 50 ms output drain allowance.
