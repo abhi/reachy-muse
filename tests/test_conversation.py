@@ -1099,7 +1099,7 @@ def test_plain_briefing_waits_for_display_text_after_empty_terminal_reply(monkey
                     display_text="Good morning. Your appointment is at ten.", display_text_ready=True)), job)
             lines = await collector
             assert [line.text for line in lines] == (
-                ["Good morning.", "Your appointment is at ten."] if late_text else ["Good morning."])
+                ["Good morning.", "Your appointment is at ten."] if late_text else [])
             assert conversation.job is None
         finally:
             collector.cancel()
@@ -1135,7 +1135,9 @@ def test_plain_completed_reply_uses_latest_display_text_before_playback(streamin
 
 
 @pytest.mark.parametrize("empty", ["", "  "])
-def test_plain_cleared_completion_waits_for_later_display_text(streaming_speech, monkeypatch, empty):
+@pytest.mark.parametrize("completed", [False, True])
+def test_plain_cleared_completion_waits_for_later_display_text(streaming_speech, monkeypatch, empty,
+                                                            completed):
     from dataclasses import replace
     from reachy_muse.turn_timeline import TurnTimeline
 
@@ -1151,16 +1153,20 @@ def test_plain_cleared_completion_waits_for_later_display_text(streaming_speech,
                              local_style=ReplyStyle.PLAIN_SHORT))
         job = await conversation._dispatch(b"voice", "Should I work out today?", started=time.monotonic(),
                                            defer_playback=False, timeline=TurnTimeline())
-        for seq, event in enumerate([
-            chat_event("delta.text_append", "reply-1", text="Rest today. "),
-            chat_event("delta.message_done", "reply-1", content="Rest today. Draft tail."),
+        events = [chat_event("delta.text_append", "reply-1", text="Rest today. ")]
+        if completed:
+            events.append(chat_event("delta.message_done", "reply-1", content="Rest today. Draft tail."))
+        events.extend([
             chat_event("message.assistant", "reply-1", display_text=empty, display_text_ready=True),
             chat_event("task.status", status="completed"),
-        ], 1):
+        ])
+        for seq, event in enumerate(events, 1):
             await conversation._queue_replies(feed(job, {**event, "seq": seq}), job)
         delivery = asyncio.create_task(conversation._deliver(job))
         try:
             await asyncio.sleep(.3)
+            assert speech.requests == []
+            assert hardware.played == []
             await conversation._queue_replies(feed(job, chat_event(
                 "message.assistant", "reply-1", seq=5,
                 display_text="Rest today. Walk tomorrow.", display_text_ready=True)), job)

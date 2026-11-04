@@ -337,12 +337,11 @@ class ReplyReader:
             if stream.reply.done:
                 remainder = stream.reply.text
                 if not stream.reply.text.strip():
-                    if stream.closed:
-                        stream.closed = False
-                        stream.remainder = None
-                        stream.narration_version += 1
-                        if not stream.spoken:
-                            stream.skip_before = stream.index
+                    stream.closed = False
+                    stream.remainder = None
+                    stream.narration_version += 1
+                    if not stream.spoken:
+                        stream.skip_before = stream.index
                     continue
                 stream.closed = True
                 if stream.plain_prefix and not stream.skip_before:
