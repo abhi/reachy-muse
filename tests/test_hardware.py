@@ -1267,6 +1267,74 @@ def test_a_command_during_a_spoken_clip_waits_for_its_fade_out_without_a_jump():
     assert max(abs(later - earlier) for earlier, later in zip(rolls, rolls[1:])) < 3
 
 
+@pytest.mark.parametrize("interruption", ["pause", "clear", "command"])
+def test_replacement_clip_fades_continuously_when_interrupted(monkeypatch, interruption):
+    from reachy_muse.contract.expressions import Expression
+    from reachy_muse.hardware import _Command
+    from reachy_muse.motion.layers import MotionLayers, Ramp
+    from reachy_muse.motion.sentence import SentenceMotion
+
+    class Library:
+        def list_moves(self):
+            return ["success1", "surprised1"]
+
+        def get(self, name):
+            roll, ears = (20, 40) if name == "success1" else (0, 10)
+            return SimpleNamespace(duration=1.0, evaluate=lambda elapsed:
+                                   (pose_factory(roll=roll), np.deg2rad([-ears, ears]), 0.0))
+
+    robot = FakeRobot()
+    controller = ReachyController(pose_factory=pose_factory, pose_interpolator=lambda a, b, t: a * (1 - t) + b * t,
+                                 sleep_on_close=False, style=MotionStyle(sway="sdk", breathing=False))
+    controller._np, controller._robot = np, robot
+    controller._output_sample_rate = 16000
+    controller._layers, controller._generated_gain = MotionLayers(controller._style), Ramp(1)
+    controller._moves = Library()
+    controller._require_running = lambda: None
+    request = _Command("reachy.move", {"yaw": 5, "duration": .2, "hold": 0}, 1010)
+
+    class Clock:
+        now, tick, interrupted = 1000.0, 0, None
+
+        def is_set(self):
+            return self.tick >= 70
+
+        def wait(self, duration):
+            self.now += duration
+            if controller._started.is_set():
+                self.tick += 1
+                if self.tick == 1:
+                    controller.play_audio(np.zeros(8000), sentence=SentenceMotion(Expression.HAPPY))
+                elif self.tick == 21:
+                    controller.play_audio(np.zeros(16000), sentence=SentenceMotion(Expression.SURPRISED))
+                elif self.tick == 27:
+                    clip = controller._clip
+                    assert controller._clip_source is not None
+                    assert clip.timeline.started < self.now < clip.timeline.started + clip.timeline.fade_in_s
+                    self.interrupted = self.now
+                    if interruption == "pause":
+                        controller.set_state("listening")
+                    elif interruption == "clear":
+                        controller.clear_audio()
+                    else:
+                        controller._commands.put_nowait(request)
+            return self.is_set()
+
+    clock = controller._stop = Clock()
+    monkeypatch.setattr(reachy_muse.hardware, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    monkeypatch.setattr(sys.modules[__name__], "time", SimpleNamespace(monotonic=lambda: clock.now))
+    controller._motion_loop()
+    assert controller._failure is None
+    frames = frames_between(robot, clock.interrupted - .025, clock.interrupted + .5)
+    poses = np.array([controller._pose_vector(head, ears, body) for _, head, ears, body in frames])
+    assert len(poses) >= 20
+    assert poses[0, 3] > 8
+    assert np.max(np.abs(np.diff(poses[:, [3, 6, 7]], axis=0))) < 3
+    assert abs(poses[-1, 3]) < 1
+    if interruption == "command":
+        assert request.result["ok"] is True
+
+
 def test_sleeping_bows_the_head_and_folds_the_antennas_without_the_idle_bob():
     controller = ReachyController(pose_factory=pose_factory)
     controller._np = np

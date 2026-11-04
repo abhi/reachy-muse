@@ -917,10 +917,14 @@ class ReachyController:
                 request.done.set()
             return pose
         if self._clip_source is not None:
-            if now >= clip.timeline.started + clip.timeline.fade_in_s:
+            source_time = min(now, clip.timeline.end)
+            if source_time >= clip.timeline.started + clip.timeline.fade_in_s:
                 self._clip_source = None
             else:
-                pose = self._clip_source
+                from reachy_muse.motion.layers import crossfade_weight
+                release = crossfade_weight(now - clip.timeline.end, clip.timeline.fade_s)
+                source = self._crossfade(clip, source_time, self._clip_source)
+                return source * (1 - release) + pose * release
         return self._crossfade(clip, now, pose)
 
     def _crossfade(self, clip: _Clip, now: float, pose, gain: float = 1.0):
@@ -1019,13 +1023,16 @@ class ReachyController:
                     except Exception as exc:
                         result = {"ok": False, "error": str(exc)}
                     finally:
+                        with self._state_lock:
+                            self._sentences.cancel()
+                            self._sentence_active = False
+                            self._sentence_terminal = None
+                            self._gesture_name = None
                         if self._clip is not None and self._clip.request is request:
                             self._clip.result = result
                         else:
                             request.result = result
                             request.done.set()
-                        with self._state_lock:
-                            self._gesture_name = None
                         previous_update = time.monotonic()
                         self._stop.wait(_MOTION_PERIOD_S)
                 else:
@@ -1248,6 +1255,8 @@ class ReachyController:
 
     def _travel(self, request: _Command, pose, antennas, body_yaw: float, duration: float) -> None:
         start = time.monotonic()
+        with self._state_lock:
+            self._sentences.cancel(fade=False)
         self._layers.suspend(start)
         start_pose = self._last_pose.copy()
         start_antennas = self._last_antennas.copy()

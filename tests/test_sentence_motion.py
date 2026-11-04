@@ -178,6 +178,82 @@ def test_command_preemption_discards_sentence_tail():
         hardware.close()
 
 
+def test_command_completion_does_not_restore_an_active_sentence_accent():
+    import time
+    from test_hardware import FakeRobot, OfflineLibrary, start_controller
+
+    robot = FakeRobot()
+    hardware = start_controller(robot, moves_factory=OfflineLibrary,
+                                style=MotionStyle(sway='sdk', breathing=False))
+    try:
+        hardware.play_audio(np.ones(160), sentence=SentenceMotion(Expression.NEUTRAL, 'question'))
+        hardware.finish_sentence()
+        deadline = time.monotonic() + 1
+        while hardware._pose_parameters(robot.pose)['roll'] < 3.5:
+            assert time.monotonic() < deadline
+            time.sleep(.002)
+        assert hardware.run_command('reachy.move', {
+            'roll': 0, 'yaw': 20, 'right_antenna': -10, 'left_antenna': 10,
+            'duration': .2, 'hold': 0})['ok']
+        completed = len(robot.frames)
+        time.sleep(.15)
+        frames = robot.frames[completed:]
+        assert len(frames) >= 3
+        np.testing.assert_allclose([hardware._pose_parameters(head)['roll']
+                                    for _, head, _, _ in frames], 0, atol=.01)
+        np.testing.assert_allclose([np.degrees(antennas) - [-10, 10]
+                                    for _, _, antennas, _ in frames], 0, atol=.01)
+    finally:
+        hardware.close()
+
+
+def test_sentence_started_during_command_cannot_play_after_completion():
+    import threading
+    import time
+    from test_hardware import FakeRobot, move_library, start_controller
+
+    executing = threading.Event()
+    release = threading.Event()
+
+    class BlockingRobot(FakeRobot):
+        def set_target(self, head, antennas, body_yaw):
+            super().set_target(head, antennas, body_yaw)
+            if head[1, 0] > 0 and not executing.is_set():
+                executing.set()
+                assert release.wait(1)
+
+    robot = BlockingRobot()
+    requested = []
+    hardware = start_controller(robot, moves_factory=move_library(requested),
+                                style=MotionStyle(sway='sdk', breathing=False))
+    result = []
+    worker = threading.Thread(target=lambda: result.append(hardware.run_command(
+        'reachy.move', {'yaw': 20, 'duration': .6, 'hold': 0})))
+    try:
+        worker.start()
+        assert executing.wait(1)
+        hardware.play_audio(np.ones(160), sentence=SentenceMotion(Expression.HAPPY, 'question'))
+        hardware.finish_sentence()
+        release.set()
+        worker.join(2)
+        assert not worker.is_alive()
+        assert result[0]['ok'], result
+        time.sleep(.15)
+        completed = next(index for index, (_, head, _, _) in enumerate(robot.frames)
+                         if hardware._pose_parameters(head)['yaw'] == 20)
+        frames = robot.frames[completed:]
+        assert len(frames) >= 4
+        yaws = [hardware._pose_parameters(head)['yaw'] for _, head, _, _ in frames]
+        intervals = np.diff([at for at, _, _, _ in frames])
+        assert np.max(np.abs(np.diff(yaws)) / intervals) < 160, yaws
+        assert requested == []
+        assert hardware._sentences.offset(time.monotonic()) == [0] * 9
+    finally:
+        release.set()
+        worker.join(2)
+        hardware.close()
+
+
 def test_continuing_sentences_cannot_keep_a_command_waiting_for_clip_fades():
     import threading
     import time

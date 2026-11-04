@@ -36,8 +36,11 @@ class SentenceTimeline:
         except queue.Full:
             pass
 
-    def cancel(self) -> None:
+    def cancel(self, *, fade: bool = True) -> None:
         self.epoch += 1
+        if not fade:
+            self.accent = self.release = None
+            self.last = [0.0] * 9
 
     def due(self, now: float) -> list[SentenceEvent]:
         while True:
