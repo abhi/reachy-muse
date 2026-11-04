@@ -112,6 +112,7 @@ class HearingTurn(Protocol):
     active: bool                   # inside a user turn that has not ended yet
     speech_active: bool
     quiet_s: float                 # seconds since the robot's voice detector last heard speech
+    supports_partials: bool
     partial: Optional[Partial]     # the open utterance's transcript so far; never sent to Muse
 
     def feed(self, samples: np.ndarray) -> None: ...

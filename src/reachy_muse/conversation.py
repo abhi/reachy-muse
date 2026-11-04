@@ -927,7 +927,8 @@ class VoiceConversation:
             if partial is not None and self.wake_detector is not None:
                 partial = replace(partial, text=self._without_wake(partial.text))
             speaking = recorder.speech_active
-            if speaking and heard_over and not self._playback.user_speaking:
+            if (speaking and heard_over and recorder.supports_partials
+                    and not self._playback.user_speaking):
                 # Hardware AEC can leave residual speech. Keep capturing it, but
                 # require words distinct from our output before pausing playback.
                 speaking = partial is not None and interrupts_playback(partial.text, tuple(heard_over))

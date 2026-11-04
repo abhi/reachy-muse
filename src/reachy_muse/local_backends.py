@@ -85,6 +85,10 @@ class LocalHearingTurn:
         return getattr(self._recorder, "quiet_s", 0.0)
 
     @property
+    def supports_partials(self) -> bool:
+        return self._recognizer is not None
+
+    @property
     def partial(self) -> Optional[Partial]:
         if self._turn is None or not self._turn.partial.text:
             return None

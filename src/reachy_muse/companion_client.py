@@ -547,6 +547,8 @@ class CompanionHearingTurn:
     pongs prove liveness while Smart Turn and final transcription are still running.
     """
 
+    supports_partials = True
+
     def __init__(self, link: CompanionLink, recorder):
         self._link = link
         self._recorder = recorder

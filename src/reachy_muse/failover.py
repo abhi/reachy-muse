@@ -137,6 +137,10 @@ class FailoverHearingTurn:
         return self._turn.quiet_s
 
     @property
+    def supports_partials(self) -> bool:
+        return self._turn.supports_partials
+
+    @property
     def partial(self):
         return self._turn.partial
 

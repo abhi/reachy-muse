@@ -34,7 +34,7 @@ def duplex(monkeypatch):
             return np.frombuffer(source.readframes(source.getnframes()), dtype="<i2").copy()
 
     async def scenario(run, *, echo=True, wake=False, real_turn=False, speech=None, silence_s=.1,
-                       wake_delay_feeds=0, hold_recognition=False, transcriber=None, owned=False):
+                       wake_delay_feeds=0, hold_recognition=False, transcriber=None, hearing=None, owned=False):
         loop = asyncio.get_running_loop()
         ready = asyncio.Event()
         consumer_ready = asyncio.Event()
@@ -130,6 +130,8 @@ def duplex(monkeypatch):
                                  transcriber=transcriber or Recognition())
                     if speech is not None or wake or transcriber is not None or hold_recognition
                     else backends_for(Mode.MUSE_VOICE, session))
+        if hearing is not None:
+            backends = replace(backends, hearing=hearing)
         if owned:
             options.update(session_id="robot-chat", owns_chat=True)
             session.acknowledgement["response"]["result"].update(session_id="robot-chat", is_thread=True)

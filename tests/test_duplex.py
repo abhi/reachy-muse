@@ -244,12 +244,7 @@ def test_confirmed_wake_alone_pauses_old_output_until_fresh_silence(duplex):
     )))
 
 
-def test_capture_gap_during_user_speech_requires_a_fresh_quiet_interval(duplex, monkeypatch):
-    from reachy_muse.capabilities import Partial
-    from reachy_muse.local_backends import LocalHearingTurn
-
-    monkeypatch.setattr(LocalHearingTurn, "partial", property(
-        lambda self: Partial("What about tomorrow?", 1, 1)))
+def test_capture_gap_during_user_speech_requires_a_fresh_quiet_interval(duplex):
     np = pytest.importorskip("numpy")
     started = asyncio.Event()
 
