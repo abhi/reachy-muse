@@ -70,8 +70,8 @@ when prompted. Reachy is already online, so no Wi-Fi password is needed.
 
 After successful pairing, an interactive terminal shows the exact introduction
 and asks whether to send it to your main Muse chat. Press Enter for yes or type
-`no` to skip it. On yes, Reachy sends the introduction after the device is
-registered and consumes Muse's reply without speaking it.
+`no` to skip it. On yes, Reachy sends the introduction and consumes Muse's reply
+without speaking it. The running voice service keeps its command connection.
 
 Use `muse-reachy pair --introduce` to consent without a prompt, or
 `muse-reachy pair --no-introduce` to skip the introduction. Non-interactive

@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # Licensed under the Apache License, Version 2.0 (the "License").
 
+import asyncio
 import io
 import json
 from types import SimpleNamespace
@@ -9,10 +10,14 @@ import pytest
 
 from musegadget import config
 from musegadget.identity import Identity
+from musegadget.link_client import LinkSession
+from musegadget.noise import ApplicationResponse, BodyChunk, ServiceFrame
 from musegadget.pair import PairOutcome, PairResult
 
 from reachy_muse import cli, introduction
-from test_introduction import Session
+from fake_muse_vm import make_session
+from test_introduction import Session, event
+from test_registered_commands import command_device, registered_device
 
 
 INTRODUCTION = (
@@ -39,11 +44,6 @@ class Terminal(io.StringIO):
         return super().readline(*args)
 
 
-class PairedSession(Session):
-    async def wait_registered(self):
-        await self.registered.wait()
-
-
 @pytest.fixture
 def pairing_flow(tmp_path, monkeypatch):
     flow = SimpleNamespace(vm_id="vm-one", outcome=PairOutcome.PAIRED,
@@ -64,7 +64,7 @@ def pairing_flow(tmp_path, monkeypatch):
                  "vm_auth_token": "fake-vm-token"}], 200
 
     def connect(**kwargs):
-        session = PairedSession()
+        session = Session()
         flow.sessions.append(session)
         flow.connected_vms.append(kwargs["vm_id"])
         return session
@@ -77,6 +77,66 @@ def pairing_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(introduction, "LinkSession", connect)
     monkeypatch.setattr(cli, "_hardware", lambda *args: pytest.fail("pairing started hardware"))
     return flow
+
+
+@pytest.mark.parametrize("flags", [[], ["--introduce"], ["--force"]])
+def test_pair_introduction_preserves_registered_voice_service(
+        tmp_path, monkeypatch, pairing_flow, flags):
+    introduce_paired = introduction.introduce_paired
+    pairing_flow.vm_id = "vm 1&x"
+    monkeypatch.setattr(cli.sys, "stdin", Terminal("yes\n"))
+
+    async def introduce(**kwargs):
+        service, _, speech = command_device()
+        service.executor.presence = lambda timeout_s: {
+            "ok": True, "present": True, "last_seen_seconds": 0}
+        async with registered_device(service, monkeypatch) as (running, running_vm, _):
+            link, vm = make_session(lambda *args: pytest.fail("pairing started hardware"), [])
+            monkeypatch.setattr(introduction, "LinkSession", lambda **options: LinkSession(
+                **options, connect=link._connect))
+            task = asyncio.create_task(introduce_paired(**kwargs))
+
+            async def invoke_commands():
+                assert running.registered.is_set()
+                for command, params, payload in [
+                    ("reachy.say", {"text": "Lunch is ready."}, {"spoken": True}),
+                    ("reachy.presence", {}, {"present": True, "last_seen_seconds": 0}),
+                ]:
+                    await running_vm.send_message({"method": "link.invoke", "id": command,
+                                                   "command": command, "params": params})
+                    assert await running_vm.next_message() == {
+                        "method": "link.result", "id": command, "ok": True, "payload": payload}
+
+            try:
+                await vm.handshake()
+                subscribe = await vm.next_frame()
+                assert subscribe.value.path == "/chat/subscribe"
+                await vm.send_frame(ServiceFrame.response(subscribe.stream_id, ApplicationResponse(
+                    status=200, end_body=False)))
+                post = await vm.next_frame()
+                assert json.loads(post.value.body) == {
+                    "message": INTRODUCTION, "output_modality": "text", "device_id": "homelink-abcdef"}
+                await vm.send_frame(ServiceFrame.response(post.stream_id, ApplicationResponse(
+                    status=200, body=b'{"session_id":"main-chat","message_id":"intro-user"}', end_body=True)))
+                await invoke_commands()
+                replies = [event("delta.message_done", message_id="intro-reply", display_text="Remembered."),
+                           event("task.status", status="completed")]
+                await vm.send_frame(ServiceFrame.body_chunk(subscribe.stream_id, BodyChunk(
+                    data=b"".join(json.dumps(reply).encode() + b"\n" for reply in replies))))
+                await task
+                await invoke_commands()
+                assert speech.words == ["Lunch is ready.", "Lunch is ready."]
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def bounded_introduction(**kwargs):
+        await asyncio.wait_for(introduce(**kwargs), 3)
+
+    monkeypatch.setattr(introduction, "introduce_paired", bounded_introduction)
+    assert cli.main(["--state-dir", str(tmp_path), "pair", *flags]) == 0
+    assert pairing_flow.pair_calls == [("--force" in flags, 600)]
+    assert introduction.introduction_sent(tmp_path, vm_id="vm 1&x", node_id="homelink-abcdef")
 
 
 @pytest.mark.parametrize("answer, sends", [

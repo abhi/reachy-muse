@@ -709,8 +709,7 @@ def pair_reachy(args) -> int:
         if args.introduce is True or (args.introduce is None and sys.stdin.isatty()):
             from reachy_muse.introduction import introduce_paired
             asyncio.run(introduce_paired(
-                confirm=confirm_introduction if args.introduce is None else None,
-                register_device=True))
+                confirm=confirm_introduction if args.introduce is None else None))
         return 0
     print({
         PairOutcome.ALREADY_PAIRED: f"Reachy is already paired. The pairing is saved in {config.state_dir()}. "

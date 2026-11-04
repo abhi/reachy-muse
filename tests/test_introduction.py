@@ -323,59 +323,6 @@ def test_standalone_introduction_preserves_running_device_registration(tmp_path,
     asyncio.run(asyncio.wait_for(check(), 3))
 
 
-@pytest.mark.parametrize("registration", ["accepted", "rejected", "disconnected"])
-def test_pair_introduction_waits_for_registration(tmp_path, monkeypatch, registration):
-    monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
-    config.save_json(config.PAIRING_FILE, {"access_token": "fake-token"}, tmp_path)
-    monkeypatch.setattr(introduction.identity, "load_or_create", lambda: Identity("02:00:00:ab:cd:ef"))
-    monkeypatch.setattr(introduction.muse_api, "fetch_vms_with_status", lambda *args: ([
-        {"vm_id": "vm-1", "is_default": True, "vm_auth_token": "fake-vm-token"}], 200))
-
-    async def check():
-        link, vm = make_session(lambda *args: pytest.fail("pairing started hardware"), [])
-        monkeypatch.setattr(introduction, "LinkSession", lambda **kwargs: LinkSession(
-            **kwargs, connect=link._connect))
-        task = asyncio.create_task(introduction.introduce_paired(register_device=True))
-        receipt = tmp_path / introduction.INTRODUCTION_STATE_FILE
-        try:
-            await vm.handshake()
-            await vm.accept_control_stream()
-            register = await vm.next_message()
-            assert register["method"] == "link.register"
-            with pytest.raises(asyncio.TimeoutError):
-                await asyncio.wait_for(vm.next_frame(), 0.02)
-            assert not receipt.exists()
-            if registration == "disconnected":
-                await vm.ws.close()
-            else:
-                await vm.send_message({"type": "res", "id": register["id"],
-                                       "ok": registration == "accepted"})
-            if registration != "accepted":
-                with pytest.raises(RuntimeError, match="^Reachy's introduction did not finish$"):
-                    await task
-                assert not receipt.exists()
-                return
-            subscribe = await vm.next_frame()
-            assert subscribe.value.path == "/chat/subscribe"
-            await vm.send_frame(ServiceFrame.response(subscribe.stream_id, ApplicationResponse(
-                status=200, end_body=False)))
-            post = await vm.next_frame()
-            assert json.loads(post.value.body)["message"] == REACHY_INTRODUCTION
-            await vm.send_frame(ServiceFrame.response(post.stream_id, ApplicationResponse(
-                status=200, body=b'{"session_id":"main-chat","message_id":"intro-user"}', end_body=True)))
-            replies = [event("delta.message_done", message_id="intro-reply", display_text="Remembered."),
-                       event("task.status", status="completed")]
-            await vm.send_frame(ServiceFrame.body_chunk(subscribe.stream_id, BodyChunk(
-                data=b"".join(json.dumps(reply).encode() + b"\n" for reply in replies))))
-            await task
-            assert json.loads(receipt.read_text())["receipts"][0]["status"] == "sent"
-        finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-
-    asyncio.run(asyncio.wait_for(check(), 3))
-
-
 def test_standalone_refreshes_rejected_access_token(tmp_path, monkeypatch):
     monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
     monkeypatch.setattr(config, "sdk_token", lambda: "fake-sdk-token")
