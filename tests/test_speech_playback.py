@@ -521,3 +521,25 @@ def test_consecutive_sentences_share_the_accepted_audio_tail_without_a_gap():
         assert clock() == pytest.approx(.21)
 
     asyncio.run(scenario())
+
+
+def test_shared_cursor_drains_the_sink_margin_after_the_nominal_tail_ends():
+    from reachy_muse.speech_playback import PlaybackCursor
+
+    async def scenario():
+        clock = Clock()
+        gate = SpeechPlayback(clock=clock)
+        cursor = PlaybackCursor()
+
+        async def push(samples):
+            pass
+
+        first = PCMPlayer(100, push, gate, cursor=cursor, clock=clock, sleep=clock.sleep)
+        await first.play(list(range(8)))
+        clock.now = .09
+        await PCMPlayer(100, None, gate, cursor=cursor, clock=clock, sleep=clock.sleep).finish()
+        assert clock() == pytest.approx(.13)
+        await PCMPlayer(100, None, gate, clock=clock, sleep=clock.sleep).finish()
+        assert clock() == pytest.approx(.13)
+
+    asyncio.run(scenario())

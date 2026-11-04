@@ -845,6 +845,31 @@ def test_idle_cleanup_cannot_join_a_speaker_lock_handoff():
     asyncio.run(bounded(scenario()))
 
 
+def test_idle_cleanup_drains_an_accepted_reply_tail_before_clearing(monkeypatch):
+    from functools import partial
+    from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor
+    from test_speech_playback import Clock
+
+    np = pytest.importorskip("numpy")
+    clock = Clock()
+    monkeypatch.setattr(reachy_muse.conversation, "PCMPlayer",
+                        partial(PCMPlayer, clock=clock, sleep=clock.sleep))
+
+    async def scenario():
+        hardware, session = FakeHardware(), FakeSession()
+        cleared = []
+        hardware.clear_audio = lambda: cleared.append(clock())
+        conversation = VoiceConversation(session, hardware,
+                                         backends=backends_for(Mode.ON_ROBOT, session, speech=object()))
+        conversation.backends.voice.phrases["Earlier answer."] = (np.full(640, .25, np.float32),)
+        await conversation._speak(None, text="Earlier answer.", stream_segment=True,
+                                  playback_cursor=PlaybackCursor(), drain=False)
+        await conversation._clear_idle_audio()
+        assert cleared == [pytest.approx(.13)]
+
+    asyncio.run(scenario())
+
+
 def test_failed_deferred_turn_does_not_flush_the_output_pipeline():
     async def scenario():
         hardware = FakeHardware()

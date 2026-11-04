@@ -4,6 +4,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from functools import partial
 import logging
 import threading
 from types import SimpleNamespace
@@ -14,10 +15,11 @@ from musegadget.identity import Identity
 from reachy_muse.arrival import PersonBox
 from reachy_muse.capabilities import Endpoint, Mode
 from reachy_muse.device_command import WakeWindow
-from reachy_muse.conversation import ReachyService, VoiceConversation, _HeldRequest, _QueuedTurn
+from reachy_muse.conversation import ReachyService, VoiceConversation, _HeldRequest, _QueuedTurn, _SpeechJob
 from reachy_muse.hardware import ReachyController
 from reachy_muse.local_backends import backends_for
 from reachy_muse.presence import Presence
+from reachy_muse.speech_playback import PCMPlayer
 from reachy_muse.turn_timeline import TurnTimeline
 from fake_muse_vm import make_session
 from test_conversation import FakeHardware, FakeSession, reply_job
@@ -200,6 +202,74 @@ def test_waiting_say_times_out_and_never_plays_later():
             assert await invoke(service, timeout_ms=20) == {"ok": True, "payload": {"spoken": False, "reason": "timeout"}}
         assert voice._speech_pending == 0
         assert speech.words == voice.hardware.played == []
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("failure", ["speech_failed", "timeout"])
+def test_failed_say_preserves_a_deferred_reply_tail(monkeypatch, failure):
+    async def check():
+        now = queued_end = 0.0
+        discarded_frames = 0
+        draining = asyncio.Queue()
+        release = asyncio.Event()
+
+        async def sleep(seconds):
+            nonlocal now
+            if seconds > 0:
+                end = now + seconds
+                draining.put_nowait(None)
+                await release.wait()
+                now = max(now, end)
+            await asyncio.sleep(0)
+
+        monkeypatch.setattr("reachy_muse.conversation.PCMPlayer",
+                            partial(PCMPlayer, clock=lambda: now, sleep=sleep))
+
+        class FailedSpeech:
+            async def stream(self, text, rate):
+                if text == "An earlier reply.":
+                    yield np.full(320, .25, np.float32)
+                elif failure == "timeout":
+                    await asyncio.Event().wait()
+                else:
+                    raise RuntimeError("Synthesis failed")
+
+        service, voice, _ = command_device(speech=FailedSpeech())
+        play_audio = voice.hardware.play_audio
+
+        def play(samples):
+            nonlocal queued_end
+            play_audio(samples)
+            queued_end = max(queued_end, now) + len(samples) / voice.hardware.output_sample_rate
+
+        def clear():
+            nonlocal discarded_frames
+            discarded_frames += round(max(0, queued_end - now) * voice.hardware.output_sample_rate)
+
+        voice.hardware.play_audio = play
+        voice.hardware.clear_audio = clear
+        voice._output_queue.put_nowait(_SpeechJob(None, "An earlier reply."))
+        speaker = asyncio.create_task(voice._play_output())
+        handoff = None
+        pending = None
+        try:
+            await voice._output_queue.join()
+            await draining.get()
+            pending = asyncio.create_task(invoke(service, timeout_ms=200))
+            if failure == "speech_failed":
+                handoff = asyncio.create_task(draining.get())
+                await asyncio.wait({pending, handoff}, return_when=asyncio.FIRST_COMPLETED)
+                release.set()
+            assert await pending == {"ok": True, "payload": {"spoken": False, "reason": failure}}
+            assert discarded_frames == 0
+            assert np.concatenate(voice.hardware.played).tolist() == [.25] * 320
+        finally:
+            release.set()
+            tasks = [task for task in (speaker, handoff, pending) if task is not None]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     asyncio.run(check())
 
 

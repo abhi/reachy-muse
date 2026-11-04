@@ -555,6 +555,7 @@ class VoiceConversation:
         self._replay_scope = ReplayScope()
         self._playback = SpeechPlayback()
         self._speaker_lock = asyncio.Lock()
+        self._speaker_cursor: PlaybackCursor | None = None
         self._speech_pending = 0
         self._speech_progress_at = 0.0
         self._waiting_for_speech = False
@@ -2053,8 +2054,12 @@ class VoiceConversation:
         self._speech_pending += 1
         try:
             async with self._speaker_lock:
+                if self._speaker_cursor is not None and self._speaker_cursor is not playback_cursor:
+                    await self._drain_speech(self._speaker_cursor)
                 if speech_serial <= self._hush_floor or (is_current is not None and not is_current()):
                     raise _SpeechSuperseded
+                playback_cursor = playback_cursor if playback_cursor is not None else PlaybackCursor()
+                self._speaker_cursor = playback_cursor
                 accepted_audio = False
                 def accepted():
                     nonlocal accepted_audio
@@ -2139,6 +2144,8 @@ class VoiceConversation:
                 if task.cancelled():
                     raise
                 cancelled = True
+        if self._speaker_cursor is not None:
+            self._speaker_cursor.end = 0.0
         self._echo_until = min(self._echo_until, time.monotonic() + ECHO_TAIL_S)
         if cancelled and propagate_cancel:
             raise asyncio.CancelledError
@@ -2148,6 +2155,8 @@ class VoiceConversation:
         # Count awakened lock waiters too: release can precede their acquisition.
         if not self._speech_pending and not self._speaker_lock.locked():
             async with self._speaker_lock:
+                if self._speaker_cursor is not None:
+                    await self._drain_speech(self._speaker_cursor)
                 await self._clear_owned_audio()
 
     async def _speak_owned(self, message_id: str | None, *, text: str | None = None,

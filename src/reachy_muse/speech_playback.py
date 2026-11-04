@@ -125,7 +125,7 @@ class PCMPlayer:
         self._gate = gate
         self._on_start, self._on_pause, self._on_resume = on_start, on_pause, on_resume
         self._clock, self._sleep = clock, sleep
-        self._cursor = cursor if cursor is not None else PlaybackCursor(clock())
+        self._cursor = cursor if cursor is not None else PlaybackCursor()
         self._started = False
         self._paused = False
         self._samples_sent = 0
@@ -187,7 +187,7 @@ class PCMPlayer:
                 self._diagnostics["scheduler_wake_lateness_ms_max"], lateness * 1000)
 
     async def _drain(self) -> None:
-        if self._samples_sent or self._cursor.end > self._clock():
+        if self._samples_sent or self._cursor.end > 0:
             await self._sleep_until(self._cursor.end + self._drain_margin_s)
 
     async def _pause(self) -> None:
