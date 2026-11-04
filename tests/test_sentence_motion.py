@@ -145,10 +145,10 @@ def test_pause_and_resume_keep_expression_without_replaying_clip():
 
 def test_sentence_motion_preserves_inactive_antenna():
     import time
-    from test_hardware import FakeRobot, start_controller
+    from test_hardware import FakeRobot, OfflineLibrary, start_controller
 
     robot = FakeRobot()
-    hardware = start_controller(robot, antenna_mode='left')
+    hardware = start_controller(robot, antenna_mode='left', moves_factory=OfflineLibrary)
     try:
         hardware.play_audio(np.ones(1600), sentence=SentenceMotion(Expression.CURIOUS, 'question'))
         hardware.finish_sentence()
@@ -161,9 +161,9 @@ def test_sentence_motion_preserves_inactive_antenna():
 
 def test_command_preemption_discards_sentence_tail():
     import time
-    from test_hardware import FakeRobot, start_controller
+    from test_hardware import FakeRobot, OfflineLibrary, start_controller
 
-    hardware = start_controller(FakeRobot())
+    hardware = start_controller(FakeRobot(), moves_factory=OfflineLibrary)
     try:
         hardware.play_audio(np.ones(16000), sentence=SentenceMotion(Expression.NEUTRAL, 'question'))
         time.sleep(.15)
@@ -221,7 +221,7 @@ def test_combined_sentences_sway_and_crossfades_stay_within_motion_limits():
 def test_delayed_motion_tick_cannot_restore_speaking_after_audio_drains():
     import threading
     import time
-    from test_hardware import FakeRobot, start_controller
+    from test_hardware import FakeRobot, OfflineLibrary, start_controller
 
     blocked, release = threading.Event(), threading.Event()
 
@@ -235,7 +235,7 @@ def test_delayed_motion_tick_cannot_restore_speaking_after_audio_drains():
                 release.wait(2)
 
     robot = SlowRobot()
-    hardware = start_controller(robot)
+    hardware = start_controller(robot, moves_factory=OfflineLibrary)
     try:
         robot.stall = True
         assert blocked.wait(1)

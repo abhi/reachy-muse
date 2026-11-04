@@ -285,13 +285,13 @@ def test_without_generated_motion_a_turn_matches_today_exactly(monkeypatch, moti
 
 
 def test_with_breathing_off_reachy_is_still_after_the_closing_motion_ends(monkeypatch):
-    from test_hardware import FakeRobot, pose_factory
+    from test_hardware import FakeRobot, OfflineLibrary, pose_factory
     from reachy_muse.hardware import ReachyController
 
     robot = FakeRobot()
     controller = ReachyController(robot_factory=lambda **kwargs: robot, pose_factory=pose_factory,
                                   pose_interpolator=lambda first, last, t: first * (1 - t) + last * t,
-                                  style=MotionStyle(breathing=False))
+                                  style=MotionStyle(breathing=False), moves_factory=OfflineLibrary)
 
     class RobotHardware(MotionHardware):
         def set_state(self, state, *, expression=None):
