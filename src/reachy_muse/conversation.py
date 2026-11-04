@@ -336,6 +336,12 @@ class ReplyReader:
             if stream.reply.done:
                 remainder = stream.reply.text
                 if not stream.reply.text.strip():
+                    if stream.closed:
+                        stream.closed = False
+                        stream.remainder = None
+                        stream.narration_version += 1
+                        if not stream.spoken:
+                            stream.skip_before = stream.index
                     continue
                 stream.closed = True
                 if stream.plain_prefix and not stream.skip_before:
@@ -1577,7 +1583,7 @@ class VoiceConversation:
             if turn.task_finished:
                 self._moments.prepare_closing(job.last_expression)
                 await self._end_asides(job, let_playing_finish=True)
-            if (job.answered and turn.complete(now) and job.replies.empty()
+            if ((job.answered or job.reader.has_reply_text()) and turn.complete(now) and job.replies.empty()
                     and (not turn.task_finished or not job.reader.awaiting_final_text() or turn.settled(now))):
                 return TurnOutcome.ACCEPTED
             if (not job.answered and job.replies.empty() and turn.settled(now)
