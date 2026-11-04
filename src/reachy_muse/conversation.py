@@ -1695,6 +1695,7 @@ class VoiceConversation:
                     continue
                 job.timeline.mark("narration_done")
                 lines = tuple(replace(line, expression=classify_sentence(line.text, line.expression).expression)
+                              if line.text else line
                               for line in lines)
                 def mark_narrated(stream=stream):
                     stream.narration_spoken = True
@@ -1711,7 +1712,8 @@ class VoiceConversation:
                 prepared = None
                 async def speak_lines():
                     for index, line in enumerate(lines):
-                        await self._speak(message_id, text=line.text, expression=line.expression.value,
+                        await self._speak(message_id, text=line.text,
+                            expression=line.expression.value if line.expression else None,
                             stream_segment=index < len(lines) - 1, is_current=is_current,
                             on_start=answer_audible(mark_narrated, line.expression))
                 speaking = speak_lines()

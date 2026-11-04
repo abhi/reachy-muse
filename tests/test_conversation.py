@@ -3037,14 +3037,16 @@ def test_marker_only_response_moves_silently_or_fails_without_motion(marker, exp
         session = FakeSession()
         conversation = VoiceConversation(session, hardware,
                                          backends=backends_for(Mode.ON_ROBOT, session, speech=UnusedSpeech()))
-        lines = await conversation.backends.narrator.lines(
-            "Nod for me.", f"[reachy:{marker}]", ReplyStyle.MARKER, message_id="reply-1")
+        job = reply_job("robot-chat")
+        acknowledge(job, {"message_id": "user-1"})
+        await conversation._queue_replies(feed(job, chat_event(
+            "delta.message_done", "reply-1", content=f"[reachy:{marker}]")), job)
         if expected:
-            await conversation._speak_lines("reply-1", lines)
+            assert await conversation._deliver(job) is TurnOutcome.ACCEPTED
             assert hardware.commands == [("reachy.expression", {"name": expected})]
         else:
             with pytest.raises(ValueError, match="empty spoken response"):
-                await conversation._speak_lines("reply-1", lines)
+                await conversation._deliver(job)
             assert hardware.commands == []
         assert hardware.played == []
 
