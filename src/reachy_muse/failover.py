@@ -9,10 +9,11 @@ import asyncio
 import logging
 import time
 from collections import deque
+from dataclasses import dataclass
 from typing import Any, Callable, Optional, Tuple, Union
 
 from reachy_muse.contract.replies import ReplyStyle
-from reachy_muse.contract.intent import CHAT_PHRASES, Intent, guess_intent
+from reachy_muse.contract.intent import Intent, guess_intent
 from reachy_muse.companion_client import CompanionOpening
 from reachy_muse.local_backends import RuleNarrator
 from reachy_muse.capabilities import (EMOJI, MARKUP, Backends, CapabilityUnavailable, Heard, HeardAudio, Hold, LocalReply,
@@ -28,7 +29,6 @@ IDLE_KEEP_S = 1.0                  # between turns, keep only this much
 ACK_DEADLINE_S = 0.9
 PROGRESS_DEADLINE_S = 1.5
 LINES_DEADLINE_S = 4.0
-SPEECH_GAP_S = 2.0                 # companion speech that pauses this long falls back
 SPOKEN_AS_WRITTEN_LINES = 2       # a plain reply this short is spoken as Muse wrote it, not condensed
 STRIKES = 3                        # consecutive failures of one companion op that rest it
 COOLDOWN_S = 60.0                  # how long a rested op stays on the robot before the companion is tried again
@@ -58,6 +58,11 @@ class _Rest:
         self._strikes = 0
 
 
+@dataclass
+class _VoiceReply:
+    companion: bool
+
+
 class CompanionRoute:
     """Whether the companion voices and narrates the current turn, decided once at its start.
 
@@ -69,13 +74,30 @@ class CompanionRoute:
         self.link = link
         self.this_turn = False
         self.hearing = _Rest("hearing")
-        self.speech = _Rest("voice")
         self.speech_lock = asyncio.Lock()
         self.narration = _Rest("narration")
+        self._voice_reply: Optional[_VoiceReply] = None
+        self._voice_replies: dict[str, _VoiceReply] = {}
 
     def begin_turn(self) -> bool:
         self.this_turn = self.link.up
+        self.begin_reply()
         return self.this_turn
+
+    def begin_reply(self) -> None:
+        self._voice_reply = _VoiceReply(self.link.up)
+
+    def voice_reply(self, line: SpokenLine) -> _VoiceReply:
+        if line.muse_message_id is not None:
+            reply = self._voice_replies.get(line.muse_message_id)
+            if reply is None:
+                reply = self._voice_replies[line.muse_message_id] = _VoiceReply(self.link.up)
+                if len(self._voice_replies) > 128:
+                    del self._voice_replies[next(iter(self._voice_replies))]
+            return reply
+        if self._voice_reply is None:
+            self._voice_reply = _VoiceReply(self.this_turn)
+        return self._voice_reply
 
     def take_outage(self) -> bool:
         return self.link.take_outage()
@@ -219,7 +241,7 @@ class FailoverHearing:
 
 
 class FailoverVoice:
-    """Companion speech; on failure the whole line is spoken again by the local voice."""
+    """Keep one voice per reply; a dead link restarts its sentence locally."""
 
     speaks_text = True
 
@@ -229,11 +251,6 @@ class FailoverVoice:
         self.route = route
         self.standalone = standalone
 
-    def _on_companion(self, line: SpokenLine) -> bool:
-        on_companion = self.route.link.up if self.standalone else self.route.this_turn
-        return (on_companion and self.companion.available and not self.route.speech.resting
-                and (line.text in CHAT_PHRASES or not self.local.is_presynthesized(line.text)))
-
     async def warm(self, output_rate: int) -> None:
         await self.local.warm(output_rate)
 
@@ -241,34 +258,43 @@ class FailoverVoice:
         return self.local.is_presynthesized(text)
 
     def prepare(self, line: SpokenLine, output_rate: int):
-        if self._on_companion(line):
-            from reachy_muse.local_speech import PreparedSpeech
-            return PreparedSpeech(self.stream(line, output_rate))
-        return self.local.prepare(line, output_rate)
+        from reachy_muse.local_speech import PreparedSpeech
+        reply = self._reply_for(line)
+        return PreparedSpeech(self._stream(line, output_rate, reply), sample_rate=output_rate,
+                              progress_at=lambda: (getattr(self.route.link, "last_progress_at", 0.0)
+                                                   if reply.companion else 0.0))
 
-    async def stream(self, line: SpokenLine, output_rate: int):
-        if self._on_companion(line):
+    def _reply_for(self, line: SpokenLine) -> _VoiceReply:
+        return _VoiceReply(self.route.link.up) if self.standalone else self.route.voice_reply(line)
+
+    def stream(self, line: SpokenLine, output_rate: int):
+        return self._stream(line, output_rate, self._reply_for(line))
+
+    async def _stream(self, line: SpokenLine, output_rate: int, reply: _VoiceReply):
+        from reachy_muse.local_speech import SpeechRestart
+
+        if reply.companion:
             async with self.route.speech_lock:
-                speech = self.companion.stream(line, output_rate)
-                spoke = False
-                try:
-                    while True:
-                        try:
-                            chunk = await asyncio.wait_for(speech.__anext__(), SPEECH_GAP_S)
-                        except StopAsyncIteration:
-                            self.route.speech.succeed()
-                            return
-                        spoke = True
-                        yield chunk
-                except (CapabilityUnavailable, asyncio.TimeoutError) as error:
-                    reason = (f"companion speech stopped ({type(error).__name__}); "
-                              + ("repeating the line" if spoke else "speaking it"))
-                    if isinstance(error, CapabilityUnavailable) and error.link_down:
-                        log.warning("Reachy's %s", reason)
-                    else:
-                        self.route.speech.fail(reason)
-                finally:
-                    await speech.aclose()
+                # A preceding prepared sentence may have lost the link while we waited.
+                if reply.companion and self.companion.available:
+                    speech = self.companion.stream(line, output_rate)
+                    spoke = False
+                    try:
+                        async for chunk in speech:
+                            spoke = spoke or bool(len(chunk))
+                            yield chunk
+                        return
+                    except CapabilityUnavailable as error:
+                        if not error.link_down:
+                            raise
+                        reply.companion = False
+                        log.warning("Reachy companion voice disconnected; restarting the sentence locally")
+                        if spoke:
+                            yield SpeechRestart()
+                    finally:
+                        await speech.aclose()
+                else:
+                    reply.companion = False
         speech = self.local.stream(line, output_rate)
         try:
             async for chunk in speech:

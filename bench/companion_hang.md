@@ -1,5 +1,9 @@
 # Companion stall, 2026-10-30
 
+This report records the October 30 behavior. The November 4
+[choppy speech incident report](choppy.md) supersedes its robot liveness and
+voice-recovery deadlines.
+
 The 07:03 incident took 57.952 seconds from wake to first answer audio. The robot
 waited 7.63 seconds before abandoning companion hearing, then spent 20.7 seconds
 in local recognition. It sent the greeting to Muse and spoke a 4.3-second outage

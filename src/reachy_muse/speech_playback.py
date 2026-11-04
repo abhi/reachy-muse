@@ -9,6 +9,7 @@ import asyncio
 import math
 import time
 from collections import deque
+from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 
@@ -73,6 +74,13 @@ class SpeechPlayback:
         return max(0.0, self._clock() - started)
 
 
+@dataclass
+class PlaybackCursor:
+    """Accepted speaker tail shared by consecutive sentences."""
+
+    end: float = 0.0
+
+
 class PCMPlayer:
     """One sentence's PCM cursor, owned by a single sequential output task.
 
@@ -102,6 +110,7 @@ class PCMPlayer:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         diagnostics: bool = False,
+        cursor: PlaybackCursor | None = None,
     ):
         if type(sample_rate) is not int or sample_rate <= 0:
             raise ValueError("Speaker sample rate must be a positive integer")
@@ -116,7 +125,7 @@ class PCMPlayer:
         self._gate = gate
         self._on_start, self._on_pause, self._on_resume = on_start, on_pause, on_resume
         self._clock, self._sleep = clock, sleep
-        self._end = clock()
+        self._cursor = cursor if cursor is not None else PlaybackCursor(clock())
         self._started = False
         self._paused = False
         self._samples_sent = 0
@@ -178,8 +187,8 @@ class PCMPlayer:
                 self._diagnostics["scheduler_wake_lateness_ms_max"], lateness * 1000)
 
     async def _drain(self) -> None:
-        if self._samples_sent:
-            await self._sleep_until(self._end + self._drain_margin_s)
+        if self._samples_sent or self._cursor.end > self._clock():
+            await self._sleep_until(self._cursor.end + self._drain_margin_s)
 
     async def _pause(self) -> None:
         if self._started and not self._paused:
@@ -235,8 +244,8 @@ class PCMPlayer:
                         metrics["push_count"] += 1
                         metrics["push_wait_ms_max"] = max(metrics["push_wait_ms_max"], waited * 1000)
                 self._samples_sent += len(chunk)
-                self._end = max(self._end, self._clock()) + len(chunk) / self._rate
-                await self._sleep_until(self._end - self._lead_s)
+                self._cursor.end = max(self._cursor.end, self._clock()) + len(chunk) / self._rate
+                await self._sleep_until(self._cursor.end - self._lead_s)
         finally:
             if metrics is not None:
                 self._last_play_end = self._clock()

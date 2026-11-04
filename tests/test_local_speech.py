@@ -409,3 +409,73 @@ class PiperVoice:
     assert json.loads(observations.read_text()) == {"model": str(model), "threads": 2,
                                                   "providers": ["CPUExecutionProvider"]}
     assert json.loads(config_path.read_text()) == voice_config
+
+
+def test_prepared_audio_preserves_restart_boundaries_and_pcm_order():
+    async def scenario():
+        async def source():
+            yield np.array([1, 2], dtype=np.float32)
+            yield local_speech.SpeechRestart()
+            yield np.array([3, 4], dtype=np.float32)
+
+        prepared = local_speech.PreparedSpeech(source(), sample_rate=100)
+        try:
+            actual = ["restart" if isinstance(chunk, local_speech.SpeechRestart) else chunk.tolist()
+                      async for chunk in prepared]
+            assert actual == [[1, 2], "restart", [3, 4]]
+        finally:
+            await prepared.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_jitter_buffer_holds_initial_pcm_until_enough_audio_is_ready():
+    async def scenario():
+        release = asyncio.Event()
+        emitted = asyncio.Event()
+
+        async def source():
+            yield np.array([1, 2], dtype=np.float32)
+            emitted.set()
+            await release.wait()
+            yield np.array([3, 4, 5, 6, 7, 8], dtype=np.float32)
+
+        prepared = local_speech.PreparedSpeech(source(), sample_rate=100)
+        reader = asyncio.create_task(prepared.__anext__())
+        await emitted.wait()
+        await asyncio.sleep(0)
+        assert not reader.done()
+        release.set()
+        assert (await reader).tolist() == [1, 2]
+        assert [chunk.tolist() async for chunk in prepared] == [[3, 4, 5, 6, 7, 8]]
+        await prepared.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_jitter_target_uses_measured_uncovered_p99_and_respects_its_cap(monkeypatch):
+    from types import SimpleNamespace
+
+    async def scenario():
+        now = [0.0]
+        monkeypatch.setattr(local_speech, "time", SimpleNamespace(monotonic=lambda: now[0]))
+
+        async def source():
+            yield np.array([1, 2, 3, 4], dtype=np.float32)
+            now[0] += .3
+            yield np.array([5, 6, 7, 8], dtype=np.float32)
+            now[0] += 2.0
+            yield np.array([9, 10, 11, 12], dtype=np.float32)
+
+        prepared = local_speech.PreparedSpeech(source(), sample_rate=100)
+        try:
+            assert np.concatenate([chunk async for chunk in prepared]).tolist() == list(range(1, 13))
+            assert prepared.metrics == {
+                "jitter_target_ms": 500.0, "jitter_wait_ms": 0.0,
+                "producer_starvations": 0, "producer_gap_ms_p99": 1960.0,
+                "producer_gap_window_count": 2,
+            }
+        finally:
+            await prepared.aclose()
+
+    asyncio.run(scenario())

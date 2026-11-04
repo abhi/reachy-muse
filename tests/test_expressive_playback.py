@@ -113,5 +113,5 @@ def test_revision_while_waiting_for_quiet_drops_old_sentence_and_its_motion(monk
             ("audio", 0, [.5, .625, .75, .875], None),
             ("end", .04),
         ]
-        assert hardware.cleared == 1
+        assert hardware.cleared == 0
     asyncio.run(scenario())

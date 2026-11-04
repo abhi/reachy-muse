@@ -33,7 +33,7 @@ from reachy_muse.contract.replies import (ReplyProtocolError, ReplyRevisionError
 from reachy_muse.capabilities import EMOJI, MARKUP, WAKE_CUE, Backends, EndedTurn, Endpoint, Heard, LocalReply, SpokenLine
 from reachy_muse.protocol import MAX_LINE_BYTES
 from reachy_muse.device_command import COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow, executable
-from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, request_topic,
+from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, interrupts_playback, request_topic,
                                    too_short_for_follow_up)
 from reachy_muse.contract.intent import Intent, maybe_chat
 from reachy_muse.morning_briefing import MorningRoutine, briefing_lines
@@ -42,7 +42,8 @@ from reachy_muse.motion.moments import Moment, MomentDirector
 from reachy_muse.motion.sentence import classify_sentence
 from reachy_muse.progress import BackendStatus, ProgressPlan, ProgressUpdate, backend_status_from_event
 from reachy_muse.pairing import PairedService
-from reachy_muse.speech_playback import PCMPlayer, SpeechPlayback
+from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlayback
+from reachy_muse.local_speech import PreparedSpeech, SpeechRestart
 from reachy_muse.turn_timeline import TurnTimeline
 from reachy_muse.startup import StartupTimeline
 
@@ -555,6 +556,9 @@ class VoiceConversation:
         self._playback = SpeechPlayback()
         self._speaker_lock = asyncio.Lock()
         self._speech_pending = 0
+        self._speech_progress_at = 0.0
+        self._waiting_for_speech = False
+        self._speech_source = None
         self._audio_clear_attempted = False
         self._output_queue: asyncio.Queue[_SpeechJob] = asyncio.Queue(maxsize=32)
         self._output_busy = False
@@ -594,13 +598,20 @@ class VoiceConversation:
 
     async def _speech_with_timeout(self, speaking) -> None:
         task = asyncio.create_task(speaking)
-        started = time.monotonic()
+        progressed = time.monotonic()
         held = self._playback.paused_s
         try:
             while not task.done():
-                elapsed = time.monotonic() - started - (self._playback.paused_s - held)
+                now = time.monotonic()
+                paused = self._playback.paused_s
+                progressed += paused - held
+                held = paused
+                progressed = max(progressed, self._speech_progress_at)
+                if self._waiting_for_speech:
+                    progressed = max(progressed, getattr(self._speech_source, "progress_at", 0.0))
+                elapsed = now - progressed
                 if elapsed >= SPEECH_TIMEOUT_S:
-                    raise TimeoutError("Reachy's speech playback did not complete in time")
+                    raise TimeoutError("Reachy's speech playback stopped making progress")
                 await asyncio.wait({task}, timeout=min(.1, SPEECH_TIMEOUT_S - elapsed))
             task.result()
         finally:
@@ -631,6 +642,7 @@ class VoiceConversation:
             finally:
                 self._output_queue.task_done()
         following = asyncio.create_task(next_job())
+        playback_cursor = PlaybackCursor()
         try:
             while True:
                 job = await asyncio.shield(following)
@@ -645,13 +657,17 @@ class VoiceConversation:
                         state=job.state, stream_segment=True, prepared_stream=job.prepared_stream,
                         is_current=job.is_current, on_start=job.on_start, role=job.role,
                         on_accepting=job.on_accepting,
-                        turn_started=job.started, speech_serial=job.serial))
+                        turn_started=job.started, speech_serial=job.serial,
+                        playback_cursor=playback_cursor, drain=False))
                 except _SpeechSuperseded:
                     pass
                 finally:
                     await close_job(job)
-                    self._output_busy = False
                 if self._output_queue.empty() and not following.done():
+                    await self._drain_speech(playback_cursor)
+                    if not self._output_queue.empty() or following.done():
+                        continue
+                    self._output_busy = False
                     if self._wake_deadline is not None:
                         self._wake_deadline = time.monotonic() + (self.wake_timeout_s or 10.0)
                     await self._plan(plan.OutputIdle(user_speaking=self._playback.user_speaking,
@@ -666,6 +682,7 @@ class VoiceConversation:
             while not self._output_queue.empty():
                 await close_job(self._output_queue.get_nowait())
             self._output_prefetched = False
+            self._output_busy = False
 
     def _input_blocked(self) -> bool:
         """Unknown audio routes suppress input only while speaker audio can echo."""
@@ -906,7 +923,14 @@ class VoiceConversation:
                 turns_awaiting_transcript.add(heard.ended)
             # Updated with turns_awaiting_transcript, so no instant shows the user done before their turn is queued.
             turn_open = recorder.active
+            partial = recorder.partial
+            if partial is not None and self.wake_detector is not None:
+                partial = replace(partial, text=self._without_wake(partial.text))
             speaking = recorder.speech_active
+            if speaking and heard_over and not self._playback.user_speaking:
+                # Hardware AEC can leave residual speech. Keep capturing it, but
+                # require words distinct from our output before pausing playback.
+                speaking = partial is not None and interrupts_playback(partial.text, tuple(heard_over))
             if speaking:
                 gap_quiet_samples = 0
             else:
@@ -918,10 +942,7 @@ class VoiceConversation:
                                                  output=self._has_output(),
                                                  turn_running=turn_task is not None,
                                                  turns_waiting=bool(pending_turns)))
-            partial = recorder.partial
             if partial is not None:
-                if self.wake_detector is not None:
-                    partial = replace(partial, text=self._without_wake(partial.text))
                 await self._plan(plan.Heard(partial, speech_active=speaking, output=self._has_output()))
             elapsed = time.monotonic() - started
             if elapsed > max(.1, len(sample) / self.hardware.sample_rate * 2) and started - last_slow_feed > 10:
@@ -1407,8 +1428,7 @@ class VoiceConversation:
                 try:
                     # Deferred output owns its cleanup; backend failures cannot
                     # pause an earlier reply's shared GStreamer pipeline.
-                    if (not defer_playback and (not completed
-                            or getattr(self.hardware, "echo_cancelled_input", False) is not True)):
+                    if not defer_playback and not completed:
                         await self._clear_idle_audio()
                 except Exception:
                     if not turn_cancelled:
@@ -1593,6 +1613,7 @@ class VoiceConversation:
         request_text = job.request or ""
         response_deadline = job.dispatched_at + self.reply_timeout_s
         waiting_for_segment = False
+        playback_cursor = PlaybackCursor()
 
         def answer_audible(then: Callable[[], None] | None = None,
                            expression: Expression | None = None) -> Callable[[], None]:
@@ -1622,6 +1643,7 @@ class VoiceConversation:
                     and turn.complete(now) and job.replies.empty()
                     and not job.reader.awaiting_audio()
                     and (not turn.task_finished or not job.reader.awaiting_final_text() or turn.settled(now))):
+                await self._drain_speech(playback_cursor)
                 return TurnOutcome.ACCEPTED
             if (not job.reader.has_spoken_reply() and job.replies.empty() and turn.settled(now)
                     and not job.reader.awaiting_audio()
@@ -1707,7 +1729,8 @@ class VoiceConversation:
                                        stream_segment=True,
                                        prepared_stream=prepared,
                                        is_current=is_current, on_start=answer_audible(mark_spoken, expression),
-                                       on_accepting=on_accepting)
+                                       on_accepting=on_accepting, playback_cursor=playback_cursor,
+                                       drain=job.replies.empty())
             else:
                 message_id = reply.message_id if isinstance(reply, NarrationSegment) else reply
                 stream = job.reader.streams[message_id]
@@ -1744,14 +1767,9 @@ class VoiceConversation:
                     job.answered = True
                     continue
                 prepared = None
-                async def speak_lines():
-                    for index, line in enumerate(lines):
-                        await self._speak(message_id, text=line.text,
-                            expression=line.expression.value if line.expression else None,
-                            stream_segment=index < len(lines) - 1, is_current=is_current,
-                            on_start=answer_audible(mark_narrated, line.expression),
-                            on_accepting=on_accepting)
-                speaking = speak_lines()
+                speaking = self._speak_lines(message_id, lines, is_current=is_current,
+                    on_line_start=lambda line: answer_audible(mark_narrated, line.expression),
+                    on_accepting=on_accepting, playback_cursor=playback_cursor)
             waiting_for_segment = False
             speech_started = time.monotonic()
             try:
@@ -1984,12 +2002,42 @@ class VoiceConversation:
             await self._speak(None, text=text, state="thinking", stream_segment=True,
                               voice=self.backends.progress_voice, progress=True)
 
+    async def _drain_speech(self, cursor: PlaybackCursor) -> None:
+        player = PCMPlayer(self.hardware.output_sample_rate, None, self._playback, cursor=cursor)
+        await player.finish()
+
+    def _prepare_line(self, voice, line: SpokenLine):
+        prepared = voice.prepare(line, self.hardware.output_sample_rate)
+        return prepared if prepared is not None else PreparedSpeech(
+            voice.stream(line, self.hardware.output_sample_rate), self.hardware.output_sample_rate)
+
     async def _speak_lines(self, message_id: str, lines, *, is_current: Callable[[], bool] | None = None,
-                           on_start: Callable[[], None] | None = None) -> None:
-        for index, line in enumerate(lines):
-            await self._speak(message_id, text=line.text,
-                              expression=line.expression.value if line.expression else None,
-                              stream_segment=index < len(lines) - 1, is_current=is_current, on_start=on_start)
+                           on_start: Callable[[], None] | None = None, on_line_start=None,
+                           on_accepting=None, playback_cursor=None) -> None:
+        lines = tuple(replace(line, muse_message_id=message_id) for line in lines)
+        if not lines:
+            return
+        cursor = playback_cursor if playback_cursor is not None else PlaybackCursor()
+        prepared = self._prepare_line(self.backends.voice, lines[0]) if lines[0].text else None
+        following = None
+        try:
+            for index, line in enumerate(lines):
+                if is_current is not None and not is_current():
+                    raise _SpeechSuperseded
+                if index + 1 < len(lines):
+                    next_line = lines[index + 1]
+                    following = self._prepare_line(self.backends.voice, next_line) if next_line.text else None
+                await self._speak(message_id, text=line.text,
+                    expression=line.expression.value if line.expression else None,
+                    stream_segment=index < len(lines) - 1, is_current=is_current,
+                    on_start=on_line_start(line) if on_line_start else on_start,
+                    prepared_stream=prepared, on_accepting=on_accepting,
+                    playback_cursor=cursor, drain=index == len(lines) - 1)
+                if prepared is not None:
+                    await prepared.aclose()
+                prepared, following = following, None
+        finally:
+            await asyncio.gather(*(item.aclose() for item in (prepared, following) if item is not None))
 
     async def _speak(self, message_id: str | None, *, text: str | None = None,
                      state: str = "speaking",
@@ -1997,7 +2045,7 @@ class VoiceConversation:
                      voice=None, progress: bool = False, prepared_stream=None,
                      is_current=None, on_start=None, turn_started: float | None = None,
                      role: str | None = None, speech_serial: int | None = None,
-                     on_accepting=None) -> None:
+                     on_accepting=None, playback_cursor=None, drain: bool = True) -> None:
         # Direct acknowledgements/progress and deferred replies share this owner.
         # Interrupted audio is flushed before a waiting speaker acquires it.
         speech_serial = next(_SPEECH_SERIALS) if speech_serial is None else speech_serial
@@ -2006,14 +2054,21 @@ class VoiceConversation:
             async with self._speaker_lock:
                 if speech_serial <= self._hush_floor or (is_current is not None and not is_current()):
                     raise _SpeechSuperseded
+                accepted_audio = False
+                def accepted():
+                    nonlocal accepted_audio
+                    accepted_audio = True
                 try:
                     await self._speak_owned(message_id, text=text, state=state,
                         expression=expression,
                         stream_segment=stream_segment, voice=voice,
                         progress=progress, prepared_stream=prepared_stream,
                         is_current=is_current, on_start=on_start, turn_started=turn_started,
-                        role=role, on_accepting=on_accepting)
+                        role=role, on_accepting=on_accepting,
+                        playback_cursor=playback_cursor, drain=drain, on_audio=accepted)
                 except BaseException as exc:
+                    if isinstance(exc, _SpeechSuperseded) and not accepted_audio:
+                        raise
                     try:
                         await self._clear_owned_audio(propagate_cancel=False)
                     except Exception:
@@ -2099,13 +2154,15 @@ class VoiceConversation:
                            expression: str | None = None, stream_segment: bool = False,
                            voice=None, progress: bool = False, prepared_stream=None,
                            is_current=None, on_start=None, turn_started: float | None = None,
-                           role: str | None = None, on_accepting=None) -> None:
+                           role: str | None = None, on_accepting=None,
+                           playback_cursor=None, drain: bool = True, on_audio=None) -> None:
         voice = voice if voice is not None else self.backends.voice
         sentence = classify_sentence(text, Expression.parse(expression)) if text and state == "speaking" else None
         if sentence is not None:
             expression = sentence.expression.value
         timed_motion = sentence is not None and callable(getattr(self.hardware, "finish_sentence", None))
         samples_played = 0
+        announced = False
         hush_floor = self._hush_floor
         write_timing = {"dispatch_ms_max": 0.0, "write_ms_max": 0.0, "return_ms_max": 0.0}
         started = self._turn_started if turn_started is None else turn_started
@@ -2138,6 +2195,10 @@ class VoiceConversation:
             if not timed_motion:
                 audible()
         def audible() -> None:
+            nonlocal announced
+            if announced:
+                return
+            announced = True
             self._recent.spoke(line.text)
             if on_start is not None:
                 on_start()
@@ -2193,12 +2254,15 @@ class VoiceConversation:
                 if accepting:
                     audible()
                 samples_played += len(samples)
+                if on_audio is not None:
+                    on_audio()
+                self._speech_progress_at = time.monotonic()
             finally:
                 if accepting and on_accepting is not None:
                     await on_accepting(False)
         player = PCMPlayer(self.hardware.output_sample_rate, push, self._playback,
                            on_start=begin, on_pause=pause, on_resume=resume,
-                           diagnostics=self.audio_diagnostics)
+                           diagnostics=self.audio_diagnostics, cursor=playback_cursor)
         text = text or ""
         line = _line(message_id, text, expression, progress=progress, role=role)
         if voice.speaks_text and not text:
@@ -2209,10 +2273,29 @@ class VoiceConversation:
         if prepared_stream is not None:
             speech = prepared_stream
         else:
-            speech = voice.stream(line, self.hardware.output_sample_rate)
+            speech = self._prepare_line(voice, line)
         try:
             try:
-                async for samples in speech:
+                while True:
+                    self._speech_source = speech
+                    self._waiting_for_speech = True
+                    try:
+                        samples = await speech.__anext__()
+                    except StopAsyncIteration:
+                        break
+                    finally:
+                        self._waiting_for_speech = False
+                        self._speech_source = None
+                    self._speech_progress_at = time.monotonic()
+                    if isinstance(samples, SpeechRestart):
+                        await player.finish()
+                        if timed_motion:
+                            self.hardware.finish_sentence()
+                        samples_played = 0
+                        player = PCMPlayer(self.hardware.output_sample_rate, push, self._playback,
+                            on_start=begin, on_pause=pause, on_resume=resume,
+                            diagnostics=self.audio_diagnostics, cursor=playback_cursor)
+                        continue
                     await player.play(samples)
             finally:
                 await speech.aclose()
@@ -2222,7 +2305,8 @@ class VoiceConversation:
                 raise ValueError("Muse returned no playable speech")
             if timed_motion:
                 self.hardware.finish_sentence()
-            await player.finish()
+            if drain:
+                await player.finish()
             if not stream_segment:
                 await asyncio.sleep(.25)
                 await hardware_call(self.hardware.set_state, "thinking",
@@ -2238,7 +2322,8 @@ class VoiceConversation:
         finally:
             self._muted = False
             if self.audio_diagnostics:
-                log.info("Reachy playback timing %s", {**player.metrics, **write_timing})
+                log.info("Reachy playback timing %s", {**player.metrics, **write_timing,
+                    **(speech.metrics if isinstance(speech, PreparedSpeech) else {})})
 
     async def _express(self, expression: str) -> None:
         result = await asyncio.to_thread(self.hardware.run_command, "reachy.expression",

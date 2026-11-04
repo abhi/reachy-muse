@@ -1,4 +1,4 @@
-"""Kokoro standing in when Chatterbox fails to load, falls behind, or fails mid-line."""
+"""Kokoro standing in when Chatterbox fails to load or fails mid-line."""
 
 from __future__ import annotations
 
@@ -28,14 +28,12 @@ class StreamingVoice(Protocol):
 
 
 class FallbackVoice:
-    """Speaks with the primary voice, and with the fallback whenever the primary cannot keep up.
+    """Speaks with the primary voice, using the fallback only after an actual failure.
 
-    If the primary fails to load, the fallback speaks every line. If any audio chunk
-    takes longer than `deadline_s`, or the primary fails mid-line, the fallback speaks the rest
-    of that line. The fallback runs on its own thread, so a stuck primary does not hold it up.
+    If the primary fails to load, the fallback speaks every line. If synthesis
+    fails mid-line, the fallback restarts that sentence. Slow chunks keep their voice.
     """
 
-    deadline_s = 1.0
     prebuffer_s = 0.15
 
     def __init__(self, primary: StreamingVoice, fallback: LoadableVoice) -> None:
@@ -69,13 +67,15 @@ class FallbackVoice:
             playback = _UnderrunWatch(out_rate)
             held: List[Chunk] = []
             release_at: Optional[float] = None
-            deadline = loop.time() + self.deadline_s
             try:
                 while done < len(lines):
-                    wake = min(deadline, release_at) if held and release_at is not None else deadline
                     try:
-                        item = (arrivals.get_nowait() if not arrivals.empty() else
-                                await asyncio.wait_for(arrivals.get(), max(0.0, wake - loop.time())))
+                        if not arrivals.empty():
+                            item = arrivals.get_nowait()
+                        elif held and release_at is not None:
+                            item = await asyncio.wait_for(arrivals.get(), max(0.0, release_at - loop.time()))
+                        else:
+                            item = await arrivals.get()
                     except asyncio.TimeoutError:
                         if held and release_at is not None and loop.time() >= release_at:
                             for chunk in held:
@@ -83,9 +83,7 @@ class FallbackVoice:
                                 yield chunk.pcm
                             held = []
                             continue
-                        log.warning("voice %s: sentence %d had no audio after %.1f s; %s speaks the rest", self.primary.name,
-                                    done + 1, self.deadline_s, self.fallback.name)
-                        break
+                        continue
                     if item is _END:
                         log.warning("voice %s ended in sentence %d; %s speaks the rest", self.primary.name,
                                     done + 1, self.fallback.name)
@@ -94,7 +92,6 @@ class FallbackVoice:
                         log.warning("voice %s failed in sentence %d (%s); %s speaks the rest", self.primary.name, done + 1,
                                     type(item).__name__, self.fallback.name)
                         break
-                    deadline = loop.time() + self.deadline_s
                     if item.pcm:
                         if release_at is None:
                             release_at = loop.time() + self.prebuffer_s

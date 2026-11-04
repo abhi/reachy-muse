@@ -29,13 +29,11 @@ def test_blocked_playback_resets_keyword_and_resampler_history(duplex, monkeypat
 
     monkeypatch.setattr(av, "AudioResampler", resampler)
     monkeypatch.setattr(FakeHardware, "sample_rate", 48000)
-    playback_started = asyncio.Event()
     finish_playback = asyncio.Event()
 
     class Speech:
         async def stream(self, text, rate):
-            yield np.zeros(80, np.float32)
-            playback_started.set()
+            yield np.zeros(640, np.float32)
             await finish_playback.wait()
 
     async def run(ctx):
@@ -48,7 +46,7 @@ def test_blocked_playback_resets_keyword_and_resampler_history(duplex, monkeypat
             ctx.conversation._speak(None, text="Public answer.", stream_segment=True)
         )
         try:
-            await playback_started.wait()
+            await ctx.playback.get()
             await ctx.feed((.4, 1))
             assert len(wake_resamplers) == 2
             finish_playback.set()

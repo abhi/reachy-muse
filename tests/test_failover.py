@@ -286,3 +286,90 @@ def test_rested_hearing_stays_on_the_robot_and_is_tried_again_after_the_cooldown
     # A lost link is no strike, so the third failure that rests hearing is the fourth window's. The
     # fifth window is heard on the robot alone, and after the cooldown the companion hears again.
     assert asyncio.run(run()) == [(1, 1), (2, 2), (3, 3), (4, 4), (4, 5), (5, 5)]
+
+
+def test_a_dead_link_restarts_the_sentence_and_latches_that_reply_only():
+    from reachy_muse.failover import FailoverVoice
+    from reachy_muse.local_speech import SpeechRestart
+
+    class Companion:
+        available = True
+
+        async def stream(self, line, output_rate):
+            yield np.array([1], dtype=np.float32)
+            if line.text == "First sentence.":
+                raise CapabilityUnavailable("connection lost")
+            yield np.array([2], dtype=np.float32)
+
+    class Local:
+        async def stream(self, line, output_rate):
+            yield np.array({"First sentence.": [10, 11], "Second sentence.": [20, 21]}[line.text],
+                           dtype=np.float32)
+
+    async def run():
+        route = CompanionRoute(Link())
+        route.begin_turn()
+        voice = FailoverVoice(Companion(), Local(), route)
+        first = voice.stream(SpokenLine("First sentence.", None, "answer", "reply-a"), 16000)
+        second = voice.stream(SpokenLine("Second sentence.", None, "answer", "reply-a"), 16000)
+        route.begin_turn()
+        chunks = []
+        for stream in (first, second):
+            chunks.append(["restart" if isinstance(chunk, SpeechRestart) else chunk.tolist()
+                           async for chunk in stream])
+        next_reply = voice.stream(SpokenLine("Next reply.", None, "answer", "reply-b"), 16000)
+        chunks.append([chunk.tolist() async for chunk in next_reply])
+        return chunks
+
+    assert asyncio.run(run()) == [[[1.0], "restart", [10.0, 11.0]], [[20.0, 21.0]], [[1.0], [2.0]]]
+
+
+def test_a_slow_companion_chunk_is_never_replaced_with_local_audio():
+    from reachy_muse.failover import FailoverVoice
+
+    class Companion:
+        available = True
+
+        async def stream(self, line, output_rate):
+            yield np.array([1], dtype=np.float32)
+            await asyncio.sleep(2.1)
+            yield np.array([2], dtype=np.float32)
+
+    class Local:
+        async def stream(self, line, output_rate):
+            yield np.array([9], dtype=np.float32)
+
+    async def run():
+        route = CompanionRoute(Link())
+        route.begin_turn()
+        voice = FailoverVoice(Companion(), Local(), route)
+        return [chunk.tolist() async for chunk in voice.stream(SpokenLine("Slow sentence.", None, "answer"), 16000)]
+
+    assert asyncio.run(run()) == [[1.0], [2.0]]
+
+
+def test_a_live_companion_error_does_not_silently_change_voice():
+    from reachy_muse.failover import FailoverVoice
+
+    class Companion:
+        available = True
+
+        async def stream(self, line, output_rate):
+            if line.text == "Rejected.":
+                raise CapabilityUnavailable("overloaded", link_down=False)
+            yield np.array([1, 2], dtype=np.float32)
+
+    class Local:
+        async def stream(self, line, output_rate):
+            yield np.array([9], dtype=np.float32)
+
+    async def run():
+        route = CompanionRoute(Link())
+        route.begin_turn()
+        voice = FailoverVoice(Companion(), Local(), route)
+        with pytest.raises(CapabilityUnavailable, match="overloaded"):
+            _ = [chunk async for chunk in voice.stream(SpokenLine("Rejected.", None, "answer"), 16000)]
+        route.begin_turn()
+        return [chunk.tolist() async for chunk in voice.stream(SpokenLine("Accepted.", None, "answer"), 16000)]
+
+    assert asyncio.run(run()) == [[1.0, 2.0]]

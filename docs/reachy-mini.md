@@ -141,33 +141,40 @@ Then start with `--mode companion` and the usual `on-robot` flags.
   companion's voice as Muse wrote it, without expressions. A longer one is
   condensed by the companion into spoken lines with expressions, which costs a
   narration round trip (0.46 s median on the bench). A reply longer than 8192 bytes is
-  too long for the companion to condense, so Reachy speaks all of it in its
-  own voice.
+  too long for the companion to condense, so Reachy retains the full reply and
+  still uses the available companion voice. Long spoken lines become requests
+  of at most 240 UTF-8 bytes, split at word boundaries. Choosing local narration
+  does not itself choose the local voice.
 - Reachy checks each companion line against your request and Muse's reply. A
   line with a number or name that is in neither is dropped, and Reachy speaks
   Muse's own sentences instead. After three dropped or late lines in a row,
   Reachy narrates on its own for a minute, while the companion keeps hearing and
-  speaking. Companion speech that stalls three times in a row rests the same way.
+  speaking. Slow speech does not put the companion voice on a cooldown.
 - Only audio from a listening window, your request, public status labels and
   Muse's reply text go to the companion. Muse session IDs, message IDs and
   credentials never do.
 
 The connection is TLS, pinned to the companion's certificate, with the pairing
-token. If the companion stops answering, Reachy logs the fallback once per outage.
-It never announces the outage or voice switch aloud, on the current or later turns.
-It finishes the current request with its own voice, using the audio it already
-heard if recognition was interrupted. If speech was interrupted, it repeats that
-line in its own voice and continues the reply. A socket that stops answering pings
-fails within about two seconds, including the close handshake. Hearing also fails
-if an open stream goes two seconds without a partial, or if no endpoint arrives
-within two seconds of the robot closing the stream. These deadlines measure
-elapsed time, including during buffered wake replay. Reachy then keeps new turns on
-the robot until the pending endpoint arrives or the companion reconnects.
-If that pending stream ends with an error, Reachy closes the socket and
-reconnects. Speech returns to the companion on a turn boundary after it has
-been back for 10 seconds.
-A companion that keeps dropping right after it connects produces only one fallback
-log entry for that outage.
+token. The robot sends a ping every 5 seconds and allows 20 seconds without a
+valid incoming frame or pong. Transcripts, audio bytes, and other valid replies
+count as progress. A healthy connection stays available while hearing or speech
+synthesis is slow. A delayed partial, endpoint, or speech chunk does not by
+itself quarantine the companion or switch the voice.
+
+If the connection dies, Reachy finishes interrupted recognition from its retained
+microphone audio. If companion speech had started, Reachy drains its accepted
+audio, restarts that sentence from the beginning in Piper, and uses Piper for
+the rest of the reply. It does not splice Piper into a partly spoken word.
+Each new reply selects the companion again when the connection is available,
+including when it recovered after hearing ended but before the reply arrived.
+There is no 10-second routing delay. The longer health window only groups
+repeated connection failures into one logged outage. Reachy never announces an
+outage or voice switch aloud.
+
+Optional acknowledgement and narration deadlines limit how long their results
+remain useful. Missing those deadlines does not mark the companion dead or
+change a reply's selected voice. The measured bounds and remaining limitations
+are in [the choppy speech incident report](../bench/choppy.md).
 
 With local chat enabled, the robot answers simple greetings, thanks, and
 "how are you" from fixed phrases when the companion cannot narrate them.
@@ -196,7 +203,7 @@ second in recorded speech) keep sentences in one request. An utterance with less
 than 0.6 seconds of voiced speech, such as "um" or "remind me", waits 1.2 seconds,
 so a hesitation does not send a fragment. In companion mode the companion's Smart
 Turn model ends a finished turn about half a second after the last word, and the
-robot's silence, two seconds by default, only caps a turn the companion judges
+robot's silence, 1.2 seconds by default, only caps a turn the companion judges
 unfinished. `--silence` overrides either default. Each recording is bounded at
 60 seconds; remaining speech continues into the next turn while the microphone
 stays open.
@@ -217,19 +224,27 @@ reads the microphone board's DSP controls before enabling capture through
 speaker playback. The XVF3800 hardware echo canceller removes the speaker's
 reference from the processed microphone channels. This permits simultaneous
 speaking and listening, although room acoustics and residual echo still affect
-recognition. Words heard while Reachy's own line is audible are dropped when every
-one of them is in that line, since that is the line's echo. While Muse works, a
+recognition. A transcript that repeats a contiguous phrase from an audible line
+is treated as echo. Short answers and correction phrases remain eligible as user
+input. While Muse works, a
 one-word utterance other than yes, no, stop or cancel is not sent as a request. Unknown or unqualified audio routes pause input during actual
 playback and its echo tail; they continue listening during recognition and
 backend work. The adapter does not change the DSP settings.
-On the verified duplex route, sustained user speech holds new TTS and pauses
-speech already playing. Reachy shows its listening pose, keeps transcribing
-follow-ups, and resumes the retained audio after the configured silence interval.
+On the verified duplex route, microphone activity during Reachy's audible speech
+pauses playback only after a partial transcript contains words distinct from
+that speech. Stop and cancel commands still interrupt. An empty partial or a
+repeated phrase keeps capturing without repeatedly stopping the speaker. Before
+output begins, sustained user speech still holds new playback. Reachy shows its
+listening pose during an accepted interruption and resumes retained audio after
+the configured silence interval.
 Playback uses 40 ms chunks and at most 80 ms of software
 queue lead; device buffering and voice detection add some interruption latency.
 Pausing retains unsent samples instead of flushing or restarting the microphone
-pipeline. Only the current sentence and one lookahead sentence prepare audio,
-with a bounded FIFO of sentence text behind them.
+pipeline. Consecutive sentences share the accepted playback tail, so each
+sentence does not add another drain delay. Receiving a normal reply does not
+clear the player queue. Explicit interruption or invalidation of audible speech
+still owns any necessary clear. Only the current sentence and one lookahead
+sentence prepare audio, with a bounded FIFO of sentence text behind them.
 If Muse finishes without answer text, Reachy announces the empty reply and
 returns to listening. Empty recognition does not send a message to Muse.
 With local speech enabled, startup loads the voice model once. Without wake-word
@@ -264,10 +279,23 @@ timing and capture mechanics stay in the adapter. Each streamed sentence
 carries its own expression. Reachy
 prepares the next sentence during playback to reduce pauses between sentences,
 keeping one sentence of lookahead and at most 4 MiB of queued float32 audio.
+The producer drains Piper's streamed PCM independently of playback. Prepared
+audio starts with an 80 ms buffer and measures uncovered producer waits. Its
+target follows the rolling empirical p99 plus 40 ms, capped at 500 ms. Priming
+waits at most 500 ms after the first available chunk. These buffers smooth
+arrival jitter; they do not expire a slow source.
+
+Piper can still pause when synthesis takes longer than the available queued
+audio. In the CPU incident replay, a 13.150-second producer wait after a
+3-second sentence leaves a 10.153-second gap even with lookahead. This path
+does not guarantee continuous speech under arbitrarily slow CM4 synthesis.
+See [the replay results](../bench/choppy.md#cpu-replay) for the measured tradeoff.
+
 Waiting for Muse has a separate 180-second budget that starts after speech
-recognition. Each speech segment has its own 180-second timeout excluding time
-held for user speech, so a late reply can finish speaking while stalled generation
-or playback still times out. Microphone processing uses a dedicated worker and
+recognition. Speech has a 180-second no-progress limit, excluding time held for
+user speech. Accepted PCM and the current companion source's progress reset
+that clock. Total reply duration does not determine whether playback has stalled.
+Microphone processing uses a dedicated worker and
 batches already available audio without waiting to fill a batch. A capture
 overflow discards the incomplete backlog and resumes with fresh audio; completed
 questions retain their place in the request queue.

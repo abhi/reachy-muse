@@ -16,7 +16,8 @@ A companion implementation must pass every vector.
 - TLS is pinned. The robot accepts only the companion's self-signed certificate whose SHA-256 fingerprint it stored at pairing. It does not use a certificate authority.
 - The pairing token is 32 random bytes. The robot sends it in `hello`. The companion compares it in constant time.
 - Plain `ws://` is for tests only. The robot's client allows it only when a test passes `insecure=True`.
-- Both sides send a WebSocket ping every 2 s. A peer that does not answer within 3 s is gone.
+- Both sides send a WebSocket ping every 5 s. The companion allows 20 s for a pong.
+- The robot allows 20 s without a valid incoming frame or pong. Incoming transcript, speech, and operation-result frames count as progress while a pong is delayed. A slow model response alone does not mark the connection down.
 
 ## Framing
 
@@ -117,8 +118,14 @@ Fields marked optional may be absent. An optional string or integer may also be 
 3. **Speech.** After `speak_start`, the companion sends speech frames and then `speak_done`. `speak_cancel` is idempotent. The companion stops within one frame and still sends `speak_done`.
 4. **Narration.** `narrate_result` answers the `narrate` with the same `id`. `classify_result` answers the `classify` with the same `id`. At most 4 narrations and classifications together are outstanding at once. A model answer that is not exactly an allowed label is sent as no command, never as `error{model}`.
 5. **Motion.** `animate_result` answers the `animate` with the same `id`. At most 2 animations are outstanding at once, apart from narrations. Each frame is 18 bytes: nine little-endian int16 values in tenths, in the order x, y, z (millimetres), roll, pitch, yaw, right antenna, left antenna, body yaw (degrees). A motion the companion cannot make is an `animate_result` with no frames, never `error{model}`. The robot clamps every frame to its own limits before it moves.
-6. **Liveness.** A close, a `ProtocolError`, `error{internal}` or `error{model}` fails every op in flight and marks the link down. `error{overloaded}`, `error{bad_request}` and `error{gap}` fail only the op they name.
-7. **Reconnect.** The robot backs off from 1 s to 30 s with jitter. Each reconnect starts with a fresh `hello`. No stream or narration state survives a reconnect. The link is up only after `welcome`.
+6. **Liveness.** A close, a `ProtocolError`, `error{internal}` or `error{model}` fails every op in flight and marks the link down. The robot also closes a connection that sends no valid frame or pong within its inactivity limit. `error{overloaded}`, `error{bad_request}` and `error{gap}` fail only the op they name. Hearing and speech streams have no fixed inference-duration deadline. Application relevance budgets may cancel an optional request without marking the connection down.
+7. **Reconnect.** The robot backs off from 0.2 s to 5 s with jitter. Each reconnect starts with a fresh `hello`. No stream or narration state survives a reconnect. The link is up only after `welcome`. After an outage, new replies can use it after a 100 ms readiness guard. The 10 s healthy-session window groups outage logs and resets backoff; it does not delay reply routing.
+
+The robot keeps one voice selection per reply. Slow audio keeps the companion
+voice. A dead connection causes the interrupted sentence to restart from its
+beginning in the local voice after accepted companion audio drains. The rest of
+that reply stays local. A later reply selects an available companion again.
+These routing and playback policies add no wire fields or message types.
 
 ## Versioning
 

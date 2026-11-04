@@ -7,13 +7,17 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections import deque
+from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 import json
 import logging
+import math
 from pathlib import Path
 import struct
 import sys
-from typing import AsyncIterator, TYPE_CHECKING
+import time
+from typing import AsyncIterator, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import numpy as np
@@ -23,45 +27,137 @@ log = logging.getLogger(__name__)
 PCM_PROCESSING_VERSION = 1
 
 
-class PreparedSpeech:
-    """Synthesize ahead of playback with at most 2 MiB of float32 audio queued."""
+@dataclass(frozen=True)
+class SpeechRestart:
+    """Drain the previous voice before repeating this sentence from its start."""
 
-    def __init__(self, stream):
+
+class PreparedSpeech:
+    """Produce independently of playback, with at most 2 MiB of queued PCM.
+
+    When a sample rate is supplied, prime an 80 ms buffer and re-prime after
+    starvation. The target grows to the measured p99 uncovered producer wait,
+    bounded at 500 ms. Priming adds at most 500 ms after the first available
+    chunk; it never treats slow synthesis as a failed connection.
+    """
+
+    def __init__(self, stream, sample_rate: int | None = None, *,
+                 min_buffer_s: float = .08, max_buffer_s: float = .5,
+                 progress_at: Callable[[], float] | None = None):
+        if sample_rate is not None and (type(sample_rate) is not int or sample_rate <= 0):
+            raise ValueError("Prepared speech sample rate must be a positive integer")
+        if (not all(math.isfinite(value) for value in (min_buffer_s, max_buffer_s))
+                or not 0 <= min_buffer_s <= max_buffer_s or max_buffer_s <= 0):
+            raise ValueError("Prepared speech buffer bounds must be finite and ordered")
+        self._progress_at = progress_at
+        self._minimum_s, self._maximum_s = min_buffer_s, max_buffer_s
         self._stream = stream
+        self._rate = sample_rate
         self._chunks = asyncio.Queue(maxsize=128)
+        self._available = asyncio.Event()
+        self._ready = asyncio.Event()
+        self._finished = False
+        self._priming = True
+        self._queued_samples = 0
+        self._gaps: deque[float] = deque(maxlen=512)
+        self._target_s = min_buffer_s
+        self._gap_p99 = 0.0
+        self._prime_wait_s = 0.0
+        self._starvations = 0
+        self._consumed_audio = False
         self._task = asyncio.create_task(self._produce())
 
+    @property
+    def progress_at(self) -> float:
+        return self._progress_at() if self._progress_at is not None else 0.0
+
+    @property
+    def metrics(self):
+        return {"jitter_target_ms": round(self._target_s * 1000, 3),
+                "jitter_wait_ms": round(self._prime_wait_s * 1000, 3),
+                "producer_starvations": self._starvations,
+                "producer_gap_ms_p99": round(self._gap_p99 * 1000, 3),
+                "producer_gap_window_count": len(self._gaps)}
+
     async def _produce(self):
+        previous_audio_s = 0.0
         try:
-            async for chunk in self._stream:
-                # Bound memory even if a speech backend yields a whole sentence.
+            while True:
+                started = time.monotonic()
+                try:
+                    chunk = await self._stream.__anext__()
+                except StopAsyncIteration:
+                    break
+                if isinstance(chunk, SpeechRestart):
+                    await self._chunks.put(chunk)
+                    self._available.set()
+                    self._ready.set()
+                    previous_audio_s = 0.0
+                    continue
+                if self._rate is not None:
+                    gap = max(0.0, time.monotonic() - started - previous_audio_s)
+                    if previous_audio_s:
+                        self._gaps.append(gap)
+                        ordered = sorted(self._gaps)
+                        self._gap_p99 = ordered[max(0, math.ceil(.99 * len(ordered)) - 1)]
+                        self._target_s = min(self._maximum_s,
+                                             max(self._minimum_s, self._gap_p99 + .04))
+                    previous_audio_s = len(chunk) / self._rate
                 for offset in range(0, len(chunk), 4096):
-                    await self._chunks.put(chunk[offset:offset + 4096].copy())
+                    part = chunk[offset:offset + 4096].copy()
+                    await self._chunks.put(part)
+                    self._queued_samples += len(part)
+                    self._available.set()
+                    if self._rate is None or self._queued_samples >= self._target_s * self._rate:
+                        self._ready.set()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             await self._chunks.put(exc)
         finally:
             await self._stream.aclose()
+            self._finished = True
+            self._available.set()
+            self._ready.set()
         await self._chunks.put(None)
 
     def __aiter__(self):
         return self
 
     async def __anext__(self):
+        if self._consumed_audio and self._priming and not self._available.is_set():
+            self._starvations += 1
+        await self._available.wait()
+        if self._priming and self._rate is not None:
+            started = time.monotonic()
+            try:
+                await asyncio.wait_for(self._ready.wait(), self._maximum_s)
+            except asyncio.TimeoutError:
+                pass
+            self._prime_wait_s += time.monotonic() - started
+            self._priming = False
         chunk = await self._chunks.get()
         if chunk is None:
             raise StopAsyncIteration
         if isinstance(chunk, Exception):
             raise chunk
+        if not isinstance(chunk, SpeechRestart):
+            self._queued_samples -= len(chunk)
+            self._consumed_audio = True
+        if self._chunks.empty() and not self._finished:
+            self._available.clear()
+            self._ready.clear()
+            self._priming = True
         return chunk
 
     def cancel(self):
         self._task.cancel()
         while not self._chunks.empty():
             self._chunks.get_nowait()
-        # Wake a consumer already waiting for a canceled preparation.
+        self._queued_samples = 0
         self._chunks.put_nowait(None)
+        self._available.set()
+        self._ready.set()
 
     async def aclose(self):
         self.cancel()
@@ -205,7 +301,7 @@ class PiperSpeech:
 
     def prepare(self, text: str, output_rate: int) -> PreparedSpeech:
         """Prepare one upcoming sentence while the speaker plays the previous one."""
-        return PreparedSpeech(self.stream(text, output_rate))
+        return PreparedSpeech(self.stream(text, output_rate), output_rate)
 
     async def _ensure_worker(self) -> None:
         if self._process is not None and self._process.returncode is None:

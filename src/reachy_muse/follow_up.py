@@ -82,11 +82,29 @@ def is_echo(text: str, heard_over: Tuple[str, ...]) -> bool:
     if (len(words) < 2 or (len(words) <= 3 and words[0] in FOLLOW_UP_WORDS)
             or words[0] in ("not", "actually", "instead")):
         return False
+    return _matches_spoken_phrase(words, heard_over)
+
+
+def _matches_spoken_phrase(words: List[str], heard_over: Tuple[str, ...]) -> bool:
     for line in heard_over:
         said = _words(line)
         if any(said[start:start + len(words)] == words for start in range(len(said) - len(words) + 1)):
             return True
     return False
+
+
+def interrupts_playback(text: str, heard_over: Tuple[str, ...]) -> bool:
+    """Require distinct recognized words before microphone VAD can pause output.
+
+    A single echoed word is common in partial transcripts. Final utterances still
+    use ``is_echo`` so short answers are retained. Stop commands always win.
+    """
+    words = _words(text)
+    if not words:
+        return False
+    if classify_follow_up(text) in (FollowUp.CANCEL, FollowUp.SILENCE):
+        return True
+    return not _matches_spoken_phrase(words, heard_over)
 
 
 def request_topic(request: str) -> str:

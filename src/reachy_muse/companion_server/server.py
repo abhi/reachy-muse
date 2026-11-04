@@ -117,7 +117,7 @@ class CompanionServer:
             ssl=self.ssl_context,
             process_request=_only_v1,
             ping_interval=5,
-            ping_timeout=10,
+            ping_timeout=20,
             # Leave room above the codec's limit so an oversize frame gets error{bad_request}, not a bare close.
             max_size=4 * MAX_TEXT_FRAME_BYTES,
         )

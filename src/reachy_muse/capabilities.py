@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from reachy_muse.progress import ProgressPlan
+    from reachy_muse.local_speech import SpeechRestart
 
     SpeechRole = Literal["ack", "progress", "answer", "notice"]
 
@@ -129,9 +130,10 @@ class Hearing(Protocol):
 
 
 class PreparedVoice(Protocol):
-    """Speech synthesized ahead of playback, as float32 mono at the requested rate."""
+    """Float32 mono PCM, with an explicit boundary before a restarted sentence."""
 
-    def __aiter__(self) -> AsyncIterator[np.ndarray]: ...
+    def __aiter__(self) -> AsyncIterator[Union[np.ndarray, SpeechRestart]]: ...
+    async def __anext__(self) -> Union[np.ndarray, SpeechRestart]: ...
     def cancel(self) -> None: ...
     async def aclose(self) -> None: ...
 
@@ -140,7 +142,7 @@ class Voice(Protocol):
     speaks_text: bool              # False: speaks only Muse's own audio for a Muse message
 
     async def warm(self, output_rate: int) -> None: ...
-    def stream(self, line: SpokenLine, output_rate: int) -> AsyncIterator[np.ndarray]: ...
+    def stream(self, line: SpokenLine, output_rate: int) -> AsyncIterator[Union[np.ndarray, SpeechRestart]]: ...
     def prepare(self, line: SpokenLine, output_rate: int) -> Optional[PreparedVoice]: ...
 
 

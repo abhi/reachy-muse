@@ -497,3 +497,27 @@ def test_cancelled_push_wait_is_observed_and_does_not_send_the_remaining_tail():
         assert player.metrics["play_wall_s"] == pytest.approx(.2)
 
     asyncio.run(scenario())
+
+
+def test_consecutive_sentences_share_the_accepted_audio_tail_without_a_gap():
+    from reachy_muse.speech_playback import PlaybackCursor
+
+    async def scenario():
+        clock = Clock()
+        gate = SpeechPlayback(clock=clock)
+        cursor = PlaybackCursor()
+        sent = []
+
+        async def push(samples):
+            sent.append((round(clock(), 2), samples))
+
+        first = PCMPlayer(100, push, gate, cursor=cursor, clock=clock, sleep=clock.sleep)
+        second = PCMPlayer(100, push, gate, cursor=cursor, clock=clock, sleep=clock.sleep)
+        await first.play([1, 2, 3, 4, 5, 6, 7, 8])
+        await second.play([9, 10, 11, 12, 13, 14, 15, 16])
+        await second.finish()
+        assert sent == [(0, [1, 2, 3, 4]), (0, [5, 6, 7, 8]),
+                        (.04, [9, 10, 11, 12]), (.08, [13, 14, 15, 16])]
+        assert clock() == pytest.approx(.21)
+
+    asyncio.run(scenario())

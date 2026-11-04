@@ -83,7 +83,7 @@ def warnings(caplog):
     return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
 
 
-@pytest.mark.parametrize("problem", ["timeout", "failure", "underrun", "load_failure"])
+@pytest.mark.parametrize("problem", ["failure", "underrun", "load_failure"])
 def test_voice_warnings_never_include_private_speech_or_exception_text(caplog, problem):
     class Primary(StubChatterbox):
         async def load(self):
@@ -91,22 +91,18 @@ def test_voice_warnings_never_include_private_speech_or_exception_text(caplog, p
                 raise RuntimeError("SENSITIVE_SENTINEL")
 
         async def stream(self, lines, out_rate, expression=None):
-            if problem == "timeout":
-                await asyncio.Event().wait()
             if problem == "failure":
                 raise RuntimeError("SENSITIVE_SENTINEL")
             async for chunk in super().stream(lines, out_rate, expression):
                 yield chunk
 
     voice = FallbackVoice(Primary(pause_s=.3), StubKokoro())
-    if problem == "timeout":
-        voice.deadline_s = .01
     spoken(voice, "SENSITIVE_SENTINEL is private.")
     assert warnings(caplog)
     assert "SENSITIVE_SENTINEL" not in caplog.text
 
 
-@pytest.mark.parametrize("ending", ["stall", "eof"])
+@pytest.mark.parametrize("ending", ["failure", "eof"])
 def test_a_primary_that_stops_mid_sentence_finishes_with_fallback(ending):
     closed = []
 
@@ -114,14 +110,13 @@ def test_a_primary_that_stops_mid_sentence_finishes_with_fallback(ending):
         async def stream(self, lines, out_rate, expression=None):
             try:
                 yield Chunk(0, b"\x01\x00" * TENTH, False)
-                if ending == "stall":
-                    await asyncio.Event().wait()
+                if ending == "failure":
+                    raise RuntimeError("engine failed")
             finally:
                 closed.append(True)
 
     kokoro = StubKokoro()
     voice = FallbackVoice(Primary(), kokoro)
-    voice.deadline_s = .03
     voice.prebuffer_s = .005
 
     async def run():
@@ -135,7 +130,6 @@ def test_a_primary_that_stops_mid_sentence_finishes_with_fallback(ending):
 def test_slow_playback_does_not_timeout_audio_already_in_the_queue():
     kokoro = StubKokoro()
     voice = FallbackVoice(StubChatterbox(), kokoro)
-    voice.deadline_s = .01
     voice.prebuffer_s = 0
 
     async def run():
@@ -215,13 +209,18 @@ def test_when_chatterbox_fails_to_load_kokoro_speaks_every_line(caplog):
     assert warnings(caplog) == ["voice chatterbox-turbo failed to load (RuntimeError); kokoro-82m speaks every line"]
 
 
-def test_a_sentence_chatterbox_cannot_start_in_time_and_the_rest_of_the_line_go_to_kokoro(caplog):
+def test_a_slow_sentence_keeps_the_primary_voice():
+    class SlowPrimary(StubChatterbox):
+        async def stream(self, lines, out_rate, expression=None):
+            for index, _ in enumerate(lines):
+                if index == 1:
+                    await asyncio.sleep(1.1)
+                yield Chunk(index, b"\x01\x00" * TENTH, True)
+
     kokoro = StubKokoro()
-    voice = FallbackVoice(StubChatterbox(stall_at=1), kokoro)
-    voice.deadline_s = 0.1
-    assert spoken(voice, "First. Second. Third.") == [b"\x01\x00" * (2 * TENTH) + b"\x02\x00" * (2 * TENTH)]
-    assert kokoro.spoken == ["Second. Third."]
-    assert warnings(caplog) == ["voice chatterbox-turbo: sentence 2 had no audio after 0.1 s; kokoro-82m speaks the rest"]
+    voice = FallbackVoice(SlowPrimary(), kokoro)
+    assert spoken(voice, "First. Second. Third.") == [b"\x01\x00" * (3 * TENTH)]
+    assert kokoro.spoken == []
 
 
 def test_a_chunk_that_arrives_after_the_robot_ran_out_is_logged_as_an_underrun(caplog):

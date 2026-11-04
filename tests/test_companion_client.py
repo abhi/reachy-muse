@@ -121,165 +121,66 @@ def test_a_permitted_pause_keeps_hearing_and_speech_on_the_companion(monkeypatch
     assert link.take_outage() is False
 
 
-def test_pauses_do_not_erase_time_waiting_for_transcription(monkeypatch):
+@pytest.mark.parametrize("delay", [2.6, 3.641, 18.0])
+def test_slow_hearing_finishes_on_the_same_connection(monkeypatch, delay):
     from types import SimpleNamespace
     import numpy as np
     import reachy_muse.companion_client as client
-    from reachy_muse.protocol import Op
-
-    class Vad:
-        def is_speech(self, pcm, rate):
-            return bool(np.any(np.frombuffer(pcm, dtype="<i2")))
+    from reachy_muse.protocol import HearEndpoint, HearPartial, Op, encode
 
     now = 100.0
     monkeypatch.setattr(client, "time", SimpleNamespace(monotonic=lambda: now))
     link = CompanionLink("ws://127.0.0.1:9000", token=TOKEN, out_rate=16000, insecure=True)
-    link._connection = client._Connection(None, (Op.HEAR, Op.SPEAK))
-    link._set(LinkState.UP)
-    turn = client.CompanionHearing(link).open_turn(16000, silence_s=3, vad=Vad())
-    turn.feed(np.full(8000, .1, dtype=np.float32))
-    assert turn.take().ended is None
-    now = 101.0
-    turn.feed(np.full(16000, .1, dtype=np.float32))
-    assert turn.take().ended is None
-    now = 101.5
-    turn.feed(np.zeros(8000, dtype=np.float32))
-    assert turn.take().ended is None
-    now = 102.6
-    turn.feed(np.full(17600, .1, dtype=np.float32))
-    with pytest.raises(CapabilityUnavailable, match="no transcript"):
-        turn.take()
-    assert not link.can(Op.SPEAK)
-
-
-@pytest.mark.parametrize("quiet_frame", [0, 2, 4])
-def test_mixed_batches_exclude_only_quiet_audio_from_the_response_deadline(monkeypatch, quiet_frame):
-    from types import SimpleNamespace
-    import numpy as np
-    import reachy_muse.companion_client as client
-    from reachy_muse.protocol import Op
-
-    class Vad:
-        def is_speech(self, pcm, rate):
-            return bool(np.any(np.frombuffer(pcm, dtype="<i2")))
-
-    now = 100.0
-    monkeypatch.setattr(client, "time", SimpleNamespace(monotonic=lambda: now))
-    link = CompanionLink("ws://127.0.0.1:9000", token=TOKEN, out_rate=16000, insecure=True)
-    link._connection = client._Connection(None, (Op.HEAR, Op.SPEAK))
-    link._set(LinkState.UP)
-    turn = client.CompanionHearing(link).open_turn(16000, silence_s=3, vad=Vad())
-    turn.feed(np.full(1600, .1, dtype=np.float32))
-    assert turn.take().ended is None
-    batch = np.full(1600, .1, dtype=np.float32)
-    batch[quiet_frame * 320:(quiet_frame + 1) * 320] = 0
-    for index in range(1, 25):
-        now = 100.0 + index * .1
-        turn.feed(batch)
-        assert turn.take().ended is None
-        assert link.can(Op.SPEAK)
-    now = 102.6
-    turn.feed(np.tile(batch, 2))
-    with pytest.raises(CapabilityUnavailable, match="no transcript"):
-        turn.take()
-    assert not link.can(Op.SPEAK)
-
-
-def test_polling_does_not_reuse_quiet_audio(monkeypatch):
-    from types import SimpleNamespace
-    import numpy as np
-    import reachy_muse.companion_client as client
-    from reachy_muse.protocol import Op
-
-    class Vad:
-        def is_speech(self, pcm, rate):
-            return bool(np.any(np.frombuffer(pcm, dtype="<i2")))
-
-    now = 100.0
-    monkeypatch.setattr(client, "time", SimpleNamespace(monotonic=lambda: now))
-    link = CompanionLink("ws://127.0.0.1:9000", token=TOKEN, out_rate=16000, insecure=True)
-    link._connection = client._Connection(None, (Op.HEAR, Op.SPEAK))
-    link._set(LinkState.UP)
-    turn = client.CompanionHearing(link).open_turn(16000, silence_s=3, vad=Vad())
-    turn.feed(np.full(1600, .1, dtype=np.float32))
-    assert turn.take().ended is None
-    now = 101.5
-    turn.feed(np.full(24000, .1, dtype=np.float32))
-    assert turn.take().ended is None
-    now = 101.52
-    turn.feed(np.zeros(320, dtype=np.float32))
-    assert turn.take().ended is None
-    now = 101.8
-    assert turn.take().ended is None
-    now = 102.03
-    with pytest.raises(CapabilityUnavailable, match="no transcript"):
-        turn.take()
-    assert not link.can(Op.SPEAK)
-
-
-def test_partial_progress_restarts_the_hearing_response_deadline(monkeypatch):
-    from types import SimpleNamespace
-    import numpy as np
-    import reachy_muse.companion_client as client
-    from reachy_muse.protocol import HearPartial, Op, encode
-
-    now = 100.0
-    monkeypatch.setattr(client, "time", SimpleNamespace(monotonic=lambda: now))
-    link = CompanionLink("ws://127.0.0.1:9000", token=TOKEN, out_rate=16000, insecure=True)
-    link._connection = client._Connection(None, (Op.HEAR, Op.SPEAK))
+    link._connection = client._Connection(None, (Op.HEAR, Op.SPEAK, Op.NARRATE))
     link._set(LinkState.UP)
     turn = client.CompanionHearing(link).open_turn(
-        16000, silence_s=.3, vad=SimpleNamespace(is_speech=lambda *args: True))
-    turn.feed(np.full(1600, .1, dtype=np.float32))
+        16000, silence_s=.3, vad=SimpleNamespace(is_speech=lambda pcm, rate: any(pcm)))
+    turn.feed(np.full(8000, .1, dtype=np.float32))
     assert turn.take().ended is None
-    now = 101.5
     link._receive(link._connection, encode(HearPartial(1, 0, "hello")))
+    turn.feed(np.zeros(6400, dtype=np.float32))
     assert turn.take().ended is None
-    now = 102.5
-    turn.feed(np.full(1600, .1, dtype=np.float32))
+    now += delay
     assert turn.take().ended is None
-    assert link.can(Op.SPEAK)
-    now = 103.5
-    with pytest.raises(CapabilityUnavailable, match="no transcript"):
-        turn.take()
-    assert not link.can(Op.SPEAK)
+    link._receive(link._connection, encode(HearEndpoint(1, "hello there", True)))
+    endpoint = asyncio.run(turn.take().ended.endpoint())
+    assert (endpoint.text, link.up, link.take_outage()) == ("hello there", True, False)
 
 
-@pytest.mark.parametrize("code", ["overloaded", "gap"])
-def test_a_terminal_hearing_probe_error_reconnects_and_restores_speech(code):
-    from reachy_muse.protocol import CloseHow, Error, ErrorCode, Op, VoiceRole, encode
+def test_speech_waits_for_a_slow_worker_while_pongs_continue():
+    from websockets.asyncio.server import serve
+    from reachy_muse.protocol import (
+        VERSION, AudioKind, Op, SpeakStart, SpeakDone, VoiceRole, Welcome, encode, encode_audio,
+    )
 
     async def scenario():
-        async with FakeCompanion(stall=True) as companion:
-            link = CompanionLink(companion.url[:-3], token=TOKEN, out_rate=16000, insecure=True,
-                                 backoff_s=(.01, .01), healthy_s=0)
+        async def slow(ws):
+            await ws.recv()
+            await ws.send(encode(Welcome(VERSION, (Op.SPEAK, Op.NARRATE), ())))
+            async for frame in ws:
+                message = decode(frame, sender=Sender.ROBOT)
+                if isinstance(message, SpeakStart):
+                    await asyncio.sleep(2.1)
+                    await ws.send(encode_audio(AudioKind.SPEECH, message.stream, 0, b"\x01\x00" * 160))
+                    await ws.send(encode(SpeakDone(message.stream, 1)))
+
+        async with serve(slow, "127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            link = CompanionLink(f"ws://127.0.0.1:{port}", token=TOKEN, out_rate=16000,
+                                 insecure=True, ping_interval_s=.02, ping_timeout_s=.1)
             running = asyncio.create_task(link.run())
             try:
-                await asyncio.wait_for(link.settled(), 2)
-                stream = link.open_hear()
-                stream.send(b"\0\0" * 1600)
-                link.hearing_stalled(stream, "no hearing response")
-                stream.close(CloseHow.ABORT)
-                assert not link.can(Op.SPEAK)
-                companion.stall = False
-                for ws in companion._server.connections:
-                    await ws.send(encode(Error(ErrorCode(code), "hearing stopped", stream=stream.id)))
-                async with asyncio.timeout(1):
-                    while not link.up:
-                        await asyncio.sleep(.01)
-                assert companion.hellos == [TOKEN, TOKEN]
-                assert link.can(Op.HEAR) and link.can(Op.SPEAK)
-                async with asyncio.timeout(1):
-                    chunks = [pcm async for pcm in link.speak("Hello.", VoiceRole.MAIN)]
-                assert len(chunks) == 3
-                assert all(chunks)
+                await asyncio.wait_for(link.settled(), 1)
+                chunks = [pcm async for pcm in link.speak("Hello.", VoiceRole.MAIN)]
+                assert chunks == [b"\x01\x00" * 160]
+                assert (link.up, link.responsive, link.take_outage()) == (True, True, False)
             finally:
                 running.cancel()
                 await asyncio.gather(running, return_exceptions=True)
     asyncio.run(scenario())
 
 
-def test_speech_deadline_does_not_wait_for_or_kill_a_jittery_socket():
+def test_no_audio_or_pong_fails_the_pending_sentence_as_a_dead_link():
     from websockets.asyncio.server import serve
     from reachy_muse.protocol import VERSION, Op, VoiceRole, Welcome, encode
 
@@ -289,24 +190,21 @@ def test_speech_deadline_does_not_wait_for_or_kill_a_jittery_socket():
         async def stalled(ws):
             await ws.recv()
             await ws.send(encode(Welcome(VERSION, (Op.SPEAK, Op.NARRATE), ())))
-            ws.transport.pause_reading()  # no pongs or close handshake; the event loop stays responsive
+            ws.transport.pause_reading()
             await release.wait()
             ws.transport.abort()
 
         async with serve(stalled, "127.0.0.1", 0) as server:
             port = server.sockets[0].getsockname()[1]
             link = CompanionLink(f"ws://127.0.0.1:{port}", token=TOKEN, out_rate=16000,
-                                 insecure=True, backoff_s=(5, 5))
+                                 insecure=True, backoff_s=(5, 5), ping_interval_s=.01, ping_timeout_s=.04)
             running = asyncio.create_task(link.run())
             try:
-                await asyncio.wait_for(link.settled(), 2)
-                start = asyncio.get_running_loop().time()
-                with pytest.raises(CapabilityUnavailable, match="speech deadline") as failed:
-                    await asyncio.wait_for(anext(link.speak("Hello.", VoiceRole.MAIN)), 2.2)
-                assert asyncio.get_running_loop().time() - start < 2.2
-                assert failed.value.link_down is False
-                assert link.can(Op.SPEAK) and link.up
-                assert link.take_outage() is False
+                await asyncio.wait_for(link.settled(), 1)
+                with pytest.raises(CapabilityUnavailable, match="no frames or pong") as failed:
+                    await asyncio.wait_for(anext(link.speak("Hello.", VoiceRole.MAIN)), .3)
+                assert failed.value.link_down is True
+                assert link.can(Op.SPEAK) is False
             finally:
                 release.set()
                 running.cancel()
@@ -341,76 +239,44 @@ def test_a_long_outage_does_not_exhaust_the_reconnect_loop():
     }
 
 
-def test_a_stalled_classification_expires_while_the_socket_still_speaks():
-    from reachy_muse.device_command import DeviceCommand
-    from reachy_muse.protocol import Op, VoiceRole
-
-    async def scenario():
-        async with FakeCompanion(stall=True, ops=(Op.CLASSIFY, Op.SPEAK, Op.NARRATE)) as companion:
-            link = CompanionLink(companion.url[:-3], token=TOKEN, out_rate=16000, insecure=True)
-            running = asyncio.create_task(link.run())
-            try:
-                await asyncio.wait_for(link.settled(), 1)
-                with pytest.raises(CapabilityUnavailable, match="classify deadline") as failed:
-                    await asyncio.wait_for(link.classify("sleep", frozenset({DeviceCommand.SLEEP})), 1.3)
-                assert failed.value.link_down is False
-                companion.stall = False
-                chunks = [pcm async for pcm in link.speak("Hello.", VoiceRole.MAIN)]
-                assert [len(pcm) for pcm in chunks] == [3200, 3200, 3200]
-            finally:
-                running.cancel()
-                await asyncio.gather(running, return_exceptions=True)
-    asyncio.run(scenario())
-
-
-def test_hearing_stall_with_working_pongs_stays_local_until_a_real_endpoint():
+def test_hearing_and_classification_wait_while_the_socket_is_responsive():
     from reachy_muse.companion_client import CompanionHearing
-    from reachy_muse.protocol import Op
+    from reachy_muse.device_command import DeviceCommand
+    from reachy_muse.protocol import Classify, ClassifyResult, HearEndpoint, Op, encode
     import numpy as np
 
-    class Vad:
-        def is_speech(self, *args):
-            return True
-
     async def scenario():
-        async with FakeCompanion(stall=True) as companion:
+        async with FakeCompanion(stall=True, ops=(Op.HEAR, Op.SPEAK, Op.NARRATE, Op.CLASSIFY)) as companion:
             link = CompanionLink(companion.url[:-3], token=TOKEN, out_rate=16000, insecure=True,
-                                 backoff_s=(5, 5), healthy_s=0)
+                                 ping_interval_s=.02, ping_timeout_s=.1)
             running = asyncio.create_task(link.run())
+            classify = None
             try:
-                await asyncio.wait_for(link.settled(), 2)
-                turn = CompanionHearing(link).open_turn(16000, silence_s=.3, vad=Vad())
+                await asyncio.wait_for(link.settled(), 1)
+                from types import SimpleNamespace
+                turn = CompanionHearing(link).open_turn(
+                    16000, silence_s=.3, vad=SimpleNamespace(is_speech=lambda *args: True))
                 turn.feed(np.full(3200, .1, dtype=np.float32))
+                turn.take()
+                classify = asyncio.create_task(link.classify("sleep", frozenset({DeviceCommand.SLEEP})))
+                await asyncio.sleep(2.1)
                 assert turn.take().ended is None
-                start = asyncio.get_running_loop().time()
-                while link.up:
-                    try:
-                        turn.take()
-                    except CapabilityUnavailable:
-                        break
-                    await asyncio.sleep(.01)
-                assert asyncio.get_running_loop().time() - start < 2.2
-                turn.abort()
-                for _ in range(5):
-                    with pytest.raises(CapabilityUnavailable):
-                        link.open_hear()
-                assert not link.can(Op.SPEAK)
-                assert link.take_outage() is True
-                assert link.take_outage() is False
-                companion.stall = False
-                # The fake delayed the endpoint. Deliver it on the same live socket.
-                from reachy_muse.protocol import HearEndpoint, encode
+                assert classify.done() is False
                 for ws in companion._server.connections:
-                    await ws.send(encode(HearEndpoint(1, "", True)))
-                async with asyncio.timeout(2):
-                    while not link.up:
+                    await ws.send(encode(HearEndpoint(1, "hello there", True)))
+                    request = next(decode(frame, sender=Sender.ROBOT) for frame in companion.received
+                                   if isinstance(frame, str) and isinstance(decode(frame, sender=Sender.ROBOT), Classify))
+                    await ws.send(encode(ClassifyResult(request.id, DeviceCommand.SLEEP)))
+                assert await asyncio.wait_for(classify, 1) is DeviceCommand.SLEEP
+                async with asyncio.timeout(1):
+                    while (ended := turn.take().ended) is None:
                         await asyncio.sleep(.01)
-                assert link.open_hear().id == 3
-                assert link.can(Op.SPEAK)
-                assert link.take_outage() is False
+                assert ((await ended.endpoint()).text, link.up, link.take_outage()) == ("hello there", True, False)
             finally:
+                if classify is not None:
+                    classify.cancel()
                 running.cancel()
-                await asyncio.gather(running, return_exceptions=True)
+                await asyncio.gather(running, *([classify] if classify is not None else []), return_exceptions=True)
     asyncio.run(scenario())
 
 
@@ -559,3 +425,119 @@ def test_a_reply_longer_than_the_wire_allows_never_reaches_the_companion():
             sent = [decode(frame, sender=Sender.ROBOT) for frame in companion.received if isinstance(frame, str)]
             return refused.value.link_down, [message for message in sent if isinstance(message, Narrate)]
     assert asyncio.run(run()) == (False, [])
+
+
+def test_partial_progress_keeps_a_missing_pong_alive_until_all_progress_stops():
+    from websockets.asyncio.server import serve
+    from reachy_muse.protocol import VERSION, HearPartial, Op, Welcome, encode
+
+    async def scenario():
+        start, frames_done, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def progressing(ws):
+            await ws.recv()
+            await ws.send(encode(Welcome(VERSION, (Op.HEAR, Op.SPEAK, Op.NARRATE), ())))
+            await start.wait()
+            ws.transport.pause_reading()
+            for revision in range(6):
+                await ws.send(encode(HearPartial(1, revision, "still listening")))
+                await asyncio.sleep(.02)
+            frames_done.set()
+            await release.wait()
+            ws.transport.abort()
+
+        async with serve(progressing, "127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            link = CompanionLink(f"ws://127.0.0.1:{port}", token=TOKEN, out_rate=16000,
+                                 insecure=True, backoff_s=(5, 5), ping_interval_s=.01, ping_timeout_s=.05)
+            running = asyncio.create_task(link.run())
+            try:
+                await asyncio.wait_for(link.settled(), 1)
+                stream = link.open_hear()
+                start.set()
+                await asyncio.wait_for(frames_done.wait(), 1)
+                assert [item.text for item in stream.inbox] == ["still listening"] * 6
+                assert link.can(Op.SPEAK) and link.take_outage() is False
+                async with asyncio.timeout(.3):
+                    while stream.failure is None:
+                        await asyncio.sleep(.005)
+                assert str(stream.failure) == "the companion sent no frames or pong"
+                assert stream.failure.link_down is True
+            finally:
+                release.set()
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+    asyncio.run(scenario())
+
+
+def test_long_unicode_speech_is_split_without_changing_voice_or_losing_text():
+    from reachy_muse.capabilities import SpokenLine
+    from reachy_muse.companion_client import CompanionVoice
+
+    class Link:
+        out_rate = 16000
+
+        def __init__(self):
+            self.requests = []
+
+        async def speak(self, text, role):
+            self.requests.append(text)
+            yield b"\x00\x40"
+
+    async def scenario():
+        link = Link()
+        voice = CompanionVoice(link)
+        chunks = [chunk.tolist() async for chunk in voice.stream(
+            SpokenLine("é" * 121 + " hello there", None, "answer"), 16000)]
+        return link.requests, chunks
+
+    assert asyncio.run(scenario()) == (["é" * 120, "é hello there"], [[.5], [.5]])
+
+
+def test_a_blocked_ping_write_still_expires_on_no_progress():
+    from types import SimpleNamespace
+    from reachy_muse.companion_client import _Connection
+    from reachy_muse.protocol import Op
+
+    async def scenario():
+        aborted = []
+
+        async def blocked_ping():
+            await asyncio.Event().wait()
+
+        ws = SimpleNamespace(ping=blocked_ping, transport=SimpleNamespace(abort=lambda: aborted.append(True)))
+        link = CompanionLink("ws://127.0.0.1:9000", token=TOKEN, out_rate=16000, insecure=True,
+                             ping_interval_s=.01, ping_timeout_s=.04)
+        connection = _Connection(ws, (Op.HEAR, Op.SPEAK))
+        link._connection = connection
+        link._set(LinkState.UP)
+        stream = link.open_hear()
+        await asyncio.wait_for(link._heartbeat(connection), .3)
+        return str(stream.failure), stream.failure.link_down, aborted
+
+    assert asyncio.run(scenario()) == ("the companion sent no frames or pong", True, [True])
+
+
+def test_ping_send_and_pong_wait_share_one_inactivity_budget():
+    from types import SimpleNamespace
+    from reachy_muse.companion_client import _Connection
+    from reachy_muse.protocol import Op
+
+    async def scenario():
+        aborted = []
+
+        async def slow_ping():
+            await asyncio.sleep(.15)
+            return asyncio.get_running_loop().create_future()
+
+        ws = SimpleNamespace(ping=slow_ping, transport=SimpleNamespace(abort=lambda: aborted.append(True)))
+        link = CompanionLink("ws://127.0.0.1:9000", token=TOKEN, out_rate=16000, insecure=True,
+                             ping_interval_s=.01, ping_timeout_s=.2)
+        connection = _Connection(ws, (Op.HEAR, Op.SPEAK))
+        link._connection = connection
+        link._set(LinkState.UP)
+        stream = link.open_hear()
+        await asyncio.wait_for(link._heartbeat(connection), .28)
+        return str(stream.failure), stream.failure.link_down, aborted
+
+    assert asyncio.run(scenario()) == ("the companion sent no frames or pong", True, [True])

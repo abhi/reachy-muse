@@ -12,7 +12,6 @@
   {"expression": "surprised", "robot": "set_state", "state": "speaking"},
   {"audio": "mp3:reply-1", "robot": "play"},
   {"expression": null, "robot": "set_state", "state": "thinking"},
-  {"robot": "clear_audio"},
   {"expression": null, "robot": "set_state", "state": "idle"},
   {"robot": "clear_audio"}
  ],

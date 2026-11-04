@@ -43,16 +43,14 @@ from reachy_muse.protocol import (
 log = logging.getLogger(__name__)
 
 PING_INTERVAL_S = 5.0
-PING_TIMEOUT_S = 10.0
+# Recorded motion-load p99 is 5.105 s (ten samples); round 3x up to 20 s.
+# This is a conservative stall allowance, not a measured network RTT p99.
+PING_TIMEOUT_S = 20.0
 CLOSE_TIMEOUT_S = 0.1
 HANDSHAKE_TIMEOUT_S = 10.0
 BACKOFF_S = (0.2, 5.0)
 HEALTHY_S = 10.0                   # a session shorter than this is a failed attempt, not a recovery
 READY_S = 0.1                     # reject immediate post-welcome failures before routing new turns
-ENDPOINT_WAIT_S = 2.0              # how long the companion has to end a stream the robot finished
-HEAR_RESPONSE_S = 2.0              # also covers a short utterance that never gets its first partial
-SPEECH_RESPONSE_S = 2.0            # each audio chunk, independently of transport pongs
-OP_RESPONSE_S = {Op.NARRATE: 4.0, Op.CLASSIFY: 1.0, Op.ANIMATE: 8.0}
 _PIN = re.compile(r"sha256:([0-9a-f]{64})")
 _FATAL = (ErrorCode.AUTH, ErrorCode.VERSION, ErrorCode.INTERNAL, ErrorCode.MODEL)
 
@@ -102,7 +100,7 @@ class _Connection:
         self.animations: Dict[int, asyncio.Future] = {}
         self.sequence = SequenceCheck()
         self.closed = False
-        self.probe: Optional[int] = None
+        self.last_progress_at = time.monotonic()
         self._next_hear = -1
         self._next_speak = 0
 
@@ -140,10 +138,6 @@ class _HearStream:
         self.failure: Optional[CapabilityUnavailable] = None
         self.truncated = False
         self.end_sample = 0            # where the robot's VAD ended the utterance, in samples fed to the turn
-        self.deadline: Optional[float] = None
-        self.last_progress_at = time.monotonic()
-        self.last_checked_at = self.last_progress_at
-        self.last_quiet_s = 0.0
         self._seq = 0
 
     def send(self, pcm: bytes) -> None:
@@ -153,8 +147,6 @@ class _HearStream:
             self._seq += 1
 
     def close(self, how: CloseHow) -> None:
-        if how is CloseHow.ABORT and self.connection.probe == self.id:
-            return  # retain this finished stream to prove hearing has recovered
         if how is CloseHow.ABORT:
             self.connection.hearing.pop(self.id, None)
         if not self.connection.closed:
@@ -233,6 +225,16 @@ class CompanionLink:
         return (self.state is LinkState.UP and self._connection is not None
                 and not self._connection.closed and op in self._connection.ops)
 
+    @property
+    def last_progress_at(self) -> float:
+        return self._connection.last_progress_at if self._connection is not None else 0.0
+
+    @property
+    def responsive(self) -> bool:
+        """A received frame or pong proves life, regardless of inference speed."""
+        return (self._connection is not None and not self._connection.closed
+                and time.monotonic() - self.last_progress_at < sum(self._ping))
+
     def take_outage(self) -> bool:
         if self._outages == self._reported_outages:
             return False
@@ -300,8 +302,8 @@ class CompanionLink:
     async def _open(self):
         from websockets.asyncio.client import connect
 
-        options = dict(open_timeout=self._handshake_timeout_s, ping_interval=self._ping[0],
-                       ping_timeout=self._ping[1], close_timeout=CLOSE_TIMEOUT_S,
+        options = dict(open_timeout=self._handshake_timeout_s, ping_interval=None,
+                       close_timeout=CLOSE_TIMEOUT_S,
                        max_size=2 * MAX_TEXT_FRAME_BYTES)
         if "proxy" in inspect.signature(connect).parameters:
             options["proxy"] = None
@@ -332,6 +334,7 @@ class CompanionLink:
             self._set(LinkState.UP)
             self._settled.set()
             writer = asyncio.ensure_future(self._write(connection))
+            heartbeat = asyncio.create_task(self._heartbeat(connection))
             try:
                 async for frame in ws:
                     self._receive(connection, frame)
@@ -339,7 +342,8 @@ class CompanionLink:
                 connection.fail("the companion link closed")
                 self._set(LinkState.DOWN)
                 writer.cancel()
-                await asyncio.gather(writer, return_exceptions=True)
+                heartbeat.cancel()
+                await asyncio.gather(writer, heartbeat, return_exceptions=True)
         finally:
             try:
                 await asyncio.wait_for(ws.close(), .5)
@@ -350,27 +354,63 @@ class CompanionLink:
         while True:
             await connection.ws.send(await connection.outbox.get())
 
+    async def _heartbeat(self, connection: _Connection) -> None:
+        """Inference can be slow while its socket is healthy. Only silence kills it."""
+        interval, inactivity = self._ping
+
+        async def while_alive(waiting):
+            task = asyncio.ensure_future(waiting)
+            try:
+                while True:
+                    if task.done():
+                        return task.result()
+                    remaining = inactivity - (time.monotonic() - connection.last_progress_at)
+                    if remaining <= 0:
+                        connection.fail("the companion sent no frames or pong")
+                        raise TimeoutError
+                    try:
+                        return await asyncio.wait_for(asyncio.shield(task), remaining)
+                    except asyncio.TimeoutError:
+                        if task.done():
+                            raise
+                        if time.monotonic() - connection.last_progress_at >= inactivity:
+                            connection.fail("the companion sent no frames or pong")
+                            raise
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                pong = await while_alive(connection.ws.ping())
+                await while_alive(pong)
+                connection.last_progress_at = time.monotonic()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            connection.fail("the companion heartbeat failed")
+            connection.ws.transport.abort()
+
     def _receive(self, connection: _Connection, frame) -> None:
         if isinstance(frame, bytes):
             audio = decode_audio(frame)
             queue = connection.speaking.get(audio.stream)
             if audio.kind is not AudioKind.SPEECH:
                 raise ProtocolError(ErrorCode.BAD_REQUEST, Reason.WRONG_DIRECTION, "microphone audio from the companion")
+            connection.last_progress_at = time.monotonic()
             if queue is not None:
                 connection.sequence.accept(audio)
                 queue.put_nowait(audio.pcm)
             return
         message = decode(frame, sender=Sender.COMPANION)
+        connection.last_progress_at = time.monotonic()
         if isinstance(message, (HearPartial, HearEndpoint)):
             stream = connection.hearing.get(message.stream)
             if stream is not None:
-                stream.last_progress_at = time.monotonic()
                 stream.inbox.append(message)
                 if isinstance(message, HearEndpoint):
                     del connection.hearing[message.stream]
-                    if connection.probe == message.stream:
-                        connection.probe = None
-                        self._set(LinkState.UP)
         elif isinstance(message, SpeakDone):
             queue = connection.speaking.pop(message.stream, None)
             if queue is not None:
@@ -387,7 +427,7 @@ class CompanionLink:
             self._error(connection, message)
 
     def _error(self, connection: _Connection, error: Error) -> None:
-        if error.code in _FATAL or (error.stream is not None and error.stream == connection.probe):
+        if error.code in _FATAL:
             raise ConnectionError(f"the companion failed: {error.code.value}: {error.message}")
         failure = CapabilityUnavailable(f"companion {error.code.value}: {error.message}", link_down=False)
         if error.stream is not None and error.stream in connection.hearing:
@@ -414,17 +454,6 @@ class CompanionLink:
         connection.hearing[stream.id] = stream
         return stream
 
-    def hearing_stalled(self, stream: _HearStream, reason: str) -> None:
-        """Quarantine a live socket whose engine stopped answering, until a real endpoint arrives."""
-        connection = stream.connection
-        if connection is not self._connection or connection.closed or connection.probe is not None:
-            return
-        if stream.deadline is None:
-            stream.close(CloseHow.FINISH)
-        connection.probe = stream.id
-        self._set(LinkState.DOWN)
-        log.warning("Reachy companion hearing is unresponsive: %s; waiting for an endpoint or reconnect", reason)
-
     async def speak(self, text: str, voice: VoiceRole) -> AsyncIterator[bytes]:
         """The companion's speech for one line, as s16le PCM at ``out_rate``."""
         connection = self._live(Op.SPEAK)
@@ -437,10 +466,7 @@ class CompanionLink:
         finished = False
         try:
             while True:
-                try:
-                    item = await asyncio.wait_for(queue.get(), SPEECH_RESPONSE_S)
-                except asyncio.TimeoutError:
-                    raise CapabilityUnavailable("the companion speech deadline expired", link_down=False) from None
+                item = await queue.get()
                 if item is _DONE:
                     finished = True
                     return
@@ -480,10 +506,7 @@ class CompanionLink:
         identity = self._narrate_id
         try:
             connection.send(build(identity))
-            try:
-                return await asyncio.wait_for(future, OP_RESPONSE_S[op])
-            except asyncio.TimeoutError:
-                raise CapabilityUnavailable(f"the companion {op.value} deadline expired", link_down=False) from None
+            return await future
         finally:
             waiting.pop(identity, None)
 
@@ -520,9 +543,8 @@ class CompanionHearingTurn:
     """Robot VAD opens each hear stream; the companion's endpoint ends it.
 
     When the robot's VAD ends an utterance first, the stream closes with ``finish`` and
-    the turn ends when the companion's forced endpoint arrives. A companion that sends no
-    partial within ``HEAR_RESPONSE_S`` while the user speaks, or no endpoint
-    within ``ENDPOINT_WAIT_S`` of ``finish``, fails the turn so that the robot finishes it.
+    the turn ends when the companion's forced endpoint arrives. Partials, audio, and
+    pongs prove liveness while Smart Turn and final transcription are still running.
     """
 
     def __init__(self, link: CompanionLink, recorder):
@@ -568,7 +590,6 @@ class CompanionHearingTurn:
                 if event.accepted:
                     stream.truncated = self._recorder.last_truncated
                     stream.end_sample = self._vad_ends.popleft() if self._vad_ends else self._fed
-                    stream.deadline = time.monotonic() + ENDPOINT_WAIT_S
                     self._closing[stream.id] = stream
                     stream.close(CloseHow.FINISH)
                 else:
@@ -592,30 +613,12 @@ class CompanionHearingTurn:
                                               stream.truncated, stream.end_sample))
                 break
             else:
-                failure = failure or stream.failure or self._overdue(stream)
+                failure = failure or stream.failure
         if self._ended:
             return HeardAudio(self._ended.popleft())
         if failure is not None:
             raise failure
         return HeardAudio()
-
-    def _overdue(self, stream: _HearStream) -> Optional[CapabilityUnavailable]:
-        now = time.monotonic()
-        reason = None
-        if stream.deadline is not None and now >= stream.deadline:
-            reason = "the companion did not end the turn"
-        elif stream.deadline is None:
-            quiet_s = self._recorder.total_quiet_s
-            stream.last_progress_at += min(quiet_s - stream.last_quiet_s,
-                                           now - max(stream.last_checked_at, stream.last_progress_at))
-            stream.last_quiet_s = quiet_s
-            stream.last_checked_at = now
-            if now - stream.last_progress_at >= HEAR_RESPONSE_S:
-                reason = "the companion sent no transcript for the speech"
-        if reason is not None:
-            self._link.hearing_stalled(stream, reason)
-            return CapabilityUnavailable(reason)
-        return None
 
     def abort(self) -> None:
         for stream in [*([self._open] if self._open is not None else []), *self._closing.values()]:
@@ -675,12 +678,16 @@ class CompanionVoice:
 
         if output_rate != self.link.out_rate:
             raise CapabilityUnavailable("the companion speaks at another rate", link_down=False)
-        speech = self.link.speak(line.text, self.role)
-        try:
-            async for pcm in speech:
-                yield np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
-        finally:
-            await speech.aclose()
+        remaining = line.text.strip()
+        while remaining:
+            text = _fit(remaining, MAX_LINE_BYTES, r"\s+")
+            remaining = remaining[len(text):].lstrip()
+            speech = self.link.speak(text, self.role)
+            try:
+                async for pcm in speech:
+                    yield np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
+            finally:
+                await speech.aclose()
 
     def prepare(self, line: SpokenLine, output_rate: int):
         return None

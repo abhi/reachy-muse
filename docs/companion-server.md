@@ -10,7 +10,7 @@ Hearing, speech and narration run real models on the Mac. Each engine is a Proto
 
 - Hearing uses Voxtral Mini 4B Realtime for the running transcript. Silero VAD and Smart Turn v3 decide when the user has finished. Parakeet TDT v2 then transcribes the whole utterance again for the final text.
 - Speech uses Chatterbox Turbo, `mlx-community/chatterbox-turbo-8bit`, whose weights are MIT-licensed. It speaks in the one voice its weights ship with and never clones a voice. It streams: every 20 speech tokens, 0.8 s of speech, it decodes the sentence so far and sends the audio that the next decode will not change, with a 60 ms crossfade at each seam. The companion holds a line's first audio for 150 ms, which covers the wait for the second decode, so the first audio reaches the robot about 0.5 s after it asks (0.6 s at p95), against 0.1 s for Kokoro. The next sentence is ready before the robot finishes the last one. A narrated line's expression adds a sound to its first sentence: happy adds `[chuckle]`, sad `[sigh]` and surprised `[gasp]`. When the server starts, it measures the voice on three fixed sentences and sets one gain that brings the voiced level to -12 dBFS RMS. A limiter with a 2 ms look-ahead then holds peaks under -4 dBFS, so the robot's speaker EQ, which lifts peaks about 2.5 dB, stays under its own limiter. The MLX port does not add the PerTh watermark that Resemble's PyTorch package adds.
-- Kokoro-82M `af_heart` stands in for Chatterbox. It speaks every line if Chatterbox fails to load. It speaks the rest of a line when a sentence's first audio takes longer than 1 s or Chatterbox fails mid-line. Kokoro speaks one sentence at a time and levels each sentence on its own.
+- Kokoro-82M `af_heart` stands in for Chatterbox. It speaks every line if Chatterbox fails to load. If Chatterbox synthesis fails during a line, Kokoro restarts the interrupted sentence and completes that line. Slow first audio or a gap between chunks keeps the Chatterbox voice. Kokoro speaks one sentence at a time and levels each sentence on its own.
 - `serve` loads the models one at a time and caps MLX at 16 operations per Metal command buffer (`MLX_MAX_OPS_PER_BUFFER`, unless already set). With hearing, the narrator and Chatterbox evaluating at once on their own threads, Metal otherwise reported GPU hangs and aborted the process. The cap costs each model about 18% of its throughput. It makes hangs rarer, not impossible: see [bench/voice_richness.md](../bench/voice_richness.md).
 - `serve --voice ENGINE[:VOICE]` picks the voice: `chatterbox-turbo`, the default, or `kokoro[:VOICE]`, such as `kokoro:bm_george`. `--loudness DBFS` sets the level for both. [bench/voice_richness.md](../bench/voice_richness.md) has the measurements.
 - Narration uses Qwen3-4B-Instruct-2507, 4-bit, through mlx-lm. It writes the acknowledgement, the progress lines and the condensed answer. See [Narration](#narration). The same model answers `classify`: it names the device command in a short utterance the robot's own grammar did not match, such as "could you be a bit quieter", or none.
@@ -74,7 +74,9 @@ long briefing or a motion planner yielding to speech can continue. Cancellation
 does not hide native work still running on a model thread. Downloads and model
 warm-up have no watchdog deadline. This recovers runtime stalls; serializing GPU
 work remains the separate fix for concurrent MLX hangs. See
-[the incident report](../bench/companion_hang.md) for bounds and tests.
+[the original stall report](../bench/companion_hang.md) for watchdog bounds and
+tests. The later [choppy speech report](../bench/choppy.md) describes the robot's
+current liveness, voice selection, and playback limits.
 
 The server listens on port 8765 at the path `/v1`, with TLS and the paired certificate. Stop it with Ctrl-C.
 

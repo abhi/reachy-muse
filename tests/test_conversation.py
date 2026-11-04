@@ -490,7 +490,7 @@ def test_progress_playback_is_preempted_and_closed_before_answer_or_turn_cleanup
                                            ["Muse returned an empty reply. Please try again."])
             assert closed.is_set() and not conversation._muted
             assert conversation.job is None
-            assert hardware.cleared == (1 if ending in ('cancel', 'timeout') else 2)
+            assert hardware.cleared == 1
             assert not hardware.commands
         finally:
             if not turn.done():
@@ -793,6 +793,8 @@ def test_waiting_or_failed_later_turn_cannot_flush_an_earlier_answer(failed_turn
                                                        stream_segment=True))
         try:
             await first_chunk.wait()
+            while not hardware.played:
+                await asyncio.sleep(.001)
             if failed_turn:
                 with pytest.raises(ConnectionError, match='rejected'):
                     await conversation.turn(b'public-waveform', defer_playback=True)
@@ -947,7 +949,7 @@ async def streaming_turn(script, speech, hardware, *, before_ack=False, style=Re
         await conversation.turn(b"voice")
         await asyncio.gather(*producers)
         assert not conversation._muted and conversation.job is None
-        assert hardware.cleared == 1
+        assert hardware.cleared == 0
     finally:
         for producer in producers:
             if not producer.done():
@@ -1456,6 +1458,8 @@ def test_plain_revision_after_narration_starts_drops_the_unheard_tail(streaming_
 
         async def tail(conversation):
             await synthesizing.wait()
+            while hardware.spoken() != ["Rest today.", "Keep it light."]:
+                await asyncio.sleep(.001)
 
         async def release(conversation):
             revised.set()
@@ -1556,7 +1560,7 @@ def test_legacy_streaming_withholds_split_marker_and_only_speaks_final_tail(stre
         async def heard(conversation):
             while not hardware.played:
                 await asyncio.sleep(.001)
-            assert speech.requests == ["Hello."]
+            assert hardware.played[0].tolist() == pytest.approx([.1] * 80)
 
         await streaming_turn([
             chat_event("delta.text_append", "reply-1", text="Hello. Next sentence. ["),
@@ -1585,7 +1589,13 @@ def test_unheard_delta_revision_before_ack_is_replaced_by_authoritative_answer(s
 
 def test_spoken_prefix_revision_drops_already_queued_tail(streaming_speech, caplog):
     async def scenario():
-        hardware = FakeHardware()
+        release = threading.Event()
+        class HeldHardware(FakeHardware):
+            def play_audio(self, samples):
+                super().play_audio(samples)
+                if len(self.played) == 1:
+                    assert release.wait(2), "the revision did not release accepted audio"
+        hardware = HeldHardware()
         speech = streaming_speech(hardware)
         draft = sentence_frame("Original.") + sentence_frame("Unspoken draft.")
 
@@ -1594,10 +1604,14 @@ def test_spoken_prefix_revision_drops_already_queued_tail(streaming_speech, capl
                 await asyncio.sleep(.001)
             assert speech.requests == ["Original."]
 
+        async def resume(conversation):
+            release.set()
+
         await streaming_turn([
             chat_event("delta.text_append", "reply-1", text=draft),
             heard,
             chat_event("delta.message_done", "reply-1", content=sentence_frame("Changed private answer.")),
+            resume,
         ], speech, hardware)
         assert speech.requests == ["Original."]
     asyncio.run(bounded(scenario()))
@@ -2101,7 +2115,7 @@ def test_empty_muse_reply_announces_the_problem_and_resumes_without_reconnecting
         assert not conversation._muted
         assert conversation.job is None
         assert not session.subscription_closed
-        assert hardware.cleared == 1
+        assert hardware.cleared == (1 if speech_fails else 0)
         await cancel_task(subscriber)
 
     asyncio.run(bounded(scenario()))
@@ -3419,7 +3433,7 @@ def test_ack_race_and_multiple_messages_play_real_mp3_once_each(mp3_tone, monkey
         spectrum = np.abs(np.fft.rfft(pcm[:len(pcm) // 2]))
         frequencies = np.fft.rfftfreq(len(pcm) // 2, 1 / hardware.output_sample_rate)
         assert abs(frequencies[np.argmax(spectrum)] - 220) < 15
-        assert hardware.cleared == 1
+        assert hardware.cleared == 0
         assert not conversation._muted
         assert conversation.job is None
         await cancel_task(subscriber)

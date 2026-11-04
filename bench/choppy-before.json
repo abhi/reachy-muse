@@ -1,0 +1,64 @@
+{
+  "morning_slow_companion": {
+    "first_audio_s": 0.201,
+    "gaps_over_10ms_s": [
+      5.556,
+      0.255
+    ],
+    "max_gap_s": 5.556,
+    "voice_switches": 2,
+    "voices": [
+      "companion",
+      "piper",
+      "companion"
+    ],
+    "pcm_frames": 168000,
+    "pcm_sha256": "101ed3f02cb01748c530be7ef4d2f71bab5882efa6df96fe04e1a0f9ed621d85",
+    "queue_clears": 0
+  },
+  "hearing_recovers_before_reply": {
+    "first_audio_s": 4.834,
+    "gaps_over_10ms_s": [
+      13.203,
+      0.925
+    ],
+    "max_gap_s": 13.203,
+    "voice_switches": 0,
+    "voices": [
+      "piper"
+    ],
+    "pcm_frames": 168000,
+    "pcm_sha256": "101ed3f02cb01748c530be7ef4d2f71bab5882efa6df96fe04e1a0f9ed621d85",
+    "queue_clears": 0
+  },
+  "cpu_fallback_pipeline": {
+    "first_audio_s": 0.202,
+    "gaps_over_10ms_s": [
+      1.353,
+      0.455
+    ],
+    "max_gap_s": 1.353,
+    "voice_switches": 0,
+    "voices": [
+      "piper"
+    ],
+    "pcm_frames": 168000,
+    "pcm_sha256": "101ed3f02cb01748c530be7ef4d2f71bab5882efa6df96fe04e1a0f9ed621d85",
+    "queue_clears": 0
+  },
+  "cpu_fallback_incident_stall": {
+    "first_audio_s": 4.832,
+    "gaps_over_10ms_s": [
+      13.202,
+      0.924
+    ],
+    "max_gap_s": 13.202,
+    "voice_switches": 0,
+    "voices": [
+      "piper"
+    ],
+    "pcm_frames": 168000,
+    "pcm_sha256": "101ed3f02cb01748c530be7ef4d2f71bab5882efa6df96fe04e1a0f9ed621d85",
+    "queue_clears": 0
+  }
+}

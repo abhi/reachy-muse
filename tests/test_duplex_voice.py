@@ -257,19 +257,17 @@ def test_two_endpoints_in_one_capture_chunk_are_both_retained(duplex):
 @pytest.mark.parametrize("echo", [True, False, None, 1])
 def test_actual_playback_accepts_input_only_with_exact_echo_capability(duplex, echo):
     np = pytest.importorskip("numpy")
-    played = asyncio.Event()
     stop = asyncio.Event()
 
     class Speech:
         async def stream(self, text, rate):
             yield np.zeros(80, np.float32)
-            played.set()
             await stop.wait()
 
     async def run(ctx):
         speaking = asyncio.create_task(ctx.conversation._speak(None, text="The first answer.", stream_segment=True))
         try:
-            await played.wait()
+            await ctx.playback.get()
             await ctx.question(.1)
             if echo is True:
                 await ctx.entered[0].wait()
