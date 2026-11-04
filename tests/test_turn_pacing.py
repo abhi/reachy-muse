@@ -152,7 +152,7 @@ def test_an_answer_arriving_mid_acknowledgement_lets_it_finish_then_plays_at_onc
     assert hardware.timeline[1][1] - finished_ack < .3
 
 
-def test_a_long_turn_without_labels_keeps_saying_waiting_lines_without_asking_the_narrator(monkeypatch):
+def test_a_long_turn_without_status_says_one_contextual_line_then_waits_quietly(monkeypatch):
     from reachy_muse.progress import ProgressPlan
     labels = Labels()
     hardware = PacedHardware(labels)
@@ -174,8 +174,9 @@ def test_a_long_turn_without_labels_keeps_saying_waiting_lines_without_asking_th
 
     def working_then_answer(session):
         async def muse():
-            while len(hardware.spoken()) < 5:
+            while len(hardware.spoken()) < 2:
                 await asyncio.sleep(.01)
+            await asyncio.sleep(1.5)
             await session.events.put(chat_event("delta.message_done", "reply-1", seq=2,
                                                 content="Robots began as toys."))
             await session.delivered.get()
@@ -186,9 +187,8 @@ def test_a_long_turn_without_labels_keeps_saying_waiting_lines_without_asking_th
 
     run_turn(monkeypatch, paced, working_then_answer)
     assert hardware.spoken() == [
-        "Hmm, good question.", "I haven't received a detailed progress update yet.",
-        "Still on it.", "Working on that for you.", "Muse is still digging in.", "Robots began as toys."]
-    assert narrated == ["I haven't received a detailed progress update yet."]
+        "Hmm, good question.", 'The answer to "robot history" is taking a little longer.', "Robots began as toys."]
+    assert narrated == []
 
 
 def test_a_request_heard_while_muse_works_is_held_with_a_nod_and_later_ones_get_one_short_line(monkeypatch):

@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from reachy_muse.progress import (
-    PUBLIC_PROGRESS_PHRASES, WAITING_LINES, BackendActivity, BackendStatus, ProgressPlan, ProgressUpdate,
+    PUBLIC_PROGRESS_PHRASES, BackendActivity, BackendStatus, ProgressPlan, ProgressUpdate,
     backend_activity_from_status, backend_status_from_event, progress_from_activity,
     validate_public_progress, waiting_progress,
 )
@@ -16,16 +16,16 @@ TWENTY_S = {"first_delay_s": 20, "interval_s": 20}
 
 
 @pytest.mark.parametrize("request_text, expected", [
-    ("Find flights to Tokyo.", "I haven't received a flight progress update yet."),
-    ("Compare airfares for tomorrow.", "I haven't received a flight progress update yet."),
+    ("Find flights to Tokyo.", "Your flight answer is taking a little longer."),
+    ("Compare airfares for tomorrow.", "Your flight answer is taking a little longer."),
     ("Explain why flights get delayed.",
-     "I haven't received a flight progress update yet."),
-    ("What is the weather?", "I haven't received a weather progress update yet."),
+     "Your flight answer is taking a little longer."),
+    ("What is the weather?", "Your weather answer is taking a little longer."),
     ("Explain how weather systems form.",
-     "I haven't received a weather progress update yet."),
-    ("Check the forecast.", "I haven't received a weather progress update yet."),
-    ("Plan my trip.", "I haven't received a detailed progress update yet."),
-    ("Explain black holes.", "I haven't received a detailed progress update yet."),
+     "Your weather answer is taking a little longer."),
+    ("Check the forecast.", "Your weather answer is taking a little longer."),
+    ("Plan my trip.", 'The answer to "Plan my trip" is taking a little longer.'),
+    ("Explain black holes.", 'The answer to "black holes" is taking a little longer.'),
 ])
 def test_waiting_cue_names_the_result_without_inventing_an_action(request_text, expected):
     assert waiting_progress(request_text) == expected
@@ -88,21 +88,21 @@ def test_unspoken_payloads_are_rejected(text):
     assert validate_public_progress(text) is None
 
 
-def test_waiting_cue_speaks_once_then_generic_waiting_lines_until_the_cap():
+def test_waiting_cue_speaks_once_then_stays_silent():
     plan = ProgressPlan("Find flights.", 100, **TWENTY_S, max_updates=4)
     assert plan.take(119.99) is None
     assert [plan.take(due) for due in (120, 140, 160, 180, 200)] == [
-        ProgressUpdate("I haven't received a flight progress update yet.", "fallback"),
-        ProgressUpdate("Still on it.", "waiting"),
-        ProgressUpdate("Working on that for you.", "waiting"),
-        ProgressUpdate("Muse is still digging in.", "waiting"),
+        ProgressUpdate("Your flight answer is taking a little longer.", "waiting"),
+        None,
+        None,
+        None,
         None,
     ]
 
 
 def test_delayed_consumer_does_not_emit_catch_up_cues_back_to_back():
     plan = ProgressPlan("Explain black holes.", 0, **TWENTY_S)
-    expected = ProgressUpdate("I haven't received a detailed progress update yet.", "fallback")
+    expected = ProgressUpdate('The answer to "black holes" is taking a little longer.', "waiting")
     assert plan.take(20) == expected
     assert plan.offer("I found a useful public source.", 55)
     assert plan.take(55) == ProgressUpdate("I found a useful public source.", "frame")
@@ -119,7 +119,7 @@ def test_latest_fresh_update_wins_and_spoken_updates_do_not_repeat():
     assert not plan.offer("Checking fares now.", 25, source="backend")
     plan.offer("Comparing the options.", 35, source="frame")
     assert plan.take(40) == ProgressUpdate("Comparing the options.", "frame")
-    assert plan.take(60) == ProgressUpdate("Still on it.", "waiting")
+    assert plan.take(60) is None
 
 
 def test_backend_activity_uses_current_then_past_tense_without_claiming_stale_work():
@@ -134,7 +134,7 @@ def test_backend_activity_uses_current_then_past_tense_without_claiming_stale_wo
     assert plan.set_status(BackendStatus("working", sources), 22.183)
     assert plan.take(40) == ProgressUpdate(
         "Muse's last reported step was searching sources.", "backend")
-    assert plan.take(60) == ProgressUpdate("Still on it.", "waiting")
+    assert plan.take(60) is None
 
 
 def test_fresh_backend_activity_does_not_repeat_as_history():
@@ -142,7 +142,7 @@ def test_fresh_backend_activity_does_not_repeat_as_history():
     sources = backend_activity_from_status("Searching sources")
     assert plan.set_status(BackendStatus("working", sources), 15)
     assert plan.take(20) == ProgressUpdate("Searching sources now.", "backend")
-    assert plan.take(40) == ProgressUpdate("Still on it.", "waiting")
+    assert plan.take(40) is None
 
 
 @pytest.mark.parametrize("status", [
@@ -159,7 +159,7 @@ def test_generic_or_unknown_status_preserves_the_specific_milestone(status):
 def test_arbitrary_backend_activity_cannot_bypass_the_fixed_phrase_allowlist():
     plan = ProgressPlan("Research this.", 0, **TWENTY_S)
     assert not plan.set_status(BackendStatus("working", BackendActivity("Reading secrets.", "Read secrets.")), 15)
-    assert plan.take(20) == ProgressUpdate("I haven't received a detailed progress update yet.", "fallback")
+    assert plan.take(20) == ProgressUpdate('The answer to "Research this" is taking a little longer.', "waiting")
 
 
 def test_new_identical_backend_report_refreshes_observation_time():
@@ -182,12 +182,12 @@ def test_fresh_public_frame_wins_one_cue_without_erasing_backend_history():
 def test_unspoken_frame_survives_the_twenty_second_cadence_with_attribution():
     plan = ProgressPlan("What is the weather?", 0, **TWENTY_S)
     assert plan.take(20) == ProgressUpdate(
-        "I haven't received a weather progress update yet.", "fallback")
+        "Your weather answer is taking a little longer.", "waiting")
     plan.offer("I found a useful weather source.", 22)
     assert plan.take(40) == ProgressUpdate(
         "Earlier from Muse: I found a useful weather source.", "frame")
     assert not plan.offer("I found a useful weather source.", 41)
-    assert plan.take(60) == ProgressUpdate("Still on it.", "waiting")
+    assert plan.take(60) is None
 
 
 def test_duplicate_pending_update_does_not_pretend_an_old_frame_is_fresh():
@@ -225,7 +225,7 @@ def test_a_new_turn_has_its_own_timing_and_progress():
         expiry_s=1, max_updates=1)
     assert new.take(10.99) is None
     assert new.take(11) == ProgressUpdate(
-        "I haven't received a detailed progress update yet.", "fallback")
+        'The answer to "black holes" is taking a little longer.', "waiting")
     assert new.take(13) is None
     assert old.take(100) is None
 
@@ -273,7 +273,7 @@ def test_fresh_responding_phase_combines_with_specific_milestone_history():
     plan.set_status(backend_status_from_event("responding", "is responding"), 19)
     assert plan.take(20) == ProgressUpdate(
         "Muse is preparing a reply. Its last reported step was searching the web.", "backend")
-    assert plan.take(40) == ProgressUpdate("Still on it.", "waiting")
+    assert plan.take(40) is None
 
 
 def test_actual_operation_wire_sequence_preserves_milestones_through_phase_changes():
@@ -294,34 +294,29 @@ def test_actual_field_timing_keeps_initial_phase_until_reply_arrives():
     plan = ProgressPlan("Find flights to Paris.", 0, **TWENTY_S)
     plan.set_status(backend_status_from_event("working", "is working"), 2)
     assert plan.take(20) == ProgressUpdate(
-        "Muse's latest status is that it's working on your request.", "backend")
+        "Your flight answer is taking a little longer.", "waiting")
     plan.set_status(backend_status_from_event("responding", "is responding"), 27.7)
     plan.stop()
     assert plan.take(40) is None
 
 
-@pytest.mark.parametrize("phase, current, history", [
-    ("working", "Muse says it's working on your request.",
-     "Muse's latest status is that it's working on your request."),
-    ("responding", "Muse is preparing a reply.",
-     "Muse's latest status is that it's preparing a reply."),
-])
-def test_phase_without_specific_activity_speaks_once_in_current_or_attributed_form(phase, current, history):
+@pytest.mark.parametrize("phase", ["working", "responding"])
+def test_generic_phase_does_not_add_filler_before_or_after_contextual_waiting(phase):
     plan = ProgressPlan("Find flights.", 0, **TWENTY_S)
-    plan.set_status(backend_status_from_event(phase, "Private words that must not be copied"), 15)
-    assert plan.take(20) == ProgressUpdate(current, "backend")
-    assert plan.take(40) == ProgressUpdate("Still on it.", "waiting")
+    plan.set_status(backend_status_from_event(phase, "Private words"), 15)
+    assert plan.take(20) == ProgressUpdate("Your flight answer is taking a little longer.", "waiting")
+    assert plan.take(40) is None
     stale = ProgressPlan("Find flights.", 0, **TWENTY_S)
     stale.set_status(backend_status_from_event(phase, None), 1)
-    assert stale.take(20) == ProgressUpdate(history, "backend")
-    assert stale.take(40) == ProgressUpdate("Still on it.", "waiting")
+    assert stale.take(20) == ProgressUpdate("Your flight answer is taking a little longer.", "waiting")
+    assert stale.take(40) is None
 
 
 @pytest.mark.parametrize("phase", ["online", "idle", "unknown"])
 def test_idle_or_unknown_without_any_specific_report_uses_the_no_detail_cue(phase):
     plan = ProgressPlan("Research this.", 0, **TWENTY_S)
     plan.set_status(backend_status_from_event(phase, None), 15)
-    assert plan.take(20) == ProgressUpdate("I haven't received a detailed progress update yet.", "fallback")
+    assert plan.take(20) == ProgressUpdate('The answer to "Research this" is taking a little longer.', "waiting")
 
 
 def test_latest_unspoken_frame_replaces_older_frame_and_survives_a_long_wait():
@@ -332,7 +327,7 @@ def test_latest_unspoken_frame_replaces_older_frame_and_survives_a_long_wait():
         "Earlier from Muse: I found a second relevant public source.", "frame")
     assert not plan.offer("I found a second relevant public source.", 105)
     assert plan.take(119.99) is None
-    assert plan.take(120) == ProgressUpdate("Still on it.", "waiting")
+    assert plan.take(120) is None
 
 
 def test_full_eighteen_word_frame_keeps_every_word_when_attributed_as_earlier():
@@ -351,7 +346,7 @@ def test_latest_specific_stage_supersedes_history_without_repeating_a_spoken_fra
     assert plan.take(20) == ProgressUpdate("I found a useful public source.", "frame")
     plan.set_status(backend_status_from_event("working", "Checking fares"), 35)
     assert plan.take(40) == ProgressUpdate("Checking fares now.", "backend")
-    assert plan.take(60) == ProgressUpdate("Still on it.", "waiting")
+    assert plan.take(60) is None
 
 
 def test_unchanged_backend_stage_speaks_once_across_long_wait_and_identical_reports():
@@ -364,38 +359,38 @@ def test_unchanged_backend_stage_speaks_once_across_long_wait_and_identical_repo
     for due in (40, 60, 80):
         assert plan.set_status(status, due - 1)
         spoken.append(plan.take(due))
-    assert spoken == [ProgressUpdate("Still on it.", "waiting"), ProgressUpdate("Working on that for you.", "waiting"),
-                      ProgressUpdate("Muse is still digging in.", "waiting")]
+    assert spoken == [None, None,
+                      None]
 
 
 def test_current_stage_is_not_spoken_again_when_its_wording_becomes_historical():
     plan = ProgressPlan("Research this.", 0, **TWENTY_S)
     plan.set_status(backend_status_from_event("working", "Searching web"), 15)
     assert plan.take(20) == ProgressUpdate("Searching the web now.", "backend")
-    assert plan.take(40) == ProgressUpdate("Still on it.", "waiting")
-    assert plan.take(60) == ProgressUpdate("Working on that for you.", "waiting")
+    assert plan.take(40) is None
+    assert plan.take(60) is None
 
 
 def test_changed_stage_and_public_frame_take_the_ticks_after_a_waiting_line():
     plan = ProgressPlan("Research this.", 0, **TWENTY_S)
     plan.set_status(backend_status_from_event("working", "Searching web"), 15)
     assert plan.take(20) == ProgressUpdate("Searching the web now.", "backend")
-    assert plan.take(40) == ProgressUpdate("Still on it.", "waiting")
+    assert plan.take(40) is None
     plan.set_status(backend_status_from_event("working", "Searching sources"), 51)
-    assert plan.take(59.99) is None
-    assert plan.take(60) == ProgressUpdate("Searching sources now.", "backend")
+    assert plan.take(51) == ProgressUpdate("Searching sources now.", "backend")
+    assert plan.take(60) is None
     assert plan.offer("I found a useful public source.", 75)
     assert plan.take(80) == ProgressUpdate("I found a useful public source.", "frame")
-    assert plan.take(100) == ProgressUpdate("Working on that for you.", "waiting")
+    assert plan.take(100) is None
 
 
-def test_new_responding_phase_speaks_once_without_repeating_search_history():
+def test_new_generic_phase_does_not_add_speech_after_a_specific_status():
     plan = ProgressPlan("Research this.", 0, **TWENTY_S)
     plan.set_status(backend_status_from_event("working", "Searching web"), 15)
     assert plan.take(20) == ProgressUpdate("Searching the web now.", "backend")
     plan.set_status(backend_status_from_event("responding", "is responding"), 39)
-    assert plan.take(40) == ProgressUpdate("Muse is preparing a reply.", "backend")
-    assert plan.take(60) == ProgressUpdate("Still on it.", "waiting")
+    assert plan.take(40) is None
+    assert plan.take(60) is None
 
 
 def test_same_stage_reported_by_frame_and_backend_does_not_repeat():
@@ -403,7 +398,7 @@ def test_same_stage_reported_by_frame_and_backend_does_not_repeat():
     assert plan.offer("Searching the web now.", 1)
     assert plan.take(20) == ProgressUpdate("Earlier from Muse: Searching the web now.", "frame")
     plan.set_status(backend_status_from_event("working", "Searching web"), 39)
-    assert plan.take(40) == ProgressUpdate("Still on it.", "waiting")
+    assert plan.take(40) is None
     assert not plan.offer("Muse's last reported step was searching the web.", 41)
 
 
@@ -414,7 +409,7 @@ def test_first_fresh_specific_backend_activity_speaks_before_the_generic_deadlin
     assert plan.take(9) == ProgressUpdate("Searching the web now.", "backend")
     assert plan.set_status(backend_status_from_event("working", "Searching web"), 9.1)
     assert plan.take(28.99) is None
-    assert plan.take(29) == ProgressUpdate("Still on it.", "waiting")
+    assert plan.take(29) is None
 
 
 def test_first_valid_public_progress_frame_speaks_immediately_then_keeps_cadence():
@@ -433,7 +428,7 @@ def test_generic_phase_does_not_bypass_the_first_deadline():
     assert plan.take(0) is None
     assert plan.take(19.99) is None
     assert plan.take(20) == ProgressUpdate(
-        "Muse's latest status is that it's working on your request.", "backend")
+        'The answer to "Research this" is taking a little longer.', "waiting")
 
 
 @pytest.mark.parametrize("kind", ["frame", "status"])
@@ -478,35 +473,30 @@ def test_fresh_backend_action_replaces_a_stale_unspoken_frame():
     assert plan.offer("I started searching for sources.", 0)
     assert plan.set_status(backend_status_from_event("working", "Checking a website"), 12)
     assert plan.take(12) == ProgressUpdate("Checking a website now.", "backend")
-    assert plan.take(32) == ProgressUpdate("Still on it.", "waiting")
+    assert plan.take(32) is None
     assert not plan.offer("I started searching for sources.", 33)
 
 
-def test_default_cadence_speaks_at_five_seconds_then_every_fifteen_with_rotating_waiting_lines():
-    plan = ProgressPlan("Research this.", 0)
+def test_default_cadence_allows_one_contextual_line_at_eight_seconds():
+    plan = ProgressPlan("Should I work out today?", 0)
     assert plan.set_status(backend_status_from_event("working", "is working"), 1)
-    assert plan.take(4.99) is None
-    assert plan.take(5) == ProgressUpdate("Muse says it's working on your request.", "backend")
-    assert plan.take(19.99) is None
-    assert [plan.take(due) for due in (20, 35, 50, 65, 80, 95)] == [
-        ProgressUpdate("Still on it.", "waiting"),
-        ProgressUpdate("Working on that for you.", "waiting"),
-        ProgressUpdate("Muse is still digging in.", "waiting"),
-        ProgressUpdate("Thanks for waiting.", "waiting"),
-        ProgressUpdate("Still on it.", "waiting"),
-        None,
-    ]
+    assert plan.take(7.99) is None
+    assert plan.take(8) == ProgressUpdate("Your workout answer is taking a little longer.", "waiting")
+    assert [plan.take(due) for due in (23, 38, 53, 68, 83, 98)] == [None] * 6
 
 
-def test_a_new_label_takes_the_next_tick_and_waiting_lines_resume_after_it():
+def test_a_new_specific_label_can_speak_after_the_only_waiting_line():
     plan = ProgressPlan("Research this.", 0)
-    assert plan.take(5) == ProgressUpdate("I haven't received a detailed progress update yet.", "fallback")
-    assert plan.take(20) == ProgressUpdate("Still on it.", "waiting")
+    assert plan.take(8) == ProgressUpdate('The answer to "Research this" is taking a little longer.', "waiting")
+    assert plan.take(23) is None
     assert plan.set_status(backend_status_from_event("working", "Searching web"), 30)
-    assert plan.take(35) == ProgressUpdate("Searching the web now.", "backend")
-    assert plan.take(50) == ProgressUpdate("Working on that for you.", "waiting")
+    assert plan.take(30) == ProgressUpdate("Searching the web now.", "backend")
+    assert plan.take(50) is None
 
 
-def test_waiting_lines_are_public_phrases_the_robot_can_say_ahead_of_time():
-    assert {line for lines in WAITING_LINES.values() for line in lines} <= set(PUBLIC_PROGRESS_PHRASES)
-    assert len(WAITING_LINES) >= 2
+@pytest.mark.parametrize("request_text", ["", "Look at https://private.example", "Check my password"])
+def test_missing_or_private_context_stays_silent_until_a_public_status(request_text):
+    plan = ProgressPlan(request_text, 0)
+    assert plan.take(8) is None
+    assert plan.offer("I found a relevant public source.", 10)
+    assert plan.take(10) == ProgressUpdate("I found a relevant public source.", "frame")

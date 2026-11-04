@@ -6,35 +6,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import chain
 import re
 from typing import Literal
 
 from reachy_muse.contract.intent import Intent
+from reachy_muse.follow_up import request_topic
 
 
-ProgressSource = Literal["backend", "frame", "fallback", "waiting"]
-PROGRESS_FIRST_S = 5.0
+ProgressSource = Literal["backend", "frame", "waiting"]
+PROGRESS_FIRST_S = 8.0
 PROGRESS_EVERY_S = 15.0
 PROGRESS_MAX_LINES = 6
-# Spoken in turn when Muse reports nothing new; never a claim about the result.
-WAITING_LINES = {
-    Intent.QUESTION: ("Still on it.", "Working on that for you.", "Muse is still digging in.", "Thanks for waiting."),
-    Intent.ACTION: ("Working on that for you.", "Still on it.", "Thanks for waiting."),
-    Intent.FOLLOW_UP: ("Still looking into that.", "Thanks for waiting.", "Hang tight, still on that."),
-    Intent.CHAT: ("Thanks for waiting.", "Still here."),
-}
 # These limits apply to incoming public frames. Trusted history attribution
 # adds three words when an older frame is spoken without truncating its report.
 MAX_PROGRESS_BYTES = 240
 
-_FLIGHT_WAIT = "I haven't received a flight progress update yet."
-_WEATHER_WAIT = "I haven't received a weather progress update yet."
-_MUSE_WAIT = "I haven't received a detailed progress update yet."
-_WORKING = "Muse says it's working on your request."
+_FLIGHT_WAIT = "Your flight answer is taking a little longer."
+_WEATHER_WAIT = "Your weather answer is taking a little longer."
+_WORKOUT_WAIT = "Your workout answer is taking a little longer."
 _RESPONDING = "Muse is preparing a reply."
-_LAST_WORKING = "Muse's latest status is that it's working on your request."
-_LAST_RESPONDING = "Muse's latest status is that it's preparing a reply."
 _FLIGHTS = "Looking at flights now."
 _FARES = "Checking fares now."
 _COMPARE = "Comparing the options."
@@ -58,12 +48,11 @@ _RESPONDING_HISTORY = {
 }
 
 PUBLIC_PROGRESS_PHRASES = (
-    _FLIGHT_WAIT, _WEATHER_WAIT, _MUSE_WAIT,
+    _FLIGHT_WAIT, _WEATHER_WAIT, _WORKOUT_WAIT,
     _FLIGHTS, _FARES, _COMPARE, _WEB, _SOURCES, _WEBSITE, _CONNECTOR,
     _LATEST_FLIGHTS, _LATEST_FARES, _LATEST_COMPARE, _LATEST_WEB,
     _LATEST_SOURCES, _LATEST_WEBSITE, _LATEST_CONNECTOR,
-    _WORKING, _RESPONDING, _LAST_WORKING, _LAST_RESPONDING,
-    *_RESPONDING_HISTORY.values(), *dict.fromkeys(chain.from_iterable(WAITING_LINES.values())),
+    *_RESPONDING_HISTORY.values(),
 )
 
 _PRIVATE_PAYLOAD = re.compile(
@@ -118,13 +107,18 @@ def validate_public_progress(text: object) -> str | None:
     return clean
 
 
-def waiting_progress(request_text: str) -> str:
+def waiting_progress(request_text: str) -> str | None:
     """Describe waiting for a result, without claiming that a tool is running."""
+    topic = request_topic(request_text)
+    if not validate_public_progress(topic):
+        return None
     if re.search(r"\b(?:flights?|airfares?|fares?)\b", request_text, re.IGNORECASE):
         return _FLIGHT_WAIT
     if re.search(r"\b(?:weather|forecast)\b", request_text, re.IGNORECASE):
         return _WEATHER_WAIT
-    return _MUSE_WAIT
+    if re.search(r"\b(?:work\s*out|workouts?|exercise)\b", request_text, re.IGNORECASE):
+        return _WORKOUT_WAIT
+    return validate_public_progress(f'The answer to "{topic}" is taking a little longer.')
 
 
 def progress_from_activity(activity_text: object) -> str | None:
@@ -166,7 +160,7 @@ def backend_status_from_event(activity_code: object, activity_text: object) -> B
 
 
 class ProgressPlan:
-    """Speak turn-scoped updates once per cadence interval: news first, else the next waiting line."""
+    """One contextual wait cue; further speech requires a new public report."""
 
     def __init__(self, request_text: str, started: float, *, intent: Intent = Intent.QUESTION,
                  first_delay_s: float = PROGRESS_FIRST_S,
@@ -180,10 +174,8 @@ class ProgressPlan:
         self._max_updates = max_updates
         self._last_cue = None
         self._emitted = 0
-        self._waited = 0
         self._spoken = set()
         self._spoken_activities = set()
-        self._spoken_phases = set()
         self._pending = None
         self._status = None
         self._milestone = None
@@ -248,26 +240,15 @@ class ProgressPlan:
                     text = milestone.current_text
                 elif fresh and status.phase == "responding":
                     text = _RESPONDING_HISTORY[text]
-                    self._spoken_phases.add("responding")
                 self._spoken_activities.add(milestone)
-                self._spoken_phases.add("working")
             else:
                 text = None
-                if status.phase not in self._spoken_phases:
-                    text = {"working": _WORKING if fresh else _LAST_WORKING,
-                            "responding": _RESPONDING if fresh else _LAST_RESPONDING}.get(status.phase)
-                    if text is not None:
-                        self._spoken_phases.add(status.phase)
             if text is not None:
                 update = ProgressUpdate(text, "backend")
-        if update is None and self._emitted:
-            update = ProgressUpdate(WAITING_LINES[self.intent][self._waited % len(WAITING_LINES[self.intent])], "waiting")
-            self._waited += 1
-            self._last_cue = now
-            self._emitted += 1
-            return update
         if update is None:
-            update = ProgressUpdate(self._waiting, "fallback")
+            if self._emitted or self._waiting is None:
+                return None
+            update = ProgressUpdate(self._waiting, "waiting")
         self._last_cue = now
         self._emitted += 1
         self._spoken.add(update.text)
@@ -275,14 +256,7 @@ class ProgressPlan:
             if (reported_text or update.text) in (activity.current_text, activity.latest_text,
                                                  _RESPONDING_HISTORY[activity.latest_text]):
                 self._spoken_activities.add(activity)
-                self._spoken_phases.add("working")
                 self._spoken.update((activity.current_text, activity.latest_text))
-        if (reported_text or update.text) in (_WORKING, _LAST_WORKING):
-            self._spoken_phases.add("working")
-            self._spoken.update((_WORKING, _LAST_WORKING))
-        if (reported_text or update.text) in (_RESPONDING, _LAST_RESPONDING):
-            self._spoken_phases.add("responding")
-            self._spoken.update((_RESPONDING, _LAST_RESPONDING))
         return update
 
     def stop(self) -> None:

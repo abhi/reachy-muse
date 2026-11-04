@@ -289,12 +289,25 @@ while header := sys.stdin.buffer.read(4):
                 await transcriber.close()
 
 
+async def progress_replay():
+    from reachy_muse.progress import ProgressPlan, backend_status_from_event
+
+    plan = ProgressPlan("Should I work out today?", 0)
+    plan.set_status(backend_status_from_event("working", "is working"), 1.7)
+    spoken = []
+    for tick in range(320):
+        now = tick / 10
+        if update := plan.take(now):
+            spoken.append({"at_s": now, "text": update.text})
+    return {"waiting_seconds": 32, "spoken": spoken, "line_count": len(spoken)}
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("experiment", choices=("engine", "jitter", "reconnect", "answer", "late-answer", "pipeline", "endpoint", "whisper"))
+    parser.add_argument("experiment", choices=("engine", "jitter", "reconnect", "answer", "late-answer", "pipeline", "endpoint", "whisper", "progress"))
     args = parser.parse_args()
     experiments = {"engine": engine_replay, "jitter": jitter_replay, "reconnect": reconnect_replay,
                    "answer": answer_replay, "late-answer": lambda: answer_replay(late=True),
                    "pipeline": lambda: answer_replay(streamed=False), "endpoint": endpoint_replay,
-                   "whisper": whisper_replay}
+                   "whisper": whisper_replay, "progress": progress_replay}
     print(json.dumps(asyncio.run(experiments[args.experiment]()), indent=2))

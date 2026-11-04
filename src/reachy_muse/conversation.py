@@ -1529,7 +1529,6 @@ class VoiceConversation:
         request_text = job.request or ""
         response_deadline = job.dispatched_at + self.reply_timeout_s
         waiting_for_segment = False
-        progress_said = []
 
         def answer_audible(then: Callable[[], None] | None = None) -> Callable[[], None]:
             def started() -> None:
@@ -1582,7 +1581,7 @@ class VoiceConversation:
                         log.info("Reachy selected %s progress %.1fs after the voice turn",
                                  progress.source, time.monotonic() - started)
                         job.aside = asyncio.create_task(
-                            self._say_progress(job, progress, progress_said))
+                            self._say_progress(progress))
                 if (job.style is ReplyStyle.EXPRESSIVE_JSON and not waiting_for_segment
                         and not self._has_output() and not self._playback.user_speaking):
                     await self._plan(plan.Working(output=False, user_speaking=False))
@@ -1868,16 +1867,8 @@ class VoiceConversation:
                 prepared.cancel()
                 await prepared.aclose()
 
-    async def _say_progress(self, job: MuseJob, progress: ProgressUpdate, already_said: list) -> None:
-        if progress.source == "waiting":
-            text = progress.text
-        else:
-            line = await self.backends.narrator.say_progress(job.request or "", progress.text, tuple(already_said))
-            if line is None:
-                return
-            text = line.text
-            already_said.append(text)
-        await self._speak(None, text=text, state="thinking", stream_segment=True,
+    async def _say_progress(self, progress: ProgressUpdate) -> None:
+        await self._speak(None, text=progress.text, state="thinking", stream_segment=True,
                           voice=self.backends.progress_voice, progress=True)
 
     async def _speak_lines(self, message_id: str, lines, *, on_start: Callable[[], None] | None = None) -> None:

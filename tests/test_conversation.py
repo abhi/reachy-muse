@@ -360,11 +360,11 @@ def test_owned_chat_backend_stages_are_spoken_once_and_answer_stops_them(monkeyp
     asyncio.run(conversation._queue_replies(feed(job, chat_event("agent.status", parent=None,
                                                         activity_text="Searching sources")), job))
     assert job.progress.take(40).text == "Muse's last reported step was searching sources."
-    assert job.progress.take(60).text == "Still on it."
+    assert job.progress.take(60) is None
     clock = 61
     asyncio.run(conversation._queue_replies(feed(job, chat_event("agent.status", parent=None,
                                                         activity_text="is responding")), job))
-    assert job.progress.take(80).text == "Working on that for you."
+    assert job.progress.take(80) is None
     assert job.replies.empty()
     clock = 81
     asyncio.run(conversation._queue_replies(feed(job, chat_event("delta.text_append", "answer", parent=None,
@@ -373,7 +373,7 @@ def test_owned_chat_backend_stages_are_spoken_once_and_answer_stops_them(monkeyp
     assert job.replies.get_nowait() == SpeechSegment("answer", 0, "Here is the documentation.", "neutral")
 
 
-def test_lunch_request_reports_working_phase_before_delayed_answer(monkeypatch):
+def test_lunch_request_gets_one_contextual_wait_cue_before_delayed_answer(monkeypatch):
     from reachy_muse.progress import ProgressPlan
     clock = 0.0
     monkeypatch.setattr(reachy_muse.conversation.time, "monotonic", lambda: clock)
@@ -386,8 +386,8 @@ def test_lunch_request_reports_working_phase_before_delayed_answer(monkeypatch):
     asyncio.run(conversation._queue_replies(feed(job, chat_event(
         "agent.status", parent=None, activity_code="working", activity_text="is working")), job))
     update = job.progress.take(20)
-    assert update.source == "backend"
-    assert update.text == "Muse's latest status is that it's working on your request."
+    assert update.source == "waiting"
+    assert update.text == 'The answer to "should I cook for lunch" is taking a little longer.'
     clock = 27
     asyncio.run(conversation._queue_replies(feed(job, chat_event(
         "agent.status", parent=None, activity_code="responding", activity_text="is responding")), job))
@@ -464,7 +464,7 @@ def test_progress_playback_is_preempted_and_closed_before_answer_or_turn_cleanup
                                          session_id="robot-chat",
                                          reply_timeout_s=.25 if ending == "timeout" else 3)
         subscriber = asyncio.create_task(conversation._subscribe())
-        turn = asyncio.create_task(conversation.turn(b"voice"))
+        turn = asyncio.create_task(conversation.turn(b"voice", recognized_text="Research this."))
         try:
             await entered.wait()
             while not hardware.played:
@@ -598,7 +598,7 @@ def test_completed_progress_hardware_error_survives_answer_race(monkeypatch, str
                                                                stream_replies=True),
                                          session_id="robot-chat")
         subscriber = asyncio.create_task(conversation._subscribe())
-        turn = asyncio.create_task(conversation.turn(b"voice"))
+        turn = asyncio.create_task(conversation.turn(b"voice", recognized_text="Research this."))
         try:
             await failed.wait()
             await session.events.put(chat_event("delta.text_append", "reply-1", text=sentence_frame("Done.")))
@@ -664,7 +664,7 @@ def test_preemption_finishes_pending_hardware_call_before_flush_and_answer(
                                                                stream_replies=True),
                                          session_id="robot-chat")
         subscriber = asyncio.create_task(conversation._subscribe())
-        turn = asyncio.create_task(conversation.turn(b"voice"))
+        turn = asyncio.create_task(conversation.turn(b"voice", recognized_text="Research this."))
         try:
             while not entered.is_set():
                 await asyncio.sleep(.001)
@@ -1283,7 +1283,7 @@ def test_authoritative_revision_during_progress_shutdown_speaks_only_replacement
                                          reply_timeout_s=3)
         subscriber = asyncio.create_task(conversation._subscribe())
         await session.chat_subscribed.wait()
-        turn = asyncio.create_task(conversation.turn(b"voice"))
+        turn = asyncio.create_task(conversation.turn(b"voice", recognized_text="Research this."))
         try:
             while not hardware.played:
                 await asyncio.sleep(.001)

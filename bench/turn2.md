@@ -168,3 +168,19 @@ from **341.62 ms to 24.36 ms**. The next transcript takes 23.25 ms in the same
 process. Both texts remain "Should I work out today?". The incident's 4.839-second
 load is moved before microphone readiness by this fix, not measured anew here.
 Startup, transcription and related checks: 108 passed, 1 skipped.
+
+## One contextual waiting line
+
+The default waiting cue now occurs at 8 seconds after acknowledgement and names
+the request's topic. There is no rotating filler or spoken generic working or
+responding phase. After the first cue, further speech requires a new public
+frame or a concrete backend activity, with the existing cadence, deduplication,
+attribution and total cap. With no usable request text, waiting stays silent.
+Thinking motion continues. Validated progress is spoken directly, so a narrator
+cannot replace it with generic filler or delay it with another model call.
+
+`python -m bench.turn2 progress` replays a 32-second wait with only Muse's generic
+working phase. Before: two lines at 5 and 20 seconds, "Muse says it's working
+on your request." and "Still on it." After: one line at 8 seconds, "Your workout
+answer is taking a little longer." There is no further speech through 32
+seconds. Behavior tests also retain actual new tool reports after that cue.
