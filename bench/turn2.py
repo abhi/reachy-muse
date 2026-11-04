@@ -77,8 +77,50 @@ async def engine_replay(stall_s=.3):
     }
 
 
+async def jitter_replay(scale=.05):
+    from websockets.asyncio.server import serve
+    from reachy_muse import companion_client as client
+    from reachy_muse.protocol import Welcome
+
+    rows = []
+    # Same burst lengths and ping phase on both versions; scale all network timers.
+    for jitter_s in (0, .5, 1, 1.5, 2, 3, 4, 6, 8):
+        accepted = asyncio.Queue()
+
+        async def companion(ws):
+            await ws.recv()
+            await ws.send(encode(Welcome(1, (Op.HEAR, Op.SPEAK, Op.NARRATE), ())))
+            accepted.put_nowait(ws)
+            await ws.wait_closed()
+
+        async with serve(companion, "127.0.0.1", 0, ping_interval=None, close_timeout=.01) as server:
+            port = server.sockets[0].getsockname()[1]
+            link = client.CompanionLink(f"ws://127.0.0.1:{port}", token="offline-token", out_rate=16000,
+                                        insecure=True, backoff_s=(10, 10),
+                                        ping_interval_s=client.PING_INTERVAL_S * scale,
+                                        ping_timeout_s=client.PING_TIMEOUT_S * scale)
+            running = asyncio.create_task(link.run())
+            ws = None
+            try:
+                await asyncio.wait_for(link.settled(), 1)
+                ws = await accepted.get()
+                await asyncio.sleep(client.PING_INTERVAL_S * scale * .9)
+                ws.transport.pause_reading()
+                await asyncio.sleep(jitter_s * scale)
+                ws.transport.resume_reading()
+                await asyncio.sleep(.14)
+                rows.append({"jitter_s": jitter_s, "drops": link.transitions.count(client.LinkState.DOWN)})
+            finally:
+                if ws is not None:
+                    ws.transport.resume_reading()
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+    return {"time_scale": scale, "bursts": rows, "drops": sum(row["drops"] for row in rows)}
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("experiment", choices=("engine",))
+    parser.add_argument("experiment", choices=("engine", "jitter"))
     args = parser.parse_args()
-    print(json.dumps(asyncio.run(engine_replay()), indent=2))
+    experiments = {"engine": engine_replay, "jitter": jitter_replay}
+    print(json.dumps(asyncio.run(experiments[args.experiment]()), indent=2))

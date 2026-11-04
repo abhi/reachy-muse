@@ -69,7 +69,7 @@ log = logging.getLogger("reachy_muse.companion_server")
 
 SUPPORTED_VERSIONS = (VERSION,)
 PATH = "/v1"
-HELLO_TIMEOUT = 5.0
+HELLO_TIMEOUT = 10.0
 CLOSE_POLICY_VIOLATION = 1008
 CLOSE_INTERNAL_ERROR = 1011
 REMEMBERED_EXPRESSIONS = 64
@@ -116,8 +116,8 @@ class CompanionServer:
             self.port,
             ssl=self.ssl_context,
             process_request=_only_v1,
-            ping_interval=2,
-            ping_timeout=3,
+            ping_interval=5,
+            ping_timeout=10,
             # Leave room above the codec's limit so an oversize frame gets error{bad_request}, not a bare close.
             max_size=4 * MAX_TEXT_FRAME_BYTES,
         )

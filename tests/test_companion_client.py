@@ -279,7 +279,7 @@ def test_a_terminal_hearing_probe_error_reconnects_and_restores_speech(code):
     asyncio.run(scenario())
 
 
-def test_a_socket_that_never_pongs_fails_pending_work_within_two_seconds():
+def test_speech_deadline_does_not_wait_for_or_kill_a_jittery_socket():
     from websockets.asyncio.server import serve
     from reachy_muse.protocol import VERSION, Op, VoiceRole, Welcome, encode
 
@@ -301,14 +301,45 @@ def test_a_socket_that_never_pongs_fails_pending_work_within_two_seconds():
             try:
                 await asyncio.wait_for(link.settled(), 2)
                 start = asyncio.get_running_loop().time()
-                with pytest.raises(CapabilityUnavailable):
+                with pytest.raises(CapabilityUnavailable, match="speech deadline") as failed:
                     await asyncio.wait_for(anext(link.speak("Hello.", VoiceRole.MAIN)), 2.2)
                 assert asyncio.get_running_loop().time() - start < 2.2
-                assert not link.can(Op.HEAR) and not link.can(Op.SPEAK) and not link.up
-                assert link.take_outage() is True
+                assert failed.value.link_down is False
+                assert link.can(Op.SPEAK) and link.up
                 assert link.take_outage() is False
             finally:
                 release.set()
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+    asyncio.run(scenario())
+
+
+def test_jitter_bursts_do_not_drop_the_companion_link():
+    from bench.turn2 import jitter_replay
+
+    result = asyncio.run(jitter_replay())
+    assert result["bursts"] == [
+        {"jitter_s": seconds, "drops": 0} for seconds in (0, .5, 1, 1.5, 2, 3, 4, 6, 8)
+    ]
+
+
+def test_a_stalled_classification_expires_while_the_socket_still_speaks():
+    from reachy_muse.device_command import DeviceCommand
+    from reachy_muse.protocol import Op, VoiceRole
+
+    async def scenario():
+        async with FakeCompanion(stall=True, ops=(Op.CLASSIFY, Op.SPEAK, Op.NARRATE)) as companion:
+            link = CompanionLink(companion.url[:-3], token=TOKEN, out_rate=16000, insecure=True)
+            running = asyncio.create_task(link.run())
+            try:
+                await asyncio.wait_for(link.settled(), 1)
+                with pytest.raises(CapabilityUnavailable, match="classify deadline") as failed:
+                    await asyncio.wait_for(link.classify("sleep", frozenset({DeviceCommand.SLEEP})), 1.3)
+                assert failed.value.link_down is False
+                companion.stall = False
+                chunks = [pcm async for pcm in link.speak("Hello.", VoiceRole.MAIN)]
+                assert [len(pcm) for pcm in chunks] == [3200, 3200, 3200]
+            finally:
                 running.cancel()
                 await asyncio.gather(running, return_exceptions=True)
     asyncio.run(scenario())

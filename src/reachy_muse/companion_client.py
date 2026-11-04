@@ -42,14 +42,16 @@ from reachy_muse.protocol import (
 
 log = logging.getLogger(__name__)
 
-PING_INTERVAL_S = 0.5
-PING_TIMEOUT_S = 1.25
+PING_INTERVAL_S = 5.0
+PING_TIMEOUT_S = 10.0
 CLOSE_TIMEOUT_S = 0.1
-HANDSHAKE_TIMEOUT_S = 3.0
+HANDSHAKE_TIMEOUT_S = 10.0
 BACKOFF_S = (1.0, 30.0)
 HEALTHY_S = 10.0                   # a session shorter than this is a failed attempt, not a recovery
 ENDPOINT_WAIT_S = 2.0              # how long the companion has to end a stream the robot finished
 HEAR_RESPONSE_S = 2.0              # also covers a short utterance that never gets its first partial
+SPEECH_RESPONSE_S = 2.0            # each audio chunk, independently of transport pongs
+OP_RESPONSE_S = {Op.NARRATE: 4.0, Op.CLASSIFY: 1.0, Op.ANIMATE: 8.0}
 _PIN = re.compile(r"sha256:([0-9a-f]{64})")
 _FATAL = (ErrorCode.AUTH, ErrorCode.VERSION, ErrorCode.INTERNAL, ErrorCode.MODEL)
 
@@ -432,7 +434,10 @@ class CompanionLink:
         finished = False
         try:
             while True:
-                item = await queue.get()
+                try:
+                    item = await asyncio.wait_for(queue.get(), SPEECH_RESPONSE_S)
+                except asyncio.TimeoutError:
+                    raise CapabilityUnavailable("the companion speech deadline expired", link_down=False) from None
                 if item is _DONE:
                     finished = True
                     return
@@ -472,7 +477,10 @@ class CompanionLink:
         identity = self._narrate_id
         try:
             connection.send(build(identity))
-            return await future
+            try:
+                return await asyncio.wait_for(future, OP_RESPONSE_S[op])
+            except asyncio.TimeoutError:
+                raise CapabilityUnavailable(f"the companion {op.value} deadline expired", link_down=False) from None
         finally:
             waiting.pop(identity, None)
 

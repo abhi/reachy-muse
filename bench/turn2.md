@@ -39,3 +39,29 @@ The logs do not contain a native stack trace or an idle-versus-warm model
 comparison. This fixes a reproduced scheduling defect; it does not prove which
 native call stalled in the live incident. No periodic GPU warm-up is added
 without evidence of an idle penalty. Existing startup inference warm-up remains.
+
+## Transport tolerance and operation deadlines
+
+Client and server keepalives now use a 5-second interval and 10-second pong
+timeout. Opening and protocol handshakes allow 10 seconds. Hearing still has its
+2-second progress and endpoint deadlines. Speech has a 2-second chunk deadline;
+classification, narration and animation have 1, 4 and 8-second response limits.
+The existing shorter caller deadlines still apply. An expired operation fails
+that operation without declaring the socket dead. The companion's independent
+10-second loop and 30-second worker watchdogs still supervise genuine hangs.
+
+`python -m bench.turn2 jitter` pauses reads on a real loopback WebSocket just
+before a scheduled client ping. Burst lengths are 0, 0.5, 1, 1.5, 2, 3, 4, 6
+and 8 seconds. Network times are scaled by 0.05; no model work runs. Run against
+the parent revision or set the replay's imported client constants to 0.5/1.25
+for the old configuration. Each burst uses a fresh connection so reconnects
+cannot hide a drop.
+
+| Replay result | Before, 0.5/1.25 s | After, 5/10 s |
+|---|---:|---:|
+| Link drops across nine bursts | 6 | 0 |
+| Smallest burst that drops the link | 1.5 s | none through 8 s |
+
+This compares injected jitter, not a prediction of the next 72 hours. Server
+keepalive uses the same new bounds. Tests also prove that a stalled operation
+expires while the connection remains usable for a later speech request.
