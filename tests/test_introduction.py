@@ -8,7 +8,7 @@ import logging
 
 import pytest
 
-from musegadget import config
+from musegadget import config, muse_turn
 from musegadget.identity import Identity
 from musegadget.link_client import LinkSession, Outcome
 from musegadget.noise import ApplicationResponse, BodyChunk, ServiceFrame
@@ -20,8 +20,10 @@ from fake_muse_vm import make_session, registered_session
 
 
 def event(name, **payload):
-    return {"type": "event", "event": name, "payload": {
-        "session_id": "main-chat", "reply_to_message_id": "intro-user", **payload}}
+    payload = {"session_id": "main-chat", "reply_to_message_id": "intro-user", **payload}
+    if payload["reply_to_message_id"] is None:
+        del payload["reply_to_message_id"]
+    return {"type": "event", "event": name, "payload": payload}
 
 
 class Session:
@@ -385,14 +387,16 @@ def test_real_sdk_posts_text_to_main_chat_and_closes_reply_subscription(tmp_path
             post = await vm.next_frame()
             assert json.loads(post.value.body) == {
                 "message": REACHY_INTRODUCTION, "output_modality": "text", "device_id": "homelink-abcdef"}
+            replies = [event("message.user", message_id="intro-user", reply_to_message_id=None),
+                       event("task.status", task_id="intro-task", status="running", reply_to_message_id=None),
+                       event("delta.message_done", message_id="intro-reply", display_text="I'll remember.",
+                             reply_to_message_id=None),
+                       event("task.status", task_id="intro-task", status="completed", reply_to_message_id=None)]
+            await vm.send_frame(ServiceFrame.body_chunk(subscribe.stream_id, BodyChunk(
+                data=b"".join(json.dumps(reply).encode() + b"\n" for reply in replies))))
             await vm.send_frame(ServiceFrame.response(post.stream_id, ApplicationResponse(
                 status=200, body=json.dumps({"session_id": "main-chat", "message_id": "intro-user"}).encode(),
                 end_body=True)))
-            replies = [event("task.status", task_id="intro-task", status="running"),
-                       event("delta.message_done", message_id="intro-reply", display_text="I'll remember."),
-                       event("task.status", task_id="intro-task", status="completed")]
-            await vm.send_frame(ServiceFrame.body_chunk(subscribe.stream_id, BodyChunk(
-                data=b"".join(json.dumps(reply).encode() + b"\n" for reply in replies))))
             await task
             reset = await vm.next_frame()
             assert reset.kind == "reset" and reset.stream_id == subscribe.stream_id
@@ -404,3 +408,89 @@ def test_real_sdk_posts_text_to_main_chat_and_closes_reply_subscription(tmp_path
             await asyncio.gather(task, connection, return_exceptions=True)
 
     asyncio.run(asyncio.wait_for(check(), 3))
+
+
+@pytest.mark.parametrize("foreign_turn", ["earlier", "later"])
+def test_real_sdk_parentless_replies_follow_the_acknowledged_user(tmp_path, foreign_turn):
+    async def check():
+        session, vm, stop, connection = await registered_session()
+        task = asyncio.create_task(introduction.introduce_once(session, tmp_path))
+
+        async def publish(*events):
+            await vm.send_frame(ServiceFrame.body_chunk(subscribe.stream_id, BodyChunk(
+                data=b"".join(json.dumps(item).encode() + b"\n" for item in events))))
+
+        try:
+            subscribe = await vm.next_frame()
+            await vm.send_frame(ServiceFrame.response(subscribe.stream_id, ApplicationResponse(
+                status=200, end_body=False)))
+            post = await vm.next_frame()
+            if foreign_turn == "later":
+                await publish(event("message.user", message_id="intro-user", reply_to_message_id=None))
+            await publish(
+                event("message.user", message_id="phone-user", reply_to_message_id=None),
+                event("message.assistant", message_id="phone-reply", display_text="A phone answer.",
+                      reply_to_message_id=None),
+                event("task.status", task_id="phone-task", status="completed", reply_to_message_id=None))
+            await vm.send_frame(ServiceFrame.response(post.stream_id, ApplicationResponse(
+                status=200, body=b'{"session_id":"main-chat","message_id":"intro-user"}', end_body=True)))
+            await asyncio.sleep(0.15)
+            assert not task.done(), "another user's reply closed the introduction subscription"
+            if foreign_turn == "earlier":
+                await publish(event("message.user", message_id="intro-user", reply_to_message_id=None))
+            parent = None if foreign_turn == "earlier" else "intro-user"
+            await publish(
+                event("task.status", task_id="intro-task", status="running", reply_to_message_id=parent),
+                event("message.assistant", message_id="intro-reply", display_text="Remembered.",
+                      reply_to_message_id=parent),
+                event("task.status", task_id="intro-task", status="completed", reply_to_message_id=parent))
+            await task
+            reset = await vm.next_frame()
+            assert reset.kind == "reset" and reset.stream_id == subscribe.stream_id
+        finally:
+            stop.set()
+            task.cancel()
+            await asyncio.gather(task, connection, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(check(), 3))
+
+
+def test_terminal_task_without_assistant_message_finishes(tmp_path, monkeypatch):
+    monkeypatch.setattr(muse_turn, "REPLY_QUIET_S", 0.02)
+
+    async def check():
+        session = Session(reply=False)
+        task = asyncio.create_task(introduction.introduce_once(session, tmp_path))
+        try:
+            await session.posted.wait()
+            session.events.put_nowait(event("task.status", task_id="intro-task", status="completed"))
+            await asyncio.wait({task}, timeout=0.5)
+            assert ("finished" if task.done() else "waiting") == "finished"
+            await task
+            assert session.closed and session.events.empty()
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(check())
+
+
+def test_blank_completion_waits_for_reordered_assistant_text(tmp_path):
+    async def check():
+        session = Session(reply=False)
+        task = asyncio.create_task(introduction.introduce_once(session, tmp_path))
+        try:
+            await session.posted.wait()
+            session.events.put_nowait(event("delta.message_done", message_id="intro-reply", display_text=""))
+            session.events.put_nowait(event("task.status", task_id="intro-task", status="completed"))
+            await asyncio.sleep(0.15)
+            session.events.put_nowait(event("message.assistant", message_id="intro-reply",
+                                           display_text="The final text arrived after task completion."))
+            await task
+            assert session.events.qsize() == 0
+            assert session.closed
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(check(), 2))

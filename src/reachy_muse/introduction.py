@@ -29,6 +29,33 @@ INTRODUCTION_TIMEOUT_S = 180
 log = logging.getLogger(__name__)
 
 
+class _IntroductionTurn(MuseTurn):
+    def __init__(self):
+        super().__init__()
+        self._after_user = False
+
+    def feed(self, event):
+        if not self.acknowledged:
+            return super().feed(event)
+        payload = event.get("payload")
+        if event.get("type") != "event" or not isinstance(payload, dict):
+            return []
+        chat = payload.get("session_id") or event.get("session_id")
+        if chat and self.session_id and chat != self.session_id:
+            return []
+        message_id = payload.get("message_id") or event.get("message_id") or payload.get("id")
+        message_id = message_id if isinstance(message_id, str) else None
+        if event.get("event") == "message.user":
+            self._after_user = message_id in self._user_ids
+            return []
+        parent = payload.get("reply_to_message_id") or payload.get("parent_message_id")
+        parent = parent if isinstance(parent, str) else None
+        if (self._after_user or parent in self._user_ids or message_id in self.replies
+                or parent in self.replies):
+            return super().feed(event)
+        return []
+
+
 def introduction_sent(directory: Path) -> bool:
     try:
         state = json.loads((directory / INTRODUCTION_STATE_FILE).read_text(encoding="utf-8"))
@@ -61,7 +88,7 @@ async def introduce_once(session: LinkSession, directory: Path | None = None) ->
 
 async def _send_and_consume(session: LinkSession, directory: Path) -> None:
     await session.wait_transport_ready()
-    turn = MuseTurn()
+    turn = _IntroductionTurn()
     armed = asyncio.Event()
     drain = asyncio.create_task(_consume_reply(session.subscribe_chat(), turn, armed))
     subscribed = asyncio.create_task(session.chat_subscribed.wait())
@@ -84,7 +111,11 @@ async def _send_and_consume(session: LinkSession, directory: Path) -> None:
 async def _consume_reply(subscription, turn: MuseTurn, armed: asyncio.Event) -> None:
     pending = asyncio.create_task(subscription.__anext__())
     try:
-        while not (turn.replies and turn.complete(time.monotonic())):
+        while True:
+            now = time.monotonic()
+            if turn.settled(now) or (any(reply.text.strip() for reply in turn.replies.values())
+                                     and turn.complete(now)):
+                break
             done, _ = await asyncio.wait({pending}, timeout=0.1)
             if pending not in done:
                 continue
