@@ -16,7 +16,7 @@ import time
 from musegadget import config, identity, muse_api
 from musegadget.link_client import DeviceDescription, LinkSession, acknowledgement
 from musegadget.muse_turn import MuseTurn
-from musegadget.service import DEFAULT_NOISE_HOST
+from musegadget.service import DEFAULT_NOISE_HOST, Service
 
 from reachy_muse import __version__
 from reachy_muse.contract.commands import COMMAND_SPECS
@@ -60,7 +60,7 @@ async def introduce_once(session: LinkSession, directory: Path | None = None) ->
 
 
 async def _send_and_consume(session: LinkSession, directory: Path) -> None:
-    await session.registered.wait()
+    await session.wait_transport_ready()
     turn = MuseTurn()
     armed = asyncio.Event()
     drain = asyncio.create_task(_consume_reply(session.subscribe_chat(), turn, armed))
@@ -110,9 +110,15 @@ async def introduce_paired() -> None:
         raise ValueError("Reachy is not paired with Muse. Run `muse-reachy pair` on the robot first.")
     ident = identity.load_or_create()
     try:
+        api = muse_api.api_root(pairing.get("api_url_v2", ""))
         vms, status = await asyncio.to_thread(
-            muse_api.fetch_vms_with_status, pairing["access_token"],
-            muse_api.api_root(pairing.get("api_url_v2", "")))
+            muse_api.fetch_vms_with_status, pairing["access_token"], api)
+        if status == 401:
+            service = Service(identity=ident, executor=None, sdk_token=config.sdk_token())
+            pairing = await service._maybe_refresh(pairing, force=True)
+            if pairing is not None:
+                vms, status = await asyncio.to_thread(
+                    muse_api.fetch_vms_with_status, pairing["access_token"], api)
         if status != 200 or not vms:
             raise RuntimeError("Muse is unavailable")
         vm = next((vm for vm in vms if vm["is_default"]), vms[0])
@@ -120,6 +126,7 @@ async def introduce_paired() -> None:
             noise_host=pairing.get("noise_host") or DEFAULT_NOISE_HOST,
             vm_id=vm["vm_id"] or vm["vm_name"], vm_auth_token=vm["vm_auth_token"],
             device=DeviceDescription(ident.node_id, "Reachy Mini", __version__, COMMAND_SPECS),
+            register_device=False,
             run_command=lambda *args: {"ok": False, "error": "Reachy is not running"})
         stop = asyncio.Event()
         connection = asyncio.create_task(session.run(stop))

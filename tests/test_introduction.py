@@ -10,13 +10,13 @@ import pytest
 
 from musegadget import config
 from musegadget.identity import Identity
-from musegadget.link_client import Outcome
+from musegadget.link_client import LinkSession, Outcome
 from musegadget.noise import ApplicationResponse, BodyChunk, ServiceFrame
 
 from reachy_muse import cli, introduction
 from reachy_muse.contract.prompts import REACHY_INTRODUCTION
 from reachy_muse.conversation import ReachyService
-from fake_muse_vm import registered_session
+from fake_muse_vm import make_session, registered_session
 
 
 def event(name, **payload):
@@ -44,6 +44,9 @@ class Session:
             return Outcome.STOPPED
         finally:
             self.connection_closed = True
+
+    async def wait_transport_ready(self):
+        await self.registered.wait()
 
     async def send_chat(self, message):
         assert self.chat_subscribed.is_set()
@@ -249,6 +252,84 @@ def test_unpaired_yes_does_not_connect(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(introduction, "LinkSession", lambda **kwargs: pytest.fail("unpaired connection"))
     assert cli.main(["--state-dir", str(tmp_path), "introduce", "--yes"]) == 1
     assert "not paired with Muse" in capsys.readouterr().err
+
+
+def test_standalone_introduction_preserves_running_device_registration(tmp_path, monkeypatch):
+    monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
+    config.save_json(config.PAIRING_FILE, {"access_token": "fake-token"}, tmp_path)
+    monkeypatch.setattr(introduction.identity, "load_or_create", lambda: Identity("02:00:00:ab:cd:ef"))
+    monkeypatch.setattr(introduction.muse_api, "fetch_vms_with_status", lambda *args: ([
+        {"vm_id": "vm-1", "is_default": True, "vm_auth_token": "fake-vm-token"}], 200))
+
+    async def check():
+        running, running_vm, stop, connection = await registered_session()
+        link, vm = make_session(lambda *args: pytest.fail("standalone command"), [])
+        monkeypatch.setattr(introduction, "LinkSession", lambda **kwargs: LinkSession(
+            **kwargs, connect=link._connect))
+        task = asyncio.create_task(introduction.introduce_paired())
+        try:
+            await vm.handshake()
+            subscribe = await vm.next_frame()
+            assert subscribe.value.path == "/chat/subscribe"
+            await vm.send_frame(ServiceFrame.response(subscribe.stream_id, ApplicationResponse(
+                status=200, end_body=False)))
+            post = await vm.next_frame()
+            assert json.loads(post.value.body)["message"] == REACHY_INTRODUCTION
+            await vm.send_frame(ServiceFrame.response(post.stream_id, ApplicationResponse(
+                status=200, body=b'{"session_id":"main-chat","message_id":"intro-user"}', end_body=True)))
+            await vm.send_frame(ServiceFrame.body_chunk(subscribe.stream_id, BodyChunk(data=b"".join(
+                json.dumps(reply).encode() + b"\n" for reply in [
+                    event("delta.message_done", message_id="intro-reply", display_text="Remembered."),
+                    event("task.status", status="completed")]))))
+            await task
+            assert running.registered.is_set()
+            await running_vm.send_message({"method": "link.invoke", "id": "still-running",
+                                           "command": "system.run", "params": {}})
+            result = await running_vm.next_message()
+            assert result["id"] == "still-running" and result["ok"] is True
+        finally:
+            stop.set()
+            task.cancel()
+            await asyncio.gather(task, connection, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(check(), 3))
+
+
+def test_standalone_refreshes_rejected_access_token(tmp_path, monkeypatch):
+    monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(config, "sdk_token", lambda: "fake-sdk-token")
+    config.save_json(config.PAIRING_FILE, {
+        "access_token": "expired", "refresh_token": "valid-refresh", "username": "paired-user"}, tmp_path)
+    monkeypatch.setattr(introduction.identity, "load_or_create", lambda: Identity("02:00:00:ab:cd:ef"))
+    fetched, refreshed, sessions = [], [], []
+
+    def fetch(token, api):
+        fetched.append(token)
+        return ([], 401) if token == "expired" else ([
+            {"vm_id": "vm-1", "is_default": True, "vm_auth_token": "fresh-vm-token"}], 200)
+
+    def refresh(token, node_id, api, sdk_token):
+        refreshed.append((token, node_id, sdk_token))
+        return {"access_token": "fresh-access", "refresh_token": "fresh-refresh"}, 200
+
+    def connect(**kwargs):
+        assert kwargs["vm_auth_token"] == "fresh-vm-token"
+        session = Session()
+        sessions.append(session)
+        return session
+
+    monkeypatch.setattr(introduction.muse_api, "fetch_vms_with_status", fetch)
+    monkeypatch.setattr(introduction.muse_api, "refresh_device_token", refresh)
+    monkeypatch.setattr(introduction, "LinkSession", connect)
+    asyncio.run(introduction.introduce_paired())
+    assert fetched == ["expired", "fresh-access"]
+    assert refreshed == [("valid-refresh", "homelink-abcdef", "fake-sdk-token")]
+    saved = config.load_json(config.PAIRING_FILE, tmp_path)
+    assert saved["access_token"] == "fresh-access"
+    assert saved["refresh_token"] == "fresh-refresh"
+    assert saved["username"] == "paired-user"
+    assert saved["access_token_saved_at"] > 0
+    assert sessions[0].posts == [REACHY_INTRODUCTION]
 
 
 @pytest.mark.parametrize("enabled", [False, True])
