@@ -973,12 +973,14 @@ def test_plain_empty_completion_keeps_later_display_text_for_playback(streaming_
 
 
 @pytest.mark.parametrize("defer_playback", [False, True])
+@pytest.mark.parametrize("original_finished", [False, True])
 @pytest.mark.parametrize("text, expected", [
     ("Never mind.", "Please stop working on my previous request."),
     ("Also make it vegetarian.", "Also make it vegetarian."),
 ])
 def test_follow_up_after_a_plain_opening_still_reaches_the_running_task(streaming_speech,
-                                                                     defer_playback, text, expected):
+                                                                     defer_playback, original_finished,
+                                                                     text, expected):
     from dataclasses import replace
     from reachy_muse.capabilities import Endpoint
     from reachy_muse.conversation import _QueuedTurn
@@ -1007,11 +1009,22 @@ def test_follow_up_after_a_plain_opening_still_reaches_the_running_task(streamin
             await conversation._output_queue.join()
             assert speech.requests == ["I'll find a recipe."]
             assert job.turn.busy
+            sent = [("Find me a pasta recipe.", "robot-chat")]
+            if original_finished:
+                session.acknowledgement = {
+                    "ok": True, "status": 200, "response": {"result": {"message_id": "user-2"}},
+                }
+                assert await conversation._follow_up(Endpoint(b"voice", "Also make it quick."),
+                                                     _QueuedTurn(None, False, 0, timeline, ()), None) is None
+                sent.append(("Also make it quick.", "robot-chat"))
+                await conversation._queue_replies(feed(job, chat_event(
+                    "delta.message_done", "reply-1", seq=3, content="I'll find a recipe.")), job)
+                await conversation._queue_replies(feed(job, chat_event(
+                    "task.status", seq=4, status="completed")), job)
+                assert not job.turn.busy and not job.turn.complete(time.monotonic())
             held = await conversation._follow_up(Endpoint(b"voice", text),
                                                  _QueuedTurn(None, False, 0, timeline, ()), None)
-            assert session.setup_messages == [
-                ("Find me a pasta recipe.", "robot-chat"), (expected, "robot-chat"),
-            ]
+            assert session.setup_messages == [*sent, (expected, "robot-chat")]
             assert held is None
         finally:
             delivery.cancel()

@@ -452,8 +452,7 @@ class MuseJob:
 
     @property
     def backend_pending(self) -> bool:
-        return (not self.answered or not self.turn.acknowledged or self.turn.busy
-                or any(not reply.done for reply in self.turn.replies.values()))
+        return not self.answered or not self.turn.complete(time.monotonic())
 
 
 @dataclass(frozen=True)

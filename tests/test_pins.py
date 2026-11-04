@@ -633,7 +633,7 @@ def test_cancel_while_muse_works_drops_the_request_and_asks_muse_to_stop(monkeyp
     check("follow_up_cancel", run_scenario(rig, service, user))
 
 
-def test_cancel_after_the_answer_started_skips_the_rest_without_asking_muse_to_stop(monkeypatch):
+def test_cancel_after_the_answer_started_still_asks_muse_to_stop_unfinished_work(monkeypatch):
     rig = Rig(monkeypatch)
     acknowledged = {"robot": "play", "audio": "tts:" + reachy_muse.conversation.CANCEL_ACKNOWLEDGEMENT}
     rig.hardware.echo_cancelled_input = True
@@ -659,7 +659,7 @@ def test_cancel_after_the_answer_started_skips_the_rest_without_asking_muse_to_s
         rig.say()
     record = run_scenario(rig, service, user)
     assert [event["text"] for event in record["events"] if event.get("muse") == "send_chat"] == [
-        "Can you search for the latest robot news?"]
+        "Can you search for the latest robot news?", "Please stop working on my previous request."]
     assert [event["audio"] for event in record["events"] if event.get("robot") == "play"][-2:] == [
         "tts:Robots learned to fold laundry.", "tts:" + reachy_muse.conversation.CANCEL_ACKNOWLEDGEMENT]
 
@@ -695,7 +695,8 @@ def test_stop_talking_during_an_answer_silences_it_and_keeps_the_waiting_request
         rig.say()
     record = run_scenario(rig, service, user)
     assert [event["text"] for event in record["events"] if event.get("muse") == "send_chat"] == [
-        "Can you search for the latest robot news?", "What time is it in Tokyo?"]
+        "Can you search for the latest robot news?", "Please stop working on my previous request.",
+        "What time is it in Tokyo?"]
     assert [event["audio"] for event in record["events"] if event.get("robot") == "play"][-2:] == [
         "tts:Robots learned to fold laundry.", "tts:It is nine in the morning there."]
 
