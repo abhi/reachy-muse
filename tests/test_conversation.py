@@ -1113,10 +1113,10 @@ def test_plain_briefing_waits_for_display_text_after_empty_terminal_reply(monkey
     ("Rest today. Draft tail.", "Try a short walk.", ["Try a short walk."]),
     ("Rest today. Draft tail.", "Rest today.", ["Rest today."]),
     ("Rest today.", "Rest today. Walk tomorrow.", ["Rest today.", "Walk tomorrow."]),
-    ("Rest today. Draft tail.", "", []),
-    ("Rest today. Draft tail.", "  ", []),
-    ("Rest today.", "", []),
-    ("Rest today.", "  ", []),
+    ("Rest today. Draft tail.", "", ["Muse returned an empty reply. Please try again."]),
+    ("Rest today. Draft tail.", "  ", ["Muse returned an empty reply. Please try again."]),
+    ("Rest today.", "", ["Muse returned an empty reply. Please try again."]),
+    ("Rest today.", "  ", ["Muse returned an empty reply. Please try again."]),
 ])
 def test_plain_completed_reply_uses_latest_display_text_before_playback(streaming_speech,
                                                                       completed, final, expected):
@@ -1136,8 +1136,9 @@ def test_plain_completed_reply_uses_latest_display_text_before_playback(streamin
 
 @pytest.mark.parametrize("empty", ["", "  "])
 @pytest.mark.parametrize("completed", [False, True])
+@pytest.mark.parametrize("late_text", [False, True])
 def test_plain_cleared_completion_waits_for_later_display_text(streaming_speech, monkeypatch, empty,
-                                                            completed):
+                                                            completed, late_text):
     from dataclasses import replace
     from reachy_muse.turn_timeline import TurnTimeline
 
@@ -1167,15 +1168,85 @@ def test_plain_cleared_completion_waits_for_later_display_text(streaming_speech,
             await asyncio.sleep(.3)
             assert speech.requests == []
             assert hardware.played == []
-            await conversation._queue_replies(feed(job, chat_event(
-                "message.assistant", "reply-1", seq=5,
-                display_text="Rest today. Walk tomorrow.", display_text_ready=True)), job)
+            if late_text:
+                await conversation._queue_replies(feed(job, chat_event(
+                    "message.assistant", "reply-1", seq=5,
+                    display_text="Rest today. Walk tomorrow.", display_text_ready=True)), job)
             await delivery
-            assert speech.requests == ["Rest today.", "Walk tomorrow."]
-            assert len(hardware.played) == 2
+            assert speech.requests == (["Rest today.", "Walk tomorrow."] if late_text else
+                                       ["Muse returned an empty reply. Please try again."])
+            assert len(hardware.played) == len(speech.requests)
         finally:
             delivery.cancel()
             await asyncio.gather(delivery, return_exceptions=True)
+            await conversation._moments.close()
+    asyncio.run(bounded(scenario()))
+
+
+@pytest.mark.parametrize("defer_playback", [False, True])
+@pytest.mark.parametrize("audio_diagnostics", [False, True])
+@pytest.mark.parametrize("final_during_push", [False, True])
+def test_plain_empty_completion_during_first_pcm_does_not_repeat_opening(
+        streaming_speech, defer_playback, audio_diagnostics, final_during_push):
+    from dataclasses import replace
+    from reachy_muse.turn_timeline import TurnTimeline
+    from test_turn_pacing import Labels, PacedHardware
+
+    async def scenario():
+        labels = Labels()
+        loop = asyncio.get_running_loop()
+
+        async def final_text():
+            await conversation._queue_replies(feed(job, chat_event(
+                "message.assistant", "reply-1", seq=4,
+                display_text="Rest today. Walk tomorrow.", display_text_ready=True)), job)
+
+        async def empty_completion():
+            await conversation._queue_replies(feed(job, chat_event(
+                "delta.message_done", "reply-1", seq=3, content="")), job)
+            if final_during_push:
+                await final_text()
+
+        class Hardware(PacedHardware):
+            def play_audio(self, samples, *, sentence=None):
+                super().play_audio(samples)
+                if len(self.played) == 1:
+                    asyncio.run_coroutine_threadsafe(empty_completion(), loop).result(1)
+
+            def finish_sentence(self):
+                pass
+
+        class Speech:
+            async def stream(self, text, rate):
+                yield labels.samples(text)
+
+        hardware = Hardware(labels)
+        session = FakeSession()
+        conversation = VoiceConversation(
+            session, hardware, session_id="robot-chat", audio_diagnostics=audio_diagnostics,
+            backends=replace(backends_for(Mode.ON_ROBOT, session, speech=Speech()),
+                             local_style=ReplyStyle.PLAIN_SHORT))
+        job = await conversation._dispatch(b"voice", "Should I work out today?", started=time.monotonic(),
+                                           defer_playback=defer_playback, timeline=TurnTimeline())
+        await conversation._queue_replies(feed(job, chat_event("task.status", status="running")), job)
+        await conversation._queue_replies(feed(job, chat_event(
+            "delta.text_append", "reply-1", seq=2, text="Rest today. ")), job)
+        delivery = asyncio.create_task(conversation._deliver(job))
+        speaker = asyncio.create_task(conversation._play_output())
+        try:
+            while not job.reader.streams["reply-1"].spoken:
+                await asyncio.sleep(.001)
+            if not final_during_push:
+                await final_text()
+            await conversation._queue_replies(feed(job, chat_event(
+                "task.status", seq=5, status="completed")), job)
+            await delivery
+            await conversation._output_queue.join()
+            assert [labels.text(chunk) for chunk in hardware.played] == ["Rest today.", "Walk tomorrow."]
+        finally:
+            delivery.cancel()
+            speaker.cancel()
+            await asyncio.gather(delivery, speaker, return_exceptions=True)
             await conversation._moments.close()
     asyncio.run(bounded(scenario()))
 

@@ -168,6 +168,7 @@ class _SpeechJob:
     state: str = "speaking"
     role: str | None = None
     serial: int = field(default_factory=lambda: next(_SPEECH_SERIALS))
+    on_accepting: Callable[[bool], Awaitable[None]] | None = None
 
 
 _SPEECH_LABELS = {
@@ -272,6 +273,7 @@ class _ReplyStream:
     remainder: str | None = None
     narration_version: int = 0
     narration_spoken: bool = False
+    accepting: bool = False
 
 
 class ReplyReader:
@@ -309,6 +311,13 @@ class ReplyReader:
         return (self.style is ReplyStyle.PLAIN_SHORT
                 and any(not stream.closed for stream in self.streams.values()))
 
+    def awaiting_audio(self) -> bool:
+        return any(stream.accepting for stream in self.streams.values())
+
+    def set_audio_accepting(self, message_id: str, accepting: bool) -> list[SpeechSegment | NarrationSegment]:
+        self.streams[message_id].accepting = accepting
+        return [] if accepting else self._plain_segments()
+
     def _reply(self, reply: Reply) -> list[str | SpeechSegment | NarrationSegment | ProgressSegment]:
         stream = self.streams.get(reply.message_id)
         if stream is None:
@@ -334,6 +343,8 @@ class ReplyReader:
         for message_id, stream in self.streams.items():
             if stream.revised:
                 continue
+            if stream.accepting:
+                break
             if stream.reply.done:
                 remainder = stream.reply.text
                 if not stream.reply.text.strip():
@@ -342,6 +353,7 @@ class ReplyReader:
                     stream.narration_version += 1
                     if not stream.spoken:
                         stream.skip_before = stream.index
+                    stream.queued = bool(stream.spoken or stream.narration_spoken)
                     continue
                 stream.closed = True
                 if stream.plain_prefix and not stream.skip_before:
@@ -622,6 +634,7 @@ class VoiceConversation:
                         job.message_id, text=job.text, expression=job.expression,
                         state=job.state, stream_segment=True, prepared_stream=job.prepared_stream,
                         is_current=job.is_current, on_start=job.on_start, role=job.role,
+                        on_accepting=job.on_accepting,
                         turn_started=job.started, speech_serial=job.serial))
                 except _SpeechSuperseded:
                     pass
@@ -1592,6 +1605,7 @@ class VoiceConversation:
                 self._moments.prepare_closing(job.last_expression)
                 await self._end_asides(job, let_playing_finish=True)
             if ((job.answered or job.reader.has_reply_text()) and turn.complete(now) and job.replies.empty()
+                    and not job.reader.awaiting_audio()
                     and (not turn.task_finished or not job.reader.awaiting_final_text() or turn.settled(now))):
                 return TurnOutcome.ACCEPTED
             if (not job.answered and job.replies.empty() and turn.settled(now)
@@ -1660,13 +1674,17 @@ class VoiceConversation:
                 expression = classify_sentence(reply.text, Expression.parse(reply.expression)).expression
                 def mark_spoken(stream=stream):
                     stream.spoken += 1
+                async def accepting(value, message_id=reply.message_id):
+                    await self._queue_replies(job.reader.set_audio_accepting(message_id, value), job)
+                on_accepting = accepting if job.style is ReplyStyle.PLAIN_SHORT else None
                 prepared = self._prepared_speech.get((reply.message_id, reply.index))
                 if job.defer_playback:
                     self._prepared_speech.pop((reply.message_id, reply.index), None)
                     queued_at = time.monotonic()
                     await self._output_queue.put(_SpeechJob(
                         reply.message_id, reply.text, expression.value, prepared,
-                        is_current, answer_audible(mark_spoken, expression), started))
+                        is_current, answer_audible(mark_spoken, expression), started,
+                        on_accepting=on_accepting))
                     response_deadline += time.monotonic() - queued_at
                     await self._queue_replies([], job)
                     job.answered = True
@@ -1674,7 +1692,8 @@ class VoiceConversation:
                 speaking = self._speak(reply.message_id, text=reply.text, expression=expression.value,
                                        stream_segment=True,
                                        prepared_stream=prepared,
-                                       is_current=is_current, on_start=answer_audible(mark_spoken, expression))
+                                       is_current=is_current, on_start=answer_audible(mark_spoken, expression),
+                                       on_accepting=on_accepting)
             else:
                 message_id = reply.message_id if isinstance(reply, NarrationSegment) else reply
                 stream = job.reader.streams[message_id]
@@ -1961,7 +1980,8 @@ class VoiceConversation:
                      expression: str | None = None, stream_segment: bool = False,
                      voice=None, progress: bool = False, prepared_stream=None,
                      is_current=None, on_start=None, turn_started: float | None = None,
-                     role: str | None = None, speech_serial: int | None = None) -> None:
+                     role: str | None = None, speech_serial: int | None = None,
+                     on_accepting=None) -> None:
         # Direct acknowledgements/progress and deferred replies share this owner.
         # Interrupted audio is flushed before a waiting speaker acquires it.
         speech_serial = next(_SPEECH_SERIALS) if speech_serial is None else speech_serial
@@ -1976,7 +1996,7 @@ class VoiceConversation:
                         stream_segment=stream_segment, voice=voice,
                         progress=progress, prepared_stream=prepared_stream,
                         is_current=is_current, on_start=on_start, turn_started=turn_started,
-                        role=role)
+                        role=role, on_accepting=on_accepting)
                 except BaseException as exc:
                     try:
                         await self._clear_owned_audio(propagate_cancel=False)
@@ -2063,7 +2083,7 @@ class VoiceConversation:
                            expression: str | None = None, stream_segment: bool = False,
                            voice=None, progress: bool = False, prepared_stream=None,
                            is_current=None, on_start=None, turn_started: float | None = None,
-                           role: str | None = None) -> None:
+                           role: str | None = None, on_accepting=None) -> None:
         voice = voice if voice is not None else self.backends.voice
         sentence = classify_sentence(text, Expression.parse(expression)) if text and state == "speaking" else None
         if sentence is not None:
@@ -2130,29 +2150,36 @@ class VoiceConversation:
             if len(self._audible) > 8:
                 del self._audible[min(self._audible, key=self._audible.get)]
             motion = {"sentence": sentence} if timed_motion and samples_played == 0 else {}
-            if self.audio_diagnostics:
-                dispatched = time.monotonic()
-                entered = finished = dispatched
-                def measured_write():
-                    nonlocal entered, finished
-                    entered = time.monotonic()
+            accepting = timed_motion and samples_played == 0
+            if accepting and on_accepting is not None:
+                await on_accepting(True)
+            try:
+                if self.audio_diagnostics:
+                    dispatched = time.monotonic()
+                    entered = finished = dispatched
+                    def measured_write():
+                        nonlocal entered, finished
+                        entered = time.monotonic()
+                        try:
+                            self.hardware.play_audio(samples, **motion)
+                        finally:
+                            finished = time.monotonic()
                     try:
-                        self.hardware.play_audio(samples, **motion)
+                        await hardware_call(measured_write)
                     finally:
-                        finished = time.monotonic()
-                try:
-                    await hardware_call(measured_write)
-                finally:
-                    resumed = time.monotonic()
-                    for key, elapsed in (("dispatch_ms_max", entered - dispatched),
-                                         ("write_ms_max", finished - entered),
-                                         ("return_ms_max", resumed - finished)):
-                        write_timing[key] = max(write_timing[key], elapsed * 1000)
-            else:
-                await hardware_call(self.hardware.play_audio, samples, **motion)
-            if timed_motion and samples_played == 0:
-                audible()
-            samples_played += len(samples)
+                        resumed = time.monotonic()
+                        for key, elapsed in (("dispatch_ms_max", entered - dispatched),
+                                             ("write_ms_max", finished - entered),
+                                             ("return_ms_max", resumed - finished)):
+                            write_timing[key] = max(write_timing[key], elapsed * 1000)
+                else:
+                    await hardware_call(self.hardware.play_audio, samples, **motion)
+                if accepting:
+                    audible()
+                samples_played += len(samples)
+            finally:
+                if accepting and on_accepting is not None:
+                    await on_accepting(False)
         player = PCMPlayer(self.hardware.output_sample_rate, push, self._playback,
                            on_start=begin, on_pause=pause, on_resume=resume,
                            diagnostics=self.audio_diagnostics)
