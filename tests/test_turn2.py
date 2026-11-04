@@ -113,3 +113,14 @@ def test_final_that_only_extends_an_uncommitted_fragment_is_allowed():
     assert feed(job, chat_event("delta.message_done", "reply-1", seq=2,
                                content="Rest today. Tomorrow take it easy.")) == ["reply-1"]
     assert job.reader.narration_text("reply-1") == "Tomorrow take it easy."
+
+
+def test_leading_expression_marker_does_not_make_an_unchanged_final_look_revised():
+    job = plain_job()
+    assert feed(job, chat_event("delta.text_append", "reply-1",
+                               text="[reachy:happy] Rest today. Tomorrow")) == [
+        SpeechSegment("reply-1", 0, "Rest today.")]
+    job.reader.streams["reply-1"].spoken = 1
+    assert feed(job, chat_event("delta.message_done", "reply-1", seq=2,
+                               content="[reachy:happy] Rest today. Walk tomorrow.")) == ["reply-1"]
+    assert job.reader.narration_text("reply-1") == "Walk tomorrow."

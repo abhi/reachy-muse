@@ -262,6 +262,7 @@ def first_plain_sentence(text: str) -> str | None:
     if mode != "text":
         return None
     clean, _ = _plain_speech(text.lstrip())
+    clean = clean.lstrip()
     end = _sentence_boundary(clean, 0)
     return clean[:end] if end is not None else None
 

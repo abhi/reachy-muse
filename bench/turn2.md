@@ -184,3 +184,11 @@ working phase. Before: two lines at 5 and 20 seconds, "Muse says it's working
 on your request." and "Still on it." After: one line at 8 seconds, "Your workout
 answer is taking a little longer." There is no further speech through 32
 seconds. Behavior tests also retain actual new tool reports after that cue.
+
+## Preserve legacy expression prefixes
+
+Review caught a leading `[reachy:happy]` marker leaving a space in the streamed
+prefix while final cleanup removed it. The reader incorrectly classified the
+unchanged final as a revision. Both sides now trim the leading space. A literal
+two-sentence replay changes from **one sentence delivered to two**, retaining
+"Rest today." followed by "Walk tomorrow." without speaking the marker.

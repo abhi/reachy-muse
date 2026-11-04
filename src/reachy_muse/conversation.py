@@ -268,9 +268,9 @@ class _ReplyStream:
 class ReplyReader:
     """Read one Muse turn's events in Reachy's reply style.
 
-    Status becomes a ``BackendStatusSegment``. A marker or plain reply becomes its
-    message ID once it is done; an expressive JSON reply becomes its sentence and
-    progress frames as they stream, one message at a time.
+    Plain replies stream a safe opening and narrate the final remainder. Marker
+    replies wait for completion; expressive JSON streams sentence and progress
+    frames. Messages retain their arrival order.
     """
 
     def __init__(self, turn: MuseTurn, style: ReplyStyle):
