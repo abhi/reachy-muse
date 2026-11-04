@@ -58,6 +58,17 @@ def test_late_answer_still_names_its_topic_after_intervening_talk():
     asyncio.run(scenario())
 
 
+def test_startup_warms_the_persistent_whisper_worker_before_fallback():
+    from bench.turn2 import whisper_replay
+
+    result = asyncio.run(whisper_replay())
+    assert result["transcripts"] == ["Should I work out today?", "Should I work out today?"]
+    assert result["worker_reused"] is True
+    assert result["startup_ms"] >= 300
+    assert result["first_fallback_ms"] < 150
+    assert result["second_fallback_ms"] < 150
+
+
 def test_plain_prefix_keeps_final_remainder_for_narration_once():
     job = plain_job()
     assert feed(job, chat_event("delta.text_append", "reply-1", text="Rest today. You")) == [

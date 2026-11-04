@@ -151,3 +151,20 @@ the companion fallback uses 1.2 rather than 0.8 seconds.
 All five lose only 0.8 seconds of trailing silence. These fixtures establish
 capture continuity, not recognition accuracy on arbitrary pauses. Endpoint,
 CLI, audio and wake-handoff checks: 187 passed.
+
+## Warm Whisper before listening
+
+`LocalHearing.start()` now starts any transcriber with a startup method, including
+batch Whisper. Previously it called only streaming recognizers. The microphone
+already awaits this method before accepting turns, and failover already calls
+the local hearing startup. The worker's existing ready handshake includes model,
+encoder/decoder, WAV conversion and VAD warm-up, and its process remains loaded
+until shutdown or a failed/cancelled recognition.
+
+`python -m bench.turn2 whisper` uses the production Whisper process owner and
+packet protocol with a fake child that takes 300 ms to become ready and 20 ms
+per transcript. Startup changes from 0 to **324.45 ms**; first fallback changes
+from **341.62 ms to 24.36 ms**. The next transcript takes 23.25 ms in the same
+process. Both texts remain "Should I work out today?". The incident's 4.839-second
+load is moved before microphone readiness by this fix, not measured anew here.
+Startup, transcription and related checks: 108 passed, 1 skipped.

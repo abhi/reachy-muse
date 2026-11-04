@@ -163,8 +163,10 @@ class LocalHearing:
         return self.transcriber is not None
 
     async def start(self) -> None:
+        start = getattr(self.transcriber, "start", None)
+        if callable(start):
+            await start()
         if self._streaming:
-            await self.transcriber.start()
             log.info("Reachy streaming recognition ready: audio processed before endpoint")
 
     def open_turn(self, sample_rate: int, *, silence_s: float, vad=None, **options) -> LocalHearingTurn:
