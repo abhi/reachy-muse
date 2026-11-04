@@ -282,6 +282,7 @@ class ReachyController:
         self._deferred = None
         self._gesture_name = None
         self._gesture_started = 0.0
+        self._gesture_epoch = None
         self.wobbling_available = False
 
     @property
@@ -344,6 +345,7 @@ class ReachyController:
         self._last_antennas = None
         self._frozen_antennas = None
         self._gesture_name = None
+        self._gesture_epoch = None
         self._clip = None
         self._clip_line = None
         self._clip_source = None
@@ -484,6 +486,9 @@ class ReachyController:
             with self._state_lock:
                 self._sentence_active = False
                 self._sentences.cancel()
+                if self._gesture_epoch is not None:
+                    self._gesture_name = None
+                    self._gesture_epoch = None
 
     def set_state(self, state: str, *, expression: str | None = None) -> None:
         if state not in STATES:
@@ -523,6 +528,7 @@ class ReachyController:
         with self._state_lock:
             self._gesture_name = name
             self._gesture_started = time.monotonic()
+            self._gesture_epoch = None
 
     def cue_progress(self) -> None:
         """Accent a spoken progress update without changing the thinking rhythm."""
@@ -979,7 +985,9 @@ class ReachyController:
                     progress_age = None if self._progress_started is None else now - self._progress_started
                     gesture = self._gesture_name
                     gesture_age = now - self._gesture_started
-                gesture_active = gesture is not None and gesture_age < GESTURE_DURATION_S
+                    gesture_epoch = self._gesture_epoch
+                gesture_active = (gesture is not None and gesture_age < GESTURE_DURATION_S
+                                  and (gesture_epoch is None or gesture_epoch == self._sentences.epoch))
                 wants_wobbling = self._style.sway == "sdk" and state == "speaking" and not gesture_active
                 if self.wobbling_available and wants_wobbling != wobbling_active:
                     try:
@@ -1028,6 +1036,7 @@ class ReachyController:
                             self._sentence_active = False
                             self._sentence_terminal = None
                             self._gesture_name = None
+                            self._gesture_epoch = None
                         if self._clip is not None and self._clip.request is request:
                             self._clip.result = result
                         else:
@@ -1063,6 +1072,7 @@ class ReachyController:
                                         continue
                                     self._gesture_name = expression
                                     self._gesture_started = event.at
+                                    self._gesture_epoch = gesture_epoch = event.epoch
                                 gesture = expression
                                 gesture_age = elapsed
                                 gesture_active = gesture_age < GESTURE_DURATION_S
@@ -1081,6 +1091,7 @@ class ReachyController:
                         self._cue_clip(now, state, expression, state_started)
                     pose, antennas = self._state_pose(state, elapsed, expression, progress_age=progress_age)
                     pose = self._face_pose(pose)
+                    gesture_active = gesture_active and (gesture_epoch is None or gesture_epoch == self._sentences.epoch)
                     if gesture_active:
                         pose = self._gesture_pose(pose, gesture, gesture_age)
                     if previous_state == "sleeping" and state != "sleeping" and self._clip is None:

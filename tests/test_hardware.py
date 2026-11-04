@@ -1380,6 +1380,73 @@ def test_clear_between_sentence_validation_and_gesture_assignment_cannot_start_g
         controller.close()
 
 
+@pytest.mark.parametrize("expression", ["nod", "shake"])
+@pytest.mark.parametrize("explicit_replacement", [False, True])
+def test_clear_after_sentence_gesture_assignment_cancels_only_sentence_motion(
+    monkeypatch, expression, explicit_replacement,
+):
+    from reachy_muse.contract.expressions import Expression
+    from reachy_muse.motion.layers import MotionLayers, Ramp
+    from reachy_muse.motion.sentence import SentenceMotion
+
+    robot = FakeRobot()
+    controller = ReachyController(
+        pose_factory=pose_factory,
+        pose_interpolator=lambda first, last, t: first * (1 - t) + last * t,
+        sleep_on_close=False, style=MotionStyle(sway="sdk", breathing=False, expression_clips=False),
+    )
+    controller._np, controller._robot = np, robot
+    controller._output_sample_rate = 16000
+    controller._layers, controller._generated_gain = MotionLayers(controller._style), Ramp(1)
+    controller._require_running = lambda: None
+
+    class Clock:
+        now, tick, flushed = 1000.0, 0, None
+
+        def is_set(self):
+            return self.tick >= 80
+
+        def wait(self, duration):
+            self.now += duration
+            if controller._started.is_set():
+                self.tick += 1
+                if self.tick == 1:
+                    controller.play_audio(np.zeros(16000), sentence=SentenceMotion(Expression(expression)))
+                    self.now += .25
+            return self.is_set()
+
+    clock = controller._stop = Clock()
+    lock = controller._state_lock
+
+    class FlushingLock:
+        def __enter__(self):
+            return lock.__enter__()
+
+        def __exit__(self, *args):
+            lock.__exit__(*args)
+            if controller._gesture_name == expression and clock.flushed is None:
+                clock.flushed = len(robot.frames)
+                if explicit_replacement:
+                    controller.gesture(expression)
+                controller.clear_audio()
+                controller.set_state("listening")
+
+    controller._state_lock = FlushingLock()
+    monkeypatch.setattr(reachy_muse.hardware, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    monkeypatch.setattr(sys.modules[__name__], "time", SimpleNamespace(monotonic=lambda: clock.now))
+    controller._motion_loop()
+    assert controller._failure is None
+    assert clock.flushed is not None
+    poses = [controller._pose_parameters(head) for _, head, _, _ in robot.frames[clock.flushed:]]
+    assert len(poses) >= 70
+    if explicit_replacement:
+        assert max(pose["pitch" if expression == "nod" else "yaw"] for pose in poses) > 4
+    else:
+        assert max(pose["pitch"] for pose in poses) <= 1e-12
+        assert min(pose["pitch"] for pose in poses) >= -3 - 1e-12
+        np.testing.assert_allclose([pose["yaw"] for pose in poses], 0, atol=1e-12)
+
+
 def test_sleeping_bows_the_head_and_folds_the_antennas_without_the_idle_bob():
     controller = ReachyController(pose_factory=pose_factory)
     controller._np = np
