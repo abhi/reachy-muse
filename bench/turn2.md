@@ -82,3 +82,24 @@ fell from **11002.89 ms to 302.03 ms**. Both return the literal line
 user speaks and reconnects before their utterance ends. Retained local audio
 produces exactly one unchanged Muse request and one answer; a recovered link
 can voice that answer. Immediate-failure flapping still produces one outage log.
+
+## Stream the first complete sentence
+
+Plain companion replies now release their first complete, unformatted sentence
+while Muse streams the remainder. Sentence boundaries retain the existing
+abbreviation, decimal, quote and control-markup rules. Incomplete, formatted,
+oversized and structured openings keep the final narration path. The final
+reply must extend the committed prefix. An unheard mismatch replaces queued
+speech; a mismatch after speech starts drops that message's remaining speech.
+Audio already heard cannot be retracted. The final remainder still uses the
+existing narrator, including condensation for long or formatted tails.
+
+`python -m bench.turn2 answer` runs the actual conversation, reply tracker and
+speaker queue. Muse's final message follows its first sentence by 2 seconds;
+fake TTS takes 250 ms per line and emits 500 ms of audio. First sentence to
+answer audio fell from **2252.71 ms to 252.08 ms**. Both versions speak exactly
+"A light workout is a good option." and "Take a rest day if you feel worn out."
+The post-change 1500 ms gap is waiting for the second sentence's final text in
+this fixture. It is not synthesis overhead. The live 0.6-second target still
+depends on actual TTS and transport performance, which this offline run does
+not establish.

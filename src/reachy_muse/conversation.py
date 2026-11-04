@@ -28,8 +28,10 @@ from musegadget.muse_turn import AgentStatus, MuseTurn, ReplayScope, Reply, Task
 from reachy_muse.contract.commands import COMMAND_SPECS, parse_command
 from reachy_muse.contract.expressions import Expression
 from reachy_muse.contract.prompts import STOP_REQUEST, muse_request
-from reachy_muse.contract.replies import ReplyProtocolError, ReplyRevisionError, ReplyStyle, SentenceStream
-from reachy_muse.capabilities import WAKE_CUE, Backends, EndedTurn, Endpoint, Heard, LocalReply, SpokenLine
+from reachy_muse.contract.replies import (ReplyProtocolError, ReplyRevisionError, ReplyStyle, SentenceStream,
+                                          first_plain_sentence, spoken_reply)
+from reachy_muse.capabilities import EMOJI, MARKUP, WAKE_CUE, Backends, EndedTurn, Endpoint, Heard, LocalReply, SpokenLine
+from reachy_muse.protocol import MAX_LINE_BYTES
 from reachy_muse.device_command import COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow, executable
 from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, request_topic,
                                    too_short_for_follow_up)
@@ -259,6 +261,8 @@ class _ReplyStream:
     revised: bool = False
     skip_before: int = 0
     queued: bool = False
+    plain_prefix: str = ""
+    remainder: str | None = None
 
 
 class ReplyReader:
@@ -301,10 +305,51 @@ class ReplyReader:
         stream.reply = reply
         if self.style is ReplyStyle.EXPRESSIVE_JSON:
             return self._stream_segments()
+        if self.style is ReplyStyle.PLAIN_SHORT:
+            return self._plain_segments()
         if reply.done and reply.text.strip() and not stream.queued:
             stream.queued = True
             return [reply.message_id]
         return []
+
+    def narration_text(self, message_id: str) -> str:
+        stream = self.streams[message_id]
+        return stream.reply.text if stream.remainder is None else stream.remainder
+
+    def _plain_segments(self) -> list[str | SpeechSegment]:
+        queued = []
+        for message_id, stream in self.streams.items():
+            if stream.closed:
+                continue
+            if stream.reply.done:
+                stream.closed = True
+                if stream.plain_prefix:
+                    final, _ = spoken_reply(stream.reply.text)
+                    if final.startswith(stream.plain_prefix):
+                        stream.remainder = final[len(stream.plain_prefix):].strip()
+                    elif stream.spoken:
+                        log.warning("Muse revised a spoken reply; remaining speech for that message skipped")
+                        stream.revised = True
+                        continue
+                    else:
+                        stream.skip_before = stream.index
+                if self.narration_text(message_id).strip():
+                    stream.queued = True
+                    queued.append(message_id)
+            elif not stream.queued and stream.reply.bound:
+                try:
+                    prefix = first_plain_sentence(stream.reply.streamed)
+                except ReplyProtocolError:
+                    prefix = None  # structured replies keep the existing final narration path
+                if (prefix and len(prefix.encode("utf-8")) <= MAX_LINE_BYTES
+                        and not MARKUP.search(prefix) and not EMOJI.search(prefix)):
+                    stream.plain_prefix = prefix
+                    queued.append(SpeechSegment(message_id, stream.index, prefix.strip()))
+                    stream.index += 1
+                    stream.queued = True
+            if not stream.reply.done:
+                break
+        return queued
 
     def _stream_segments(self) -> list[SpeechSegment | ProgressSegment]:
         queued = []
@@ -1588,7 +1633,7 @@ class VoiceConversation:
                 if not job.answered and job.request is not None:
                     await self._answer_begins(job)
                 lines = await self.backends.narrator.lines(
-                    request_text, turn.replies[reply].text, job.style, message_id=reply)
+                    request_text, job.reader.narration_text(reply), job.style, message_id=reply)
                 job.timeline.mark("narration_done")
                 job.last_expression = next((line.expression for line in reversed(lines) if line.expression),
                                            job.last_expression)
@@ -2178,7 +2223,7 @@ class VoiceConversation:
                     heard.append((reply.message_id, reply.index,
                                   _line(reply.message_id, reply.text, reply.expression)))
                 elif isinstance(reply, str):
-                    heard.extend((reply, 0, line) for line in briefing_lines(job.turn.replies[reply].text))
+                    heard.extend((reply, 1, line) for line in briefing_lines(job.reader.narration_text(reply)))
             return ()
         finally:
             if shown:

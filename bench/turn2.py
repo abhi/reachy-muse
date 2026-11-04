@@ -189,7 +189,7 @@ async def answer_replay(*, late=False):
             first_text = time.monotonic()
             await session.events.put(chat_event("delta.text_append", "reply-1", text=first + " "))
             await asyncio.sleep(2)
-            await session.events.put(chat_event("delta.message_done", "reply-1", content=first + " " + second))
+            await session.events.put(chat_event("delta.message_done", "reply-1", seq=2, content=first + " " + second))
             await session.events.put(chat_event("task.status", seq=200, status="completed"))
         producers.append(asyncio.create_task(answer()))
 
@@ -204,9 +204,10 @@ async def answer_replay(*, late=False):
     speaker = asyncio.create_task(conversation._play_output())
     try:
         await session.chat_subscribed.wait()
-        await conversation.turn(b"\0" * 32044, recognized_text="Should I work out today?",
-                                timeline=timeline, defer_playback=True)
-        await conversation._output_queue.join()
+        async with asyncio.timeout(10):
+            await conversation.turn(b"\0" * 32044, recognized_text="Should I work out today?",
+                                    timeline=timeline, defer_playback=True)
+            await conversation._output_queue.join()
         await asyncio.gather(*producers)
         return {"first_sentence_to_audio_ms": round((starts[.1] - first_text) * 1000, 2),
                 "sentence_gap_ms": round((starts[.2] - starts[.1] - .5) * 1000, 2),

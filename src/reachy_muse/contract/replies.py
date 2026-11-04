@@ -30,7 +30,7 @@ class ReplyStyle(Enum):
     MUSE_VOICE = "muse_voice"      # Muse speaks its own TTS; legacy markers are accepted
     MARKER = "marker"              # local speech of a complete reply; legacy markers are accepted
     EXPRESSIVE_JSON = "json"       # stream plain sentences or legacy JSON frames
-    PLAIN_SHORT = "plain"          # companion narration of a complete reply
+    PLAIN_SHORT = "plain"          # stream a plain opening, then narrate the final remainder
 
 
 _MARKER = re.compile(r"\[reachy:([a-zA-Z0-9_-]{1,80})\]")
@@ -253,6 +253,17 @@ def _sentence_boundary(text: str, start: int) -> int | None:
                 continue
         return end
     return None
+
+
+def first_plain_sentence(text: str) -> str | None:
+    """A complete plain prefix, including its punctuation; no speculative tail."""
+    _check_reply_size(text)
+    mode, _, _ = _select_mode(text, final=False)
+    if mode != "text":
+        return None
+    clean, _ = _plain_speech(text.lstrip())
+    end = _sentence_boundary(clean, 0)
+    return clean[:end] if end is not None else None
 
 
 class SentenceStream:
