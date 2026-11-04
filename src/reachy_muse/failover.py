@@ -285,10 +285,9 @@ class FailoverVoice:
                             yield chunk
                         return
                     except CapabilityUnavailable as error:
-                        if not error.link_down:
-                            raise
                         reply.companion = False
-                        log.warning("Reachy companion voice disconnected; restarting the sentence locally")
+                        log.warning("Reachy companion voice unavailable (%s); restarting the sentence locally",
+                                    type(error).__name__)
                         if spoke:
                             yield SpeechRestart()
                     finally:

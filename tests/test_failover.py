@@ -288,7 +288,8 @@ def test_rested_hearing_stays_on_the_robot_and_is_tried_again_after_the_cooldown
     assert asyncio.run(run()) == [(1, 1), (2, 2), (3, 3), (4, 4), (4, 5), (5, 5)]
 
 
-def test_a_dead_link_restarts_the_sentence_and_latches_that_reply_only():
+@pytest.mark.parametrize("link_down", [False, True])
+def test_a_failed_companion_restarts_the_sentence_and_latches_that_reply_only(link_down):
     from reachy_muse.failover import FailoverVoice
     from reachy_muse.local_speech import SpeechRestart
 
@@ -298,7 +299,7 @@ def test_a_dead_link_restarts_the_sentence_and_latches_that_reply_only():
         async def stream(self, line, output_rate):
             yield np.array([1], dtype=np.float32)
             if line.text == "First sentence.":
-                raise CapabilityUnavailable("connection lost")
+                raise CapabilityUnavailable("speech unavailable", link_down=link_down)
             yield np.array([2], dtype=np.float32)
 
     class Local:
@@ -348,28 +349,69 @@ def test_a_slow_companion_chunk_is_never_replaced_with_local_audio():
     assert asyncio.run(run()) == [[1.0], [2.0]]
 
 
-def test_a_live_companion_error_does_not_silently_change_voice():
+def test_a_refused_speech_request_keeps_the_conversation_usable_and_private(monkeypatch, caplog):
+    from dataclasses import replace
+    from musegadget.identity import Identity
+    from musegadget.link_client import Outcome
+    import reachy_muse.conversation as conversation_module
+    from reachy_muse.capabilities import Mode
+    from reachy_muse.companion_client import CompanionVoice
     from reachy_muse.failover import FailoverVoice
+    from reachy_muse.local_backends import backends_for
+    from reachy_muse.protocol import AudioKind, Error, ErrorCode, SpeakDone, SpeakStart, encode_audio
+    from test_conversation import FakeHardware, FakeSession, bounded
 
-    class Companion:
-        available = True
+    private = "private-companion-error-marker"
 
-        async def stream(self, line, output_rate):
-            if line.text == "Rejected.":
-                raise CapabilityUnavailable("overloaded", link_down=False)
-            yield np.array([1, 2], dtype=np.float32)
+    class Session(FakeSession):
+        registered_at = None
 
-    class Local:
-        async def stream(self, line, output_rate):
-            yield np.array([9], dtype=np.float32)
+        async def run(self, stop):
+            await stop.wait()
+            return Outcome.STOPPED
+
+    class Speech:
+        async def stream(self, text, rate):
+            yield np.full(320, .25, dtype=np.float32)
 
     async def run():
-        route = CompanionRoute(Link())
-        route.begin_turn()
-        voice = FailoverVoice(Companion(), Local(), route)
-        with pytest.raises(CapabilityUnavailable, match="overloaded"):
-            _ = [chunk async for chunk in voice.stream(SpokenLine("Rejected.", None, "answer"), 16000)]
-        route.begin_turn()
-        return [chunk.tolist() async for chunk in voice.stream(SpokenLine("Accepted.", None, "answer"), 16000)]
+        stop = asyncio.Event()
+        session, hardware = Session(), FakeHardware()
+        requested = []
+        link = CompanionLink("ws://localhost:9", token="test", out_rate=8000, insecure=True)
 
-    assert asyncio.run(run()) == [[1.0, 2.0]]
+        class Connection(_Connection):
+            def send(self, message):
+                assert isinstance(message, SpeakStart)
+                requested.append(message.text)
+                if message.text == "Rejected.":
+                    link._receive(self, encode(Error(ErrorCode.OVERLOADED, private, stream=message.stream)))
+                else:
+                    link._receive(self, encode_audio(AudioKind.SPEECH, message.stream, 0, b"\x00\x40" * 320))
+                    link._receive(self, encode(SpeakDone(message.stream, 1)))
+
+        link._connection = Connection(None, (Op.SPEAK, Op.NARRATE))
+        link._set(LinkState.UP)
+        route = CompanionRoute(link)
+        local = backends_for(Mode.ON_ROBOT, session, speech=Speech())
+        backends = replace(local, voice=FailoverVoice(CompanionVoice(link), local.voice, route))
+
+        class Conversation(conversation_module.VoiceConversation):
+            async def run(self):
+                await self._speak("reply-a", text="Rejected.", stream_segment=True)
+                await self._speak("reply-a", text="Same reply.", stream_segment=True)
+                await self._speak("reply-b", text="Accepted.", stream_segment=True)
+                stop.set()
+                await asyncio.Event().wait()
+
+        monkeypatch.setattr(conversation_module, "VoiceConversation", Conversation)
+        service = conversation_module.ReachyService(
+            identity=Identity("02:00:00:ab:cd:ef"), executor=hardware, backends=lambda session: backends)
+        outcome = await service.serve(session, {"vm_id": "vm-1"}, stop)
+        assert (outcome, private in caplog.text) == (Outcome.STOPPED, False)
+        assert np.concatenate(hardware.played).tolist() == [.25] * 640 + [.5] * 320
+        assert requested == ["Rejected.", "Accepted."]
+        assert link.up
+        assert "CapabilityUnavailable" in caplog.text
+
+    asyncio.run(bounded(run()))
