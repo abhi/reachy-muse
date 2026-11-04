@@ -972,6 +972,55 @@ def test_plain_empty_completion_keeps_later_display_text_for_playback(streaming_
     asyncio.run(bounded(scenario()))
 
 
+@pytest.mark.parametrize("defer_playback", [False, True])
+@pytest.mark.parametrize("text, expected", [
+    ("Never mind.", "Please stop working on my previous request."),
+    ("Also make it vegetarian.", "Also make it vegetarian."),
+])
+def test_follow_up_after_a_plain_opening_still_reaches_the_running_task(streaming_speech,
+                                                                     defer_playback, text, expected):
+    from dataclasses import replace
+    from reachy_muse.capabilities import Endpoint
+    from reachy_muse.conversation import _QueuedTurn
+    from reachy_muse.turn_timeline import TurnTimeline
+
+    async def scenario():
+        hardware = FakeHardware()
+        speech = streaming_speech(hardware)
+        session = FakeSession()
+        conversation = VoiceConversation(
+            session, hardware, session_id="robot-chat",
+            backends=replace(backends_for(Mode.ON_ROBOT, session, speech=speech),
+                             local_style=ReplyStyle.PLAIN_SHORT))
+        timeline = TurnTimeline()
+        timeline.mark("endpoint")
+        job = await conversation._dispatch(b"voice", "Find me a pasta recipe.", started=time.monotonic(),
+                                           defer_playback=defer_playback, timeline=timeline)
+        await conversation._queue_replies(feed(job, chat_event("task.status", status="running")), job)
+        await conversation._queue_replies(feed(job, chat_event(
+            "delta.text_append", "reply-1", seq=2, text="I'll find a recipe. ")), job)
+        delivery = asyncio.create_task(conversation._deliver(job))
+        speaker = asyncio.create_task(conversation._play_output())
+        try:
+            while not job.answered or not hardware.played:
+                await asyncio.sleep(.001)
+            await conversation._output_queue.join()
+            assert speech.requests == ["I'll find a recipe."]
+            assert job.turn.busy
+            held = await conversation._follow_up(Endpoint(b"voice", text),
+                                                 _QueuedTurn(None, False, 0, timeline, ()), None)
+            assert session.setup_messages == [
+                ("Find me a pasta recipe.", "robot-chat"), (expected, "robot-chat"),
+            ]
+            assert held is None
+        finally:
+            delivery.cancel()
+            speaker.cancel()
+            await asyncio.gather(delivery, speaker, return_exceptions=True)
+            await conversation._moments.close()
+    asyncio.run(bounded(scenario()))
+
+
 @pytest.mark.parametrize("late_text", [False, True])
 def test_plain_opening_waits_for_display_text_after_empty_terminal_reply(streaming_speech, monkeypatch,
                                                                       late_text):
@@ -1005,6 +1054,47 @@ def test_plain_opening_waits_for_display_text_after_empty_terminal_reply(streami
     asyncio.run(bounded(scenario()))
 
 
+@pytest.mark.parametrize("late_text", [False, True])
+def test_plain_briefing_waits_for_display_text_after_empty_terminal_reply(monkeypatch, late_text):
+    from dataclasses import replace
+    from reachy_muse.conversation import _BriefingSlot
+
+    monkeypatch.setattr(muse_turn, "EMPTY_REPLY_GRACE_S", 1)
+
+    async def scenario():
+        session = FakeSession()
+        conversation = VoiceConversation(
+            session, FakeHardware(), session_id="robot-chat", reply_timeout_s=2,
+            backends=replace(backends_for(Mode.ON_ROBOT, session), local_style=ReplyStyle.PLAIN_SHORT))
+        collector = asyncio.create_task(conversation._briefing_reply(_BriefingSlot("Brief me.", lambda: False)))
+        try:
+            while conversation.job is None or not conversation.job.turn.acknowledged:
+                await asyncio.sleep(0)
+            job = conversation.job
+            await conversation._queue_replies(feed(job, chat_event(
+                "delta.text_append", "reply-1", text="Good morning. ")), job)
+            while not job.replies.empty():
+                await asyncio.sleep(0)
+            await conversation._queue_replies(feed(job, chat_event(
+                "delta.message_done", "reply-1", seq=2, content="")), job)
+            await conversation._queue_replies(feed(job, chat_event(
+                "task.status", seq=3, status="completed")), job)
+            await asyncio.sleep(.3)
+            if late_text:
+                await conversation._queue_replies(feed(job, chat_event(
+                    "message.assistant", "reply-1", seq=4,
+                    display_text="Good morning. Your appointment is at ten.", display_text_ready=True)), job)
+            lines = await collector
+            assert [line.text for line in lines] == (
+                ["Good morning.", "Your appointment is at ten."] if late_text else ["Good morning."])
+            assert conversation.job is None
+        finally:
+            collector.cancel()
+            await asyncio.gather(collector, return_exceptions=True)
+            await conversation._moments.close()
+    asyncio.run(bounded(scenario()))
+
+
 @pytest.mark.parametrize("completed, final, expected", [
     ("Rest today. Draft tail.", "Rest today. Walk tomorrow.", ["Rest today.", "Walk tomorrow."]),
     ("Rest today. Draft tail.", "Try a short walk.", ["Try a short walk."]),
@@ -1024,6 +1114,124 @@ def test_plain_completed_reply_uses_latest_display_text_before_playback(streamin
         ], speech, hardware, before_ack=True, style=ReplyStyle.PLAIN_SHORT)
         assert speech.requests == expected
         assert len(hardware.played) == len(expected)
+    asyncio.run(bounded(scenario()))
+
+
+@pytest.mark.parametrize("defer_playback", [False, True])
+@pytest.mark.parametrize("phase", ["narration", "playback"])
+@pytest.mark.parametrize("final, expected", [
+    ("Rest today. Walk tomorrow.", ["Rest today.", "Walk tomorrow."]),
+    ("Rest today.", ["Rest today."]),
+    ("Try a short walk.", ["Rest today."]),
+])
+def test_plain_revision_during_narration_or_playback_discards_the_old_tail(
+        streaming_speech, defer_playback, phase, final, expected):
+    from dataclasses import replace
+    from reachy_muse.local_backends import RuleNarrator
+    from reachy_muse.turn_timeline import TurnTimeline
+    from test_turn_pacing import Labels, PacedHardware
+
+    async def scenario():
+        labels = Labels()
+        hardware = PacedHardware(labels)
+        narrating = asyncio.Event()
+        revised = asyncio.Event()
+
+        class Speech:
+            async def stream(self, text, rate):
+                yield labels.samples(text)
+
+        class Narrator(RuleNarrator):
+            async def lines(self, request, reply, style, *, message_id=None):
+                if reply == "Draft tail.":
+                    narrating.set()
+                    if phase == "narration":
+                        await revised.wait()
+                return await super().lines(request, reply, style, message_id=message_id)
+
+        session = FakeSession()
+        conversation = VoiceConversation(
+            session, hardware, session_id="robot-chat",
+            backends=replace(backends_for(Mode.ON_ROBOT, session, speech=Speech()),
+                             narrator=Narrator(), local_style=ReplyStyle.PLAIN_SHORT))
+        job = await conversation._dispatch(b"voice", "Should I work out today?", started=time.monotonic(),
+                                           defer_playback=defer_playback, timeline=TurnTimeline())
+        await conversation._queue_replies(feed(job, chat_event("task.status", status="running")), job)
+        await conversation._queue_replies(feed(job, chat_event(
+            "delta.text_append", "reply-1", seq=2, text="Rest today. ")), job)
+        delivery = asyncio.create_task(conversation._deliver(job))
+        speaker = asyncio.create_task(conversation._play_output())
+        try:
+            while not job.answered or not hardware.played:
+                await asyncio.sleep(.001)
+            await conversation._output_queue.join()
+            assert hardware.spoken() == ["Rest today."]
+            if phase == "playback":
+                await conversation._speaker_lock.acquire()
+            await conversation._queue_replies(feed(job, chat_event(
+                "delta.message_done", "reply-1", seq=3, content="Rest today. Draft tail.")), job)
+            await narrating.wait()
+            if phase == "playback":
+                while not conversation._speech_pending:
+                    await asyncio.sleep(.001)
+            for seq in (4, 5):
+                await conversation._queue_replies(feed(job, chat_event(
+                    "message.assistant", "reply-1", seq=seq, display_text=final, display_text_ready=True)), job)
+            revised.set()
+            if phase == "playback":
+                conversation._speaker_lock.release()
+            await conversation._queue_replies(feed(job, chat_event("task.status", seq=6, status="completed")), job)
+            await delivery
+            await conversation._output_queue.join()
+            assert [labels.text(chunk) for chunk in hardware.played] == expected
+        finally:
+            revised.set()
+            delivery.cancel()
+            speaker.cancel()
+            await asyncio.gather(delivery, speaker, return_exceptions=True)
+            await conversation._moments.close()
+    asyncio.run(bounded(scenario()))
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_plain_revision_after_narration_starts_drops_the_unheard_tail(streaming_speech, streamed):
+    from test_turn_pacing import Labels, PacedHardware
+
+    async def scenario():
+        labels = Labels()
+        hardware = PacedHardware(labels)
+        synthesizing = asyncio.Event()
+        revised = asyncio.Event()
+
+        class Speech:
+            async def stream(self, text, rate):
+                if text == "Draft tail.":
+                    synthesizing.set()
+                    await revised.wait()
+                yield labels.samples(text)
+
+        async def opening(conversation):
+            while not conversation.job.answered:
+                await asyncio.sleep(.001)
+
+        async def tail(conversation):
+            await synthesizing.wait()
+
+        async def release(conversation):
+            revised.set()
+
+        script = [
+            chat_event("delta.text_append", "reply-1", text="Rest today. "),
+            opening,
+        ] if streamed else []
+        await streaming_turn([*script,
+            chat_event("delta.message_done", "reply-1", content="Rest today. Keep it light. Draft tail."),
+            tail,
+            chat_event("message.assistant", "reply-1", display_text="Rest today. Walk tomorrow.",
+                       display_text_ready=True),
+            release,
+        ], Speech(), hardware, style=ReplyStyle.PLAIN_SHORT)
+        assert [labels.text(chunk) for chunk in hardware.played] == ["Rest today.", "Keep it light."]
     asyncio.run(bounded(scenario()))
 
 

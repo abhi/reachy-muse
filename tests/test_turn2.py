@@ -4,7 +4,7 @@ import pytest
 
 from bench.turn2 import answer_replay
 from reachy_muse.contract.replies import ReplyStyle
-from reachy_muse.conversation import SpeechSegment
+from reachy_muse.conversation import NarrationSegment, SpeechSegment
 from test_conversation import acknowledge, chat_event, feed, reply_job
 
 
@@ -75,7 +75,7 @@ def test_plain_prefix_keeps_final_remainder_for_narration_once():
         SpeechSegment("reply-1", 0, "Rest today.")]
     assert feed(job, chat_event("delta.text_append", "reply-1", seq=2, text=" earned it. ")) == []
     assert feed(job, chat_event("delta.message_done", "reply-1", seq=3,
-                               content="Rest today. You earned it.")) == ["reply-1"]
+                               content="Rest today. You earned it.")) == [NarrationSegment("reply-1", 1)]
     assert job.reader.narration_text("reply-1") == "You earned it."
     assert feed(job, chat_event("delta.message_done", "reply-1", seq=4,
                                content="Rest today. You earned it.")) == []
@@ -92,7 +92,7 @@ def test_final_replacement_discards_an_unheard_prefix_or_drops_a_spoken_messages
     if spoken:
         assert result == [] and stream.revised
     else:
-        assert result == ["reply-1"] and stream.skip_before == 1
+        assert result == [NarrationSegment("reply-1", 1)] and stream.skip_before == 1
         assert job.reader.narration_text("reply-1") == "Take a rest day."
 
 
@@ -101,7 +101,8 @@ def test_final_replacement_discards_an_unheard_prefix_or_drops_a_spoken_messages
 def test_incomplete_or_formatted_openings_keep_final_narration(draft):
     job = plain_job()
     assert feed(job, chat_event("delta.text_append", "reply-1", text=draft)) == []
-    assert feed(job, chat_event("delta.message_done", "reply-1", seq=2, content="Take a rest day.")) == ["reply-1"]
+    assert feed(job, chat_event("delta.message_done", "reply-1", seq=2, content="Take a rest day.")) == [
+        NarrationSegment("reply-1", 1)]
     assert job.reader.narration_text("reply-1") == "Take a rest day."
 
 
@@ -111,7 +112,7 @@ def test_final_that_only_extends_an_uncommitted_fragment_is_allowed():
         SpeechSegment("reply-1", 0, "Rest today.")]
     job.reader.streams["reply-1"].spoken = 1
     assert feed(job, chat_event("delta.message_done", "reply-1", seq=2,
-                               content="Rest today. Tomorrow take it easy.")) == ["reply-1"]
+                               content="Rest today. Tomorrow take it easy.")) == [NarrationSegment("reply-1", 1)]
     assert job.reader.narration_text("reply-1") == "Tomorrow take it easy."
 
 
@@ -122,5 +123,5 @@ def test_leading_expression_marker_does_not_make_an_unchanged_final_look_revised
         SpeechSegment("reply-1", 0, "Rest today.")]
     job.reader.streams["reply-1"].spoken = 1
     assert feed(job, chat_event("delta.message_done", "reply-1", seq=2,
-                               content="[reachy:happy] Rest today. Walk tomorrow.")) == ["reply-1"]
+                               content="[reachy:happy] Rest today. Walk tomorrow.")) == [NarrationSegment("reply-1", 1)]
     assert job.reader.narration_text("reply-1") == "Walk tomorrow."

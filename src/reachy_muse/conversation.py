@@ -94,6 +94,12 @@ class SpeechSegment:
 
 
 @dataclass(frozen=True)
+class NarrationSegment:
+    message_id: str
+    version: int
+
+
+@dataclass(frozen=True)
 class ProgressSegment:
     text: str
     source: str = "frame"
@@ -263,7 +269,8 @@ class _ReplyStream:
     queued: bool = False
     plain_prefix: str = ""
     remainder: str | None = None
-    narration_queued: bool = False
+    narration_version: int = 0
+    narration_spoken: bool = False
 
 
 class ReplyReader:
@@ -280,7 +287,7 @@ class ReplyReader:
         self.streams: dict[str, _ReplyStream] = {}
 
     def read(self, events: list[TurnEvent]) -> list[
-            str | SpeechSegment | ProgressSegment | BackendStatusSegment | TaskFinished]:
+            str | SpeechSegment | NarrationSegment | ProgressSegment | BackendStatusSegment | TaskFinished]:
         queued = []
         for event in events:
             if isinstance(event, AgentStatus):
@@ -301,7 +308,7 @@ class ReplyReader:
         return (self.style is ReplyStyle.PLAIN_SHORT
                 and any(not stream.closed for stream in self.streams.values()))
 
-    def _reply(self, reply: Reply) -> list[str | SpeechSegment | ProgressSegment]:
+    def _reply(self, reply: Reply) -> list[str | SpeechSegment | NarrationSegment | ProgressSegment]:
         stream = self.streams.get(reply.message_id)
         if stream is None:
             stream = self.streams[reply.message_id] = _ReplyStream(reply)
@@ -321,30 +328,36 @@ class ReplyReader:
         stream = self.streams[message_id]
         return stream.reply.text if stream.remainder is None else stream.remainder
 
-    def _plain_segments(self) -> list[str | SpeechSegment]:
+    def _plain_segments(self) -> list[SpeechSegment | NarrationSegment]:
         queued = []
         for message_id, stream in self.streams.items():
             if stream.revised:
                 continue
             if stream.reply.done:
-                stream.remainder = stream.reply.text
+                remainder = stream.reply.text
                 if not stream.reply.text.strip():
                     continue
                 stream.closed = True
                 if stream.plain_prefix and not stream.skip_before:
                     final, _ = spoken_reply(stream.reply.text)
                     if final.startswith(stream.plain_prefix):
-                        stream.remainder = final[len(stream.plain_prefix):].strip()
+                        remainder = final[len(stream.plain_prefix):].strip()
                     elif stream.spoken:
                         log.warning("Muse revised a spoken reply; remaining speech for that message skipped")
                         stream.revised = True
                         continue
                     else:
                         stream.skip_before = stream.index
-                if self.narration_text(message_id).strip() and not stream.narration_queued:
-                    stream.queued = True
-                    stream.narration_queued = True
-                    queued.append(message_id)
+                if remainder != stream.remainder:
+                    if stream.narration_spoken:
+                        log.warning("Muse revised a spoken reply; remaining speech for that message skipped")
+                        stream.revised = True
+                        continue
+                    stream.remainder = remainder
+                    stream.narration_version += 1
+                    if remainder.strip():
+                        stream.queued = True
+                        queued.append(NarrationSegment(message_id, stream.narration_version))
             elif not stream.queued and stream.reply.bound:
                 try:
                     prefix = first_plain_sentence(stream.reply.streamed)
@@ -430,6 +443,11 @@ class MuseJob:
 
     def __post_init__(self) -> None:
         self.reader = ReplyReader(self.turn, self.style)
+
+    @property
+    def backend_pending(self) -> bool:
+        return (not self.answered or not self.turn.acknowledged or self.turn.busy
+                or any(not reply.done for reply in self.turn.replies.values()))
 
 
 @dataclass(frozen=True)
@@ -762,6 +780,10 @@ class VoiceConversation:
                 stream = job.reader.streams[reply.message_id]
                 if stream.revised or reply.index < stream.skip_before:
                     self._discard_prepared((reply.message_id, reply.index))
+                    continue
+            if isinstance(reply, NarrationSegment):
+                stream = job.reader.streams[reply.message_id]
+                if stream.revised or reply.version != stream.narration_version:
                     continue
             if job.progress is not None:
                 job.progress.stop()
@@ -1541,6 +1563,7 @@ class VoiceConversation:
 
         def answer_audible(then: Callable[[], None] | None = None) -> Callable[[], None]:
             def started() -> None:
+                job.answered = True
                 job.timeline.mark("first_audio")
                 job.timeline.report()
                 if then is not None:
@@ -1639,28 +1662,41 @@ class VoiceConversation:
                                        prepared_stream=prepared,
                                        is_current=is_current, on_start=answer_audible(mark_spoken))
             else:
-                if job.reader.streams[reply].revised:
+                message_id = reply.message_id if isinstance(reply, NarrationSegment) else reply
+                stream = job.reader.streams[message_id]
+                def is_current(stream=stream, reply=reply):
+                    return (not job.dropped and not stream.revised
+                            and (not isinstance(reply, NarrationSegment)
+                                 or reply.version == stream.narration_version))
+                if not is_current():
                     continue
                 await self._end_asides(job, let_playing_finish=True)
                 if not job.answered and job.request is not None:
                     await self._answer_begins(job)
+                if not is_current():
+                    continue
                 lines = await self.backends.narrator.lines(
-                    request_text, job.reader.narration_text(reply), job.style, message_id=reply)
+                    request_text, job.reader.narration_text(message_id), job.style, message_id=message_id)
+                if not is_current():
+                    continue
                 job.timeline.mark("narration_done")
                 job.last_expression = next((line.expression for line in reversed(lines) if line.expression),
                                            job.last_expression)
                 self._moments.prepare_closing(job.last_expression)
+                def mark_narrated(stream=stream):
+                    stream.narration_spoken = True
                 if job.defer_playback:
                     queued_at = time.monotonic()
                     for line in lines:
                         await self._output_queue.put(_SpeechJob(
-                            reply, line.text, line.expression.value if line.expression else None,
-                            is_current=lambda: not job.dropped, on_start=answer_audible(), started=started))
+                            message_id, line.text, line.expression.value if line.expression else None,
+                            is_current=is_current, on_start=answer_audible(mark_narrated), started=started))
                     response_deadline += time.monotonic() - queued_at
                     job.answered = True
                     continue
                 prepared = None
-                speaking = self._speak_lines(reply, lines, on_start=answer_audible())
+                speaking = self._speak_lines(message_id, lines, is_current=is_current,
+                                             on_start=answer_audible(mark_narrated))
             waiting_for_segment = False
             speech_started = time.monotonic()
             try:
@@ -1668,7 +1704,7 @@ class VoiceConversation:
             except _SpeechSuperseded:
                 if isinstance(reply, SpeechSegment):
                     self._discard_prepared((reply.message_id, reply.index))
-                    continue
+                continue
             finally:
                 # Response waiting and draining accepted audio have separate budgets.
                 response_deadline += time.monotonic() - speech_started
@@ -1755,7 +1791,7 @@ class VoiceConversation:
         if kind is FollowUp.ADD_DETAIL:
             if held is not None:
                 return replace(held, text=f"{held.text} {text}")
-            if running is not None and not running.answered:
+            if running is not None and running.backend_pending:
                 await self._add_detail(running, text)
                 return None
         if held is not None:
@@ -1828,14 +1864,14 @@ class VoiceConversation:
     async def _drop(self, job: MuseJob, *, stop_motion: bool = True) -> None:
         """Stop relaying ``job``. Muse has no cancel call, so Reachy asks it in words on the same chat.
 
-        Once the answer has started, Muse's work is done: Reachy only skips the lines not yet spoken.
+        After Muse finishes, Reachy only skips the lines not yet spoken.
         """
         job.dropped = True
         if stop_motion:
             self._moments.stop()
         if job.progress is not None:
             job.progress.stop()
-        if job.answered:
+        if not job.backend_pending:
             log.info("Reachy skipped the rest of an answer the user cancelled")
             return
         response = acknowledgement(await self.session.send_chat(STOP_REQUEST, self.session_id))
@@ -1891,11 +1927,12 @@ class VoiceConversation:
             await self._speak(None, text=text, state="thinking", stream_segment=True,
                               voice=self.backends.progress_voice, progress=True)
 
-    async def _speak_lines(self, message_id: str, lines, *, on_start: Callable[[], None] | None = None) -> None:
+    async def _speak_lines(self, message_id: str, lines, *, is_current: Callable[[], bool] | None = None,
+                           on_start: Callable[[], None] | None = None) -> None:
         for index, line in enumerate(lines):
             await self._speak(message_id, text=line.text,
                               expression=line.expression.value if line.expression else None,
-                              stream_segment=index < len(lines) - 1, on_start=on_start)
+                              stream_segment=index < len(lines) - 1, is_current=is_current, on_start=on_start)
 
     async def _speak(self, message_id: str | None, *, text: str | None = None,
                      state: str = "speaking",
@@ -2207,7 +2244,7 @@ class VoiceConversation:
             timeline.mark("muse_ack")
             await self._queue_replies(job.reader.read(job.turn.acknowledge(response)), job)
             log.info("Muse accepted Reachy's morning briefing request")
-            heard: list[tuple[str, int, SpokenLine]] = []
+            heard: list[tuple[str, int, int | None, SpokenLine]] = []
             deadline = job.dispatched_at + self.reply_timeout_s
             while not job.dropped:
                 if slot.abandoned:
@@ -2220,10 +2257,13 @@ class VoiceConversation:
                     if not self._has_output():
                         self._moments.cue(Moment.THINKING)
                 now = time.monotonic()
-                if heard and job.turn.complete(now) and job.replies.empty():
+                if (heard and job.turn.complete(now) and job.replies.empty()
+                        and (not job.turn.task_finished or not job.reader.awaiting_final_text()
+                             or job.turn.settled(now))):
                     streams = job.reader.streams
-                    return tuple(line for message_id, index, line in heard
-                                 if not streams[message_id].revised and index >= streams[message_id].skip_before)
+                    return tuple(line for message_id, index, version, line in heard
+                                 if not streams[message_id].revised and index >= streams[message_id].skip_before
+                                 and (version is None or version == streams[message_id].narration_version))
                 if job.turn.settled(now) and job.replies.empty() and not job.reader.has_reply_text():
                     log.warning("Muse finished the morning briefing without reply text")
                     return None
@@ -2235,10 +2275,13 @@ class VoiceConversation:
                 except asyncio.TimeoutError:
                     continue
                 if isinstance(reply, SpeechSegment):
-                    heard.append((reply.message_id, reply.index,
+                    heard.append((reply.message_id, reply.index, None,
                                   _line(reply.message_id, reply.text, reply.expression)))
+                elif isinstance(reply, NarrationSegment):
+                    heard.extend((reply.message_id, 1, reply.version, line)
+                                 for line in briefing_lines(job.reader.narration_text(reply.message_id)))
                 elif isinstance(reply, str):
-                    heard.extend((reply, 1, line) for line in briefing_lines(job.reader.narration_text(reply)))
+                    heard.extend((reply, 1, None, line) for line in briefing_lines(job.reader.narration_text(reply)))
             return ()
         finally:
             if shown:
