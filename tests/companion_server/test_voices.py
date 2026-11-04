@@ -149,6 +149,63 @@ def test_slow_playback_does_not_timeout_audio_already_in_the_queue():
     assert kokoro.spoken == []
 
 
+@pytest.mark.parametrize("prefetch", [False, True])
+def test_healthy_single_worker_keeps_both_sentences_on_chatterbox(prefetch):
+    import numpy as np
+
+    from reachy_muse.capabilities import SpokenLine
+    from reachy_muse.companion_client import CompanionLink, CompanionVoice
+    from reachy_muse.companion_server.engines import EchoNarrator
+    from reachy_muse.companion_server.server import CompanionServer, Engines
+    from reachy_muse.companion_server.voice_chatterbox import ChatterboxVoice
+    from reachy_muse.failover import CompanionRoute, FailoverVoice
+    from reachy_muse.local_backends import LocalVoice
+    from test_voice_chatterbox import SineTurbo
+
+    model = SineTurbo(tokens=5)
+    primary = ChatterboxVoice(open_model=lambda: model)
+    kokoro = StubKokoro()
+    server_voice = FallbackVoice(primary, kokoro)
+
+    async def run():
+        await server_voice.load()
+        model.texts.clear()
+        model.decode_s = .65
+        async with CompanionServer(Engines(voice=server_voice, narrator=EchoNarrator()), "offline-token") as server:
+            link = CompanionLink(server.url[:-3], token="offline-token", out_rate=RATE, insecure=True)
+            running = asyncio.create_task(link.run())
+            prepared = []
+            try:
+                await asyncio.wait_for(link.settled(), 1)
+                route = CompanionRoute(link)
+                assert route.begin_turn()
+                voice = FailoverVoice(CompanionVoice(link), LocalVoice(None), route)
+                lines = [SpokenLine(text, None, "answer") for text in ("First.", "Second.")]
+                if prefetch:
+                    prepared = [voice.prepare(line, RATE) for line in lines]
+                    first = await anext(prepared[0])
+                    async with asyncio.timeout(.3):
+                        while model.texts != ["First.", "Second."]:
+                            await asyncio.sleep(.01)
+                    audio = [np.concatenate([first, *[chunk async for chunk in prepared[0]]]),
+                             np.concatenate([chunk async for chunk in prepared[1]])]
+                else:
+                    audio = [np.concatenate([chunk async for chunk in voice.stream(line, RATE)]) for line in lines]
+                assert all(np.any(samples) for samples in audio)
+                assert model.texts == ["First.", "Second."]
+                assert kokoro.spoken == []
+            finally:
+                for speech in prepared:
+                    await speech.aclose()
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+
+    try:
+        asyncio.run(asyncio.wait_for(run(), 5))
+    finally:
+        primary._thread.shutdown()
+
+
 def test_when_chatterbox_fails_to_load_kokoro_speaks_every_line(caplog):
     kokoro = StubKokoro()
     voice = FallbackVoice(StubChatterbox(fail_load=True), kokoro)

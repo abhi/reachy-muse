@@ -70,6 +70,7 @@ class CompanionRoute:
         self.this_turn = False
         self.hearing = _Rest("hearing")
         self.speech = _Rest("voice")
+        self.speech_lock = asyncio.Lock()
         self.narration = _Rest("narration")
 
     def begin_turn(self) -> bool:
@@ -247,26 +248,27 @@ class FailoverVoice:
 
     async def stream(self, line: SpokenLine, output_rate: int):
         if self._on_companion(line):
-            speech = self.companion.stream(line, output_rate)
-            spoke = False
-            try:
-                while True:
-                    try:
-                        chunk = await asyncio.wait_for(speech.__anext__(), SPEECH_GAP_S)
-                    except StopAsyncIteration:
-                        self.route.speech.succeed()
-                        return
-                    spoke = True
-                    yield chunk
-            except (CapabilityUnavailable, asyncio.TimeoutError) as error:
-                reason = (f"companion speech stopped ({type(error).__name__}); "
-                          + ("repeating the line" if spoke else "speaking it"))
-                if isinstance(error, CapabilityUnavailable) and error.link_down:
-                    log.warning("Reachy's %s", reason)
-                else:
-                    self.route.speech.fail(reason)
-            finally:
-                await speech.aclose()
+            async with self.route.speech_lock:
+                speech = self.companion.stream(line, output_rate)
+                spoke = False
+                try:
+                    while True:
+                        try:
+                            chunk = await asyncio.wait_for(speech.__anext__(), SPEECH_GAP_S)
+                        except StopAsyncIteration:
+                            self.route.speech.succeed()
+                            return
+                        spoke = True
+                        yield chunk
+                except (CapabilityUnavailable, asyncio.TimeoutError) as error:
+                    reason = (f"companion speech stopped ({type(error).__name__}); "
+                              + ("repeating the line" if spoke else "speaking it"))
+                    if isinstance(error, CapabilityUnavailable) and error.link_down:
+                        log.warning("Reachy's %s", reason)
+                    else:
+                        self.route.speech.fail(reason)
+                finally:
+                    await speech.aclose()
         speech = self.local.stream(line, output_rate)
         try:
             async for chunk in speech:

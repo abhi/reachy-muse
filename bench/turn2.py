@@ -152,7 +152,7 @@ async def answer_replay(*, late=False, streamed=True):
     from reachy_muse.capabilities import Mode
     from reachy_muse.contract.replies import ReplyStyle
     from reachy_muse.conversation import VoiceConversation
-    from reachy_muse.failover import FailoverVoice, _Rest
+    from reachy_muse.failover import CompanionRoute, FailoverVoice
     from reachy_muse.local_backends import backends_for
     from test_conversation import FakeHardware, chat_event
 
@@ -195,7 +195,8 @@ async def answer_replay(*, late=False, streamed=True):
         producers.append(asyncio.create_task(answer()))
 
     session = owned_session(send_hook=send)
-    route = SimpleNamespace(this_turn=True, speech=_Rest("speech"))
+    route = CompanionRoute(SimpleNamespace(up=True))
+    route.begin_turn()
     backends = replace(backends_for(Mode.ON_ROBOT, session), local_style=ReplyStyle.PLAIN_SHORT,
                        voice=FailoverVoice(Voice(), Voice(), route))
     conversation = VoiceConversation(session, Hardware(), backends=backends,
