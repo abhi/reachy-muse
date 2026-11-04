@@ -400,6 +400,55 @@ def test_service_consumes_introduction_before_voice_on_every_route(tmp_path, mon
     asyncio.run(asyncio.wait_for(check(), 2))
 
 
+def test_service_recovers_voice_after_an_uncertain_introduction(tmp_path, monkeypatch):
+    import reachy_muse.conversation as conversation
+
+    monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
+
+    async def check():
+        states, voices, outcomes = [], [], []
+        stop = asyncio.Event()
+
+        class Hardware:
+            def set_state(self, state):
+                states.append(state)
+
+        class Voice:
+            def __init__(self, session, hardware, **kwargs):
+                voices.append(session)
+
+            async def run(self):
+                stop.set()
+
+        class LostAcknowledgement(Session):
+            async def send_chat(self, message):
+                await super().send_chat(message)
+                raise ConnectionError("acknowledgement lost")
+
+        monkeypatch.setattr(conversation, "VoiceConversation", Voice)
+        service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=Hardware(),
+                               backends=lambda _: None, introduce_to_muse=True)
+        first = LostAcknowledgement(reply=False)
+        assert await service.serve(first, {"vm_id": "vm 1&x"}, stop) is Outcome.CLOSED
+        assert first.posts == [REACHY_INTRODUCTION]
+        reconnects = [Session(), Session()]
+        for session in reconnects:
+            stop = asyncio.Event()
+            outcomes.append(await service.serve(session, {"vm_id": "vm 1&x"}, stop))
+        assert outcomes == [Outcome.STOPPED, Outcome.STOPPED]
+        assert voices == reconnects
+        assert states == ["error"]
+        assert [post for session in reconnects for post in session.posts] == []
+        retry = Session()
+        with pytest.raises(RuntimeError, match="outcome is unknown.*Check your main Muse chat"):
+            await introduction.introduce_once(retry, tmp_path, **DESTINATION, stop=retry.stop)
+        assert retry.posts == []
+        receipts = json.loads((tmp_path / introduction.INTRODUCTION_STATE_FILE).read_text())["receipts"]
+        assert [receipt["status"] for receipt in receipts] == ["pending"]
+
+    asyncio.run(asyncio.wait_for(check(), 3))
+
+
 def test_real_sdk_posts_text_to_main_chat_and_closes_reply_subscription(tmp_path):
     async def check():
         session, vm, stop, connection = await registered_session()
