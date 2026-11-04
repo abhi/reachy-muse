@@ -17,6 +17,7 @@ import wave
 import pytest
 
 from reachy_muse import local_transcription
+from reachy_muse.local_backends import LocalHearing
 from reachy_muse.local_transcription import MoonshineTranscriber, WhisperTranscriber
 
 
@@ -203,6 +204,26 @@ def test_speech_callback_arrives_before_recognition_and_never_for_silence(model,
         finally:
             await transcriber.close()
     asyncio.run(scenario())
+
+
+def test_stalled_batch_warmup_is_reaped_and_next_turn_retries(model, worker, monkeypatch):
+    monkeypatch.setenv("WHISPER_TEST_MODE", "startup_stall")
+    monkeypatch.setattr("reachy_muse.local_backends.RECOGNITION_TIMEOUT_S", .2, raising=False)
+
+    async def scenario():
+        transcriber = WhisperTranscriber(model)
+        hearing = LocalHearing(transcriber)
+        try:
+            await asyncio.wait_for(hearing.start(), 1)
+            assert len(worker[1]) == 1
+            assert worker[1][0].returncode == -9
+            monkeypatch.setenv("WHISPER_TEST_MODE", "normal")
+            assert await hearing.transcribe(recording()) == "Pineapple sunshine. Café."
+            assert len(worker[1]) == 2
+        finally:
+            await transcriber.close()
+    asyncio.run(scenario())
+    assert all(process.returncode == -9 for process in worker[1])
 
 
 @pytest.mark.parametrize("mode,message,callback_count", [

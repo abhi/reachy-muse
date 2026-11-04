@@ -18,6 +18,7 @@ from reachy_muse.progress import PUBLIC_PROGRESS_PHRASES, ProgressPlan
 
 log = logging.getLogger(__name__)
 ACKNOWLEDGEMENTS = tuple(dict.fromkeys(chain.from_iterable(FALLBACK_OPENERS.values())))
+RECOGNITION_TIMEOUT_S = 60.0
 
 class _LocalEndedTurn:
     """A turn Silero or WebRTC ended, recognized by the streaming or the batch transcriber."""
@@ -165,7 +166,12 @@ class LocalHearing:
     async def start(self) -> None:
         start = getattr(self.transcriber, "start", None)
         if callable(start):
-            await start()
+            try:
+                await asyncio.wait_for(start(), RECOGNITION_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                if self._streaming:
+                    raise
+                log.warning("Local speech recognition warm-up timed out; retrying on the next turn")
         if self._streaming:
             log.info("Reachy streaming recognition ready: audio processed before endpoint")
 
@@ -183,7 +189,7 @@ class LocalHearing:
             self._lock = asyncio.Lock()
         async with self._lock:
             started = time.monotonic()
-            text = await asyncio.wait_for(self.transcriber.transcribe(wav), 60)
+            text = await asyncio.wait_for(self.transcriber.transcribe(wav), RECOGNITION_TIMEOUT_S)
             log.info("Speech recognition took %.1fs", time.monotonic() - started)
             return text
 
