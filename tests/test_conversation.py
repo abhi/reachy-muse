@@ -1252,6 +1252,110 @@ def test_plain_empty_completion_during_first_pcm_does_not_repeat_opening(
 
 
 @pytest.mark.parametrize("defer_playback", [False, True])
+@pytest.mark.parametrize("audio_diagnostics", [False, True])
+@pytest.mark.parametrize("style", [ReplyStyle.PLAIN_SHORT, ReplyStyle.EXPRESSIVE_JSON])
+def test_reply_revision_during_first_pcm_keeps_only_the_accepted_answer(
+        streaming_speech, defer_playback, audio_diagnostics, style):
+    from dataclasses import replace
+    from reachy_muse.turn_timeline import TurnTimeline
+    from test_turn_pacing import Labels, PacedHardware
+
+    async def scenario():
+        labels = Labels()
+        loop = asyncio.get_running_loop()
+
+        async def revise():
+            event = (chat_event("delta.message_done", "reply-1", seq=3,
+                                content=sentence_frame("Try a short walk."))
+                     if style is ReplyStyle.EXPRESSIVE_JSON else
+                     chat_event("message.assistant", "reply-1", seq=3,
+                                display_text="Try a short walk.", display_text_ready=True))
+            await conversation._queue_replies(feed(job, event), job)
+            await conversation._queue_replies(feed(job, chat_event(
+                "task.status", seq=4, status="completed")), job)
+
+        class Hardware(PacedHardware):
+            def play_audio(self, samples, *, sentence=None):
+                super().play_audio(samples)
+                if len(self.played) == 1:
+                    asyncio.run_coroutine_threadsafe(revise(), loop).result(1)
+
+            def finish_sentence(self):
+                pass
+
+        class Speech:
+            async def stream(self, text, rate):
+                yield labels.samples(text)
+
+        hardware = Hardware(labels)
+        session = FakeSession()
+        conversation = VoiceConversation(
+            session, hardware, session_id="robot-chat", audio_diagnostics=audio_diagnostics,
+            backends=replace(backends_for(Mode.ON_ROBOT, session, speech=Speech()), local_style=style))
+        job = await conversation._dispatch(b"voice", "Should I work out today?", started=time.monotonic(),
+                                           defer_playback=defer_playback, timeline=TurnTimeline())
+        await conversation._queue_replies(feed(job, chat_event("task.status", status="running")), job)
+        event = (chat_event("delta.text_append", "reply-1", seq=2, text=sentence_frame("Rest today."))
+                 if style is ReplyStyle.EXPRESSIVE_JSON else
+                 chat_event("delta.message_done", "reply-1", seq=2, content="Rest today."))
+        await conversation._queue_replies(feed(job, event), job)
+        delivery = asyncio.create_task(conversation._deliver(job))
+        speaker = asyncio.create_task(conversation._play_output())
+        try:
+            assert await delivery is TurnOutcome.ACCEPTED
+            await conversation._output_queue.join()
+            assert [labels.text(chunk) for chunk in hardware.played] == ["Rest today."]
+        finally:
+            delivery.cancel()
+            speaker.cancel()
+            await asyncio.gather(delivery, speaker, return_exceptions=True)
+            await conversation._moments.close()
+    asyncio.run(bounded(scenario()))
+
+
+@pytest.mark.parametrize("empty", ["", "  "])
+def test_deferred_plain_empty_completion_before_first_pcm_announces_the_problem(streaming_speech, empty):
+    from dataclasses import replace
+    from reachy_muse.turn_timeline import TurnTimeline
+
+    async def scenario():
+        hardware = FakeHardware()
+        speech = streaming_speech(hardware)
+        session = FakeSession()
+        conversation = VoiceConversation(
+            session, hardware, session_id="robot-chat",
+            backends=replace(backends_for(Mode.ON_ROBOT, session, speech=speech),
+                             local_style=ReplyStyle.PLAIN_SHORT))
+        job = await conversation._dispatch(b"voice", "Should I work out today?", started=time.monotonic(),
+                                           defer_playback=True, timeline=TurnTimeline())
+        await conversation._queue_replies(feed(job, chat_event("task.status", status="running")), job)
+        await conversation._queue_replies(feed(job, chat_event(
+            "delta.text_append", "reply-1", seq=2, text="Rest today. ")), job)
+        await conversation._speaker_lock.acquire()
+        delivery = asyncio.create_task(conversation._deliver(job))
+        speaker = asyncio.create_task(conversation._play_output())
+        try:
+            while not conversation._speech_pending:
+                await asyncio.sleep(.001)
+            assert hardware.played == []
+            await conversation._queue_replies(feed(job, chat_event(
+                "delta.message_done", "reply-1", seq=3, content=empty)), job)
+            await conversation._queue_replies(feed(job, chat_event(
+                "task.status", seq=4, status="completed")), job)
+            assert await delivery is TurnOutcome.ACCEPTED
+            conversation._speaker_lock.release()
+            await conversation._output_queue.join()
+            assert speech.requests == ["Muse returned an empty reply. Please try again."]
+            assert len(hardware.played) == 1
+        finally:
+            delivery.cancel()
+            speaker.cancel()
+            await asyncio.gather(delivery, speaker, return_exceptions=True)
+            await conversation._moments.close()
+    asyncio.run(bounded(scenario()))
+
+
+@pytest.mark.parametrize("defer_playback", [False, True])
 @pytest.mark.parametrize("phase", ["narration", "playback"])
 @pytest.mark.parametrize("final, expected", [
     ("Rest today. Walk tomorrow.", ["Rest today.", "Walk tomorrow."]),

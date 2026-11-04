@@ -307,6 +307,9 @@ class ReplyReader:
         return any(stream.queued or (self.style is not ReplyStyle.EXPRESSIVE_JSON and stream.reply.text.strip())
                    for stream in self.streams.values())
 
+    def has_spoken_reply(self) -> bool:
+        return any(stream.spoken or stream.narration_spoken for stream in self.streams.values())
+
     def awaiting_final_text(self) -> bool:
         return (self.style is ReplyStyle.PLAIN_SHORT
                 and any(not stream.closed for stream in self.streams.values()))
@@ -314,9 +317,14 @@ class ReplyReader:
     def awaiting_audio(self) -> bool:
         return any(stream.accepting for stream in self.streams.values())
 
-    def set_audio_accepting(self, message_id: str, accepting: bool) -> list[SpeechSegment | NarrationSegment]:
+    def set_audio_accepting(self, message_id: str, accepting: bool) -> list[
+            SpeechSegment | NarrationSegment | ProgressSegment]:
         self.streams[message_id].accepting = accepting
-        return [] if accepting else self._plain_segments()
+        if accepting:
+            return []
+        if self.style is ReplyStyle.EXPRESSIVE_JSON:
+            return self._stream_segments()
+        return self._plain_segments() if self.style is ReplyStyle.PLAIN_SHORT else []
 
     def _reply(self, reply: Reply) -> list[str | SpeechSegment | NarrationSegment | ProgressSegment]:
         stream = self.streams.get(reply.message_id)
@@ -396,6 +404,8 @@ class ReplyReader:
         for message_id, stream in self.streams.items():
             if stream.closed:
                 continue
+            if stream.accepting:
+                break
             try:
                 if stream.reply.done:
                     try:
@@ -1596,6 +1606,10 @@ class VoiceConversation:
                 if then is not None:
                     then()
             return started
+
+        async def accepting(message_id: str, value: bool) -> None:
+            await self._queue_replies(job.reader.set_audio_accepting(message_id, value), job)
+
         while True:
             if job.dropped:
                 log.info("Reachy stopped relaying a cancelled Muse request")
@@ -1604,11 +1618,13 @@ class VoiceConversation:
             if turn.task_finished:
                 self._moments.prepare_closing(job.last_expression)
                 await self._end_asides(job, let_playing_finish=True)
-            if ((job.answered or job.reader.has_reply_text()) and turn.complete(now) and job.replies.empty()
+            if ((job.reader.has_spoken_reply() or job.reader.has_reply_text())
+                    and turn.complete(now) and job.replies.empty()
                     and not job.reader.awaiting_audio()
                     and (not turn.task_finished or not job.reader.awaiting_final_text() or turn.settled(now))):
                 return TurnOutcome.ACCEPTED
-            if (not job.answered and job.replies.empty() and turn.settled(now)
+            if (not job.reader.has_spoken_reply() and job.replies.empty() and turn.settled(now)
+                    and not job.reader.awaiting_audio()
                     and not job.reader.has_reply_text()):
                 await self._end_asides(job, let_playing_finish=True)
                 log.warning("Muse finished without reply text; returning to listening")
@@ -1674,9 +1690,7 @@ class VoiceConversation:
                 expression = classify_sentence(reply.text, Expression.parse(reply.expression)).expression
                 def mark_spoken(stream=stream):
                     stream.spoken += 1
-                async def accepting(value, message_id=reply.message_id):
-                    await self._queue_replies(job.reader.set_audio_accepting(message_id, value), job)
-                on_accepting = accepting if job.style is ReplyStyle.PLAIN_SHORT else None
+                on_accepting = partial(accepting, reply.message_id)
                 prepared = self._prepared_speech.get((reply.message_id, reply.index))
                 if job.defer_playback:
                     self._prepared_speech.pop((reply.message_id, reply.index), None)
@@ -1718,13 +1732,14 @@ class VoiceConversation:
                               for line in lines)
                 def mark_narrated(stream=stream):
                     stream.narration_spoken = True
+                on_accepting = partial(accepting, message_id)
                 if job.defer_playback:
                     queued_at = time.monotonic()
                     for line in lines:
                         await self._output_queue.put(_SpeechJob(
                             message_id, line.text, line.expression.value if line.expression else None,
                             is_current=is_current, on_start=answer_audible(mark_narrated, line.expression),
-                            started=started))
+                            started=started, on_accepting=on_accepting))
                     response_deadline += time.monotonic() - queued_at
                     job.answered = True
                     continue
@@ -1734,7 +1749,8 @@ class VoiceConversation:
                         await self._speak(message_id, text=line.text,
                             expression=line.expression.value if line.expression else None,
                             stream_segment=index < len(lines) - 1, is_current=is_current,
-                            on_start=answer_audible(mark_narrated, line.expression))
+                            on_start=answer_audible(mark_narrated, line.expression),
+                            on_accepting=on_accepting)
                 speaking = speak_lines()
             waiting_for_segment = False
             speech_started = time.monotonic()
