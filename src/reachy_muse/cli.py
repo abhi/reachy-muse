@@ -289,6 +289,12 @@ def parser() -> argparse.ArgumentParser:
     pair = sub.add_parser("pair", help="Open Bluetooth setup in the Muse phone app")
     pair.add_argument("--force", action="store_true")
     pair.add_argument("--timeout", type=int, default=600)
+    consent = pair.add_mutually_exclusive_group()
+    consent.add_argument("--introduce", action="store_true",
+                         help="Send Reachy's introduction after pairing, without asking")
+    consent.add_argument("--no-introduce", dest="introduce", action="store_false",
+                         help="Skip Reachy's introduction after pairing")
+    pair.set_defaults(introduce=None)
     introduce = sub.add_parser("introduce", help="Preview Reachy's introduction to your main Muse chat")
     introduce.add_argument("--yes", action="store_true", help="Send the introduction once per text version")
     for command in ("run", "doctor"):
@@ -700,6 +706,11 @@ def pair_reachy(args) -> int:
     result = pair(on_open=setup_open, force=args.force, timeout_s=args.timeout)
     if result.outcome is PairOutcome.PAIRED:
         print(f"Reachy is paired with Muse. The pairing is saved in {config.state_dir()}.")
+        if args.introduce is True or (args.introduce is None and sys.stdin.isatty()):
+            from reachy_muse.introduction import introduce_paired
+            asyncio.run(introduce_paired(
+                confirm=confirm_introduction if args.introduce is None else None,
+                register_device=True))
         return 0
     print({
         PairOutcome.ALREADY_PAIRED: f"Reachy is already paired. The pairing is saved in {config.state_dir()}. "
@@ -708,6 +719,15 @@ def pair_reachy(args) -> int:
         PairOutcome.WINDOW_CLOSED: "Setup window closed without pairing. Run `muse-reachy pair` to try again.",
     }[result.outcome], file=sys.stderr)
     return 1
+
+
+def confirm_introduction() -> bool:
+    print(f"\n{REACHY_INTRODUCTION}\n")
+    try:
+        return input("Send this introduction to your main Muse chat? [Y/n] ").strip().lower() in (
+            "", "y", "yes")
+    except EOFError:
+        return False
 
 
 def main(argv=None) -> int:

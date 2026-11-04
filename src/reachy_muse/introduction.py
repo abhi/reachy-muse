@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 import fcntl
 import hashlib
 import json
@@ -202,7 +203,8 @@ async def _consume_reply(subscription, turn: MuseTurn, armed: asyncio.Event) -> 
         await subscription.aclose()
 
 
-async def introduce_paired() -> None:
+async def introduce_paired(*, confirm: Callable[[], bool] | None = None,
+                           register_device: bool = False) -> None:
     """Use the saved pairing without starting robot hardware or voice playback."""
     pairing = config.load_json(config.PAIRING_FILE)
     if not pairing:
@@ -225,16 +227,25 @@ async def introduce_paired() -> None:
         vm_id = vm["vm_id"] or vm["vm_name"]
         if introduction_sent(config.state_dir(), vm_id=vm_id, node_id=ident.node_id):
             return
+        if confirm is not None and not confirm():
+            return
+        if config.load_json(config.PAIRING_FILE) != pairing:
+            raise RuntimeError("Reachy's pairing changed before its introduction")
         session = LinkSession(
             noise_host=pairing.get("noise_host") or DEFAULT_NOISE_HOST,
             vm_id=vm_id, vm_auth_token=vm["vm_auth_token"],
             device=DeviceDescription(ident.node_id, "Reachy Mini", __version__, COMMAND_SPECS),
-            register_device=False,
+            register_device=register_device,
             run_command=lambda *args: {"ok": False, "error": "Reachy is not running"})
         stop = asyncio.Event()
+
+        async def send() -> None:
+            if register_device:
+                await session.wait_registered()
+            await introduce_once(session, vm_id=vm_id, node_id=ident.node_id, stop=stop)
+
         connection = asyncio.create_task(session.run(stop))
-        introduction = asyncio.create_task(introduce_once(
-            session, vm_id=vm_id, node_id=ident.node_id, stop=stop))
+        introduction = asyncio.create_task(send())
         try:
             done, _ = await asyncio.wait({connection, introduction}, return_when=asyncio.FIRST_COMPLETED)
             if introduction not in done:

@@ -68,6 +68,20 @@ In the Muse phone app, enable Settings > Devices > Developer mode. Add the
 `MuseGadgetXXXXXX` device printed by the command. Select the current network
 when prompted. Reachy is already online, so no Wi-Fi password is needed.
 
+After successful pairing, an interactive terminal shows the exact introduction
+and asks whether to send it to your main Muse chat. Press Enter for yes or type
+`no` to skip it. On yes, Reachy sends the introduction after the device is
+registered and consumes Muse's reply without speaking it.
+
+Use `muse-reachy pair --introduce` to consent without a prompt, or
+`muse-reachy pair --no-introduce` to skip the introduction. Non-interactive
+pairing defaults to no, so scripts send nothing unless you pass `--introduce`.
+Pairing and the [manual introduction commands](#ask-muse-to-remember-reachy)
+share the receipt in `reachy-introduction.json` inside `--state-dir`.
+Re-pairing the same Muse VM does not offer or resend an introduction already
+sent with the current text. Pairing a different VM offers it again for that VM.
+A changed introduction text also gets a new offer.
+
 If BlueZ denies setup to the normal account, use sudo with the same explicit
 state directory, then return ownership to the service account:
 
@@ -542,10 +556,11 @@ to remember your Reachy Mini at home, its spoken replies, and how to use
 
 You can also add `--introduce-to-muse` to `muse-reachy run`. This is off by
 default and always posts to the main chat, regardless of the voice chat selection.
-Both commands record the text version, Muse account and VM, and device identity
-in `reachy-introduction.json` inside `--state-dir`. Restarts and reconnects do
-not resend it. A new destination or changed introduction text sends once more
-when you opt in. Keep this file with your pairing state.
+Pairing and both manual commands record the text version, Muse account and VM,
+and device identity in `reachy-introduction.json` inside `--state-dir`.
+Restarts and reconnects do not resend it. A new destination or changed
+introduction text sends once more when you opt in. Keep this file with your
+pairing state.
 Reachy consumes Muse's reply without speaking it or logging its contents.
 
 If a send loses its acknowledgement, its receipt stays `pending` and blocks
