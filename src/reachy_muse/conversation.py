@@ -801,7 +801,8 @@ class VoiceConversation:
             except asyncio.QueueFull:
                 raise ValueError("Muse returned too many queued speech segments") from None
             key = (reply.message_id, reply.index) if isinstance(reply, SpeechSegment) else None
-            if (not job.defer_playback and key is not None and key not in self._prepared_speech
+            if (not job.defer_playback and (job.answered or not job.context_changed)
+                    and key is not None and key not in self._prepared_speech
                     and reply.text.strip() and len(self._prepared_speech) < 2):
                 prepared = self.backends.voice.prepare(
                     _line(reply.message_id, reply.text, reply.expression), self.hardware.output_sample_rate)
@@ -1764,7 +1765,10 @@ class VoiceConversation:
             await self._output_queue.put(_SpeechJob(None, intro, is_current=lambda: not job.dropped,
                                                     started=job.started))
         else:
-            await self._speak(None, text=intro, stream_segment=True)
+            for key in tuple(self._prepared_speech):
+                self._discard_prepared(key)
+            await asyncio.gather(*self._closing_speech)
+            await self._speech_with_timeout(self._speak(None, text=intro, stream_segment=True))
 
     async def _follow_up(self, endpoint: Endpoint, request: _QueuedTurn,
                          held: _HeldRequest | None) -> _HeldRequest | None:
