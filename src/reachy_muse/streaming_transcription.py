@@ -154,6 +154,7 @@ call. A hung call kills/reaps the process and fails every affected turn.
         self._turns = {}
         self._next_id = 0
         self._wake = asyncio.Event()
+        self._acknowledged = asyncio.Event()
 
     def _check_loop(self) -> None:
         if asyncio.get_running_loop() is not self._loop:
@@ -198,6 +199,29 @@ call. A hung call kills/reaps the process and fails every affected turn.
         self._turns[turn._id] = turn
         self._enqueue(_Command(_OPEN, turn))
         return turn
+
+    async def transcribe(self, wav: bytes) -> str:
+        """Recognize a finished 16 kHz recording, fed as the worker drains the shared budget."""
+        import io
+        import wave
+
+        with wave.open(io.BytesIO(wav)) as recording:
+            if (recording.getnchannels(), recording.getsampwidth(), recording.getframerate()) != (1, 2, SAMPLE_RATE):
+                raise StreamingTranscriptionError("Streaming recognition needs mono PCM16 at 16 kHz")
+            pcm = recording.readframes(recording.getnframes())
+        turn = self.open_turn()
+        piece = 2 * min(SAMPLE_RATE // 2, self._max_samples)
+        try:
+            for start in range(0, len(pcm), piece):
+                audio = pcm[start:start + piece]
+                while self._accepting and self._pending_samples + len(audio) // 2 > self._max_samples:
+                    self._acknowledged.clear()
+                    await self._acknowledged.wait()
+                turn.feed(audio)
+        except BaseException:
+            turn.abort()
+            raise
+        return await turn.finish()
 
     def _enqueue(self, command: _Command) -> None:
         self._commands.append(command)
@@ -266,6 +290,7 @@ call. A hung call kills/reaps the process and fails every affected turn.
                     finally:
                         self._pending_samples -= len(command.pcm) // 2
                         self._inflight = None
+                        self._acknowledged.set()
                     turn = command.turn
                     if response is None:
                         self._discard(turn, StreamingTranscriptionError("Streaming model failed this utterance"))
@@ -291,6 +316,7 @@ call. A hung call kills/reaps the process and fails every affected turn.
             self._accepting = False
             self._commands.clear()
             self._pending_samples = 0
+            self._acknowledged.set()
             await self._stop_process()
 
     async def _stop_process(self) -> None:

@@ -243,6 +243,31 @@ def test_overflow_counts_inflight_pcm_discards_whole_turn_and_preserves_other_tu
     asyncio.run(scenario())
 
 
+def test_reachy_transcribes_a_finished_recording_longer_than_the_streaming_buffer(model, worker):
+    import io
+    import wave
+
+    from reachy_muse.local_backends import LocalHearing
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as recording:
+        recording.setnchannels(1)
+        recording.setsampwidth(2)
+        recording.setframerate(16000)
+        recording.writeframes(pcm(2, 16000) + pcm(0, 6 * 16000) + pcm(3, 16000))
+
+    async def scenario():
+        transcriber = SherpaStreamingTranscriber(model)
+        hearing = LocalHearing(transcriber)
+        try:
+            await hearing.start()
+            assert hearing.transcribes
+            assert await hearing.transcribe(buffer.getvalue()) == "Find a flight to Paris. on Tuesday."
+        finally:
+            await transcriber.close()
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("action", ["abort", "cancel_final"])
 def test_cancelled_inflight_result_cannot_revive_partial_or_final(model, worker, action):
     async def scenario():

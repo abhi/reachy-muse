@@ -13,7 +13,7 @@ from fake_companion import FakeCompanion
 from reachy_muse.companion_client import LinkState
 from reachy_muse.protocol import NarrateOp
 from test_companion import PARTIALS, QUESTION, Conversation, answer, hear_streams_opened, scenario, spoken_by_companion
-from test_pins import ScriptedStreamingTranscriber
+from test_pins import ScriptedStreamingTranscriber, Transcripts
 
 pytest.importorskip("numpy")
 pytest.importorskip("av")
@@ -57,6 +57,43 @@ def test_a_late_companion_hands_its_audio_to_muse_when_the_robot_only_streams(mo
             await robot.run(user)
             assert [event["muse"] for event in robot.recording.events if "muse" in event][-1:] == ["send_voice"]
             assert robot.spoken() == ["companion"]
+    scenario(run())
+
+
+class StreamingRecognizer(ScriptedStreamingTranscriber, Transcripts):
+    """Streams live turns and transcribes a finished recording, as Sherpa does."""
+
+    def __init__(self, *texts):
+        ScriptedStreamingTranscriber.__init__(self)
+        Transcripts.__init__(self, *texts)
+
+
+def test_a_cancel_heard_past_a_late_companion_still_stops_muse(monkeypatch):
+    async def muse(session, request):
+        if request == 1:
+            while session.requests < 2:
+                await asyncio.sleep(.01)
+            await session.answer(request, "Robots learned to fold laundry.")
+        else:
+            await session.answer(request, "Okay, I stopped.")
+
+    async def run():
+        async with FakeCompanion(partials=PARTIALS, frames_per_partial=12, no_endpoint=True) as companion:
+            robot = Conversation(monkeypatch, companion.url[:-3], muse,
+                                 transcriber=StreamingRecognizer("Can you search for the latest robot news?",
+                                                                 "Never mind."),
+                                 ping_interval_s=.05, ping_timeout_s=.2)
+
+            async def user():
+                await robot.speak(.8)
+                await robot.until(lambda: robot.requests(), 5)
+                await robot.speak(.8)
+                await robot.until(lambda: len(robot.requests()) == 2, 5)
+            await robot.run(user)
+            assert robot.requests() == ["Can you search for the latest robot news?",
+                                        "Please stop working on my previous request."]
+            assert [event["muse"] for event in robot.recording.events
+                    if event.get("muse") in ("send_chat", "send_voice")] == ["send_chat", "send_chat"]
     scenario(run())
 
 
