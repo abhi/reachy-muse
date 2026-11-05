@@ -1246,24 +1246,54 @@ def test_a_spoken_expression_falls_back_to_its_static_pose(options):
     assert max(rolls) < .5 and min(rolls) < -4
 
 
-def test_a_command_during_a_spoken_clip_waits_for_its_fade_out_without_a_jump():
+def test_a_command_during_a_spoken_clip_waits_for_its_fade_out_without_a_jump(monkeypatch):
+    from reachy_muse.hardware import _Command
+    from reachy_muse.motion.layers import MotionLayers, Ramp
+
     robot = FakeRobot()
-    controller = start_controller(robot, moves_factory=move_library())
-    try:
-        time.sleep(.3)
-        spoken = time.monotonic()
-        controller.set_state("speaking", expression="happy")
-        time.sleep(.5)
-        called = time.monotonic()
-        result = controller.run_command("reachy.move", {"yaw": 10, "duration": .2, "hold": 0})
-        answered = time.monotonic()
-    finally:
-        controller.close()
-    assert result["ok"] is True
-    assert answered - called == pytest.approx(.6, abs=.1)
-    rolls = rolls_between(controller, robot, spoken, answered)
+    controller = ReachyController(pose_factory=pose_factory, pose_interpolator=lambda a, b, t: a * (1 - t) + b * t,
+                                 sleep_on_close=False, style=MotionStyle(sway="sdk", breathing=False))
+    controller._np, controller._robot = np, robot
+    controller._output_sample_rate = 16000
+    controller._layers, controller._generated_gain = MotionLayers(controller._style), Ramp(1)
+    controller._moves = move_library()(EMOTIONS_DATASET)
+    controller._require_running = lambda: None
+    request = _Command("reachy.move", {"yaw": 10, "duration": .2, "hold": 0}, 1010)
+
+    class Clock:
+        now, tick, spoken, called, answered = 1000.0, 0, None, None, None
+
+        def is_set(self):
+            return self.tick >= 70
+
+        def wait(self, duration):
+            self.now += duration
+            if controller._started.is_set():
+                self.tick += 1
+                if self.tick == 1:
+                    self.spoken = self.now
+                    controller.set_state("speaking", expression="happy")
+                elif self.tick == 21:
+                    self.called = self.now
+                    controller._commands.put_nowait(request)
+            return self.is_set()
+
+    clock = controller._stop = Clock()
+
+    class Completion:
+        def set(self):
+            clock.answered = clock.now
+
+    request.done = Completion()
+    monkeypatch.setattr(reachy_muse.hardware, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    monkeypatch.setattr(sys.modules[__name__], "time", SimpleNamespace(monotonic=lambda: clock.now))
+    controller._motion_loop()
+    assert controller._failure is None
+    assert request.result["ok"] is True
+    assert clock.called - clock.spoken == pytest.approx(.5)
+    assert clock.answered - clock.called == pytest.approx(.675)
+    rolls = rolls_between(controller, robot, clock.spoken, clock.answered)
     assert max(rolls) > 9
-    # The 17-degree swing from the clip back to the static pose spreads over the 0.4 s fade.
     assert max(abs(later - earlier) for earlier, later in zip(rolls, rolls[1:])) < 3
 
 
