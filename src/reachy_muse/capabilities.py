@@ -59,6 +59,7 @@ class SpokenLine:
     expression: Optional[Expression]
     role: SpeechRole
     muse_message_id: Optional[str] = None
+    on_robot: bool = False          # play Reachy's own recording, even while the companion voices the turn
 
 
 @dataclass(frozen=True)

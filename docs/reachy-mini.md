@@ -264,7 +264,9 @@ only if Muse has sent no reply text within one second (`ACK_GRACE_S`), so a
 fast answer is never delayed behind it. An acknowledgment already playing when
 the answer arrives finishes its words; nothing else queued plays before the
 answer. A companion that returns no acknowledgment means silence. One that
-misses its 0.9-second deadline gets one of Reachy's own phrases instead. Simple
+misses its 0.9-second deadline gets one of Reachy's own phrases instead, played
+from its startup recording, because a companion that slow to narrate is slow to
+speak too. Simple
 small talk can still get a cached local reply. A failed or ungrounded acknowledgement falls back to Reachy's own phrase. The adapter
 selects the on-robot phrases locally without an additional model request.
 Startup caches their audio. Empty

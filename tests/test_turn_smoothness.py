@@ -67,7 +67,8 @@ def test_late_acknowledgement_narration_still_acknowledges_the_request(monkeypat
             robot = Conversation(monkeypatch, companion.url[:-3], answer("Castles kept dragons out.", 2.5))
             await robot.run(lambda: robot.turns(1))
             assert robot.requests() == [QUESTION]
-            assert spoken_by_companion(companion) == ["Hmm, good question.", "Castles kept dragons out."]
+            assert robot.spoken() == ["tts:Hmm, good question.", "companion"]
+            assert spoken_by_companion(companion) == ["Castles kept dragons out."]
     scenario(run())
 
 

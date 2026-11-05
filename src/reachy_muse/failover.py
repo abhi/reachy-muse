@@ -9,7 +9,7 @@ import asyncio
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional, Tuple, Union
 
 from reachy_muse.contract.replies import ReplyStyle
@@ -296,6 +296,8 @@ class FailoverVoice:
                                                    if reply.companion else 0.0))
 
     def _reply_for(self, line: SpokenLine) -> _VoiceReply:
+        if line.on_robot and self.local.is_presynthesized(line.text):
+            return _VoiceReply(False)
         return _VoiceReply(self.route.link.up) if self.standalone else self.route.voice_reply(line)
 
     def stream(self, line: SpokenLine, output_rate: int):
@@ -341,7 +343,13 @@ LATE = _Late()
 
 
 def settle(heard: Heard, guess: Intent, got: Union[CompanionOpening, _Late, None], local: RuleNarrator) -> Opener:
-    if got is LATE or got is None:
+    if got is LATE:
+        # A companion this slow to narrate is slow to speak too; the recording plays at once.
+        opening = local.hold(guess, heard)
+        if isinstance(opening, Hold) and opening.line is not None:
+            return Hold(opening.intent, replace(opening.line, on_robot=True))
+        return opening
+    if got is None:
         return local.hold(guess, heard)
     intent = got.intent or guess
     if intent is Intent.CHAT:
