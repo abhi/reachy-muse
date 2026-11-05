@@ -91,13 +91,13 @@ def test_unspoken_payloads_are_rejected(text):
     assert validate_public_progress(text) is None
 
 
-def test_waiting_cue_speaks_once_then_stays_silent():
+def test_waiting_cues_move_on_twice_then_stay_silent():
     plan = ProgressPlan("Find flights.", 100, **TWENTY_S, max_updates=4)
     assert plan.take(119.99) is None
     assert [plan.take(due) for due in (120, 140, 160, 180, 200)] == [
         ProgressUpdate("Muse is still working on your flights.", "waiting"),
-        None,
-        None,
+        ProgressUpdate("Still on it. Muse hasn't finished yet.", "waiting"),
+        ProgressUpdate("This one is taking Muse a while. I'll tell you as soon as it's ready.", "waiting"),
         None,
         None,
     ]
@@ -304,15 +304,15 @@ def test_actual_field_timing_keeps_initial_phase_until_reply_arrives():
 
 
 @pytest.mark.parametrize("phase", ["working", "responding"])
-def test_generic_phase_does_not_add_filler_before_or_after_contextual_waiting(phase):
+def test_generic_phase_adds_nothing_to_the_waiting_lines(phase):
     plan = ProgressPlan("Find flights.", 0, **TWENTY_S)
     plan.set_status(backend_status_from_event(phase, "Private words"), 15)
     assert plan.take(20) == ProgressUpdate("Muse is still working on your flights.", "waiting")
-    assert plan.take(40) is None
+    assert plan.take(40) == ProgressUpdate("Still on it. Muse hasn't finished yet.", "waiting")
     stale = ProgressPlan("Find flights.", 0, **TWENTY_S)
     stale.set_status(backend_status_from_event(phase, None), 1)
     assert stale.take(20) == ProgressUpdate("Muse is still working on your flights.", "waiting")
-    assert stale.take(40) is None
+    assert stale.take(40) == ProgressUpdate("Still on it. Muse hasn't finished yet.", "waiting")
 
 
 @pytest.mark.parametrize("phase", ["online", "idle", "unknown"])
@@ -480,21 +480,24 @@ def test_fresh_backend_action_replaces_a_stale_unspoken_frame():
     assert not plan.offer("I started searching for sources.", 33)
 
 
-def test_default_cadence_allows_one_contextual_line_at_six_seconds():
+def test_default_cadence_speaks_three_waiting_lines_from_six_seconds():
     plan = ProgressPlan("Should I work out today?", 0)
     assert plan.set_status(backend_status_from_event("working", "is working"), 1)
     assert plan.take(5.99) is None
     assert plan.take(6) == ProgressUpdate("Muse is still working on your workout question.", "waiting")
-    assert [plan.take(due) for due in (21, 36, 51, 66, 81, 96)] == [None] * 6
+    assert [plan.take(due) for due in (21, 36, 51, 66, 81, 96)] == [
+        ProgressUpdate("Still on it. Muse hasn't finished yet.", "waiting"),
+        ProgressUpdate("This one is taking Muse a while. I'll tell you as soon as it's ready.", "waiting"),
+        None, None, None, None]
 
 
-def test_a_new_specific_label_can_speak_after_the_only_waiting_line():
+def test_a_new_specific_label_speaks_after_a_waiting_line_and_ends_the_waiting_lines():
     plan = ProgressPlan("Research this.", 0)
     assert plan.take(8) == ProgressUpdate('Muse is still working on "Research this".', "waiting")
-    assert plan.take(23) is None
-    assert plan.set_status(backend_status_from_event("working", "Searching web"), 30)
-    assert plan.take(30) == ProgressUpdate("Searching the web now.", "backend")
-    assert plan.take(50) is None
+    assert plan.set_status(backend_status_from_event("working", "Searching web"), 20)
+    assert plan.take(23) == ProgressUpdate("Searching the web now.", "backend")
+    assert plan.take(38) is None
+    assert plan.take(53) is None
 
 
 @pytest.mark.parametrize("request_text", ["", "Look at https://private.example", "Check my password"])
@@ -511,6 +514,15 @@ def test_the_waiting_line_is_announced_once_ahead_of_its_due_time():
     assert plan.upcoming_waiting(3, 3) == "Muse is still working on your workout question."
     assert plan.upcoming_waiting(4, 3) is None
     assert plan.take(6) == ProgressUpdate("Muse is still working on your workout question.", "waiting")
+
+
+def test_each_later_waiting_line_is_announced_ahead_of_its_own_due_time():
+    plan = ProgressPlan("Should I work out today?", 0)
+    assert plan.upcoming_waiting(3, 3) == "Muse is still working on your workout question."
+    assert plan.take(6) == ProgressUpdate("Muse is still working on your workout question.", "waiting")
+    assert plan.upcoming_waiting(17.99, 3) is None
+    assert plan.upcoming_waiting(18, 3) == "Still on it. Muse hasn't finished yet."
+    assert plan.upcoming_waiting(19, 3) is None
 
 
 def test_no_waiting_line_is_announced_after_progress_was_spoken_or_stopped():

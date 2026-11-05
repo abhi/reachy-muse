@@ -20,9 +20,9 @@ from reachy_muse.local_speech import PiperSpeech
 from test_local_speech import worker  # noqa: F401
 
 
-# Playback digests after removing generic waiting phrases from the progress cache.
-REPLAY_PCM_SHA256 = "a790e66a35a30b59bcd3677849a8cdafece3255444392c30f8590b52cbf5563d"
-PIPER_PCM_SHA256 = "175e36d958923eb4173cd1394d9b563a58e7ec78708eccff422844b3035afe78"
+# Playback digests of every phrase cached at startup, including the progress phrases.
+REPLAY_PCM_SHA256 = "8c04610c5890ba5e5d29e563884ccefe7b9813edbcea240c612883c65226f8e7"
+PIPER_PCM_SHA256 = "79a84c3229a6a68bfc7b60e2c5c80dd488414d65445994b7a4f72f54b633f4c4"
 
 
 @pytest.fixture
@@ -38,10 +38,10 @@ def test_reconnection_reaches_ready_with_baseline_audio_and_no_new_synthesis(mod
         speech, progress = ReplaySpeech(model, 0), ReplaySpeech(model, 0)
         _, before = await startup(speech, progress)
         assert before == REPLAY_PCM_SHA256
-        assert (len(speech.requests), len(progress.requests)) == (14, 25)
+        assert (len(speech.requests), len(progress.requests)) == (14, 27)
         _, after = await startup(speech, progress)
         assert after == REPLAY_PCM_SHA256
-        assert (len(speech.requests), len(progress.requests)) == (14, 25)
+        assert (len(speech.requests), len(progress.requests)) == (14, 27)
     asyncio.run(scenario())
 
 

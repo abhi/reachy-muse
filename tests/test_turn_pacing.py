@@ -152,7 +152,7 @@ def test_an_answer_arriving_mid_acknowledgement_lets_it_finish_then_plays_at_onc
     assert hardware.timeline[1][1] - finished_ack < .3
 
 
-def test_a_long_turn_without_status_says_one_contextual_line_then_waits_quietly(monkeypatch):
+def test_a_long_turn_without_status_says_three_waiting_lines_then_waits_quietly(monkeypatch):
     from reachy_muse.progress import ProgressPlan
     labels = Labels()
     hardware = PacedHardware(labels)
@@ -174,7 +174,7 @@ def test_a_long_turn_without_status_says_one_contextual_line_then_waits_quietly(
 
     def working_then_answer(session):
         async def muse():
-            while len(hardware.spoken()) < 2:
+            while len(hardware.spoken()) < 4:
                 await asyncio.sleep(.01)
             await asyncio.sleep(1.5)
             await session.events.put(chat_event("delta.message_done", "reply-1", seq=2,
@@ -187,7 +187,8 @@ def test_a_long_turn_without_status_says_one_contextual_line_then_waits_quietly(
 
     run_turn(monkeypatch, paced, working_then_answer)
     assert hardware.spoken() == [
-        "Hmm, good question.", 'Muse is still working on "robot history".', "Robots began as toys."]
+        "Hmm, good question.", 'Muse is still working on "robot history".', "Still on it. Muse hasn't finished yet.",
+        "This one is taking Muse a while. I'll tell you as soon as it's ready.", "Robots began as toys."]
     assert narrated == []
 
 

@@ -25,6 +25,8 @@ _FLIGHT_WAIT = "Muse is still working on your flights."
 _WEATHER_WAIT = "Muse is still working on your weather question."
 _WORKOUT_WAIT = "Muse is still working on your workout question."
 _REQUEST_WAIT = "Muse is still working on your request."
+_LATER_WAITS = ("Still on it. Muse hasn't finished yet.",
+                "This one is taking Muse a while. I'll tell you as soon as it's ready.")
 _RESPONDING = "Muse is preparing a reply."
 _FLIGHTS = "Looking at flights now."
 _FARES = "Checking fares now."
@@ -49,7 +51,7 @@ _RESPONDING_HISTORY = {
 }
 
 PUBLIC_PROGRESS_PHRASES = (
-    _FLIGHT_WAIT, _WEATHER_WAIT, _WORKOUT_WAIT, _REQUEST_WAIT,
+    _FLIGHT_WAIT, _WEATHER_WAIT, _WORKOUT_WAIT, _REQUEST_WAIT, *_LATER_WAITS,
     _FLIGHTS, _FARES, _COMPARE, _WEB, _SOURCES, _WEBSITE, _CONNECTOR,
     _LATEST_FLIGHTS, _LATEST_FARES, _LATEST_COMPARE, _LATEST_WEB,
     _LATEST_SOURCES, _LATEST_WEBSITE, _LATEST_CONNECTOR,
@@ -164,15 +166,20 @@ def backend_status_from_event(activity_code: object, activity_text: object) -> B
 
 
 class ProgressPlan:
-    """One contextual wait cue; further speech requires a new public report."""
+    """A contextual wait cue, then up to two later ones while Muse reports nothing to speak.
+
+    Once a public report is spoken, further speech requires a new one.
+    """
 
     def __init__(self, request_text: str, started: float, *, intent: Intent = Intent.QUESTION,
                  first_delay_s: float = PROGRESS_FIRST_S,
                  interval_s: float = PROGRESS_EVERY_S, expiry_s: float = 10,
                  max_updates: int | None = PROGRESS_MAX_LINES):
         self.intent = intent
-        self._waiting = waiting_progress(request_text)
-        self._waiting_announced = False
+        waiting = waiting_progress(request_text)
+        self._waiting_lines = () if waiting is None else (waiting, *_LATER_WAITS)
+        self._announced: set[str] = set()
+        self._spoke_report = False
         self._first_due = started + first_delay_s
         self._interval_s = interval_s
         self._expiry_s = expiry_s
@@ -187,12 +194,19 @@ class ProgressPlan:
         self._stopped = False
 
     def upcoming_waiting(self, now: float, lead_s: float) -> str | None:
-        """The waiting line, once, ``lead_s`` before it can be due, so its audio is ready in time."""
-        if (self._waiting_announced or self._stopped or self._emitted or self._waiting is None
-                or now < self._first_due - lead_s):
+        """The next waiting line, once, ``lead_s`` before it can be due, so its audio is ready in time."""
+        line = self._next_waiting()
+        due = self._first_due if self._last_cue is None else max(self._first_due, self._last_cue + self._interval_s)
+        if line is None or line in self._announced or now < due - lead_s:
             return None
-        self._waiting_announced = True
-        return self._waiting
+        self._announced.add(line)
+        return line
+
+    def _next_waiting(self) -> str | None:
+        if (self._stopped or (self._max_updates is not None and self._emitted >= self._max_updates)
+                or self._spoke_report or self._emitted >= len(self._waiting_lines)):
+            return None
+        return self._waiting_lines[self._emitted]
 
     def offer(self, text: object, now: float, *, source: ProgressSource = "frame") -> bool:
         """Replace pending progress with a valid update not already spoken."""
@@ -259,9 +273,11 @@ class ProgressPlan:
             if text is not None:
                 update = ProgressUpdate(text, "backend")
         if update is None:
-            if self._emitted or self._waiting is None:
+            waiting = self._next_waiting()
+            if waiting is None:
                 return None
-            update = ProgressUpdate(self._waiting, "waiting")
+            update = ProgressUpdate(waiting, "waiting")
+        self._spoke_report = self._spoke_report or update.source != "waiting"
         self._last_cue = now
         self._emitted += 1
         self._spoken.add(update.text)

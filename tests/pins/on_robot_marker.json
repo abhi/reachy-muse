@@ -31,6 +31,8 @@
   "progress_tts:Muse is still working on your weather question.",
   "progress_tts:Muse is still working on your workout question.",
   "progress_tts:Muse is still working on your request.",
+  "progress_tts:Still on it. Muse hasn't finished yet.",
+  "progress_tts:This one is taking Muse a while. I'll tell you as soon as it's ready.",
   "progress_tts:Looking at flights now.",
   "progress_tts:Checking fares now.",
   "progress_tts:Comparing the options.",
