@@ -85,12 +85,18 @@ These options change the engines:
 - `--engines stub` serves the stub engines instead: a fixed script, a 440 Hz tone and an echo. The tests use it.
 - `--delay-ms 240` makes Voxtral's partial text arrive sooner. The default is 480 ms.
 - `--narrator-model mlx-community/Llama-3.1-8B-Instruct-4bit` narrates with another MLX instruction model. The eval set below scores any model you name.
-- `--motion` also generates full-body motion for the robot's greeting, thinking and closing moments. See [Generated motion](#generated-motion).
+- `--motion-library` serves prebuilt full-body motion without loading the planner. See [Offline motion library](motion-library.md).
+- `--motion` generates motion live and is mutually exclusive with `--motion-library`. Keep it off in the live speech companion because it competes for the GPU.
 - `--no-final-pass` skips Parakeet and uses Voxtral's own final text. This saves about 1 GB of memory and 2.3 GB of download, but the final text arrives about 130 ms later.
 
 `reachy-companion serve --insecure` serves plain `ws://` without TLS, and listens only on 127.0.0.1 unless you pass `--bind`. Use it only for tests.
 
 ## Generated motion
+
+Use `reachy-companion motion-library build` to generate motions separately, then
+`serve --motion-library` to play them during conversation. The
+[library guide](motion-library.md) covers resume, invalidation, optional sentence
+expressions and the uninstalled nightly launchd example.
 
 `serve --motion` offers the protocol's `animate` op. It runs
 [reachy-motion-generator](https://github.com/pham-tuan-binh/reachy-motion-generator) (Apache-2.0): a

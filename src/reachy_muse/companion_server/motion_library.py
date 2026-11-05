@@ -133,7 +133,8 @@ def _frames(value: Any) -> tuple:
             raise ValueError("motion frame must have nine channels")
         row = []
         for channel, item in zip(ANIMATION_CHANNELS, frame):
-            if isinstance(item, bool) or not isinstance(item, (float, int)) or not math.isfinite(item):
+            if (isinstance(item, bool) or not isinstance(item, (float, int))
+                    or isinstance(item, float) and not math.isfinite(item)):
                 raise ValueError("motion frame contains a nonfinite or nonnumeric value")
             low, high = POSE_LIMITS[channel]
             row.append(round(max(low, min(high, item)), 1))

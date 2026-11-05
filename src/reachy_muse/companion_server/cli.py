@@ -45,9 +45,20 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                                     f"(default {DEFAULT_VOICE})")
     serve_command.add_argument("--loudness", type=float, default=-12.0, metavar="DBFS", help="the RMS level of the voiced part of spoken speech, before peaks are limited to -4 dBFS")
     serve_command.add_argument("--narrator-model", default=DEFAULT_REPO, help="the MLX instruction model that narrates; evals/narrator chose the default")
-    serve_command.add_argument("--motion", action="store_true", help="also generate motion for the robot (the companion-motion extra); real engines only")
+    motion_mode = serve_command.add_mutually_exclusive_group()
+    motion_mode.add_argument("--motion", action="store_true", help="generate motion live (the companion-motion extra); real engines only")
+    motion_mode.add_argument("--motion-library", action="store_true", help="serve prebuilt motion from the state directory without loading the planner")
     serve_command.add_argument("--motion-dir", type=Path, help="where the motion planner and generator live "
                                "(default: ~/Library/Application Support/reachy-companion/motion)")
+
+    library_command = commands.add_parser("motion-library", help="build motion offline, separately from the companion")
+    library_commands = library_command.add_subparsers(dest="library_command", required=True)
+    build_command = library_commands.add_parser("build", help="resume building the motion library with local model weights")
+    build_command.add_argument("--variants", type=_positive_int, default=12)
+    build_command.add_argument("--only", nargs="+", action="extend", metavar="INTENT", help="build only these intent keys")
+    build_command.add_argument("--motion-dir", type=Path, help="directory containing the prepared planner and generator")
+    build_command.add_argument("--if-idle", type=_positive_int, metavar="MINUTES", help="require companion activity status and this many quiet minutes (nightly: 20)")
+    build_command.add_argument("--_worker", action="store_true", help=argparse.SUPPRESS)
 
     args = parser.parse_args(argv)
     if args.command == "pair":
@@ -55,6 +66,15 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         result = pairing.pair(args.state_dir, hosts=[args.host], force=args.force)
         print(result.line(args.host, args.port))
         print(f"{'kept' if existed and not args.force else 'created'} the pairing in {args.state_dir}", file=sys.stderr)
+    elif args.command == "motion-library":
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+        try:
+            if args._worker:
+                _build_library(args)
+            else:
+                raise SystemExit(_guarded_library_build(args))
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
     else:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
         asyncio.run(_serve(args))
@@ -68,25 +88,76 @@ def _voice(spec: str) -> str:
     return spec
 
 
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
+
+
+def _guarded_library_build(args: argparse.Namespace) -> int:
+    from reachy_muse.companion_server.motion_activity import run_guarded_build
+
+    command = [sys.executable, "-m", "reachy_muse.companion_server", "--state-dir", str(args.state_dir),
+               "motion-library", "build", "--_worker", "--variants", str(args.variants)]
+    if args.motion_dir is not None:
+        command.extend(("--motion-dir", str(args.motion_dir)))
+    if args.only:
+        command.extend(("--only", *args.only))
+    return run_guarded_build(args.state_dir, command, idle_seconds=60 * (args.if_idle or 20),
+                             require_status=args.if_idle is not None)
+
+
+def _build_library(args: argparse.Namespace) -> None:
+    from reachy_muse.companion_server.motion_activity import watch_build_parent
+
+    watch_build_parent()
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    for name, value in GPU_COMMAND_BUFFER.items():
+        os.environ.setdefault(name, value)
+    from reachy_muse.companion_server.motion import DEFAULT_DIR, MotionEngine
+    from reachy_muse.companion_server.motion_library import build_library, model_identity
+
+    motion_dir = args.motion_dir or DEFAULT_DIR
+    identity = model_identity(motion_dir)
+    engine = MotionEngine(motion_dir)
+    try:
+        count = build_library(args.state_dir / "motion-library", engine, identity,
+                              variants=args.variants, only=args.only)
+        print(f"built {count} motions in {args.state_dir / 'motion-library'}")
+    finally:
+        engine.close()
+
+
 async def _serve(args: argparse.Namespace) -> None:
+    from reachy_muse.companion_server.motion_activity import ActivityStatus
+
     paired = pairing.load(args.state_dir)
+    activity = ActivityStatus(args.state_dir)
     engines = await _engines(args)
     watchdog.start()
     tls = None if args.insecure else paired.tls_context()
     stop = asyncio.get_running_loop().create_future()
     for sig in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(sig, lambda: stop.done() or stop.set_result(None))
-    async with CompanionServer(engines, paired.token, ssl_context=tls, host=args.bind or ("127.0.0.1" if args.insecure else "0.0.0.0"), port=args.port) as server:
+    async with CompanionServer(engines, paired.token, ssl_context=tls, host=args.bind or ("127.0.0.1" if args.insecure else "0.0.0.0"), port=args.port, activity=activity) as server:
         logging.info("serving %s (%s engines)%s", server.url, args.engines, "  INSECURE: no TLS" if args.insecure else "")
         await stop
     logging.info("stopped")
 
 
 async def _engines(args: argparse.Namespace) -> Engines:
+    library = None
+    if getattr(args, "motion_library", False):
+        from reachy_muse.companion_server.motion_library import LibraryAnimator
+
+        library = LibraryAnimator(args.state_dir / "motion-library")
+        await library.load()
     if args.engines == "stub":
         narrator = EchoNarrator()
         return Engines(hearing=ScriptedHearing(), voice=ToneVoice(), narrator=narrator, classifier=narrator,
-                       motion=NodAnimator() if args.motion else None)
+                       motion=library or (NodAnimator() if args.motion else None))
     for name, value in GPU_COMMAND_BUFFER.items():
         os.environ.setdefault(name, value)  # MLX reads it when the GPU is first used
     from reachy_muse.companion_server.hearing_voxtral import HearingConfig, VoxtralHearing
@@ -106,5 +177,5 @@ async def _engines(args: argparse.Namespace) -> Engines:
     # One at a time: warming several models on their own threads at once hung the GPU.
     for engine in (hearing, voice, narrator, *([motion] if motion else [])):
         await engine.load()
-    return Engines(hearing=hearing, voice=voice, narrator=narrator, motion=motion, classifier=narrator,
+    return Engines(hearing=hearing, voice=voice, narrator=narrator, motion=library or motion, classifier=narrator,
                    speech_first=speech_first)

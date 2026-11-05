@@ -47,6 +47,17 @@ def test_resume_each_completed_variant_without_loading_complete_engine(tmp_path)
     assert library.build_library(tmp_path, Engine(fail_at=0), {"weights": "a"}, variants=4, only=["happy"]) == 0
 
 
+def test_oversized_integer_poses_are_clamped_before_float_conversion(tmp_path):
+    class IntegerEngine:
+        def generate(self, prompt, duration, *, seed):
+            return SimpleNamespace(recipe="hold", fps=25,
+                                   frames=np.full((round(25 * duration), 9), 10 ** 1000, dtype=object))
+
+    assert library.build_library(tmp_path, IntegerEngine(), {}, variants=1, only=["happy"]) == 1
+    result = animate(load(tmp_path))
+    assert result.frames[0] == (15, 15, 20, 20, 20, 35, 90, 90, 35)
+
+
 def test_publication_interrupted_before_manifest_keeps_old_snapshot(tmp_path, monkeypatch):
     library.build_library(tmp_path, Engine(), {}, variants=1, only=["happy"])
     previous = (tmp_path / "manifest.json").read_bytes()

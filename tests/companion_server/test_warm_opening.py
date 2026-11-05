@@ -26,6 +26,7 @@ class Socket:
 
 class Server:
     token = "test"
+    activity = None
 
     def __init__(self, voice):
         self.engines = Engines(voice=voice, narrator=EchoNarrator(), speech_first=SpeechFirst())

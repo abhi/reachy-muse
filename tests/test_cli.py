@@ -582,7 +582,7 @@ def test_native_media_connects_to_local_daemon(monkeypatch):
     reachy_muse.cli._hardware(reachy_muse.cli.parser().parse_args(['run']))
     assert captured == {'host': 'localhost', 'port': 8000,
                         'connection_mode': 'localhost_only', 'media_backend': 'local',
-                        'enable_motion': True, 'antenna_mode': 'both', 'face_follow_model': None,
+                        'enable_motion': True, 'library_expressions': False, 'antenna_mode': 'both', 'face_follow_model': None,
                         'speaker_eq_gains': SPEAKER_EQ_GAINS, 'style': MotionStyle(sway='sdk', breathing=False)}
 
 

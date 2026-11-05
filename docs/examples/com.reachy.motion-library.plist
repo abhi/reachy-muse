@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.reachy.motion-library</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REACHY_COMPANION__</string>
+        <string>--state-dir</string>
+        <string>__STATE_DIR__</string>
+        <string>motion-library</string>
+        <string>build</string>
+        <string>--if-idle</string>
+        <string>20</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>1</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <key>Nice</key>
+    <integer>10</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__LOG_DIR__/motion-library.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG_DIR__/motion-library.err.log</string>
+</dict>
+</plist>
