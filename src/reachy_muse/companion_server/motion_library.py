@@ -226,11 +226,13 @@ class LibraryAnimator:
         self.library_dir = Path(library_dir)
         self._animations: dict[str, tuple[tuple[str, Animation], ...]] = {}
         self._recent: dict[str, deque[str]] = {}
+        self._next: dict[str, int] = {}
         self._aliases = {prompt: key for key, spec in INTENTS.items() for prompt in spec.prompts}
 
     async def load(self) -> None:
         self._animations = await asyncio.to_thread(self._snapshot)
         self._recent.clear()
+        self._next.clear()
 
     def _snapshot(self) -> dict[str, tuple[tuple[str, Animation], ...]]:
         result = {}
@@ -253,7 +255,9 @@ class LibraryAnimator:
             return empty
         key = self._aliases.get(intent, intent)
         choices = self._animations.get(key, ())
-        eligible = {variant_id: animation for variant_id, animation in choices
+        cursor = self._next.get(key, 0)
+        ordered = choices[cursor:] + choices[:cursor]
+        eligible = {variant_id: animation for variant_id, animation in ordered
                     if 0.5 <= duration_s / (len(animation.frames) / FPS) <= 2}
         if not eligible:
             return empty
@@ -264,6 +268,8 @@ class LibraryAnimator:
             available = [index for index in eligible if index not in recent]
         index = available[0]
         recent.append(index)
+        position = next(i for i, (variant_id, _) in enumerate(choices) if variant_id == index)
+        self._next[key] = (position + 1) % len(choices)
         animation = eligible[index]
         log.debug("motion library intent=%s variant=%s", key, index)
         count = min(MAX_ANIMATION_FRAMES, round(duration_s * FPS))

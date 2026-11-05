@@ -178,3 +178,28 @@ def test_seed_reaches_existing_motion_pipeline():
         assert seeds == [0, 123, 456]
     finally:
         engine.close()
+
+
+def test_rotation_visits_all_twelve_variants(tmp_path):
+    library.build_library(tmp_path, Engine(), {}, variants=12, only=["happy"])
+    animator = load(tmp_path)
+    samples = [animate(animator).frames[0][0] for _ in range(13)]
+    assert set(samples[:12]) == {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+    assert samples[12] == samples[0]
+    assert samples[12] not in samples[9:12]
+    short = animate(animator, duration=1.2).frames[0][0]
+    normal = animate(animator).frames[0][0]
+    assert short != normal
+
+
+@pytest.mark.parametrize("malformed", [None, [], 5, {"variants": []}, {"variants": None}])
+def test_builder_repairs_malformed_manifest_entries(tmp_path, malformed):
+    library.build_library(tmp_path, Engine(), {}, variants=1, only=["happy"])
+    path = tmp_path / "manifest.json"
+    manifest = json.loads(path.read_text())
+    if isinstance(malformed, dict):
+        malformed["fingerprint"] = manifest["intents"]["happy"]["fingerprint"]
+    manifest["intents"]["happy"] = malformed
+    path.write_text(json.dumps(manifest))
+    assert library.build_library(tmp_path, Engine(), {}, variants=1, only=["happy"]) == 1
+    assert animate(load(tmp_path)).frames
