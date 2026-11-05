@@ -2,6 +2,8 @@ import argparse
 import asyncio
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import numpy as np
@@ -50,6 +52,59 @@ def test_engine_startup_blocks_builds_and_restarts_quiet_time(tmp_path, monkeypa
     assert motion_activity._quiet(finished, 1200, True) is False
     now[0] += 1200
     assert motion_activity._quiet(finished, 1200, True) is True
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_cancelled_startup_stays_active_until_executor_finishes(tmp_path, monkeypatch, fails):
+    from reachy_muse.companion_server import motion_activity
+
+    now = [2000.0]
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    monkeypatch.setattr(motion_activity, "time", SimpleNamespace(time=lambda: now[0], monotonic=lambda: now[0]))
+    monkeypatch.setattr(cli.pairing, "load", lambda directory: SimpleNamespace(token="test"))
+    monkeypatch.setattr(cli.watchdog, "start", lambda: pytest.fail("cancelled startup armed the watchdog"))
+
+    def load():
+        started.set()
+        try:
+            assert release.wait(3)
+            if fails:
+                raise RuntimeError("model load failed")
+        finally:
+            finished.set()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        async def engines(args):
+            await asyncio.get_running_loop().run_in_executor(executor, load)
+            return cli.Engines()
+
+        monkeypatch.setattr(cli, "_engines", engines)
+
+        async def scenario():
+            task = asyncio.create_task(cli._serve(argparse.Namespace(state_dir=tmp_path)))
+            try:
+                assert await asyncio.to_thread(started.wait, 3)
+                now[0] += 1300
+                for _ in range(2):
+                    task.cancel()
+                    await asyncio.sleep(0)
+                    status = motion_activity._read_activity(tmp_path)
+                    assert status["active"] == 1
+                    assert motion_activity._quiet(status, 1200, True) is False
+                    assert not finished.is_set()
+                    assert not task.done()
+            finally:
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+
+        asyncio.run(scenario())
+
+    assert finished.is_set()
+    status = motion_activity._read_activity(tmp_path)
+    assert {key: status[key] for key in ("active", "wall", "monotonic")} == {
+        "active": 0, "wall": 3300.0, "monotonic": 3300.0}
+    assert motion_activity._quiet(status, 1200, True) is False
 
 
 def test_worker_builds_then_resumes_without_generating_again(tmp_path, monkeypatch, capsys):
