@@ -165,7 +165,8 @@ class LocalHearing:
 
     @property
     def transcribes(self) -> bool:
-        return self.transcriber is not None
+        """A streaming-only recognizer cannot transcribe a finished WAV; Muse hears that audio."""
+        return self.transcriber is not None and (self._batch or not self._streaming)
 
     async def start(self) -> None:
         start = getattr(self.transcriber, "start", None)

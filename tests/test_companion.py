@@ -43,7 +43,8 @@ class CompanionHardware(PinHardware):
 class Conversation:
     """One robot in companion mode, its scripted Muse, and a user talking over room tone."""
 
-    def __init__(self, monkeypatch, url, muse, *, owned=True, transcript=QUESTION, backoff_s=(.05, .2), **link):
+    def __init__(self, monkeypatch, url, muse, *, owned=True, transcript=QUESTION, transcriber=None,
+                 backoff_s=(.05, .2), **link):
         self.recording = Recording()
         self.hardware = CompanionHardware(self.recording)
         self.session = PinSession(self.recording, muse, owned=owned)
@@ -54,7 +55,7 @@ class Conversation:
             return "robot-chat"
         backends = functools.partial(backends_for, Mode.COMPANION, speech=TextCodedVoice(self.recording, "tts"),
                                      progress_speech=TextCodedVoice(self.recording, "progress_tts"),
-                                     transcriber=Transcriber(transcript), companion=self.link)
+                                     transcriber=transcriber or Transcriber(transcript), companion=self.link)
         self.service = reachy_muse.conversation.ReachyService(
             identity=IDENTITY, executor=self.hardware, silence_s=.2, speech_gate=Vad(), backends=backends,
             **({"prepare_chat": prepare_chat, "owns_chat": True} if owned else {}))

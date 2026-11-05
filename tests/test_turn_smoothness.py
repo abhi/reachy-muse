@@ -12,6 +12,7 @@ import pytest
 from fake_companion import FakeCompanion
 from reachy_muse.companion_client import LinkState
 from test_companion import PARTIALS, Conversation, answer, hear_streams_opened, scenario
+from test_pins import ScriptedStreamingTranscriber
 
 pytest.importorskip("numpy")
 pytest.importorskip("av")
@@ -41,3 +42,18 @@ def test_a_companion_that_never_endpoints_cannot_hold_the_turn_open(monkeypatch)
             assert robot.spoken() == ["companion", "companion"]
     scenario(run())
 
+
+
+def test_a_late_companion_hands_its_audio_to_muse_when_the_robot_only_streams(monkeypatch):
+    async def run():
+        async with FakeCompanion(partials=PARTIALS, frames_per_partial=12, no_endpoint=True) as companion:
+            robot = Conversation(monkeypatch, companion.url[:-3], answer("Castles kept dragons out."),
+                                 transcriber=ScriptedStreamingTranscriber(), ping_interval_s=.05, ping_timeout_s=.2)
+
+            async def user():
+                await robot.speak(.8)
+                await robot.until(lambda: robot.session.scripts, 5)
+            await robot.run(user)
+            assert [event["muse"] for event in robot.recording.events if "muse" in event][-1:] == ["send_voice"]
+            assert robot.spoken() == ["companion"]
+    scenario(run())
