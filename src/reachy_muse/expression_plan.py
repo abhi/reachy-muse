@@ -180,7 +180,6 @@ class ExpressionPlanner:
         self._words_at_gesture = 0
         self._quiet_since: Optional[float] = None
         self._nodded: Optional[Tuple[int, int]] = None
-        self._pause_nodded = False
         self._answered = False
         self._status_shown: Optional[Tuple[str, Optional[str]]] = None
         self._varied_at = -math.inf
@@ -293,14 +292,13 @@ class ExpressionPlanner:
         return ()
 
     def _pause(self, event: Pause, now: float) -> Tuple[Cue, ...]:
-        """One nod per pause shows the user Reachy heard them, even before any transcript."""
-        if event.quiet_s < CLAUSE_PAUSE_S:
-            self._pause_nodded = False
+        """One nod per pause shows the user Reachy heard them, even before any transcript.
+
+        A nod in an earlier pause never holds this one back, so the user's last pause still gets its nod.
+        """
+        if (event.quiet_s < CLAUSE_PAUSE_S or self._nod_at >= now - event.quiet_s or event.output
+                or self._state is not State.LISTENING or now - self._gesture_at < GESTURE_GAP_S):
             return ()
-        if (self._pause_nodded or event.output or self._state is not State.LISTENING
-                or now - self._gesture_at < GESTURE_GAP_S or now - self._nod_at < NOD_EVERY_S):
-            return ()
-        self._pause_nodded = True
         self._nod_at = now
         return self._gesture(NOD, now)
 

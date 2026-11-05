@@ -173,12 +173,12 @@ LISTENING_GESTURES = {
          (1.8, Pause(1.0, output=True)),
          (1.9, Pause(1.1, output=False))],
         [(0, (LISTENING,)), (.1, (TILT,)), (.8, ()), (1.8, ()), (1.9, (NOD,))]),
-    "a pause soon after a clause nod does not nod again": (
+    "a clause nod is the nod for the pause that follows it": (
         [(0, Recording(active=True, turn_running=False)),
          (.3, heard("well,", 1)),
-         (2.0, Pause(.6, output=False)),
-         (3.4, Pause(2.0, output=False))],
-        [(0, (LISTENING,)), (.3, (NOD,)), (2.0, ()), (3.4, (NOD,))]),
+         (2.0, Pause(1.9, output=False)),
+         (3.4, Pause(3.3, output=False))],
+        [(0, (LISTENING,)), (.3, (NOD,)), (2.0, ()), (3.4, ())]),
 }
 
 THINKING_MOTION = {
@@ -267,6 +267,16 @@ def test_thinking_motion(script, expected):
 @pytest.mark.parametrize("script, expected", GOT_IT_NODS.values(), ids=GOT_IT_NODS.keys())
 def test_got_it_nod(script, expected):
     assert plan(script) == expected
+
+
+def test_the_user_stopping_gets_a_nod_after_an_earlier_pause_nod():
+    speech = ((0, 2.0), (2.7, 3.5))
+    script = [(0, Recording(active=True, turn_running=False))]
+    for tenth in range(1, 51):
+        now = tenth / 10
+        last_speech = max(min(now, end) for start, end in speech if start <= now)
+        script.append((now, Pause(round(now - last_speech, 1), output=False)))
+    assert [now for now, cues in plan(script) if NOD in cues] == [2.6, 4.2]
 
 
 def test_a_held_request_gets_a_nod_even_mid_answer():
