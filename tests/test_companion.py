@@ -88,7 +88,7 @@ class Conversation:
 
     async def speak(self, voiced_s):
         self._voiced += round(voiced_s * 16000 / CHUNK)
-        await self.until(lambda: not self._voiced)
+        await self.until(lambda: not self._voiced, voiced_s + 5)
 
     async def until(self, predicate, timeout=5):
         deadline = asyncio.get_running_loop().time() + timeout

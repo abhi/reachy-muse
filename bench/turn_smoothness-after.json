@@ -1,0 +1,153 @@
+{
+  "endpoint": 2.0,
+  "transcript": 5.733,
+  "dispatch": 5.733,
+  "muse_ack": 7.393,
+  "ack_audio": 6.734,
+  "first_status": 7.69,
+  "first_text": 98.835,
+  "reply_done": 98.835,
+  "narration_done": 98.837,
+  "first_audio": 99.04,
+  "first_motion": [
+    0.602,
+    "nod"
+  ],
+  "thinking_pose": 2.038,
+  "first_reachy_speech": [
+    6.771,
+    "acknowledgement"
+  ],
+  "acknowledged": true,
+  "waiting_cue": 14.042,
+  "expressions": [
+    "happy",
+    "sad",
+    "curious"
+  ],
+  "requests": [
+    "can you find me a vegetarian dinner spot near the office"
+  ],
+  "log": [
+    [
+      2.038,
+      "Reachy queued a voice turn; 1 pending"
+    ],
+    [
+      3.538,
+      "Reachy transcribes the turn itself: the companion did not end the turn in time"
+    ],
+    [
+      3.538,
+      "Reachy used its own hearing: the companion did not end the turn in time (1 in a row)"
+    ],
+    [
+      3.538,
+      "Reachy voice turn started"
+    ],
+    [
+      5.77,
+      "Recognized 56 characters from Reachy's microphone"
+    ],
+    [
+      6.671,
+      "Reachy used its own narration: narration timed out (1 in a row)"
+    ],
+    [
+      6.671,
+      "Reachy acknowledges in its own words; its companion's narration was late"
+    ],
+    [
+      6.771,
+      "Reachy selected a question acknowledgement 3.2s after the voice turn"
+    ],
+    [
+      6.771,
+      "Reachy acknowledgement started 3.2s after the voice turn"
+    ],
+    [
+      6.837,
+      "Reachy spoke 0.0 seconds of acknowledgement audio"
+    ],
+    [
+      7.431,
+      "Muse accepted a 7.9-second voice turn"
+    ],
+    [
+      7.728,
+      "Muse public progress phase=working stage=none 4.2s after the voice turn"
+    ],
+    [
+      7.728,
+      "Muse backend activity working 4.2s after the voice turn"
+    ],
+    [
+      13.449,
+      "Reachy selected waiting progress 9.9s after the voice turn"
+    ],
+    [
+      14.042,
+      "Reachy progress started 10.5s after the voice turn"
+    ],
+    [
+      14.392,
+      "Reachy spoke 0.3 seconds of progress audio"
+    ],
+    [
+      98.873,
+      "Muse completed a reply message 95.3s after the voice turn"
+    ],
+    [
+      98.873,
+      "Muse first assistant event arrived 95.3s after the voice turn"
+    ],
+    [
+      98.873,
+      "Muse first reply text arrived 95.3s after the voice turn"
+    ],
+    [
+      98.873,
+      "Playing next Muse reply 95.3s after the voice turn"
+    ],
+    [
+      99.077,
+      "Muse speech started 95.5s after the voice turn"
+    ],
+    [
+      99.077,
+      "Reachy spoke with expression happy"
+    ],
+    [
+      99.338,
+      "Reachy spoke 0.3 seconds of Muse audio"
+    ],
+    [
+      99.339,
+      "Muse speech started 95.8s after the voice turn"
+    ],
+    [
+      99.339,
+      "Reachy spoke with expression sad"
+    ],
+    [
+      99.638,
+      "Reachy spoke 0.3 seconds of Muse audio"
+    ],
+    [
+      99.638,
+      "Muse speech started 96.1s after the voice turn"
+    ],
+    [
+      99.638,
+      "Reachy spoke with expression curious"
+    ],
+    [
+      100.278,
+      "Reachy spoke 0.3 seconds of Muse audio"
+    ],
+    [
+      100.279,
+      "Reachy voice turn ended"
+    ]
+  ]
+}
