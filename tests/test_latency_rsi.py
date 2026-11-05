@@ -21,7 +21,7 @@ from test_local_speech import worker  # noqa: F401
 
 
 # Playback digests after removing generic waiting phrases from the progress cache.
-REPLAY_PCM_SHA256 = "857737cf749f6fa04f78e5b980dfbe43f4089a534c05a29535c251ce8a4c5c1a"
+REPLAY_PCM_SHA256 = "8fc78b1b9237c26dda31a55011344b1c6d115d72d5803ea2048dcd8a24a68e83"
 PIPER_PCM_SHA256 = "49129f4f66fb7f09720337440fe13eb3f5ba7bbf7fa0dc3e90c0fe1c6787abcb"
 
 

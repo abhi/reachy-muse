@@ -16,16 +16,16 @@ TWENTY_S = {"first_delay_s": 20, "interval_s": 20}
 
 
 @pytest.mark.parametrize("request_text, expected", [
-    ("Find flights to Tokyo.", "Your flight answer is taking a little longer."),
-    ("Compare airfares for tomorrow.", "Your flight answer is taking a little longer."),
+    ("Find flights to Tokyo.", "Muse is still working on your flights."),
+    ("Compare airfares for tomorrow.", "Muse is still working on your flights."),
     ("Explain why flights get delayed.",
-     "Your flight answer is taking a little longer."),
-    ("What is the weather?", "Your weather answer is taking a little longer."),
+     "Muse is still working on your flights."),
+    ("What is the weather?", "Muse is still working on your weather question."),
     ("Explain how weather systems form.",
-     "Your weather answer is taking a little longer."),
-    ("Check the forecast.", "Your weather answer is taking a little longer."),
-    ("Plan my trip.", 'The answer to "Plan my trip" is taking a little longer.'),
-    ("Explain black holes.", 'The answer to "black holes" is taking a little longer.'),
+     "Muse is still working on your weather question."),
+    ("Check the forecast.", "Muse is still working on your weather question."),
+    ("Plan my trip.", 'Muse is still working on "Plan my trip".'),
+    ("Explain black holes.", 'Muse is still working on "black holes".'),
 ])
 def test_waiting_cue_names_the_result_without_inventing_an_action(request_text, expected):
     assert waiting_progress(request_text) == expected
@@ -92,7 +92,7 @@ def test_waiting_cue_speaks_once_then_stays_silent():
     plan = ProgressPlan("Find flights.", 100, **TWENTY_S, max_updates=4)
     assert plan.take(119.99) is None
     assert [plan.take(due) for due in (120, 140, 160, 180, 200)] == [
-        ProgressUpdate("Your flight answer is taking a little longer.", "waiting"),
+        ProgressUpdate("Muse is still working on your flights.", "waiting"),
         None,
         None,
         None,
@@ -102,7 +102,7 @@ def test_waiting_cue_speaks_once_then_stays_silent():
 
 def test_delayed_consumer_does_not_emit_catch_up_cues_back_to_back():
     plan = ProgressPlan("Explain black holes.", 0, **TWENTY_S)
-    expected = ProgressUpdate('The answer to "black holes" is taking a little longer.', "waiting")
+    expected = ProgressUpdate('Muse is still working on "black holes".', "waiting")
     assert plan.take(20) == expected
     assert plan.offer("I found a useful public source.", 55)
     assert plan.take(55) == ProgressUpdate("I found a useful public source.", "frame")
@@ -159,7 +159,7 @@ def test_generic_or_unknown_status_preserves_the_specific_milestone(status):
 def test_arbitrary_backend_activity_cannot_bypass_the_fixed_phrase_allowlist():
     plan = ProgressPlan("Research this.", 0, **TWENTY_S)
     assert not plan.set_status(BackendStatus("working", BackendActivity("Reading secrets.", "Read secrets.")), 15)
-    assert plan.take(20) == ProgressUpdate('The answer to "Research this" is taking a little longer.', "waiting")
+    assert plan.take(20) == ProgressUpdate('Muse is still working on "Research this".', "waiting")
 
 
 def test_new_identical_backend_report_refreshes_observation_time():
@@ -182,7 +182,7 @@ def test_fresh_public_frame_wins_one_cue_without_erasing_backend_history():
 def test_unspoken_frame_survives_the_twenty_second_cadence_with_attribution():
     plan = ProgressPlan("What is the weather?", 0, **TWENTY_S)
     assert plan.take(20) == ProgressUpdate(
-        "Your weather answer is taking a little longer.", "waiting")
+        "Muse is still working on your weather question.", "waiting")
     plan.offer("I found a useful weather source.", 22)
     assert plan.take(40) == ProgressUpdate(
         "Earlier from Muse: I found a useful weather source.", "frame")
@@ -225,7 +225,7 @@ def test_a_new_turn_has_its_own_timing_and_progress():
         expiry_s=1, max_updates=1)
     assert new.take(10.99) is None
     assert new.take(11) == ProgressUpdate(
-        'The answer to "black holes" is taking a little longer.', "waiting")
+        'Muse is still working on "black holes".', "waiting")
     assert new.take(13) is None
     assert old.take(100) is None
 
@@ -294,7 +294,7 @@ def test_actual_field_timing_keeps_initial_phase_until_reply_arrives():
     plan = ProgressPlan("Find flights to Paris.", 0, **TWENTY_S)
     plan.set_status(backend_status_from_event("working", "is working"), 2)
     assert plan.take(20) == ProgressUpdate(
-        "Your flight answer is taking a little longer.", "waiting")
+        "Muse is still working on your flights.", "waiting")
     plan.set_status(backend_status_from_event("responding", "is responding"), 27.7)
     plan.stop()
     assert plan.take(40) is None
@@ -304,11 +304,11 @@ def test_actual_field_timing_keeps_initial_phase_until_reply_arrives():
 def test_generic_phase_does_not_add_filler_before_or_after_contextual_waiting(phase):
     plan = ProgressPlan("Find flights.", 0, **TWENTY_S)
     plan.set_status(backend_status_from_event(phase, "Private words"), 15)
-    assert plan.take(20) == ProgressUpdate("Your flight answer is taking a little longer.", "waiting")
+    assert plan.take(20) == ProgressUpdate("Muse is still working on your flights.", "waiting")
     assert plan.take(40) is None
     stale = ProgressPlan("Find flights.", 0, **TWENTY_S)
     stale.set_status(backend_status_from_event(phase, None), 1)
-    assert stale.take(20) == ProgressUpdate("Your flight answer is taking a little longer.", "waiting")
+    assert stale.take(20) == ProgressUpdate("Muse is still working on your flights.", "waiting")
     assert stale.take(40) is None
 
 
@@ -316,7 +316,7 @@ def test_generic_phase_does_not_add_filler_before_or_after_contextual_waiting(ph
 def test_idle_or_unknown_without_any_specific_report_uses_the_no_detail_cue(phase):
     plan = ProgressPlan("Research this.", 0, **TWENTY_S)
     plan.set_status(backend_status_from_event(phase, None), 15)
-    assert plan.take(20) == ProgressUpdate('The answer to "Research this" is taking a little longer.', "waiting")
+    assert plan.take(20) == ProgressUpdate('Muse is still working on "Research this".', "waiting")
 
 
 def test_latest_unspoken_frame_replaces_older_frame_and_survives_a_long_wait():
@@ -428,7 +428,7 @@ def test_generic_phase_does_not_bypass_the_first_deadline():
     assert plan.take(0) is None
     assert plan.take(19.99) is None
     assert plan.take(20) == ProgressUpdate(
-        'The answer to "Research this" is taking a little longer.', "waiting")
+        'Muse is still working on "Research this".', "waiting")
 
 
 @pytest.mark.parametrize("kind", ["frame", "status"])
@@ -477,17 +477,17 @@ def test_fresh_backend_action_replaces_a_stale_unspoken_frame():
     assert not plan.offer("I started searching for sources.", 33)
 
 
-def test_default_cadence_allows_one_contextual_line_at_eight_seconds():
+def test_default_cadence_allows_one_contextual_line_at_six_seconds():
     plan = ProgressPlan("Should I work out today?", 0)
     assert plan.set_status(backend_status_from_event("working", "is working"), 1)
-    assert plan.take(7.99) is None
-    assert plan.take(8) == ProgressUpdate("Your workout answer is taking a little longer.", "waiting")
-    assert [plan.take(due) for due in (23, 38, 53, 68, 83, 98)] == [None] * 6
+    assert plan.take(5.99) is None
+    assert plan.take(6) == ProgressUpdate("Muse is still working on your workout question.", "waiting")
+    assert [plan.take(due) for due in (21, 36, 51, 66, 81, 96)] == [None] * 6
 
 
 def test_a_new_specific_label_can_speak_after_the_only_waiting_line():
     plan = ProgressPlan("Research this.", 0)
-    assert plan.take(8) == ProgressUpdate('The answer to "Research this" is taking a little longer.', "waiting")
+    assert plan.take(8) == ProgressUpdate('Muse is still working on "Research this".', "waiting")
     assert plan.take(23) is None
     assert plan.set_status(backend_status_from_event("working", "Searching web"), 30)
     assert plan.take(30) == ProgressUpdate("Searching the web now.", "backend")

@@ -187,7 +187,7 @@ def test_a_long_turn_without_status_says_one_contextual_line_then_waits_quietly(
 
     run_turn(monkeypatch, paced, working_then_answer)
     assert hardware.spoken() == [
-        "Hmm, good question.", 'The answer to "robot history" is taking a little longer.', "Robots began as toys."]
+        "Hmm, good question.", 'Muse is still working on "robot history".', "Robots began as toys."]
     assert narrated == []
 
 

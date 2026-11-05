@@ -319,15 +319,14 @@ ssh pollen@reachy-mini.local 'journalctl -u muse-reachy --since "-2h" --no-pager
 With local speech enabled, Reachy can give a short progress update when an
 accepted request takes longer to answer. A fresh, explicit public action or
 public progress frame can provide the first update immediately. A generic
-phase or waiting update waits 5 seconds (`PROGRESS_FIRST_S`). After that,
-Reachy speaks every 15 seconds (`PROGRESS_EVERY_S`) while the request remains
-active, at most 6 lines per request (`PROGRESS_MAX_LINES`), and never while you
-are talking. A tick with a new public label or phase speaks that; a tick with
-nothing new speaks the next of a small rotating set of waiting lines ("Still on
-it.", "Working on that for you.", "Muse is still digging in.", "Thanks for
-waiting."), which never repeats one line twice in a row and never claims a
-result. Reachy speaks these waiting lines itself; the companion narrator only
-rephrases Muse's own labels.
+phase or waiting update waits 6 seconds after Muse accepts the request
+(`PROGRESS_FIRST_S`). After that, Reachy speaks at most every 15 seconds
+(`PROGRESS_EVERY_S`) while the request remains active, at most 6 lines per
+request (`PROGRESS_MAX_LINES`), and never while you are talking. A tick with a
+new public label or phase speaks that. Without one, Reachy says one waiting line
+per request that names what you asked, such as "Muse is still working on your
+flights." or 'Muse is still working on "black holes".' It never repeats that
+line and never claims a result.
 The progress worker runs separately from answer playback and is canceled when
 the answer arrives, so a progress cue does not hold up the reply.
 

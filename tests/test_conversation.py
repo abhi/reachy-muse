@@ -387,7 +387,7 @@ def test_lunch_request_gets_one_contextual_wait_cue_before_delayed_answer(monkey
         "agent.status", parent=None, activity_code="working", activity_text="is working")), job))
     update = job.progress.take(20)
     assert update.source == "waiting"
-    assert update.text == 'The answer to "should I cook for lunch" is taking a little longer.'
+    assert update.text == 'Muse is still working on "should I cook for lunch".'
     clock = 27
     asyncio.run(conversation._queue_replies(feed(job, chat_event(
         "agent.status", parent=None, activity_code="responding", activity_text="is responding")), job))

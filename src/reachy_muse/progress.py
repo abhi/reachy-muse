@@ -14,16 +14,16 @@ from reachy_muse.follow_up import request_topic
 
 
 ProgressSource = Literal["backend", "frame", "waiting"]
-PROGRESS_FIRST_S = 8.0
+PROGRESS_FIRST_S = 6.0
 PROGRESS_EVERY_S = 15.0
 PROGRESS_MAX_LINES = 6
 # These limits apply to incoming public frames. Trusted history attribution
 # adds three words when an older frame is spoken without truncating its report.
 MAX_PROGRESS_BYTES = 240
 
-_FLIGHT_WAIT = "Your flight answer is taking a little longer."
-_WEATHER_WAIT = "Your weather answer is taking a little longer."
-_WORKOUT_WAIT = "Your workout answer is taking a little longer."
+_FLIGHT_WAIT = "Muse is still working on your flights."
+_WEATHER_WAIT = "Muse is still working on your weather question."
+_WORKOUT_WAIT = "Muse is still working on your workout question."
 _RESPONDING = "Muse is preparing a reply."
 _FLIGHTS = "Looking at flights now."
 _FARES = "Checking fares now."
@@ -118,7 +118,7 @@ def waiting_progress(request_text: str) -> str | None:
         return _WEATHER_WAIT
     if re.search(r"\b(?:work\s*out|workouts?|exercise)\b", request_text, re.IGNORECASE):
         return _WORKOUT_WAIT
-    return validate_public_progress(f'The answer to "{topic}" is taking a little longer.')
+    return validate_public_progress(f'Muse is still working on "{topic}".')
 
 
 def progress_from_activity(activity_text: object) -> str | None:
