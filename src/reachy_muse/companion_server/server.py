@@ -11,7 +11,7 @@ import hmac
 import logging
 import ssl
 from collections import OrderedDict
-from contextlib import aclosing
+from contextlib import aclosing, nullcontext
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import Awaitable, Callable, Dict, Optional, Sequence, Tuple, Union
@@ -64,6 +64,7 @@ from reachy_muse.companion_server.engines import (
     Narrated,
     Animator, Classifier, Endpoint, Hearing, Narrator, Partial, SpeechFirst, Voice,
 )
+from reachy_muse.companion_server.motion_activity import ActivityStatus
 
 log = logging.getLogger("reachy_muse.companion_server")
 
@@ -95,7 +96,8 @@ class Engines:
 class CompanionServer:
     """`async with CompanionServer(engines, token) as server:` serves until the block exits."""
 
-    def __init__(self, engines: Engines, token: str, *, ssl_context: Optional[ssl.SSLContext] = None, host: str = "127.0.0.1", port: int = 0) -> None:
+    def __init__(self, engines: Engines, token: str, *, ssl_context: Optional[ssl.SSLContext] = None,
+                 host: str = "127.0.0.1", port: int = 0, activity: Optional[ActivityStatus] = None) -> None:
         offered = engines.offered()
         encode(Welcome(VERSION, tuple(offered), tuple((op.value, name) for op, name in offered.items())))  # refuse names the codec would refuse
         self.engines = engines
@@ -103,6 +105,7 @@ class CompanionServer:
         self.ssl_context = ssl_context
         self.host = host
         self.port = port
+        self.activity = activity
         self._server: Optional[Server] = None
 
     @property
@@ -184,6 +187,7 @@ _NARRATE: Dict[NarrateOp, Callable[[Narrator, Narrate], Awaitable[Union[Narrated
 class _Session:
     def __init__(self, server: CompanionServer, ws: ServerConnection) -> None:
         self.engines = server.engines
+        self.activity = server.activity
         self.token = server.token
         self.ws = ws
         self.ops: Tuple[Op, ...] = ()
@@ -253,6 +257,8 @@ class _Session:
         if op is not None and op not in self.ops:
             await self._send(_error(ErrorCode.BAD_REQUEST, f"op {op.value} was not granted in welcome", **_target(message)))
             return
+        if self.activity is not None and op in (Op.HEAR, Op.SPEAK):
+            self.activity.touch()
         await handle(self, message)
 
     async def _second_hello(self, message: Hello) -> None:
@@ -486,7 +492,7 @@ class _Session:
 
     def _speech_first(self, work: Callable[[], Awaitable[None]]) -> Callable[[], Awaitable[None]]:
         async def first() -> None:
-            with self.engines.speech_first.busy():
+            with self.engines.speech_first.busy(), self.activity.busy() if self.activity else nullcontext():
                 await work()
         return first
 
