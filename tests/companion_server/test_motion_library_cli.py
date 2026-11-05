@@ -14,6 +14,44 @@ def test_explicit_voice_selection_is_preserved():
     assert cli._voice("kokoro:af_heart") == "kokoro:af_heart"
 
 
+@pytest.mark.parametrize("outcome", ["loaded", "failed", "cancelled"])
+def test_engine_startup_blocks_builds_and_restarts_quiet_time(tmp_path, monkeypatch, outcome):
+    from reachy_muse.companion_server import motion_activity
+
+    now = [2000.0]
+    observed = []
+    monkeypatch.setattr(motion_activity.time, "time", lambda: now[0])
+    monkeypatch.setattr(motion_activity.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(cli.pairing, "load", lambda directory: SimpleNamespace(token="test"))
+
+    async def engines(args):
+        observed.append(motion_activity._read_activity(tmp_path)["active"])
+        now[0] += 1300
+        observed.append(motion_activity._quiet(motion_activity._read_activity(tmp_path), 1200, True))
+        if outcome == "failed":
+            raise RuntimeError("failed")
+        if outcome == "cancelled":
+            raise asyncio.CancelledError()
+        return cli.Engines()
+
+    def loaded():
+        raise RuntimeError("loaded")
+
+    monkeypatch.setattr(cli, "_engines", engines)
+    monkeypatch.setattr(cli.watchdog, "start", loaded)
+    error = asyncio.CancelledError if outcome == "cancelled" else RuntimeError
+    with pytest.raises(error):
+        asyncio.run(cli._serve(argparse.Namespace(state_dir=tmp_path)))
+
+    assert observed == [1, False]
+    finished = motion_activity._read_activity(tmp_path)
+    assert {key: finished[key] for key in ("active", "wall", "monotonic")} == {
+        "active": 0, "wall": 3300.0, "monotonic": 3300.0}
+    assert motion_activity._quiet(finished, 1200, True) is False
+    now[0] += 1200
+    assert motion_activity._quiet(finished, 1200, True) is True
+
+
 def test_worker_builds_then_resumes_without_generating_again(tmp_path, monkeypatch, capsys):
     from reachy_muse.companion_server import motion, motion_activity, motion_library
 

@@ -135,7 +135,8 @@ async def _serve(args: argparse.Namespace) -> None:
 
     paired = pairing.load(args.state_dir)
     activity = ActivityStatus(args.state_dir)
-    engines = await _engines(args)
+    with activity.busy():
+        engines = await _engines(args)
     watchdog.start()
     tls = None if args.insecure else paired.tls_context()
     stop = asyncio.get_running_loop().create_future()
