@@ -69,3 +69,25 @@ def test_late_acknowledgement_narration_still_acknowledges_the_request(monkeypat
             assert robot.requests() == [QUESTION]
             assert spoken_by_companion(companion) == ["Hmm, good question.", "Castles kept dragons out."]
     scenario(run())
+
+
+def test_reachy_nods_when_the_user_pauses_before_any_words_arrive(monkeypatch):
+    async def run():
+        async with FakeCompanion(partials=PARTIALS, frames_per_partial=10_000) as companion:
+            robot = Conversation(monkeypatch, companion.url[:-3], answer("Castles kept dragons out."), silence_s=1.0)
+            moved = []
+
+            def motion():
+                return [event.get("name") or event["state"] for event in robot.recording.events
+                        if event.get("robot") in ("gesture", "set_state")]
+
+            async def user():
+                await robot.speak(.8)
+                stopped = asyncio.get_running_loop().time()
+                await robot.until(lambda: "nod" in motion(), 2)
+                moved.append(asyncio.get_running_loop().time() - stopped)
+                await robot.until(lambda: robot.requests(), 3)
+            await robot.run(user)
+            assert .5 < moved[0] < 1.0, moved
+            assert motion()[:3] == ["idle", "listening", "nod"]
+    scenario(run())

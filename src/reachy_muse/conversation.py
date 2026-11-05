@@ -955,6 +955,8 @@ class VoiceConversation:
                                                  turns_waiting=bool(pending_turns)))
             if partial is not None:
                 await self._plan(plan.Heard(partial, speech_active=speaking, output=self._has_output()))
+            if recorder.active:
+                await self._plan(plan.Pause(recorder.quiet_s, output=self._has_output()))
             elapsed = time.monotonic() - started
             if elapsed > max(.1, len(sample) / self.hardware.sample_rate * 2) and started - last_slow_feed > 10:
                 log.warning("Reachy microphone processing took %.3fs for %.3fs of audio",

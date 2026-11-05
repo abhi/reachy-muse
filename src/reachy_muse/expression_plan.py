@@ -115,6 +115,14 @@ class Heard:
 
 
 @dataclass(frozen=True)
+class Pause:
+    """Inside an open utterance, with or without a transcript: seconds since the voice detector heard speech."""
+
+    quiet_s: float
+    output: bool
+
+
+@dataclass(frozen=True)
 class MuseStatus:
     """Muse's latest reported phase and allowlisted activity, observed while Reachy waits."""
 
@@ -159,7 +167,7 @@ class Sleep:
 
 
 Event = Union[Started, WakeHeard, WakeClosed, CaptureGap, Recording, UserSpeech, Working,
-              TurnStarted, Heard, MuseStatus, AnswerArrived, RequestHeld, TurnDone, OutputIdle, Sleep]
+              TurnStarted, Heard, Pause, MuseStatus, AnswerArrived, RequestHeld, TurnDone, OutputIdle, Sleep]
 
 
 class ExpressionPlanner:
@@ -172,6 +180,7 @@ class ExpressionPlanner:
         self._words_at_gesture = 0
         self._quiet_since: Optional[float] = None
         self._nodded: Optional[Tuple[int, int]] = None
+        self._pause_nodded = False
         self._answered = False
         self._status_shown: Optional[Tuple[str, Optional[str]]] = None
         self._varied_at = -math.inf
@@ -188,6 +197,7 @@ class ExpressionPlanner:
             Working: self._working,
             TurnStarted: self._turn_started,
             Heard: self._heard,
+            Pause: self._pause,
             MuseStatus: self._muse_status,
             AnswerArrived: self._answer_arrived,
             RequestHeld: self._request_held,
@@ -281,6 +291,18 @@ class ExpressionPlanner:
         if self._words - self._words_at_gesture >= TILT_WORDS:
             return self._gesture(TILT, now)
         return ()
+
+    def _pause(self, event: Pause, now: float) -> Tuple[Cue, ...]:
+        """One nod per pause shows the user Reachy heard them, even before any transcript."""
+        if event.quiet_s < CLAUSE_PAUSE_S:
+            self._pause_nodded = False
+            return ()
+        if (self._pause_nodded or event.output or self._state is not State.LISTENING
+                or now - self._gesture_at < GESTURE_GAP_S or now - self._nod_at < NOD_EVERY_S):
+            return ()
+        self._pause_nodded = True
+        self._nod_at = now
+        return self._gesture(NOD, now)
 
     def _muse_status(self, event: MuseStatus, now: float) -> Tuple[Cue, ...]:
         shown = (event.phase, event.activity)

@@ -3,7 +3,7 @@ import pytest
 from reachy_muse.contract.expressions import Expression
 from reachy_muse.capabilities import Partial
 from reachy_muse.expression_plan import (
-    AnswerArrived, CaptureGap, ExpressionPlanner, Gesture, Heard, MuseStatus, OutputIdle, Recording, RequestHeld,
+    AnswerArrived, CaptureGap, ExpressionPlanner, Gesture, Heard, MuseStatus, OutputIdle, Pause, Recording, RequestHeld,
     SetState, Sleep, Started, State, TurnDone, TurnStarted, UserSpeech, WakeClosed, WakeHeard, Working,
 )
 
@@ -157,6 +157,28 @@ LISTENING_GESTURES = {
          (.1, heard("well,", 1, utterance=1)),
          (4.0, heard("well,", 1, utterance=2))],
         [(0, (LISTENING,)), (.1, (NOD,)), (4.0, (NOD,))]),
+    "a pause nods once without any transcript": (
+        [(0, WakeHeard()),
+         (1.7, Pause(.3, output=False)),
+         (2.0, Pause(.62, output=False)),
+         (2.1, Pause(.72, output=False)),
+         (2.5, Pause(0, output=False)),
+         (5.0, Pause(.6, output=False))],
+        [(0, (SetState(State.LISTENING, Expression.HAPPY),)), (1.7, ()), (2.0, (NOD,)), (2.1, ()), (2.5, ()),
+         (5.0, (NOD,))]),
+    "a pause during Reachy's speech or a gesture waits": (
+        [(0, Recording(active=True, turn_running=False)),
+         (.1, heard("one two three", 1)),
+         (.8, Pause(.7, output=False)),
+         (1.8, Pause(1.0, output=True)),
+         (1.9, Pause(1.1, output=False))],
+        [(0, (LISTENING,)), (.1, (TILT,)), (.8, ()), (1.8, ()), (1.9, (NOD,))]),
+    "a pause soon after a clause nod does not nod again": (
+        [(0, Recording(active=True, turn_running=False)),
+         (.3, heard("well,", 1)),
+         (2.0, Pause(.6, output=False)),
+         (3.4, Pause(2.0, output=False))],
+        [(0, (LISTENING,)), (.3, (NOD,)), (2.0, ()), (3.4, (NOD,))]),
 }
 
 THINKING_MOTION = {
