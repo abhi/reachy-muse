@@ -1,0 +1,43 @@
+"""Whole turns against a companion that is alive but busy, as on November 5 at 06:11.
+
+Its pongs keep arriving, so the link stays up, but its hearing never ends the turn and its
+narration answers late. The robot must still end the turn at its own silence endpoint and
+let the user hear that it is working.
+"""
+
+import asyncio
+
+import pytest
+
+from fake_companion import FakeCompanion
+from reachy_muse.companion_client import LinkState
+from test_companion import PARTIALS, Conversation, answer, hear_streams_opened, scenario
+
+pytest.importorskip("numpy")
+pytest.importorskip("av")
+
+
+def test_a_companion_that_never_endpoints_cannot_hold_the_turn_open(monkeypatch):
+    async def run():
+        async with FakeCompanion(partials=PARTIALS, frames_per_partial=12, no_endpoint=True) as companion:
+            robot = Conversation(monkeypatch, companion.url[:-3], answer("Castles kept dragons out."),
+                                 transcript="what the robot heard", ping_interval_s=.05, ping_timeout_s=.2)
+            waited, transitions = [], []
+
+            async def user():
+                for turn in (1, 2):
+                    await robot.speak(.8)
+                    stopped = asyncio.get_running_loop().time()
+                    await robot.until(lambda: len(robot.requests()) == turn, 10)
+                    waited.append(asyncio.get_running_loop().time() - stopped)
+                    await robot.quiet()
+                transitions.extend(robot.link.transitions)
+            await robot.run(user)
+            # The robot's .2 s silence endpoint, the 1.5 s endpoint grace, and scheduling.
+            assert all(1.5 < wait < 2.5 for wait in waited), waited
+            assert robot.requests() == ["what the robot heard"] * 2
+            assert hear_streams_opened(companion) == [1, 3]
+            assert transitions == [LinkState.CONNECTING, LinkState.UP]
+            assert robot.spoken() == ["companion", "companion"]
+    scenario(run())
+

@@ -16,8 +16,8 @@ from reachy_muse.contract.replies import ReplyStyle
 from reachy_muse.contract.intent import Intent, guess_intent
 from reachy_muse.companion_client import CompanionOpening
 from reachy_muse.local_backends import RuleNarrator
-from reachy_muse.capabilities import (EMOJI, MARKUP, Backends, CapabilityUnavailable, Heard, HeardAudio, Hold, LocalReply,
-                                      Opener, SpokenLine, grounded)
+from reachy_muse.capabilities import (EMOJI, MARKUP, Backends, CapabilityUnavailable, Endpoint, Heard, HeardAudio, Hold,
+                                      LocalReply, Opener, SpokenLine, grounded)
 from reachy_muse.device_command import Commands
 from reachy_muse.protocol import MAX_LINE_BYTES, MAX_REPLY_BYTES
 from reachy_muse.progress import ProgressPlan
@@ -101,6 +101,33 @@ class CompanionRoute:
 
     def take_outage(self) -> bool:
         return self.link.take_outage()
+
+
+class _CompanionEnded:
+    """A companion turn whose words fall back to Reachy's own transcription of its audio."""
+
+    def __init__(self, ended, rest: _Rest):
+        self._ended = ended
+        self._rest = rest
+        self.truncated = ended.truncated
+        self.end_sample = ended.end_sample
+
+    def start(self) -> None:
+        self._ended.start()
+
+    def cancel(self) -> None:
+        self._ended.cancel()
+
+    async def endpoint(self) -> Optional[Endpoint]:
+        try:
+            endpoint = await self._ended.endpoint()
+        except CapabilityUnavailable as error:
+            log.warning("Reachy transcribes the turn itself: %s", error)
+            if not error.link_down:
+                self._rest.fail(str(error))
+            return Endpoint(self._ended.wav, None)
+        self._rest.succeed()
+        return endpoint
 
 
 class FailoverHearingTurn:
@@ -195,8 +222,8 @@ class FailoverHearingTurn:
             self._switch(on_companion=False)
             return HeardAudio()
         if heard.ended is not None:
-            self._hearing.rest.succeed()
             self._forget_until(self._turn_start_sample + heard.ended.end_sample)
+            return HeardAudio(_CompanionEnded(heard.ended, self._hearing.rest), heard.failures, heard.transcript_lost)
         elif not self._turn.active:
             self._trim(IDLE_KEEP_S)
         return heard

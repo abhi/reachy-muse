@@ -51,6 +51,9 @@ HANDSHAKE_TIMEOUT_S = 10.0
 BACKOFF_S = (0.2, 5.0)
 HEALTHY_S = 10.0                   # a session shorter than this is a failed attempt, not a recovery
 READY_S = 0.1                     # reject immediate post-welcome failures before routing new turns
+# From the robot's silence endpoint to the companion's forced endpoint. Healthy finals take
+# 0.66 s alone and 1.12 s at the median with motion; a later one is transcribed on the robot.
+ENDPOINT_WAIT_S = 1.5
 _PIN = re.compile(r"sha256:([0-9a-f]{64})")
 _FATAL = (ErrorCode.AUTH, ErrorCode.VERSION, ErrorCode.INTERNAL, ErrorCode.MODEL)
 
@@ -126,7 +129,7 @@ class _Connection:
             if not future.done():
                 future.set_exception(CapabilityUnavailable(reason))
         for stream in self.hearing.values():
-            stream.failure = CapabilityUnavailable(reason)
+            stream.fail(CapabilityUnavailable(reason))
 
 
 class _HearStream:
@@ -136,8 +139,9 @@ class _HearStream:
         self.audio = bytearray()
         self.inbox: List[object] = []
         self.failure: Optional[CapabilityUnavailable] = None
-        self.truncated = False
-        self.end_sample = 0            # where the robot's VAD ended the utterance, in samples fed to the turn
+        self.finished_at: Optional[float] = None   # when the robot's VAD ended the utterance
+        self.endpoint: Optional[HearEndpoint] = None
+        self.settled = asyncio.Event()             # an endpoint or a failure arrived
         self._seq = 0
 
     def send(self, pcm: bytes) -> None:
@@ -151,6 +155,14 @@ class _HearStream:
             self.connection.hearing.pop(self.id, None)
         if not self.connection.closed:
             self.connection.send(HearClose(self.id, how))
+
+    def finish(self) -> None:
+        self.finished_at = time.monotonic()
+        self.close(CloseHow.FINISH)
+
+    def fail(self, failure: CapabilityUnavailable) -> None:
+        self.failure = failure
+        self.settled.set()
 
 
 def _clip(text: str, limit: int) -> str:
@@ -408,9 +420,13 @@ class CompanionLink:
         if isinstance(message, (HearPartial, HearEndpoint)):
             stream = connection.hearing.get(message.stream)
             if stream is not None:
-                stream.inbox.append(message)
                 if isinstance(message, HearEndpoint):
                     del connection.hearing[message.stream]
+                if stream.finished_at is None:
+                    stream.inbox.append(message)
+                elif isinstance(message, HearEndpoint):
+                    stream.endpoint = message
+                    stream.settled.set()
         elif isinstance(message, SpeakDone):
             queue = connection.speaking.pop(message.stream, None)
             if queue is not None:
@@ -431,7 +447,7 @@ class CompanionLink:
             raise ConnectionError(f"the companion failed: {error.code.value}: {error.message}")
         failure = CapabilityUnavailable(f"companion {error.code.value}: {error.message}", link_down=False)
         if error.stream is not None and error.stream in connection.hearing:
-            connection.hearing.pop(error.stream).failure = failure
+            connection.hearing.pop(error.stream).fail(failure)
         elif error.stream is not None and error.stream in connection.speaking:
             connection.speaking.pop(error.stream).put_nowait(failure)
             connection.sequence.forget(error.stream)
@@ -548,12 +564,53 @@ class _HeardTurn:
         return self._endpoint
 
 
-class CompanionHearingTurn:
-    """Robot VAD opens each hear stream; the companion's endpoint ends it.
+class _FinishedTurn:
+    """A turn the robot's VAD ended first; the companion's forced endpoint brings its words.
 
-    When the robot's VAD ends an utterance first, the stream closes with ``finish`` and
-    the turn ends when the companion's forced endpoint arrives. Partials, audio, and
-    pongs prove liveness while Smart Turn and final transcription are still running.
+    The words must arrive within ``ENDPOINT_WAIT_S`` of the robot's endpoint. A companion that
+    is alive but busy fails only this turn, so the robot can transcribe the same audio.
+    """
+
+    def __init__(self, stream: _HearStream, truncated: bool, end_sample: int):
+        self._stream = stream
+        self._cancelled = False
+        self.truncated = truncated
+        self.end_sample = end_sample
+
+    @property
+    def wav(self) -> bytes:
+        return _wav(bytes(self._stream.audio))
+
+    def start(self) -> None:
+        pass
+
+    def cancel(self) -> None:
+        self._cancelled = True
+        self._stream.close(CloseHow.ABORT)
+        self._stream.settled.set()
+
+    async def endpoint(self) -> Optional[Endpoint]:
+        stream = self._stream
+        remaining = stream.finished_at + ENDPOINT_WAIT_S - time.monotonic()
+        try:
+            if not stream.settled.is_set():
+                await asyncio.wait_for(stream.settled.wait(), max(0.0, remaining))
+        except asyncio.TimeoutError:
+            stream.close(CloseHow.ABORT)
+            raise CapabilityUnavailable("the companion did not end the turn in time", link_down=False) from None
+        if self._cancelled:
+            raise asyncio.CancelledError
+        if stream.endpoint is None:
+            raise stream.failure
+        return Endpoint(self.wav, stream.endpoint.text, stream.endpoint.forced)
+
+
+class CompanionHearingTurn:
+    """Robot VAD opens each hear stream; the earlier of the companion's endpoint and the robot's ends it.
+
+    When the robot's VAD ends an utterance first, the stream closes with ``finish`` and the
+    turn ends at once; its words follow with the companion's forced endpoint. Liveness of
+    the link never holds a turn open.
     """
 
     supports_partials = True
@@ -562,7 +619,6 @@ class CompanionHearingTurn:
         self._link = link
         self._recorder = recorder
         self._open: Optional[_HearStream] = None
-        self._closing: Dict[int, _HearStream] = {}
         self._ended = deque()
         self._fed = 0
         self._vad_ends = deque()
@@ -570,7 +626,7 @@ class CompanionHearingTurn:
 
     @property
     def active(self) -> bool:
-        return self._recorder.active or self._open is not None or bool(self._closing)
+        return self._recorder.active or self._open is not None
 
     @property
     def speech_active(self) -> bool:
@@ -599,43 +655,35 @@ class CompanionHearingTurn:
             elif isinstance(event, SpeechEnd) and self._open is not None:
                 stream, self._open = self._open, None
                 if event.accepted:
-                    stream.truncated = self._recorder.last_truncated
-                    stream.end_sample = self._vad_ends.popleft() if self._vad_ends else self._fed
-                    self._closing[stream.id] = stream
-                    stream.close(CloseHow.FINISH)
+                    stream.finish()
+                    self._ended.append(_FinishedTurn(stream, self._recorder.last_truncated,
+                                                     self._vad_ends.popleft() if self._vad_ends else self._fed))
                 else:
                     stream.close(CloseHow.ABORT)
                 self.partial = None
-        failure = None
-        for stream in [*([self._open] if self._open is not None else []), *self._closing.values()]:
+        stream = self._open
+        if stream is not None:
             messages, stream.inbox = stream.inbox, []
             for message in messages:
                 if isinstance(message, HearPartial):
-                    if stream is self._open:
-                        self.partial = Partial(message.text, message.rev, stream.id)
+                    self.partial = Partial(message.text, message.rev, stream.id)
                     continue
-                if stream is self._open:
-                    self._open = None
-                    stream.end_sample = self._fed
-                    self._recorder.reset()
-                self._closing.pop(stream.id, None)
+                self._open = None
+                self._recorder.reset()
                 self.partial = None
                 self._ended.append(_HeardTurn(Endpoint(_wav(bytes(stream.audio)), message.text, message.forced),
-                                              stream.truncated, stream.end_sample))
+                                              False, self._fed))
                 break
-            else:
-                failure = failure or stream.failure
         if self._ended:
             return HeardAudio(self._ended.popleft())
-        if failure is not None:
-            raise failure
+        if stream is not None and stream.failure is not None:
+            raise stream.failure
         return HeardAudio()
 
     def abort(self) -> None:
-        for stream in [*([self._open] if self._open is not None else []), *self._closing.values()]:
-            stream.close(CloseHow.ABORT)
+        if self._open is not None:
+            self._open.close(CloseHow.ABORT)
         self._open = None
-        self._closing.clear()
         self.partial = None
 
 

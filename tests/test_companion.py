@@ -496,36 +496,12 @@ def test_slow_companion_speech_keeps_its_voice_and_finishes(monkeypatch):
     scenario(run())
 
 
-@pytest.mark.parametrize("no_partials", [False, True])
-def test_a_slow_hearing_endpoint_keeps_the_reply_on_companion(monkeypatch, no_partials):
-    from reachy_muse.protocol import HearEndpoint, encode
-
-    async def run():
-        async with FakeCompanion(partials=PARTIALS, frames_per_partial=12,
-                                 no_endpoint=True, stall=no_partials) as companion:
-            robot = Conversation(monkeypatch, companion.url[:-3], answer("Castles kept dragons out."),
-                                 transcript="what the robot heard", ping_interval_s=.05, ping_timeout_s=.2)
-
-            async def user():
-                await robot.speak(.8)
-                await asyncio.sleep(2.2)
-                assert robot.link.up and not robot.requests()
-                companion.stall = False
-                for ws in companion._server.connections:
-                    await ws.send(encode(HearEndpoint(1, QUESTION, True)))
-                await robot.until(lambda: robot.requests())
-            await robot.run(user)
-            assert robot.requests() == [QUESTION]
-            assert robot.spoken() == ["companion"]
-    scenario(run())
-
-
 def hear_streams_opened(companion):
     return [message.stream for message in (decode(frame, sender=Sender.ROBOT) for frame in companion.received
                                            if isinstance(frame, str)) if isinstance(message, HearOpen)]
 
 
-def test_a_slow_endpoint_does_not_quarantine_later_turns(monkeypatch, caplog):
+def test_a_slow_endpoint_within_the_grace_keeps_the_companions_words(monkeypatch, caplog):
     from reachy_muse.protocol import HearEndpoint, encode
 
     async def run():
@@ -534,15 +510,13 @@ def test_a_slow_endpoint_does_not_quarantine_later_turns(monkeypatch, caplog):
                                  transcript="what the robot heard", ping_interval_s=.05, ping_timeout_s=.2)
 
             async def user():
-                await robot.speak(.8)
-                await asyncio.sleep(2.2)
-                companion.no_endpoint = False
-                for ws in companion._server.connections:
-                    await ws.send(encode(HearEndpoint(1, QUESTION, True)))
-                await robot.until(lambda: robot.requests())
-                await robot.quiet()
-                await robot.speak(.8)
-                await robot.until(lambda: len(robot.requests()) == 2)
+                for stream in (1, 3):
+                    await robot.speak(.8)
+                    await asyncio.sleep(1.0)
+                    for ws in companion._server.connections:
+                        await ws.send(encode(HearEndpoint(stream, QUESTION, True)))
+                    await robot.until(lambda: len(robot.requests()) == (stream + 1) // 2)
+                    await robot.quiet()
             await robot.run(user)
             assert hear_streams_opened(companion) == [1, 3]
             assert robot.requests() == [QUESTION, QUESTION]

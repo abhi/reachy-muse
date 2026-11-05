@@ -101,10 +101,9 @@ def test_a_connecting_companion_preserves_the_opening_before_vad_activation(open
     assert turn.take().ended is None
     turn.feed(np.zeros(1600, dtype=np.float32))
     ended = turn.take().ended
-    if ended is None:
-        stream, = link._connection.hearing
+    assert ended is not None
+    for stream in tuple(link._connection.hearing):
         link._receive(link._connection, encode(HearEndpoint(stream, "first", True)))
-        ended = turn.take().ended
     endpoint = asyncio.run(ended.endpoint())
     with wave.open(io.BytesIO(endpoint.audio), "rb") as wav:
         recorded = np.frombuffer(wav.readframes(wav.getnframes()), dtype="<i2")
@@ -151,11 +150,12 @@ def test_a_disconnect_after_handoff_replays_all_unfinished_audio(ended_first_tur
     np.testing.assert_array_equal(np.frombuffer(stream.audio, dtype="<i2"), expected)
     if ended_first_turn:
         turn.feed(np.zeros(1600, dtype=np.float32))
-        assert turn.take().ended is None
+        first = turn.take().ended
+        assert first is not None
         turn.feed(np.full(8000, .75, dtype=np.float32))
         assert turn.take().ended is None
         link._receive(link._connection, encode(HearEndpoint(stream.id, "first", True)))
-        assert turn.take().ended is not None
+        assert asyncio.run(first.endpoint()).text == "first"
         expected = [24576] * 8000
     link._connection.fail("disconnected")
     link._set(LinkState.DOWN)
@@ -216,12 +216,13 @@ class Recorder:
 def test_an_ended_turn_waiting_behind_another_is_returned_before_the_companion_fails():
     voice = SpeechAudio(b"\0\0" * 160)
     link = HearingLink()
-    turn = CompanionHearingTurn(link, Recorder([voice, SpeechEnd(True), voice, SpeechEnd(True)], [voice]))
-    assert turn.take().ended is None
-    link.connection.hearing[1].inbox.append(HearEndpoint(1, "first", True))
-    link.connection.hearing[3].inbox.append(HearEndpoint(3, "second", True))
+    turn = CompanionHearingTurn(link, Recorder([voice, SpeechEnd(True), voice, SpeechEnd(True), voice]))
     first = turn.take().ended
-    link.connection.hearing[5].failure = CapabilityUnavailable("gone", link_down=False)
+    streams = link.connection.hearing
+    for stream, text in ((1, "first"), (3, "second")):
+        streams[stream].endpoint = HearEndpoint(stream, text, True)
+        streams[stream].settled.set()
+    streams[5].failure = CapabilityUnavailable("gone", link_down=False)
     second = turn.take().ended
 
     async def texts():

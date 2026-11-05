@@ -121,15 +121,15 @@ def test_a_permitted_pause_keeps_hearing_and_speech_on_the_companion(monkeypatch
     assert link.take_outage() is False
 
 
-@pytest.mark.parametrize("delay", [2.6, 3.641, 18.0])
-def test_slow_hearing_finishes_on_the_same_connection(monkeypatch, delay):
+def _finished_hearing_turn(monkeypatch):
+    """A turn the robot's VAD has just ended, on a link whose clock the test moves."""
     from types import SimpleNamespace
     import numpy as np
     import reachy_muse.companion_client as client
-    from reachy_muse.protocol import HearEndpoint, HearPartial, Op, encode
+    from reachy_muse.protocol import HearPartial, Op, encode
 
-    now = 100.0
-    monkeypatch.setattr(client, "time", SimpleNamespace(monotonic=lambda: now))
+    clock = SimpleNamespace(now=100.0)
+    monkeypatch.setattr(client, "time", SimpleNamespace(monotonic=lambda: clock.now))
     link = CompanionLink("ws://127.0.0.1:9000", token=TOKEN, out_rate=16000, insecure=True)
     link._connection = client._Connection(None, (Op.HEAR, Op.SPEAK, Op.NARRATE))
     link._set(LinkState.UP)
@@ -139,12 +139,41 @@ def test_slow_hearing_finishes_on_the_same_connection(monkeypatch, delay):
     assert turn.take().ended is None
     link._receive(link._connection, encode(HearPartial(1, 0, "hello")))
     turn.feed(np.zeros(6400, dtype=np.float32))
-    assert turn.take().ended is None
-    now += delay
-    assert turn.take().ended is None
+    ended = turn.take().ended
+    assert ended is not None and not turn.active
+    return link, ended, clock
+
+
+def _companion_endpoint(link):
+    from reachy_muse.protocol import HearEndpoint, encode
+
     link._receive(link._connection, encode(HearEndpoint(1, "hello there", True)))
-    endpoint = asyncio.run(turn.take().ended.endpoint())
-    assert (endpoint.text, link.up, link.take_outage()) == ("hello there", True, False)
+
+
+@pytest.mark.parametrize("delay", [0.662, 1.122])
+def test_the_companion_transcribes_a_turn_the_robot_ended(monkeypatch, delay):
+    link, ended, clock = _finished_hearing_turn(monkeypatch)
+    clock.now += delay
+    _companion_endpoint(link)
+    endpoint = asyncio.run(ended.endpoint())
+    assert (endpoint.text, endpoint.forced, link.up, link.take_outage()) == ("hello there", True, True, False)
+
+
+@pytest.mark.parametrize("delay", [1.6, 3.641, 37.28])
+def test_a_late_companion_endpoint_fails_only_that_turn(monkeypatch, delay):
+    from reachy_muse.protocol import CloseHow, HearClose
+
+    link, ended, clock = _finished_hearing_turn(monkeypatch)
+    clock.now += delay
+    with pytest.raises(CapabilityUnavailable, match="did not end the turn in time") as raised:
+        asyncio.run(ended.endpoint())
+    _companion_endpoint(link)
+    assert raised.value.link_down is False
+    assert (link.up, link.take_outage(), link._connection.hearing) == (True, False, {})
+    outbox = link._connection.outbox
+    sent = [decode(frame, sender=Sender.ROBOT) for frame in (outbox.get_nowait() for _ in range(outbox.qsize()))
+            if isinstance(frame, str)]
+    assert [message.how for message in sent if isinstance(message, HearClose)] == [CloseHow.FINISH, CloseHow.ABORT]
 
 
 def test_speech_waits_for_a_slow_worker_while_pongs_continue():

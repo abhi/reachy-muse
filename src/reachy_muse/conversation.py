@@ -1374,6 +1374,8 @@ class VoiceConversation:
                 if isinstance(text, TurnOutcome):
                     completed = True
                     return text
+                if text is not None:
+                    timeline.mark("transcript")
                 self._say_hushed = False
                 if text is not None and await self._obey(text, started, timeline) is not None:
                     completed = True
