@@ -58,6 +58,7 @@ INPUT_OVERFLOW_CUE = "My question queue is full. Please repeat that after I fini
 TRANSCRIPTION_RETRY_CUE = "I missed part of that. Please say it again."
 LATE_ANSWER_S = 20.0
 ANSWER_HOLD_LIMIT_S = 8.0
+WAITING_LEAD_S = 3.0               # synthesis of the waiting cue starts this long before it is due
 CANCEL_ACKNOWLEDGEMENT = "Okay, I'll drop that."
 # Muse may answer Reachy's stop request without naming it as the parent; such messages
 # this soon after a stop are taken as that answer, not the next request's.
@@ -460,6 +461,7 @@ class MuseJob:
     replies: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=32))
     intent: Intent = Intent.QUESTION
     progress: ProgressPlan | None = None
+    waiting_speech: PreparedSpeech | None = None  # the waiting cue's audio, ready before the cue is due
     aside: asyncio.Task | None = None  # Reachy's own line about the job: its acknowledgement or a progress update
     aside_audible: bool = False        # an acknowledgement has started playing, so it is not cut off mid-word
     answered: bool = False
@@ -837,6 +839,7 @@ class VoiceConversation:
                     continue
             if job.progress is not None:
                 job.progress.stop()
+                self._discard_waiting(job)
             try:
                 job.replies.put_nowait(reply)
             except asyncio.QueueFull:
@@ -853,7 +856,13 @@ class VoiceConversation:
             await self._vary_thinking_pose_if_cooled_down()
 
     def _discard_prepared(self, key) -> None:
-        prepared = self._prepared_speech.pop(key, None)
+        self._close_prepared(self._prepared_speech.pop(key, None))
+
+    def _discard_waiting(self, job: MuseJob) -> None:
+        prepared, job.waiting_speech = job.waiting_speech, None
+        self._close_prepared(prepared)
+
+    def _close_prepared(self, prepared) -> None:
         if prepared is not None:
             prepared.cancel()
             closing = asyncio.create_task(prepared.aclose())
@@ -1419,6 +1428,7 @@ class VoiceConversation:
                         await self._end_asides(job, let_playing_finish=False, turn_cancelled=turn_cancelled)
                     finally:
                         job.progress = None
+                        self._discard_waiting(job)
             finally:
                 prepared, self._prepared_speech = self._prepared_speech, {}
                 await asyncio.gather(*(audio.aclose() for audio in prepared.values()), return_exceptions=True)
@@ -1677,14 +1687,18 @@ class VoiceConversation:
                     self._input_overflow = False
                     job.aside = asyncio.create_task(self._speak(
                         None, text=INPUT_OVERFLOW_CUE, state="thinking", stream_segment=True))
+                waiting = (job.progress.upcoming_waiting(time.monotonic(), WAITING_LEAD_S)
+                           if job.progress is not None and not job.answered else None)
+                if waiting is not None and len(waiting.encode("utf-8")) <= MAX_LINE_BYTES:
+                    job.waiting_speech = self._prepare_line(self.backends.progress_voice,
+                                                            _line(None, waiting, None, progress=True))
                 if (job.progress is not None and job.aside is None and not job.answered
                         and not self._has_output() and not self._playback.user_speaking):
                     progress = job.progress.take(time.monotonic())
                     if progress is not None:
                         log.info("Reachy selected %s progress %.1fs after the voice turn",
                                  progress.source, time.monotonic() - started)
-                        job.aside = asyncio.create_task(
-                            self._say_progress(progress))
+                        job.aside = asyncio.create_task(self._say_progress(progress, job))
                 if (job.style is ReplyStyle.EXPRESSIVE_JSON and not waiting_for_segment
                         and not self._has_output() and not self._playback.user_speaking):
                     await self._plan(plan.Working(output=False, user_speaking=False))
@@ -1994,7 +2008,10 @@ class VoiceConversation:
                 prepared.cancel()
                 await prepared.aclose()
 
-    async def _say_progress(self, progress: ProgressUpdate) -> None:
+    async def _say_progress(self, progress: ProgressUpdate, job: MuseJob | None = None) -> None:
+        prepared = None
+        if job is not None and progress.source == "waiting":
+            prepared, job.waiting_speech = job.waiting_speech, None
         lines = [""]
         for word in progress.text.split():
             text = f"{lines[-1]} {word}".strip()
@@ -2003,8 +2020,14 @@ class VoiceConversation:
             else:
                 lines[-1] = text
         for text in lines:
-            await self._speak(None, text=text, state="thinking", stream_segment=True,
-                              voice=self.backends.progress_voice, progress=True)
+            speech, prepared = prepared, None
+            try:
+                await self._speak(None, text=text, state="thinking", stream_segment=True,
+                                  voice=self.backends.progress_voice, progress=True, prepared_stream=speech)
+            finally:
+                if speech is not None:
+                    speech.cancel()
+                    await speech.aclose()
 
     async def _drain_speech(self, cursor: PlaybackCursor) -> None:
         player = PCMPlayer(self.hardware.output_sample_rate, None, self._playback, cursor=cursor)

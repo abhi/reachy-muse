@@ -228,3 +228,41 @@ def test_a_request_heard_while_muse_works_is_held_with_a_nod_and_later_ones_get_
     plays = [event["audio"] for event in events if event.get("robot") == "play"]
     assert plays.count(busy) == 1
     assert plays[-2:] == ["tts:Answer 1.", "tts:Answer 2."]
+
+
+def test_the_waiting_cue_is_ready_to_play_when_it_is_due(monkeypatch):
+    from reachy_muse.progress import ProgressPlan
+    labels = Labels()
+    hardware = PacedHardware(labels)
+    cue = 'Muse is still working on "robot history".'
+    due = []
+
+    class Recognition:
+        async def transcribe(self, wav):
+            return "Can you search for robot history?"
+
+    class Speech:
+        async def stream(self, text, rate):
+            yield labels.samples(text)
+
+    class BusySpeech:
+        async def stream(self, text, rate):
+            await asyncio.sleep(1.0)
+            yield labels.samples(text)
+
+    def build(session):
+        conversation = VoiceConversation(session, hardware, backends=backends_for(
+            Mode.ON_ROBOT, session, speech=Speech(), progress_speech=BusySpeech(), transcriber=Recognition()))
+        conversation.backends.voice.phrases = {
+            phrase: (labels.samples(phrase),) for phrase in reachy_muse.local_backends.ACKNOWLEDGEMENTS}
+
+        def progress(request, started, intent):
+            due.append(started + 1.5)
+            return ProgressPlan(request, started, intent=intent, first_delay_s=1.5)
+        conversation.backends.narrator.progress = progress
+        return conversation
+
+    run_turn(monkeypatch, build, answer_after(0, "Robots began as toys.", when=lambda: cue in hardware.spoken()))
+    assert hardware.spoken() == ["Hmm, good question.", cue, "Robots began as toys."]
+    started = dict(hardware.timeline)[cue]
+    assert 0 <= started - due[0] < .4

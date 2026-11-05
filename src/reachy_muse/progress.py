@@ -168,6 +168,7 @@ class ProgressPlan:
                  max_updates: int | None = PROGRESS_MAX_LINES):
         self.intent = intent
         self._waiting = waiting_progress(request_text)
+        self._waiting_announced = False
         self._first_due = started + first_delay_s
         self._interval_s = interval_s
         self._expiry_s = expiry_s
@@ -180,6 +181,14 @@ class ProgressPlan:
         self._status = None
         self._milestone = None
         self._stopped = False
+
+    def upcoming_waiting(self, now: float, lead_s: float) -> str | None:
+        """The waiting line, once, ``lead_s`` before it can be due, so its audio is ready in time."""
+        if (self._waiting_announced or self._stopped or self._emitted or self._waiting is None
+                or now < self._first_due - lead_s):
+            return None
+        self._waiting_announced = True
+        return self._waiting
 
     def offer(self, text: object, now: float, *, source: ProgressSource = "frame") -> bool:
         """Replace pending progress with a valid update not already spoken."""

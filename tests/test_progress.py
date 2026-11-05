@@ -500,3 +500,21 @@ def test_missing_or_private_context_stays_silent_until_a_public_status(request_t
     assert plan.take(8) is None
     assert plan.offer("I found a relevant public source.", 10)
     assert plan.take(10) == ProgressUpdate("I found a relevant public source.", "frame")
+
+
+def test_the_waiting_line_is_announced_once_ahead_of_its_due_time():
+    plan = ProgressPlan("Should I work out today?", 0)
+    assert plan.upcoming_waiting(2.99, 3) is None
+    assert plan.upcoming_waiting(3, 3) == "Muse is still working on your workout question."
+    assert plan.upcoming_waiting(4, 3) is None
+    assert plan.take(6) == ProgressUpdate("Muse is still working on your workout question.", "waiting")
+
+
+def test_no_waiting_line_is_announced_after_progress_was_spoken_or_stopped():
+    spoken = ProgressPlan("Research this.", 0)
+    assert spoken.set_status(backend_status_from_event("working", "Searching web"), 1)
+    assert spoken.take(1) == ProgressUpdate("Searching the web now.", "backend")
+    assert spoken.upcoming_waiting(5, 3) is None
+    stopped = ProgressPlan("Research this.", 0)
+    stopped.stop()
+    assert stopped.upcoming_waiting(5, 3) is None
