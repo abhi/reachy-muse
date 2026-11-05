@@ -158,8 +158,13 @@ The connection is TLS, pinned to the companion's certificate, with the pairing
 token. The robot sends a ping every 5 seconds and allows 20 seconds without a
 valid incoming frame or pong. Transcripts, audio bytes, and other valid replies
 count as progress. A healthy connection stays available while hearing or speech
-synthesis is slow. A delayed partial, endpoint, or speech chunk does not by
-itself quarantine the companion or switch the voice.
+synthesis is slow, and a delayed partial, endpoint, or speech chunk does not
+quarantine the companion. Liveness never lengthens a turn, though. The earlier
+of the companion's endpoint and Reachy's own silence endpoint ends it. After
+Reachy's endpoint, the companion has 1.5 seconds (`ENDPOINT_WAIT_S`) to send
+the words, and then Reachy transcribes the same audio itself. A companion
+sentence that plays no audio for 6 seconds (`SPEECH_STALL_S`) restarts in Piper.
+Neither marks the connection down.
 
 If the connection dies, Reachy finishes interrupted recognition from its retained
 microphone audio. If companion speech had started, Reachy drains its accepted
@@ -258,9 +263,9 @@ fewer. The acknowledgment is prepared when the request is sent, but it starts
 only if Muse has sent no reply text within one second (`ACK_GRACE_S`), so a
 fast answer is never delayed behind it. An acknowledgment already playing when
 the answer arrives finishes its words; nothing else queued plays before the
-answer. A companion that returns no acknowledgment means silence, and so does one that
-misses its 0.9-second deadline. Simple small talk can still get a cached local
-reply. A failed or ungrounded acknowledgement falls back to Reachy's own phrase. The adapter
+answer. A companion that returns no acknowledgment means silence. One that
+misses its 0.9-second deadline gets one of Reachy's own phrases instead. Simple
+small talk can still get a cached local reply. A failed or ungrounded acknowledgement falls back to Reachy's own phrase. The adapter
 selects the on-robot phrases locally without an additional model request.
 Startup caches their audio. Empty
 recognition does not send a message to Muse. A timed wake opens question capture
