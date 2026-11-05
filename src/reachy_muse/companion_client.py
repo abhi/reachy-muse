@@ -504,11 +504,20 @@ class CompanionLink:
         future = asyncio.get_running_loop().create_future()
         waiting[self._narrate_id] = future
         identity = self._narrate_id
+        sent = False
+        cancelled_animation = False
         try:
             connection.send(build(identity))
+            sent = True
             return await future
+        except asyncio.CancelledError:
+            # The protocol has no animate cancellation. Keep the slot until the
+            # companion answers so an abandoned request still counts against its limit.
+            cancelled_animation = sent and op is Op.ANIMATE
+            raise
         finally:
-            waiting.pop(identity, None)
+            if not cancelled_animation:
+                waiting.pop(identity, None)
 
 
 def _wav(pcm: bytes) -> bytes:
