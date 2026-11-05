@@ -463,7 +463,7 @@ class ReachyController:
                         self._clip_line = self._state_started
                         self._progress_started = None
                         self._sentences.offer(SentenceEvent(self._state_started, self._sentence_epoch,
-                                                            "start", (sentence.expression.value, self._sentence_serial, move)))
+                                                            "start", (sentence.expression.value, self._sentence_serial), move))
                 self._layers.feed_speech(audio, self._output_sample_rate, at)
 
     def finish_sentence(self) -> None:
@@ -1067,7 +1067,8 @@ class ReachyController:
                             with self._state_lock:
                                 if event.epoch != self._sentences.epoch:
                                     continue
-                                expression, serial, move = event.value
+                                expression, serial = event.value
+                                move = event.move
                                 if self._sentence_paused or self._state != "speaking":
                                     continue
                                 self._reply_expression = expression

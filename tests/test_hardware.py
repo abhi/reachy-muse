@@ -2079,7 +2079,7 @@ def test_library_sentence_motion_is_audio_ordered_and_cancelled_with_epoch(monke
         ('start', 'happy'), ('end', 'plain'), ('start', 'sad')]
     assert events[0].at == pytest.approx(1000.06)
     assert events[2].at == pytest.approx(1000.16)
-    assert events[0].value[2].frames[0, 0] < 999
+    assert events[0].move.frames[0].tolist() == [15., 0., 0., 0., 0., 0., 0., 0., 0.]
     controller.play_audio(np.zeros(1600), sentence=SentenceMotion(Expression.HAPPY, motion=motion))
     controller.clear_audio()
     assert controller._sentences.due(1002.0) == []
