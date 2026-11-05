@@ -2055,3 +2055,31 @@ def test_minute_diagnostics_are_numeric_and_restart_a_failed_watcher(caplog):
     assert lines == ["Arrival stats frames=12 frame_errors=2 brightness=30.0 motion_triggers=3 "
                      "detector_runs=4 max_person_confidence=0.375 pitch=3.0 yaw=-12.0 asleep=1 still=1"]
     assert "private camera details" not in caplog.text
+
+
+def test_library_sentence_motion_is_audio_ordered_and_cancelled_with_epoch(monkeypatch):
+    from reachy_muse.capabilities import Motion
+    from reachy_muse.contract.expressions import Expression
+    from reachy_muse.motion.layers import MotionLayers
+    from reachy_muse.motion.sentence import SentenceMotion
+
+    robot = FakeRobot()
+    controller = ReachyController(pose_factory=pose_factory, sleep_on_close=False)
+    controller._np, controller._robot = np, robot
+    controller._output_sample_rate = 16000
+    controller._layers = MotionLayers(controller._style)
+    controller._require_running = lambda: None
+    monkeypatch.setattr(reachy_muse.hardware.time, 'monotonic', lambda: 1000.0)
+    motion = Motion(25, ((999., 0., 0., 0., 0., 0., 0., 0., 0.),))
+    controller.play_audio(np.zeros(1600), sentence=SentenceMotion(Expression.HAPPY, motion=motion))
+    controller.finish_sentence()
+    controller.play_audio(np.zeros(1600), sentence=SentenceMotion(Expression.SAD, motion=motion))
+    events = controller._sentences.due(1001.0)
+    assert [(event.kind, event.value[0]) for event in events] == [
+        ('start', 'happy'), ('end', 'plain'), ('start', 'sad')]
+    assert events[0].at == pytest.approx(1000.06)
+    assert events[2].at == pytest.approx(1000.16)
+    assert events[0].value[2].frames[0, 0] < 999
+    controller.play_audio(np.zeros(1600), sentence=SentenceMotion(Expression.HAPPY, motion=motion))
+    controller.clear_audio()
+    assert controller._sentences.due(1002.0) == []

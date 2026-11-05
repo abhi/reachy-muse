@@ -191,6 +191,7 @@ class ReachyController:
         self, host: str = "reachy-mini.local", connection_mode: str = "auto",
         media_backend: str = "default", *, port: int = 8000,
         enable_motion: bool = True, sleep_on_close: bool = True,
+        library_expressions: bool = False,
         antenna_mode: str = "both",
         face_follow_model: Path | None = None,
         face_follower_factory: Callable | None = None,
@@ -234,6 +235,7 @@ class ReachyController:
                                      media_backend=media_backend)
         self._sleep_on_close = sleep_on_close
         self._enable_motion = enable_motion
+        self.library_expressions = library_expressions and enable_motion
         self._initial_motor_mode = None
         self._robot = None
         self._speaker_eq = None
@@ -436,6 +438,13 @@ class ReachyController:
                 except Exception as exc:
                     raise ReachyHardwareError(f"Reachy Mini speaker failed: {exc}") from exc
                 at = time.monotonic()
+                move = None
+                if sentence is not None and sentence.motion is not None:
+                    from reachy_muse.motion.layers import clamp_to_limits
+                    poses = self._np.asarray(sentence.motion.frames, dtype=float)
+                    if (poses.ndim == 2 and poses.shape[1] == 9 and len(poses)
+                            and self._np.isfinite(poses).all() and sentence.motion.fps > 0):
+                        move = _Frames(clamp_to_limits(poses), sentence.motion.fps, False, self._head)
                 from reachy_muse.motion.layers import SWAY_LATENCY_S
                 from reachy_muse.motion.sentence_timeline import SentenceEvent
                 start = max(at, self._audio_end)
@@ -454,7 +463,7 @@ class ReachyController:
                         self._clip_line = self._state_started
                         self._progress_started = None
                         self._sentences.offer(SentenceEvent(self._state_started, self._sentence_epoch,
-                                                            "start", (sentence.expression.value, self._sentence_serial)))
+                                                            "start", (sentence.expression.value, self._sentence_serial, move)))
                 self._layers.feed_speech(audio, self._output_sample_rate, at)
 
     def finish_sentence(self) -> None:
@@ -1058,7 +1067,7 @@ class ReachyController:
                             with self._state_lock:
                                 if event.epoch != self._sentences.epoch:
                                     continue
-                                expression, serial = event.value
+                                expression, serial, move = event.value
                                 if self._sentence_paused or self._state != "speaking":
                                     continue
                                 self._reply_expression = expression
@@ -1076,7 +1085,15 @@ class ReachyController:
                                 gesture = expression
                                 gesture_age = elapsed
                                 gesture_active = gesture_age < GESTURE_DURATION_S
-                            self._cue_clip(now, state, expression, state_started, replace=True, epoch=event.epoch)
+                            if move is None:
+                                self._cue_clip(now, state, expression, state_started, replace=True, epoch=event.epoch)
+                            else:
+                                from reachy_muse.motion.layers import ClipTimeline
+                                with self._state_lock:
+                                    if event.epoch == self._sentences.epoch and (self._clip is None or self._clip.request is None):
+                                        self._clip_source = self._last_written_vector.copy() if self._last_written_vector is not None else None
+                                        self._clip = _Clip(move, ClipTimeline(event.at, move.duration),
+                                                           SPOKEN_CLIP_INTENSITY, during="speaking")
                         else:
                             with self._state_lock:
                                 if event.epoch != self._sentences.epoch:

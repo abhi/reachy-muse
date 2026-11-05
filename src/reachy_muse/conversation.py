@@ -30,7 +30,7 @@ from reachy_muse.contract.expressions import Expression
 from reachy_muse.contract.prompts import STOP_REQUEST, muse_request
 from reachy_muse.contract.replies import (ReplyProtocolError, ReplyRevisionError, ReplyStyle, SentenceStream,
                                           first_plain_sentence, spoken_reply)
-from reachy_muse.capabilities import EMOJI, MARKUP, WAKE_CUE, Backends, EndedTurn, Endpoint, Heard, LocalReply, SpokenLine
+from reachy_muse.capabilities import EMOJI, MARKUP, WAKE_CUE, Backends, CapabilityUnavailable, EndedTurn, Endpoint, Heard, LocalReply, SpokenLine
 from reachy_muse.protocol import MAX_LINE_BYTES
 from reachy_muse.device_command import COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow, executable
 from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, interrupts_playback, request_topic,
@@ -2172,6 +2172,7 @@ class VoiceConversation:
             expression = sentence.expression.value
         timed_motion = sentence is not None and callable(getattr(self.hardware, "finish_sentence", None))
         samples_played = 0
+        expression_task = None
         announced = False
         hush_floor = self._hush_floor
         write_timing = {"dispatch_ms_max": 0.0, "write_ms_max": 0.0, "return_ms_max": 0.0}
@@ -2236,7 +2237,15 @@ class VoiceConversation:
             self._audible[line.text] = self._echo_until
             if len(self._audible) > 8:
                 del self._audible[min(self._audible, key=self._audible.get)]
-            motion = {"sentence": sentence} if timed_motion and samples_played == 0 else {}
+            current_sentence = sentence
+            if timed_motion and samples_played == 0 and expression_task is not None:
+                if expression_task.done() and not expression_task.cancelled():
+                    result = expression_task.result()
+                    if result is not None:
+                        current_sentence = replace(sentence, motion=result)
+                else:
+                    expression_task.cancel()
+            motion = {"sentence": current_sentence} if timed_motion and samples_played == 0 else {}
             accepting = timed_motion and samples_played == 0
             if accepting and on_accepting is not None:
                 await on_accepting(True)
@@ -2284,6 +2293,18 @@ class VoiceConversation:
             speech = prepared_stream
         else:
             speech = self._prepare_line(voice, line)
+        source = self.backends.motion
+        if (timed_motion and getattr(self.hardware, "library_expressions", False)
+                and source is not None and getattr(source, "library_available", False)):
+            async def expression_motion():
+                try:
+                    return await asyncio.wait_for(source.generate(sentence.expression.value, 2.5), .05)
+                except (asyncio.TimeoutError, CapabilityUnavailable):
+                    return None
+                except Exception:
+                    log.exception("Sentence expression motion failed")
+                    return None
+            expression_task = asyncio.create_task(expression_motion())
         try:
             try:
                 while True:
@@ -2330,6 +2351,8 @@ class VoiceConversation:
                 self._echo_until = math.inf
             raise
         finally:
+            if expression_task is not None:
+                expression_task.cancel()
             self._muted = False
             if self.audio_diagnostics:
                 log.info("Reachy playback timing %s", {**player.metrics, **write_timing,

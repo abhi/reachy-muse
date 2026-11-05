@@ -753,6 +753,10 @@ class CompanionMotion:
     def available(self) -> bool:
         return self.link.can(Op.ANIMATE)
 
+    @property
+    def library_available(self) -> bool:
+        return self.available and dict(self.link.models).get(Op.ANIMATE.value) == "reachy-motion-library"
+
     async def generate(self, intent: str, duration_s: float) -> Optional[Motion]:
         result = await self.link.animate(intent, duration_s)
         return Motion(result.fps, result.frames) if result.frames else None

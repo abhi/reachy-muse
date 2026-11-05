@@ -10,12 +10,14 @@ import re
 from typing import Literal
 
 from reachy_muse.contract.expressions import Expression
+from reachy_muse.capabilities import Motion
 
 
 @dataclass(frozen=True)
 class SentenceMotion:
     expression: Expression
     terminal: Literal["plain", "question", "exclamation"] = "plain"
+    motion: Motion | None = None
 
 
 _WORDS = re.compile(r"[a-z]+(?:'[a-z]+)?")

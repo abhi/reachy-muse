@@ -16,7 +16,7 @@ class SentenceEvent:
     at: float
     epoch: int
     kind: Literal["start", "end"]
-    value: tuple[str, int]
+    value: tuple[str, int] | tuple[str, int, object]
 
 
 class SentenceTimeline:

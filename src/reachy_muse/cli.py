@@ -330,6 +330,8 @@ def parser() -> argparse.ArgumentParser:
                               help="Let Reachy answer pure social chat itself instead of sending it to Muse")
             item.add_argument("--arbitration-shadow", action="store_true",
                               help="Log content-free arbitration decisions without changing live routing")
+            item.add_argument("--library-expressions", action="store_true",
+                              help="Use companion library motion for spoken expressions when ready")
             item.add_argument("--audio-diagnostics", action="store_true",
                               help="Log playback timing counters without audio or transcript content")
             item.add_argument("--wake-model", type=Path,
@@ -448,6 +450,7 @@ def _hardware(args, *, motion=True):
                            connection_mode="localhost_only" if args.host in ("localhost", "127.0.0.1")
                            else "network", media_backend=args.media_backend,
                            enable_motion=motion and not args.no_motion,
+                           library_expressions=getattr(args, "library_expressions", False),
                            antenna_mode=args.antenna_mode, face_follow_model=face_model,
                            speaker_eq_gains=COMPANION_SPEAKER_EQ_GAINS if companion else SPEAKER_EQ_GAINS,
                            style=MotionStyle.from_env(), **watcher)
