@@ -21,8 +21,8 @@ from test_local_speech import worker  # noqa: F401
 
 
 # Playback digests after removing generic waiting phrases from the progress cache.
-REPLAY_PCM_SHA256 = "8fc78b1b9237c26dda31a55011344b1c6d115d72d5803ea2048dcd8a24a68e83"
-PIPER_PCM_SHA256 = "49129f4f66fb7f09720337440fe13eb3f5ba7bbf7fa0dc3e90c0fe1c6787abcb"
+REPLAY_PCM_SHA256 = "a790e66a35a30b59bcd3677849a8cdafece3255444392c30f8590b52cbf5563d"
+PIPER_PCM_SHA256 = "175e36d958923eb4173cd1394d9b563a58e7ec78708eccff422844b3035afe78"
 
 
 @pytest.fixture
@@ -38,10 +38,10 @@ def test_reconnection_reaches_ready_with_baseline_audio_and_no_new_synthesis(mod
         speech, progress = ReplaySpeech(model, 0), ReplaySpeech(model, 0)
         _, before = await startup(speech, progress)
         assert before == REPLAY_PCM_SHA256
-        assert (len(speech.requests), len(progress.requests)) == (14, 24)
+        assert (len(speech.requests), len(progress.requests)) == (14, 25)
         _, after = await startup(speech, progress)
         assert after == REPLAY_PCM_SHA256
-        assert (len(speech.requests), len(progress.requests)) == (14, 24)
+        assert (len(speech.requests), len(progress.requests)) == (14, 25)
     asyncio.run(scenario())
 
 

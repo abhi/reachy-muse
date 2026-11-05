@@ -10,7 +10,7 @@ import re
 from typing import Literal
 
 from reachy_muse.contract.intent import Intent
-from reachy_muse.follow_up import request_topic
+from reachy_muse.follow_up import TOPIC_WORDS, request_topic
 
 
 ProgressSource = Literal["backend", "frame", "waiting"]
@@ -24,6 +24,7 @@ MAX_PROGRESS_BYTES = 240
 _FLIGHT_WAIT = "Muse is still working on your flights."
 _WEATHER_WAIT = "Muse is still working on your weather question."
 _WORKOUT_WAIT = "Muse is still working on your workout question."
+_REQUEST_WAIT = "Muse is still working on your request."
 _RESPONDING = "Muse is preparing a reply."
 _FLIGHTS = "Looking at flights now."
 _FARES = "Checking fares now."
@@ -48,7 +49,7 @@ _RESPONDING_HISTORY = {
 }
 
 PUBLIC_PROGRESS_PHRASES = (
-    _FLIGHT_WAIT, _WEATHER_WAIT, _WORKOUT_WAIT,
+    _FLIGHT_WAIT, _WEATHER_WAIT, _WORKOUT_WAIT, _REQUEST_WAIT,
     _FLIGHTS, _FARES, _COMPARE, _WEB, _SOURCES, _WEBSITE, _CONNECTOR,
     _LATEST_FLIGHTS, _LATEST_FARES, _LATEST_COMPARE, _LATEST_WEB,
     _LATEST_SOURCES, _LATEST_WEBSITE, _LATEST_CONNECTOR,
@@ -118,6 +119,9 @@ def waiting_progress(request_text: str) -> str | None:
         return _WEATHER_WAIT
     if re.search(r"\b(?:work\s*out|workouts?|exercise)\b", request_text, re.IGNORECASE):
         return _WORKOUT_WAIT
+    # A topic cut mid-phrase sounds garbled once speech drops the quotes.
+    if len(request_topic(request_text, words=TOPIC_WORDS + 1).split()) > TOPIC_WORDS:
+        return _REQUEST_WAIT
     return validate_public_progress(f'Muse is still working on "{topic}".')
 
 

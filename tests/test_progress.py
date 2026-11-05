@@ -26,6 +26,9 @@ TWENTY_S = {"first_delay_s": 20, "interval_s": 20}
     ("Check the forecast.", "Muse is still working on your weather question."),
     ("Plan my trip.", 'Muse is still working on "Plan my trip".'),
     ("Explain black holes.", 'Muse is still working on "black holes".'),
+    ("How many people live in Tokyo right now?", "Muse is still working on your request."),
+    ("Remind me to call mom at five", "Muse is still working on your request."),
+    ("Turn the lights off in the kitchen", "Muse is still working on your request."),
 ])
 def test_waiting_cue_names_the_result_without_inventing_an_action(request_text, expected):
     assert waiting_progress(request_text) == expected

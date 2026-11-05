@@ -332,8 +332,10 @@ phase or waiting update waits 6 seconds after Muse accepts the request
 request (`PROGRESS_MAX_LINES`), and never while you are talking. A tick with a
 new public label or phase speaks that. Without one, Reachy says one waiting line
 per request that names what you asked, such as "Muse is still working on your
-flights." or 'Muse is still working on "black holes".' It never repeats that
-line and never claims a result.
+flights." or 'Muse is still working on "black holes".' A request with more
+than six words of topic gets "Muse is still working on your request." instead,
+so the line never stops mid-phrase. It never repeats that line and never claims
+a result.
 The progress worker runs separately from answer playback and is canceled when
 the answer arrives, so a progress cue does not hold up the reply.
 

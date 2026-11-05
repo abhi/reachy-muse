@@ -107,12 +107,12 @@ def interrupts_playback(text: str, heard_over: Tuple[str, ...]) -> bool:
     return not _matches_spoken_phrase(words, heard_over)
 
 
-def request_topic(request: str) -> str:
-    """A few of the request's own words naming what it was about; "" when it has none."""
+def request_topic(request: str, *, words: int = TOPIC_WORDS) -> str:
+    """Up to ``words`` of the request's own words naming what it was about; "" when it has none."""
     tokens = [token.strip(".,!?;:\"()") for token in request.split()]
     tokens = [token for token in tokens if token]
     start = 0
     while start < len(tokens) and tokens[start].replace("’", "'").casefold() in _TOPIC_LEAD:
         start += 1
-    return " ".join(tokens[start:][:TOPIC_WORDS] or tokens[:TOPIC_WORDS])
+    return " ".join(tokens[start:][:words] or tokens[:words])
 
