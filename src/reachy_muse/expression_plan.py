@@ -74,7 +74,7 @@ class Recording:
     """Without a wake word, the recorder started or stopped capturing a turn."""
 
     active: bool
-    turn_running: bool
+    turn_running: bool             # a turn is running, or the capture that just stopped is one
 
 
 @dataclass(frozen=True)

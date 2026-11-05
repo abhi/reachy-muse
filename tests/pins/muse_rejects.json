@@ -3,7 +3,6 @@
   {"muse": "subscribe_chat", "session_id": "robot-chat"},
   {"expression": null, "robot": "set_state", "state": "idle"},
   {"expression": null, "robot": "set_state", "state": "listening"},
-  {"expression": null, "robot": "set_state", "state": "idle"},
   {"expression": null, "robot": "set_state", "state": "thinking"},
   {"expression": null, "robot": "set_state", "state": "thinking"},
   {"expression": null, "robot": "set_state", "state": "thinking"},

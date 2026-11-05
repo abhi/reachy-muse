@@ -5,7 +5,6 @@
   {"expression": null, "robot": "set_state", "state": "listening"},
   {"name": "tilt", "robot": "gesture"},
   {"name": "nod", "robot": "gesture"},
-  {"expression": null, "robot": "set_state", "state": "idle"},
   {"expression": null, "robot": "set_state", "state": "thinking"},
   {"expression": null, "robot": "set_state", "state": "thinking"},
   {"expression": null, "robot": "set_state", "state": "thinking"},

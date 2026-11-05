@@ -1301,7 +1301,7 @@ class VoiceConversation:
                     wav = await record(sample)
                     if recorder.active != active_before:
                         await self._plan(plan.Recording(active=recorder.active,
-                                                        turn_running=turn_task is not None))
+                                                        turn_running=turn_task is not None or wav is not None))
                 if wav is None:
                     continue
                 while wav is not None:

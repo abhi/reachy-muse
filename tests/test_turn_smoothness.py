@@ -89,5 +89,5 @@ def test_reachy_nods_when_the_user_pauses_before_any_words_arrive(monkeypatch):
                 await robot.until(lambda: robot.requests(), 3)
             await robot.run(user)
             assert .5 < moved[0] < 1.0, moved
-            assert motion()[:3] == ["idle", "listening", "nod"]
+            assert motion()[:4] == ["idle", "listening", "nod", "thinking"]
     scenario(run())
