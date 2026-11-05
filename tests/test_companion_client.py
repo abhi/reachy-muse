@@ -159,6 +159,30 @@ def test_the_companion_transcribes_a_turn_the_robot_ended(monkeypatch, delay):
     assert (endpoint.text, endpoint.forced, link.up, link.take_outage()) == ("hello there", True, True, False)
 
 
+def test_a_companion_endpoint_that_lands_just_before_the_robots_keeps_its_words(monkeypatch):
+    from types import SimpleNamespace
+    import numpy as np
+    import reachy_muse.companion_client as client
+    from reachy_muse.protocol import HearEndpoint, HearPartial, Op, encode
+
+    clock = SimpleNamespace(now=100.0)
+    monkeypatch.setattr(client, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    link = CompanionLink("ws://127.0.0.1:9000", token=TOKEN, out_rate=16000, insecure=True)
+    link._connection = client._Connection(None, (Op.HEAR, Op.SPEAK, Op.NARRATE))
+    link._set(LinkState.UP)
+    turn = client.CompanionHearing(link).open_turn(
+        16000, silence_s=.3, vad=SimpleNamespace(is_speech=lambda pcm, rate: any(pcm)))
+    turn.feed(np.full(8000, .1, dtype=np.float32))
+    assert turn.take().ended is None
+    link._receive(link._connection, encode(HearPartial(1, 0, "hello")))
+    link._receive(link._connection, encode(HearEndpoint(1, "hello there", False)))
+    turn.feed(np.zeros(6400, dtype=np.float32))
+    ended = turn.take().ended
+    clock.now += 1.6
+    endpoint = asyncio.run(ended.endpoint())
+    assert (endpoint.text, endpoint.forced, link.up, link.take_outage()) == ("hello there", False, True, False)
+
+
 @pytest.mark.parametrize("delay", [1.6, 3.641, 37.28])
 def test_a_late_companion_endpoint_fails_only_that_turn(monkeypatch, delay):
     from reachy_muse.protocol import CloseHow, HearClose

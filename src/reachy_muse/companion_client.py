@@ -161,6 +161,9 @@ class _HearStream:
 
     def finish(self) -> None:
         self.finished_at = time.monotonic()
+        self.endpoint = next((message for message in self.inbox if isinstance(message, HearEndpoint)), None)
+        if self.endpoint is not None:
+            self.settled.set()
         self.close(CloseHow.FINISH)
 
     def fail(self, failure: CapabilityUnavailable) -> None:
