@@ -107,3 +107,25 @@ def test_a_neutral_narration_still_lets_each_sentence_show_its_feeling(monkeypat
             assert [event["expression"] for event in robot.recording.events
                     if event.get("state") == "speaking"] == ["happy", "sad", "curious"]
     scenario(run())
+
+
+def test_a_companion_voice_that_never_starts_cannot_hold_the_answer(monkeypatch):
+    import reachy_muse.companion_client
+
+    monkeypatch.setattr(reachy_muse.companion_client, "SPEECH_STALL_S", .5)
+
+    async def run():
+        async with FakeCompanion(partials=PARTIALS, frames_per_partial=12, mute=True) as companion:
+            robot = Conversation(monkeypatch, companion.url[:-3], answer("Castles kept dragons out."),
+                                 ping_interval_s=.05, ping_timeout_s=.2)
+            transitions = []
+
+            async def user():
+                await robot.speak(.8)
+                await robot.until(lambda: robot.spoken(), 3)
+                transitions.extend(robot.link.transitions)
+            await robot.run(user)
+            assert spoken_by_companion(companion) == ["Castles kept dragons out."]
+            assert robot.spoken() == ["tts:Castles kept dragons out."]
+            assert transitions == [LinkState.CONNECTING, LinkState.UP]
+    scenario(run())

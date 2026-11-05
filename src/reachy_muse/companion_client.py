@@ -54,6 +54,9 @@ READY_S = 0.1                     # reject immediate post-welcome failures befor
 # From the robot's silence endpoint to the companion's forced endpoint. Healthy finals take
 # 0.66 s alone and 1.12 s at the median with motion; a later one is transcribed on the robot.
 ENDPOINT_WAIT_S = 1.5
+# Pongs prove the socket, not the voice. Measured loaded first audio peaks at 1.47 s and the
+# 06:12 incident's slowest line took 3.6 s; a voice silent for longer restarts on the robot.
+SPEECH_STALL_S = 6.0
 _PIN = re.compile(r"sha256:([0-9a-f]{64})")
 _FATAL = (ErrorCode.AUTH, ErrorCode.VERSION, ErrorCode.INTERNAL, ErrorCode.MODEL)
 
@@ -482,7 +485,10 @@ class CompanionLink:
         finished = False
         try:
             while True:
-                item = await queue.get()
+                try:
+                    item = await asyncio.wait_for(queue.get(), SPEECH_STALL_S)
+                except asyncio.TimeoutError:
+                    raise CapabilityUnavailable("the companion voice stalled", link_down=False) from None
                 if item is _DONE:
                     finished = True
                     return
