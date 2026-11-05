@@ -663,16 +663,3 @@ def test_a_reply_of_two_short_sentences_goes_straight_to_speech_without_the_cond
     scenario(run())
 
 
-def test_an_acknowledgement_the_companion_narrates_too_late_is_skipped_not_replaced(monkeypatch):
-    from reachy_muse.protocol import NarrateOp
-    question = "what's the weather in paris"
-
-    async def run():
-        async with FakeCompanion(partials=(question,), frames_per_partial=12, endpoint_after=46,
-                                 narrate_delay_s={NarrateOp.ACKNOWLEDGE: 1.5}) as companion:
-            robot = Conversation(monkeypatch, companion.url[:-3], answer("It is sunny in Paris.", SLOW_S))
-            await robot.run(lambda: robot.turns(1))
-            assert robot.requests() == [question]
-            assert spoken_by_companion(companion) == ["It is sunny in Paris."]
-            assert robot.spoken() == ["companion"]
-    scenario(run())

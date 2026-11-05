@@ -11,7 +11,8 @@ import pytest
 
 from fake_companion import FakeCompanion
 from reachy_muse.companion_client import LinkState
-from test_companion import PARTIALS, Conversation, answer, hear_streams_opened, scenario
+from reachy_muse.protocol import NarrateOp
+from test_companion import PARTIALS, QUESTION, Conversation, answer, hear_streams_opened, scenario, spoken_by_companion
 from test_pins import ScriptedStreamingTranscriber
 
 pytest.importorskip("numpy")
@@ -56,4 +57,15 @@ def test_a_late_companion_hands_its_audio_to_muse_when_the_robot_only_streams(mo
             await robot.run(user)
             assert [event["muse"] for event in robot.recording.events if "muse" in event][-1:] == ["send_voice"]
             assert robot.spoken() == ["companion"]
+    scenario(run())
+
+
+def test_late_acknowledgement_narration_still_acknowledges_the_request(monkeypatch):
+    async def run():
+        async with FakeCompanion(partials=PARTIALS, frames_per_partial=12,
+                                 narrate_delay_s={NarrateOp.ACKNOWLEDGE: 3.0}) as companion:
+            robot = Conversation(monkeypatch, companion.url[:-3], answer("Castles kept dragons out.", 2.5))
+            await robot.run(lambda: robot.turns(1))
+            assert robot.requests() == [QUESTION]
+            assert spoken_by_companion(companion) == ["Hmm, good question.", "Castles kept dragons out."]
     scenario(run())

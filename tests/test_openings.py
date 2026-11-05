@@ -15,7 +15,7 @@ def test_presynthesized_openers_do_not_claim_or_invent_facts(phrase):
 
 
 @pytest.mark.parametrize("got, heard, expected", [
-    (LATE, Heard("book a table"), Hold(Intent.ACTION, None)),
+    (LATE, Heard("book a table"), Hold(Intent.ACTION, SpokenLine("On it.", None, "ack"))),
     (None, Heard("book a table"), Hold(Intent.ACTION, SpokenLine("On it.", None, "ack"))),
     (CompanionOpening(None, (SpokenLine("Sure.", None, "ack"),)), Heard("book a table"),
      Hold(Intent.ACTION, SpokenLine("Sure.", None, "ack"))),

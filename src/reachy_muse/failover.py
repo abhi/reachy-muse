@@ -341,11 +341,7 @@ LATE = _Late()
 
 
 def settle(heard: Heard, guess: Intent, got: Union[CompanionOpening, _Late, None], local: RuleNarrator) -> Opener:
-    if got is LATE:
-        if heard.may_chat:
-            return local.hold(guess, heard)
-        return Hold(guess, None)
-    if got is None:
+    if got is LATE or got is None:
         return local.hold(guess, heard)
     intent = got.intent or guess
     if intent is Intent.CHAT:
@@ -391,7 +387,7 @@ class FailoverNarrator:
             got = await self._ask(self.companion.acknowledge(heard), ACK_DEADLINE_S, (heard.text, heard.previous),
                                   lines=lambda opening: opening.lines)
         if got is LATE:
-            log.info("Reachy skips the acknowledgement; its companion's narration was late")
+            log.info("Reachy acknowledges in its own words; its companion's narration was late")
         opening = settle(heard, guess, got, self.local)
         if isinstance(opening, LocalReply) and not isinstance(got, CompanionOpening):
             self.route.this_turn = False
