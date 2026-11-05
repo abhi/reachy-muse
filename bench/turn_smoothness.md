@@ -142,18 +142,23 @@ leaves the link and the answer voice alone.
 | `ec9b856` | A companion sentence with no audio for 6 s (`SPEECH_STALL_S`) restarts in Piper. |
 | `03de88e` | The guide and protocol describe both bounds. |
 | `11df46f` | The opener that replaces a late narration plays from Reachy's startup recording. |
+| `b129408` | Reachy's streaming recognizer transcribes a late companion's turn, so commands, cancels and echo filtering still apply. |
+| `3a941a5` | A companion endpoint that lands in the same feed as Reachy's endpoint keeps its words. |
+| `a337949` | The user's last pause nods even after an earlier pause nod. |
+| `4ee6e6a` | A waiting cue never names a topic cut mid-phrase. |
+| `e043caf` | Two later waiting lines follow, 15 s apart, while Muse reports nothing. |
 
 ## Every wait and silence on the turn path
 
 | Step | Bound or feedback at `a7c37d3` | Now |
 |---|---|---|
 | Wake to request | 10 s wake window; happy listening pose | unchanged |
-| User pauses | no motion without partials; the partial pause nod could not fire | nod at 0.6 s quiet, at most every 3 s |
+| User pauses | no motion without partials; the partial pause nod could not fire | nod at 0.6 s quiet, once per pause |
 | Reachy's silence endpoint to the companion's words | **unbounded while pongs arrive** | 1.5 s, then Reachy's recognizer (60 s limit) |
 | Turn end to thinking pose | idle flash without a wake word | direct |
 | Acknowledgement narration | 0.9 s; late meant silence | 0.9 s; late plays a recorded opener |
 | Acknowledgement and answer speech on the companion voice | **unbounded while pongs arrive** (pongs count as speech progress) | 6 s without audio, then Piper for the rest of that reply |
-| First waiting cue | 8 s after Muse accepts, synthesized when due | 6 s, synthesized 3 s ahead |
+| First waiting cue | 8 s after Muse accepts, synthesized when due | 6 s, synthesized 3 s ahead; two later lines 15 s apart while Muse reports nothing |
 | Muse's answer | 180 s `REPLY_TIMEOUT_S` | unchanged; outside this repository |
 | Sentence lines narration | 4 s `LINES_DEADLINE_S` | unchanged |
 | Library expression clip | 0.05 s | unchanged |
@@ -165,10 +170,6 @@ leaves the link and the answer voice alone.
   the evening before) is a plausible GPU competitor, but no evidence confirms
   it. Three late endpoints in a row now rest companion hearing for 60 s, so a
   companion that stays slow stops costing the 1.5 s grace.
-* **Silence after the waiting cue.** When Muse publishes no milestones, the
-  cue is said once. After that, only motion runs until the answer, which was
-  80 s in this incident. A second line would repeat the filler the user
-  objected to, so none was added.
 * **Spoken feedback in the fallback path comes at 6.8 s.** It adds up the
   2.0 s silence endpoint, the 1.5 s endpoint grace, Reachy's 2.2 s
   recognizer, and the 1.0 s acknowledgement grace. Motion covers the first
