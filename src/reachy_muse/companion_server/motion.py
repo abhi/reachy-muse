@@ -272,21 +272,22 @@ class MotionEngine:
             log.info("motion ready in %.1f s", time.perf_counter() - started)
         return self._pipeline
 
-    def submit(self, intent: str, duration_hint_s: Optional[float] = None) -> "Future[Trajectory]":
+    def submit(self, intent: str, duration_hint_s: Optional[float] = None, *, seed: Optional[int] = None) -> "Future[Trajectory]":
         """Queue one request on the motion thread. From asyncio, await asyncio.wrap_future(engine.submit(...))."""
-        return self._thread.submit(self._generate, intent, duration_hint_s)
+        return self._thread.submit(self._generate, intent, duration_hint_s, seed)
 
-    def generate(self, intent: str, duration_hint_s: Optional[float] = None) -> Trajectory:
+    def generate(self, intent: str, duration_hint_s: Optional[float] = None, *, seed: Optional[int] = None) -> Trajectory:
         """Block until the motion thread returns this intent's Trajectory. Raises ValueError if no valid recipe."""
-        return self.submit(intent, duration_hint_s).result()
+        return self.submit(intent, duration_hint_s, seed=seed).result()
 
     async def animate(self, intent: str, duration_s: float) -> Animation:
         trajectory = await asyncio.wrap_future(self.submit(intent, duration_s))
         frames = np.round(trajectory.frames[:MAX_ANIMATION_FRAMES, _WIRE], 1)
         return Animation(trajectory.fps, tuple(tuple(float(value) for value in frame) for frame in frames))
 
-    def _generate(self, intent: str, duration_hint_s: Optional[float]) -> Trajectory:
-        result = self._load().run(intent, duration_hint_s)
+    def _generate(self, intent: str, duration_hint_s: Optional[float], seed: Optional[int] = None) -> Trajectory:
+        pipeline = self._load()
+        result = pipeline.run(intent, duration_hint_s, **({"seed": seed} if seed is not None else {}))
         log.info("motion %r: %.1f s of frames in %.0f ms (planner %.0f ms)", intent, len(result.frames) / FPS,
                  result.timing_ms["total"], result.timing_ms["planner"])
         return Trajectory(intent, result.recipe, result.frames)
