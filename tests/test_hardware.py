@@ -2113,3 +2113,44 @@ def test_library_sentence_motion_is_audio_ordered_and_cancelled_with_epoch(monke
     controller.play_audio(np.zeros(1600), sentence=SentenceMotion(Expression.HAPPY, motion=motion))
     controller.clear_audio()
     assert controller._sentences.due(1002.0) == []
+
+
+def test_library_sentence_motion_uses_static_pose_when_clips_are_disabled(monkeypatch):
+    from reachy_muse.capabilities import Motion
+    from reachy_muse.contract.expressions import Expression
+    from reachy_muse.motion.layers import MotionLayers, Ramp
+    from reachy_muse.motion.sentence import SentenceMotion
+
+    robot = FakeRobot()
+    controller = ReachyController(
+        pose_factory=pose_factory, pose_interpolator=lambda a, b, t: a * (1 - t) + b * t,
+        sleep_on_close=False, library_expressions=True,
+        style=MotionStyle(sway="sdk", breathing=False, expression_clips=False),
+    )
+    controller._np, controller._robot = np, robot
+    controller._output_sample_rate = 16000
+    controller._layers, controller._generated_gain = MotionLayers(controller._style), Ramp(1)
+    motion = Motion(25, ((0., 0., 0., 16., 0., 0., -10., 10., 0.),) * 50)
+
+    class Clock:
+        now, tick, spoken = 1000.0, 0, None
+
+        def is_set(self):
+            return self.tick >= 60
+
+        def wait(self, duration):
+            self.now += duration
+            if controller._started.is_set():
+                self.tick += 1
+                if self.tick == 1:
+                    self.spoken = self.now
+                    controller.play_audio(np.zeros(32000), sentence=SentenceMotion(Expression.HAPPY, motion=motion))
+            return self.is_set()
+
+    clock = controller._stop = Clock()
+    monkeypatch.setattr(reachy_muse.hardware, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    monkeypatch.setattr(sys.modules[__name__], "time", SimpleNamespace(monotonic=lambda: clock.now))
+    controller._motion_loop()
+    assert controller._failure is None
+    rolls = rolls_between(controller, robot, clock.spoken, clock.now)
+    assert max(rolls) < .5 and min(rolls) < -4

@@ -190,6 +190,31 @@ def test_disabled_or_non_library_source_does_not_request_expression(enabled, ava
     asyncio.run(scenario())
 
 
+def test_disabled_expression_clips_do_not_request_library_motion():
+    from reachy_muse.hardware import ReachyController
+    from reachy_muse.motion import MotionStyle
+
+    async def scenario():
+        source = Source(.001)
+        hardware = Hardware()
+        hardware.library_expressions = ReachyController(
+            library_expressions=True, style=MotionStyle(expression_clips=False),
+        ).library_expressions
+        session = FakeSession()
+        conversation = VoiceConversation(session, hardware, backends=replace(
+            backends_for(Mode.MUSE_VOICE, session), motion=source))
+
+        async def speech():
+            await asyncio.sleep(.01)
+            yield np.ones(80, dtype=np.float32)
+
+        await conversation._speak_owned('id', text='Hello!', prepared_stream=speech(),
+                                        stream_segment=True, drain=False)
+        assert source.calls == []
+        assert hardware.sentences[0].motion is None
+    asyncio.run(scenario())
+
+
 def test_cancelled_animation_keeps_its_slot_until_companion_answers():
     from reachy_muse.capabilities import CapabilityUnavailable
     from reachy_muse.companion_client import CompanionLink, LinkState, _Connection

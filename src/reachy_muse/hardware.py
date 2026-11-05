@@ -235,7 +235,7 @@ class ReachyController:
                                      media_backend=media_backend)
         self._sleep_on_close = sleep_on_close
         self._enable_motion = enable_motion
-        self.library_expressions = library_expressions and enable_motion
+        self.library_expressions = library_expressions and enable_motion and style.expression_clips
         self._initial_motor_mode = None
         self._robot = None
         self._speaker_eq = None
@@ -439,7 +439,7 @@ class ReachyController:
                     raise ReachyHardwareError(f"Reachy Mini speaker failed: {exc}") from exc
                 at = time.monotonic()
                 move = None
-                if sentence is not None and sentence.motion is not None:
+                if self._style.expression_clips and sentence is not None and sentence.motion is not None:
                     from reachy_muse.motion.layers import clamp_to_limits
                     poses = self._np.asarray(sentence.motion.frames, dtype=float)
                     if (poses.ndim == 2 and poses.shape[1] == 9 and len(poses)
