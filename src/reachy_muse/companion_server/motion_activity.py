@@ -150,17 +150,20 @@ def run_guarded_build(state_dir: Path, command: Sequence[str], *, idle_seconds: 
                     return result
                 time.sleep(POLL_S)
         finally:
-            if read_fd >= 0:
-                os.close(read_fd)
-            os.close(write_fd)
-            if process is not None:
-                if process.poll() is None:
-                    # This is our live process group, never a PID read from disk.
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                process.wait()
+            try:
+                if process is not None:
+                    if process.poll() is None:
+                        # This is our live process group, never a PID read from disk.
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except (ProcessLookupError, PermissionError):
+                            if process.poll() is None:
+                                raise
+                    process.wait()
+            finally:
+                if read_fd >= 0:
+                    os.close(read_fd)
+                os.close(write_fd)
 
 
 def watch_build_parent() -> None:

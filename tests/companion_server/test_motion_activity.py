@@ -148,6 +148,57 @@ def test_activity_during_spawn_aborts_before_child_starts_work(tmp_path, monkeyp
     assert marker.exists() is False
 
 
+def test_aborted_build_keeps_parent_pipe_open_until_child_is_reaped(tmp_path, monkeypatch):
+    tracker = activity.ActivityStatus(tmp_path)
+    pipe, close, popen = os.pipe, os.close, subprocess.Popen
+    descriptors, children, closed_after_exit = [], [], []
+
+    def make_pipe():
+        pair = pipe()
+        descriptors.extend(pair)
+        return pair
+
+    def spawn(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        tracker.touch()
+        return child
+
+    def close_pipe(fd):
+        if descriptors and fd == descriptors[1]:
+            closed_after_exit.append(children[0].returncode is not None)
+        close(fd)
+
+    monkeypatch.setattr(activity.os, "pipe", make_pipe)
+    monkeypatch.setattr(activity.os, "close", close_pipe)
+    monkeypatch.setattr(activity.subprocess, "Popen", spawn)
+    assert activity.run_guarded_build(tmp_path, child_command(tmp_path / "child"), idle_seconds=0) == 75
+    assert closed_after_exit == [True]
+
+
+def test_abort_preserves_status_when_child_exits_before_signal(tmp_path, monkeypatch):
+    tracker = activity.ActivityStatus(tmp_path)
+    popen = subprocess.Popen
+    children = []
+
+    def spawn(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        tracker.touch()
+        return child
+
+    def killpg(pid, sig):
+        assert pid == children[0].pid
+        children[0].kill()
+        children[0].wait()
+        raise PermissionError("process group already exited")
+
+    monkeypatch.setattr(activity.subprocess, "Popen", spawn)
+    monkeypatch.setattr(activity.os, "killpg", killpg)
+    assert activity.run_guarded_build(tmp_path, [sys.executable, "-c", "import time; time.sleep(30)"],
+                                      idle_seconds=0) == 75
+
+
 def test_child_startup_failure_preserves_its_exit_code(tmp_path, monkeypatch):
     popen = subprocess.Popen
 
