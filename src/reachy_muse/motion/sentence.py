@@ -21,22 +21,29 @@ class SentenceMotion:
 
 
 _WORDS = re.compile(r"[a-z]+(?:'[a-z]+)?")
-_SAD = frozenset({"sorry", "unfortunately", "sad", "sadly", "failed", "failure", "condolences"})
+_SAD = frozenset({"sorry", "unfortunately", "unfortunate", "sad", "sadly", "failed", "failure", "condolences",
+                  "cancelled", "canceled", "delayed", "worse", "worst"})
 _HAPPY = frozenset({"congratulations", "congrats", "hooray", "wonderful", "fantastic", "excellent", "delighted",
-                    "great", "awesome", "lovely", "glad", "thanks", "happy", "excited"})
-_SURPRISED = frozenset({"wow", "whoa", "surprising", "incredible", "unbelievable"})
+                    "great", "awesome", "lovely", "glad", "thanks", "happy", "excited", "enjoy", "perfect",
+                    "nice", "fun", "amazing", "beautiful", "yay", "welcome"})
+_SURPRISED = frozenset({"wow", "whoa", "surprising", "surprisingly", "incredible", "unbelievable", "remarkable",
+                        "astonishing", "shocking"})
+_AGREEING = frozenset({"yes", "absolutely", "certainly", "agreed", "sure", "definitely", "exactly", "correct",
+                       "yep", "yeah"})
 _NEGATIONS = frozenset({"not", "no", "never", "isn't", "wasn't", "aren't", "don't", "didn't"})
 
 
 def classify_sentence(text: str, hint: Expression | None = None) -> SentenceMotion:
     """Preserve explicit expressions; infer unmarked English text without I/O.
 
-    Only the first 2048 characters and final punctuation are examined. Ambiguous
-    statements stay neutral; punctuation accents do not depend on the emotion.
+    A neutral hint is a narrator's default, not a choice, so the text can still
+    show a feeling. Only the first 2048 characters and final punctuation are
+    examined. Ambiguous statements stay neutral; punctuation accents do not
+    depend on the emotion.
     """
     ending = text[-32:].rstrip().rstrip('\"\'”’)]}').rstrip()
     terminal = "question" if ending.endswith("?") else "exclamation" if ending.endswith("!") else "plain"
-    if hint is not None:
+    if hint is not None and hint is not Expression.NEUTRAL:
         return SentenceMotion(hint, terminal)
     words = _WORDS.findall(text[:2048].lower().replace("’", "'"))
     positive = set()
@@ -54,7 +61,7 @@ def classify_sentence(text: str, hint: Expression | None = None) -> SentenceMoti
         expression = Expression.CURIOUS
     elif positive & _SURPRISED:
         expression = Expression.SURPRISED
-    elif words and words[0] in {"yes", "absolutely", "certainly", "agreed"}:
+    elif words and words[0] in _AGREEING:
         expression = Expression.NOD
     else:
         expression = Expression.NEUTRAL

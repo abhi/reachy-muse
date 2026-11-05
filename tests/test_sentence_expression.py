@@ -22,6 +22,11 @@ from reachy_muse.motion.sentence import SentenceMotion, classify_sentence
     ("I'm not happy about it.", SentenceMotion(Expression.NEUTRAL)),
     ("The outcome is not surprising.", SentenceMotion(Expression.NEUTRAL)),
     ("", SentenceMotion(Expression.NEUTRAL)),
+    ("Enjoy the concert tonight.", SentenceMotion(Expression.HAPPY)),
+    ("Your flight is delayed by an hour.", SentenceMotion(Expression.SAD)),
+    ("Surprisingly, the museum is free today.", SentenceMotion(Expression.SURPRISED)),
+    ("Sure, I'll remind you at six.", SentenceMotion(Expression.NOD)),
+    ("The game wasn't cancelled.", SentenceMotion(Expression.NEUTRAL)),
 ])
 def test_local_expression_and_punctuation(text, expected):
     assert classify_sentence(text) == expected
@@ -29,7 +34,17 @@ def test_local_expression_and_punctuation(text, expected):
 
 def test_explicit_expression_keeps_independent_question_accent():
     assert classify_sentence("Is that good news?", Expression.SAD) == SentenceMotion(Expression.SAD, "question")
-    assert classify_sentence("Congratulations!", Expression.NEUTRAL) == SentenceMotion(Expression.NEUTRAL, "exclamation")
+    assert classify_sentence("Sadly, yes!", Expression.HAPPY) == SentenceMotion(Expression.HAPPY, "exclamation")
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Congratulations!", SentenceMotion(Expression.HAPPY, "exclamation")),
+    ("Sadly the moat is closed.", SentenceMotion(Expression.SAD)),
+    ("Would you like directions?", SentenceMotion(Expression.CURIOUS, "question")),
+    ("The train leaves at six.", SentenceMotion(Expression.NEUTRAL)),
+])
+def test_a_neutral_hint_lets_the_text_show_its_feeling(text, expected):
+    assert classify_sentence(text, Expression.NEUTRAL) == expected
 
 
 def test_long_text_bounds_lexical_scan_but_keeps_terminal_punctuation():

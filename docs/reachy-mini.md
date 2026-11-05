@@ -922,8 +922,10 @@ to eight degrees around the gaze direction, and shakes use up to ten. Absolute
 head-angle limits still apply near the edges of the tracking range.
 A sentence without an emotion marker gets a local expression from a bounded
 English lexicon. Questions lean curious, good news and congratulations look
-happy, and apologies look sad. Unmatched text stays neutral. Explicit expressions
-from Muse or the narrator take precedence. This classification does not call a
+happy, and apologies or delays look sad. Unmatched text stays neutral. Explicit
+expressions from Muse or the narrator take precedence, except neutral: narrators
+use it as their default, so the lexicon still reads that sentence. This
+classification does not call a
 model or wait for the companion. Motion smoothing uses elapsed time so changes
 in the update rate do not slow the transitions.
 

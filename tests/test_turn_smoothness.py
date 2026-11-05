@@ -91,3 +91,19 @@ def test_reachy_nods_when_the_user_pauses_before_any_words_arrive(monkeypatch):
             assert .5 < moved[0] < 1.0, moved
             assert motion()[:4] == ["idle", "listening", "nod", "thinking"]
     scenario(run())
+
+
+def test_a_neutral_narration_still_lets_each_sentence_show_its_feeling(monkeypatch):
+    from reachy_muse.contract.expressions import Expression
+
+    reply = "Great news, the castle is open. Sadly the moat is closed. Would you like directions?"
+
+    async def run():
+        async with FakeCompanion(partials=PARTIALS, frames_per_partial=12, expression=Expression.NEUTRAL) as companion:
+            robot = Conversation(monkeypatch, companion.url[:-3], answer(reply))
+            await robot.run(lambda: robot.turns(1))
+            assert spoken_by_companion(companion) == [
+                "Great news, the castle is open.", "Sadly the moat is closed.", "Would you like directions?"]
+            assert [event["expression"] for event in robot.recording.events
+                    if event.get("state") == "speaking"] == ["happy", "sad", "curious"]
+    scenario(run())

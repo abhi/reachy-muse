@@ -3550,7 +3550,7 @@ def test_timely_final_reply_finishes_all_sentences_after_response_deadline(
         hardware = FakeHardware()
         sentences = [("First, choose a movie.", "happy"),
                      ("Then order dinner.", "curious"),
-                     ("Finally, enjoy your evening.", "neutral")]
+                     ("Finally, pick a snack.", "neutral")]
         final = "".join(sentence_frame(text, expression) for text, expression in sentences)
 
         class Transcriber:
