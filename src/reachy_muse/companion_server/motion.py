@@ -281,7 +281,14 @@ class MotionEngine:
         return self.submit(intent, duration_hint_s, seed=seed).result()
 
     async def animate(self, intent: str, duration_s: float) -> Animation:
-        trajectory = await asyncio.wrap_future(self.submit(intent, duration_s))
+        work = self.submit(intent, duration_s)
+        result = asyncio.wrap_future(work)
+        try:
+            trajectory = await asyncio.shield(result)
+        except asyncio.CancelledError:
+            work.cancel()
+            await asyncio.gather(result, return_exceptions=True)
+            raise
         frames = np.round(trajectory.frames[:MAX_ANIMATION_FRAMES, _WIRE], 1)
         return Animation(trajectory.fps, tuple(tuple(float(value) for value in frame) for frame in frames))
 

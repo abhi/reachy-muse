@@ -7,14 +7,16 @@ import subprocess
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from websockets.asyncio.client import connect
 
 from reachy_muse.companion_server import motion_activity as activity
-from reachy_muse.companion_server.engines import ScriptedHearing
+from reachy_muse.companion_server.engines import Animation, ScriptedHearing
+from reachy_muse.companion_server.motion_library import LibraryAnimator
 from reachy_muse.companion_server.server import CompanionServer, Engines
-from reachy_muse.protocol import HearOpen, Hello, Op, SpeakStart, VoiceRole, encode
+from reachy_muse.protocol import Animate, AnimateResult, HearOpen, Hello, Op, Sender, SpeakStart, VoiceRole, decode, encode
 
 
 def status(path):
@@ -224,3 +226,70 @@ def test_authenticated_hear_and_speak_record_activity_until_disconnect(tmp_path)
 
     asyncio.run(run())
     assert observed == [2]
+
+
+@pytest.mark.parametrize("ending", ["success", "failure", "disconnect"])
+def test_live_motion_blocks_builds_and_completion_restarts_quiet_time(tmp_path, monkeypatch, ending):
+    now = [2000.0]
+    monkeypatch.setattr(activity, "time", SimpleNamespace(time=lambda: now[0], monotonic=lambda: now[0]))
+    tracker = activity.ActivityStatus(tmp_path)
+
+    async def run():
+        started, release = asyncio.Event(), asyncio.Event()
+
+        class HoldingAnimator:
+            name = "holding"
+
+            async def animate(self, intent, duration_s):
+                started.set()
+                await release.wait()
+                if ending == "failure":
+                    raise ValueError("no valid recipe")
+                return Animation(25, ((0.0,) * 9,))
+
+        async with CompanionServer(Engines(motion=HoldingAnimator()), "token", activity=tracker) as server:
+            async with connect(server.url) as ws:
+                await ws.send(encode(Hello((1,), "token", (Op.ANIMATE,), 24000, "test")))
+                await ws.recv()
+                await ws.send(encode(Animate(1, "happy", 2000)))
+                await asyncio.wait_for(started.wait(), 3)
+                assert status(tmp_path)["active"] == 1
+                assert status(tmp_path)["revision"] == 3
+                now[0] += 1300
+                assert activity._quiet(status(tmp_path), 1200, True) is False
+                if ending != "disconnect":
+                    release.set()
+                    frames = ((0.0,) * 9,) if ending == "success" else ()
+                    assert decode(await ws.recv(), sender=Sender.COMPANION) == AnimateResult(1, 25, frames)
+        assert status(tmp_path)["active"] == 0
+        assert status(tmp_path)["wall"] == 3300.0
+        assert status(tmp_path)["monotonic"] == 3300.0
+        assert activity._quiet(status(tmp_path), 1200, True) is False
+        now[0] += 1200
+        assert activity._quiet(status(tmp_path), 1200, True) is True
+
+    asyncio.run(run())
+
+
+def test_missing_library_prefetch_does_not_reset_quiet_time(tmp_path, monkeypatch):
+    now = [2000.0]
+    monkeypatch.setattr(activity, "time", SimpleNamespace(time=lambda: now[0], monotonic=lambda: now[0]))
+    tracker = activity.ActivityStatus(tmp_path)
+    initial = status(tmp_path)
+    now[0] += 1200
+
+    async def run():
+        library = LibraryAnimator(tmp_path / "motion-library")
+        await library.load()
+        async with CompanionServer(Engines(motion=library), "token", activity=tracker) as server:
+            async with connect(server.url) as ws:
+                await ws.send(encode(Hello((1,), "token", (Op.ANIMATE,), 24000, "test")))
+                await ws.recv()
+                for request in range(3):
+                    now[0] += 1
+                    await ws.send(encode(Animate(request, "happy", 2000)))
+                    assert decode(await ws.recv(), sender=Sender.COMPANION) == AnimateResult(request, 25, ())
+                    assert status(tmp_path) == initial
+                    assert activity._quiet(status(tmp_path), 1200, True) is True
+
+    asyncio.run(run())

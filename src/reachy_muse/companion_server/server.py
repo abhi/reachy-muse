@@ -65,6 +65,7 @@ from reachy_muse.companion_server.engines import (
     Animator, Classifier, Endpoint, Hearing, Narrator, Partial, SpeechFirst, Voice,
 )
 from reachy_muse.companion_server.motion_activity import ActivityStatus
+from reachy_muse.companion_server.motion_library import LibraryAnimator
 
 log = logging.getLogger("reachy_muse.companion_server")
 
@@ -257,7 +258,8 @@ class _Session:
         if op is not None and op not in self.ops:
             await self._send(_error(ErrorCode.BAD_REQUEST, f"op {op.value} was not granted in welcome", **_target(message)))
             return
-        if self.activity is not None and op in (Op.HEAR, Op.SPEAK):
+        if self.activity is not None and (op in (Op.HEAR, Op.SPEAK)
+                or op is Op.ANIMATE and not isinstance(self.engines.motion, LibraryAnimator)):
             self.activity.touch()
         await handle(self, message)
 
@@ -479,7 +481,8 @@ class _Session:
         assert self.engines.motion is not None
         try:
             try:
-                animation = await self.engines.motion.animate(message.intent, message.duration_ms / 1000)
+                with self.activity.busy() if self.activity and not isinstance(self.engines.motion, LibraryAnimator) else nullcontext():
+                    animation = await self.engines.motion.animate(message.intent, message.duration_ms / 1000)
                 frame = encode(AnimateResult(message.id, animation.fps, animation.frames))
             except Exception:
                 log.exception("motion for request %s failed; answering with no frames", message.id)

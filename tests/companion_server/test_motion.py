@@ -89,6 +89,51 @@ def test_animate_keeps_at_most_fifteen_seconds_of_frames(tmp_path):
     assert len(animation.frames) == 375
 
 
+@pytest.mark.parametrize("fails", [False, True])
+def test_cancelled_animation_waits_for_running_motion_before_leaving_activity(tmp_path, fails):
+    import asyncio
+    import json
+
+    from reachy_muse.companion_server.motion_activity import ActivityStatus
+
+    started, release = threading.Event(), threading.Event()
+    tracker = ActivityStatus(tmp_path)
+
+    class HoldingPipeline(StubPipeline):
+        def run(self, intent, duration_hint_s=None):
+            if intent != WARM_INTENT:
+                started.set()
+                assert release.wait(3)
+                if fails:
+                    raise ValueError("no valid recipe")
+            return super().run(intent, duration_hint_s)
+
+    engine = MotionEngine(tmp_path, build=HoldingPipeline)
+
+    async def run():
+        async def animate():
+            with tracker.busy():
+                await engine.animate("happy", 2.0)
+
+        task = asyncio.create_task(animate())
+        try:
+            assert await asyncio.to_thread(started.wait, 3)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert json.loads(tracker.path.read_text())["active"] == 1
+            assert not task.done()
+        finally:
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert json.loads(tracker.path.read_text())["active"] == 0
+
+    try:
+        asyncio.run(run())
+    finally:
+        engine.close()
+
+
 def test_prepared_models_load_without_the_network(tmp_path, monkeypatch):
     from reachy_muse.companion_server.motion import prepare
 
