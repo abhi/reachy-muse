@@ -25,6 +25,7 @@ GRAMMAR = ("hey muse", "hey news", "hey music", "hey moose", "hey mouse", "[unk]
 class VoskCandidate:
     score: float | None
     score_kind: str = "word_confidence_mean"
+    phrase_verified: bool = False
 
 
 class VoskWakeWordDetector:
@@ -146,7 +147,8 @@ class VoskWakeWordDetector:
                                    if isinstance(word, dict) and type(word.get("conf")) in (float, int)
                                    and math.isfinite(word["conf"]) and 0 <= word["conf"] <= 1]
                     score = sum(confidences) / len(confidences) if confidences else None
-                    candidate = VoskCandidate(score, "word_confidence_mean" if score is not None else "unavailable")
+                    candidate = VoskCandidate(score, "word_confidence_mean" if score is not None else "unavailable",
+                                              phrase_verified=detected)
                     self._partial_started = None
                     if detected:
                         self.reset()

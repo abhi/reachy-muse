@@ -223,6 +223,8 @@ class WakePolicy:
             reason = "speaking"
         elif not context.armed or self._samples - self._last_accept < self.cooldown_samples:
             reason = "cooldown"
+        elif getattr(getattr(detector, "last_candidate", None), "phrase_verified", False):
+            source, verification = "native", "match"
         else:
             pcm = np.rint(np.concatenate(tuple(self._audio)) * 32767).astype("<i2").tobytes()
             started = time.monotonic()

@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
+import io
 import json
 from pathlib import Path
 import sys
 import threading
 from types import SimpleNamespace
+import wave
 
 import pytest
 
@@ -86,6 +89,73 @@ def test_endpoint_recognizes_exact_wake_tokens_with_a_same_breath_question(model
     assert detector.feed(np.zeros(1600, dtype=np.float32))
     assert len(instances) == 2
     assert not detector.feed(np.zeros(1600, dtype=np.float32))
+
+
+@pytest.mark.parametrize("available", [False, True])
+def test_policy_keeps_exact_endpoint_match_after_a_same_breath_question(models, available):
+    from reachy_muse.wake_policy import WakePolicy, WakeVerifier
+
+    directory, instances, _ = models
+    detector = VoskWakeWordDetector(directory)
+    instances[-1].plan = [(False, "")] * 24 + [(True, "hey muse what time is it")]
+
+    class Local:
+        async def transcribe(self, wav):
+            with wave.open(io.BytesIO(wav), "rb") as recording:
+                pcm = np.frombuffer(recording.readframes(recording.getnframes()), dtype="<i2")
+            return "hey muse what time is it" if 8192 in pcm else "what time is it"
+
+    async def run():
+        policy = WakePolicy(WakeVerifier(local=Local() if available else None))
+        audio = np.concatenate((np.full(8000, .25), np.full(24000, .5), np.zeros(8000)))
+        accepted = [await policy.feed(detector, audio[start:start + 1600])
+                    for start in range(0, len(audio), 1600)]
+        assert accepted == [False] * 24 + [True]
+        assert policy.last_decision.reason == "accepted"
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("context, valid, reason", [
+    ({"blocked": True}, True, "speaking"),
+    ({"speaking": True}, True, "speaking"),
+    ({"speaking": True, "playback": ("Say hey muse.",)}, True, "echo"),
+    ({"armed": False}, True, "cooldown"),
+    ({}, False, "capture_gap"),
+])
+def test_policy_still_guards_exact_endpoint_matches(models, context, valid, reason):
+    from reachy_muse.wake_policy import WakeContext, WakePolicy
+
+    directory, instances, _ = models
+    detector = VoskWakeWordDetector(directory)
+    instances[-1].plan = [(True, "hey muse")]
+
+    async def run():
+        policy = WakePolicy()
+        assert await policy.feed(detector, np.full(1600, .25), context=WakeContext(**context),
+                                 valid=lambda: valid) is False
+        assert policy.last_decision.reason == reason
+
+    asyncio.run(run())
+
+
+def test_policy_still_verifies_stable_partial_matches(models):
+    from reachy_muse.wake_policy import WakePolicy, WakeVerifier
+
+    directory, instances, _ = models
+    detector = VoskWakeWordDetector(directory, mode="stable_partial")
+    instances[-1].plan = [(False, "hey muse")] * 7
+
+    class Local:
+        async def transcribe(self, wav):
+            return "hey music"
+
+    async def run():
+        policy = WakePolicy(WakeVerifier(local=Local()))
+        assert await policy.feed(detector, np.full(11200, .25)) is False
+        assert policy.last_decision.reason == "verification_rejected"
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("text", [
