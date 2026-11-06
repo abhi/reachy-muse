@@ -313,3 +313,24 @@ def test_while_muse_works_past_the_follow_up_window_the_room_stops_reaching_muse
     run(rig, conversation, user, rest=("thinking",))
     assert [at for at in calls.frame_times if at > heard["until"] - 2.0] == []
     assert heard["call_open"] is True
+
+
+async def answer_then_hang_up(sdk, emit, script):
+    await answers(REPLY, 1.0)(sdk, emit, script)
+    await asyncio.sleep(3.5)
+    script.hang_up(ConnectionError("media reset"))
+
+
+def test_a_call_lost_after_muse_answered_does_not_ask_the_user_to_repeat(monkeypatch):
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    calls = ScriptedCalls(answer_early=True, answer=answer_then_hang_up)
+    conversation = realtime_service(rig, Transcripts("Hey Muse, what's the weather tomorrow?"), calls)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: calls.hung_up.done(), 8)
+        await room(rig, 1.0)
+
+    events = run(rig, conversation, user)
+    assert set(played(events)) == {"muse"}

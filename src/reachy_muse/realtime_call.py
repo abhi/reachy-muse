@@ -144,6 +144,7 @@ class RealtimeSpeaker:
     accent rides on the first sample it belongs to. ``on_start`` runs before the first push of a
     stretch of speech, ``on_audible`` hears every push with the sentence it belongs to and when
     its sound ends, and ``on_idle`` runs once the queue has drained and the last push has played.
+    ``reply_started`` is when the latest reply's first chunk began to play.
     """
 
     def __init__(self, hardware, motion: ReplyMotion, *, on_audible: Callable[[Optional[str], float], None],
@@ -165,6 +166,7 @@ class RealtimeSpeaker:
         self._extras: dict = {}
         self._audible_text: Optional[str] = None
         self._replies: list = []
+        self.reply_started: Optional[float] = None
 
     @property
     def busy(self) -> bool:
@@ -231,6 +233,7 @@ class RealtimeSpeaker:
                 await self._on_start()
             if item.response_id not in self._replies:
                 self._replies.append(item.response_id)
+                self.reply_started = time.monotonic()
             count = len(item.pcm) // 2
             marks = self._motion.marks(item.response_id, item.offset, count)
             cuts = sorted({0, count, *(mark.sample for mark in marks if 0 < mark.sample < count)})

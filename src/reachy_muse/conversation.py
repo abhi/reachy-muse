@@ -2009,10 +2009,13 @@ class VoiceConversation:
         self._say_hushed = False
         if await self._obey(text, started, request.timeline) is not None:
             return TurnOutcome.ACCEPTED
-        if request.call.failed:
+        call = request.call
+        if call.failed:
             await self._call_lost()
             return TurnOutcome.EMPTY
-        request.call.awaiting_answer = True
+        replied_at = call.speaker.reply_started
+        if not call.audible and (replied_at is None or replied_at < request.timeline.marks["speech_end"]):
+            call.awaiting_answer = True
         self._recent.asked(text)
         request.timeline.facts["path"] = "realtime"
         request.timeline.report()
