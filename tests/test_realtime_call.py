@@ -163,6 +163,233 @@ def test_muse_audio_plays_through_the_speaker_and_a_flush_clears_it():
     assert 4000 <= played < 12000
 
 
+@pytest.mark.parametrize("failure_at", ["play_audio", "on_start", "on_audible", "on_idle"])
+def test_a_speaker_failure_ends_the_call_and_clears_its_playback_state(failure_at):
+    from musegadget import voice_call as sdk
+
+    async def scenario():
+        failed = asyncio.Event()
+        closed = asyncio.Event()
+        error = OSError("speaker disconnected")
+        loop = asyncio.get_running_loop()
+
+        def fail(where):
+            if failure_at == where:
+                loop.call_soon_threadsafe(failed.set)
+                raise error
+
+        class Hardware(Speaker):
+            def play_audio(self, samples):
+                fail("play_audio")
+                super().play_audio(samples)
+
+        class Call:
+            async def run(self, source, output, *, realtime_input=False):
+                call.on_event(sdk.AudioChunk("r1", 0, tone(.1)))
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    closed.set()
+
+        async def start():
+            fail("on_start")
+
+        async def idle():
+            fail("on_idle")
+
+        async def build(call):
+            return Call()
+
+        motion = ReplyMotion()
+        hardware = Hardware()
+        speaker = RealtimeSpeaker(hardware, motion, on_audible=lambda *args: fail("on_audible"),
+                                  on_start=start, on_idle=idle)
+        call = RealtimeCall(MicrophoneFeed(16000), speaker, motion, on_working=lambda working: None,
+                            on_reply_done=lambda reply: None)
+        call.start(build)
+        try:
+            await asyncio.wait_for(failed.wait(), 3)
+            for _ in range(30):
+                await asyncio.sleep(0)
+            ended = call.done, call.failed, call.failure is error
+        finally:
+            await call.close()
+        return ended, speaker.busy, hardware.cleared, closed.is_set()
+
+    assert asyncio.run(scenario()) == ((True, True, True), False, 1, True)
+
+
+@pytest.mark.parametrize("first", ["local", "muse"])
+@pytest.mark.parametrize("flush", [False, True])
+def test_local_and_realtime_speech_wait_for_each_others_playback_ownership(first, flush):
+    from musegadget import voice_call as sdk
+    from test_conversation import FakeSession
+    from test_turn_pacing import Labels, conversation_for
+
+    async def scenario():
+        labels = Labels()
+        entered, release = threading.Event(), threading.Event()
+        played = []
+
+        class Hardware(Speaker):
+            sample_rate = output_sample_rate = 24000
+
+            def set_state(self, state, *, expression=None):
+                pass
+
+            def play_audio(self, samples):
+                label = "local" if samples[0] == labels.codes.get("Notification.") else "muse"
+                if played[-1:] != [label]:
+                    played.append(label)
+                if len(played) == 1:
+                    entered.set()
+                    release.wait(3)
+
+            def clear_audio(self):
+                played.append("clear")
+                super().clear_audio()
+
+        class Call:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def run(self, *args, **kwargs):
+                await asyncio.Event().wait()
+
+        async def close():
+            pass
+
+        async def link():
+            return VoiceLink(object(), lambda: True, close)
+
+        hardware = Hardware()
+        voice = conversation_for(labels, hardware, "")(FakeSession())
+        voice.realtime = RealtimeVoice(link, device_id="synthetic", voice_call=Call)
+        voice._open_call()
+
+        def muse():
+            voice.call.on_event(sdk.AudioChunk("r1", 0, tone(.2)))
+
+        local = None
+        try:
+            if first == "local":
+                local = asyncio.create_task(voice._speak(None, text="Notification."))
+            else:
+                muse()
+            assert await asyncio.to_thread(entered.wait, 2)
+            if first == "local":
+                muse()
+            else:
+                local = asyncio.create_task(voice._speak(None, text="Notification."))
+            await asyncio.sleep(.05)
+            before_release = played.copy()
+            flushing = voice.call.speaker.flush_now() if flush else None
+            release.set()
+            if flushing is not None:
+                await flushing
+            await local
+            while voice.call.audible:
+                await asyncio.sleep(.01)
+            return before_release, played, hardware.cleared
+        finally:
+            release.set()
+            if local is not None:
+                await asyncio.gather(local, return_exceptions=True)
+            await voice._close_call()
+            await voice.realtime.close()
+
+    other = "muse" if first == "local" else "local"
+    expected = ([first], [first, other], 0)
+    if flush:
+        expected = ([first], ["local"], 0) if first == "local" else ([first], ["muse", "clear", "local"], 1)
+    assert asyncio.run(asyncio.wait_for(scenario(), 5)) == expected
+
+
+def test_closing_during_the_idle_callback_releases_playback_ownership():
+    async def scenario():
+        lock = asyncio.Lock()
+        idle = asyncio.Event()
+        hardware = Speaker()
+
+        async def start():
+            pass
+
+        async def quiet():
+            idle.set()
+            await asyncio.Event().wait()
+
+        speaker = RealtimeSpeaker(hardware, ReplyMotion(), on_audible=lambda *args: None,
+                                  on_start=start, on_idle=quiet, own_speaker=lambda cursor: lock)
+        speaker.chunk("r1", 0, tone(.04))
+        await idle.wait()
+        await speaker.close()
+        return lock.locked(), hardware.cleared
+
+    assert asyncio.run(asyncio.wait_for(scenario(), 2)) == (False, 1)
+
+
+def test_the_sdk_s_two_flush_callbacks_preserve_fresh_audio_that_arrives_during_cleanup():
+    from musegadget import voice_call as sdk
+    from reachy_muse.realtime_call import _SilentOutput
+
+    class Hardware(Speaker):
+        output_sample_rate = 24000
+
+        def __init__(self):
+            super().__init__()
+            self.first_played = threading.Event()
+            self.clearing = threading.Event()
+            self.release = threading.Event()
+            self.fresh = threading.Event()
+            self.buffer = []
+
+        def play_audio(self, samples):
+            self.buffer.extend(samples.tolist())
+            self.first_played.set()
+            if np.max(samples) > .2:
+                self.fresh.set()
+
+        def clear_audio(self):
+            self.cleared += 1
+            if self.cleared == 1:
+                self.clearing.set()
+                self.release.wait(3)
+            else:
+                self.fresh.wait(3)
+            self.buffer.clear()
+
+    async def scenario():
+        hardware = Hardware()
+
+        async def nothing():
+            pass
+
+        motion = ReplyMotion()
+        speaker = RealtimeSpeaker(hardware, motion, on_audible=lambda *args: None,
+                                  on_start=nothing, on_idle=nothing)
+        call = RealtimeCall(MicrophoneFeed(16000), speaker, motion, on_working=lambda working: None,
+                            on_reply_done=lambda reply: None)
+        remote = sdk.VoiceCall(object(), device_id="homelink-synthetic", on_event=call.on_event)
+        remote._output = _SilentOutput(call)
+        try:
+            remote._queue_pcm(tone(.2), "r1")
+            assert await asyncio.to_thread(hardware.first_played.wait, 3)
+            await remote.barge_in()
+            assert await asyncio.to_thread(hardware.clearing.wait, 3)
+            remote._queue_pcm(np.full(1920, 10000, "<i2").tobytes(), "r2")
+            hardware.release.set()
+            await speaker._flushing
+            assert await asyncio.to_thread(hardware.fresh.wait, 3)
+            while speaker.busy:
+                await asyncio.sleep(.01)
+            return hardware.cleared, len(hardware.buffer)
+        finally:
+            hardware.release.set()
+            await call.close()
+
+    assert asyncio.run(asyncio.wait_for(scenario(), 5)) == (1, 1920)
+
+
 def test_a_voice_link_that_will_not_connect_leaves_the_next_call_failed_and_the_chat_path_open():
     async def scenario():
         async def refuse():
@@ -397,4 +624,51 @@ def test_each_sentence_s_closing_gesture_lands_where_its_speech_ends_not_where_t
         await call.close()
         return [round(sample / 24000, 2) for sample in hardware.ends]
 
-    assert asyncio.run(scenario()) == [1.6, 3.5]
+    assert asyncio.run(scenario()) == [1.6, 3.8]
+
+
+def test_response_done_before_the_remaining_pcm_does_not_end_a_question_at_its_internal_pause():
+    from musegadget import voice_call as sdk
+
+    class Hardware(Speaker):
+        output_sample_rate = 24000
+
+        def __init__(self):
+            super().__init__()
+            self.ends = []
+
+        def play_audio(self, samples, *, sentence=None, accents=()):
+            self.played.append(len(samples))
+
+        def finish_sentence(self):
+            self.ends.append(sum(self.played))
+
+    async def scenario():
+        hardware = Hardware()
+        idle = asyncio.Event()
+
+        async def nothing():
+            pass
+
+        async def quiet():
+            idle.set()
+
+        motion = ReplyMotion()
+        speaker = RealtimeSpeaker(hardware, motion, on_audible=lambda *args: None,
+                                  on_start=nothing, on_idle=quiet)
+        call = RealtimeCall(MicrophoneFeed(16000), speaker, motion, on_working=lambda working: None,
+                            on_reply_done=lambda reply: None)
+        try:
+            call.on_event(sdk.TranscriptDone("r1", "Would you like a reminder?"))
+            call.on_event(sdk.AudioChunk("r1", 0, tone(.5)))
+            call.on_event(sdk.ResponseDone("r1", "completed"))
+            call.on_event(sdk.AudioChunk("r1", 12000, bytes(7200 * 2)))
+            while sum(hardware.played) < 14400:
+                await asyncio.sleep(.01)
+            call.on_event(sdk.AudioChunk("r1", 19200, tone(.9) + bytes(7200 * 2)))
+            await asyncio.wait_for(idle.wait(), 5)
+            return [round(sample / 24000, 2) for sample in hardware.ends]
+        finally:
+            await call.close()
+
+    assert asyncio.run(asyncio.wait_for(scenario(), 6)) == [2.0]

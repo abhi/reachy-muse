@@ -1,0 +1,112 @@
+{
+  "alignment": {
+    "clear": {
+      "ahead": {
+        "sentences": 63,
+        "start_error_ms": {
+          "p50": 1.0,
+          "p95": 5.2,
+          "max": 5.8
+        },
+        "within_150ms": 1.0,
+        "pause_confirmed": 1.0,
+        "shown": 1.0,
+        "late": 0.0,
+        "non_neutral_expressions": 30,
+        "accents_per_s": 0.36,
+        "replies_with_closing": "12/24",
+        "motion_cpu_ms_per_audio_s": 1.281
+      },
+      "with_audio": {
+        "sentences": 63,
+        "start_error_ms": {
+          "p50": 1.5,
+          "p95": 5.9,
+          "max": 817.8
+        },
+        "within_150ms": 0.984,
+        "pause_confirmed": 1.0,
+        "shown": 1.0,
+        "late": 0.0,
+        "non_neutral_expressions": 30,
+        "accents_per_s": 0.3,
+        "replies_with_closing": "12/24",
+        "motion_cpu_ms_per_audio_s": 1.291
+      },
+      "late": {
+        "sentences": 63,
+        "start_error_ms": {
+          "p50": 64.5,
+          "p95": 197.2,
+          "max": 1069.8
+        },
+        "within_150ms": 0.778,
+        "pause_confirmed": 0.968,
+        "shown": 1.0,
+        "late": 0.571,
+        "non_neutral_expressions": 27,
+        "accents_per_s": 0.36,
+        "replies_with_closing": "12/24",
+        "motion_cpu_ms_per_audio_s": 1.074
+      }
+    },
+    "tight": {
+      "ahead": {
+        "sentences": 63,
+        "start_error_ms": {
+          "p50": 1.1,
+          "p95": 309.3,
+          "max": 640.8
+        },
+        "within_150ms": 0.921,
+        "pause_confirmed": 1.0,
+        "shown": 1.0,
+        "late": 0.0,
+        "non_neutral_expressions": 30,
+        "accents_per_s": 0.33,
+        "replies_with_closing": "12/24",
+        "motion_cpu_ms_per_audio_s": 1.26
+      },
+      "with_audio": {
+        "sentences": 63,
+        "start_error_ms": {
+          "p50": 0.7,
+          "p95": 86.8,
+          "max": 755.2
+        },
+        "within_150ms": 0.952,
+        "pause_confirmed": 1.0,
+        "shown": 1.0,
+        "late": 0.016,
+        "non_neutral_expressions": 30,
+        "accents_per_s": 0.34,
+        "replies_with_closing": "12/24",
+        "motion_cpu_ms_per_audio_s": 1.273
+      },
+      "late": {
+        "sentences": 62,
+        "start_error_ms": {
+          "p50": 56.8,
+          "p95": 537.4,
+          "max": 1889.0
+        },
+        "within_150ms": 0.694,
+        "pause_confirmed": 0.935,
+        "shown": 1.0,
+        "late": 0.468,
+        "non_neutral_expressions": 27,
+        "accents_per_s": 0.36,
+        "replies_with_closing": "12/24",
+        "motion_cpu_ms_per_audio_s": 1.144
+      }
+    }
+  },
+  "speaker": {
+    "first_push_ms": {
+      "p50": 0.6,
+      "p95": 1.1,
+      "max": 3.8
+    },
+    "speaker_and_motion_cpu_ms_per_audio_s": 8.79
+  }
+}

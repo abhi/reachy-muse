@@ -6,7 +6,7 @@
 ``RealtimeVoice`` opens each call on a voice-only connection beside Reachy's registered session,
 so Muse can still invoke Reachy's commands during the call. A ``RealtimeCall`` streams the
 echo-cancelled microphone to Muse at 24 kHz and plays each reply chunk through Reachy's own
-speaker path as soon as the SDK accepts it. The SDK's paced ``write`` is not used for sound:
+speaker path once it has playback ownership. The SDK's paced ``write`` is not used for sound:
 its sleep-per-frame pacing drifts behind real time, and the accepted chunks carry the sample
 offsets that sentence alignment needs. Motion never holds audio back; marks only split a chunk.
 """
@@ -225,12 +225,15 @@ class RealtimeSpeaker:
     """
 
     def __init__(self, hardware, motion: ReplyMotion, *, on_audible: Callable[[Optional[str], float], None],
-                 on_start: Callable[[], Awaitable[None]], on_idle: Callable[[], Awaitable[None]]) -> None:
+                 on_start: Callable[[], Awaitable[None]], on_idle: Callable[[], Awaitable[None]],
+                 own_speaker=None) -> None:
         self._hardware = hardware
         self._motion = motion
         self._on_audible = on_audible
         self._on_start = on_start
         self._on_idle = on_idle
+        self._own_speaker = own_speaker or (lambda cursor: contextlib.nullcontext())
+        self._owner = None
         self._timed = callable(getattr(hardware, "finish_sentence", None))
         self._rate = hardware.output_sample_rate
         self._resample = _Resampler(SAMPLE_RATE, self._rate, output="flt")
@@ -238,6 +241,8 @@ class RealtimeSpeaker:
         self._cursor = PlaybackCursor()
         self._task: Optional[asyncio.Task] = None
         self._flushing: Optional[asyncio.Future] = None
+        self.failed = asyncio.get_running_loop().create_future()
+        self._closed = False
         self._speaking = False
         self._sentence_open = False
         self._extras: dict = {}
@@ -247,29 +252,35 @@ class RealtimeSpeaker:
 
     @property
     def busy(self) -> bool:
-        return self._speaking or not self._queue.empty()
+        return self._speaking or self._owner is not None or not self._queue.empty()
 
     def chunk(self, response_id: Optional[str], offset: int, pcm: bytes) -> None:
+        if self._closed or self.failed.done():
+            return
         self._queue.put_nowait(_Chunk(response_id, offset, pcm))
         self._start()
 
     def flush_now(self) -> asyncio.Future:
         """Drop queued and playing reply audio; chunks that arrive afterwards play once it is gone."""
         flushing = self._flushing is not None and not self._flushing.done()
-        if not self.busy and not flushing:
+        if not self.busy and not flushing and not self.failed.done():
             done = asyncio.get_running_loop().create_future()
             done.set_result(None)
             return done
-        had_audio = self.busy
         while not self._queue.empty():
             self._queue.get_nowait()
+        if flushing:
+            return self._flushing
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
-        self._flushing = asyncio.ensure_future(self._cleared(self._flushing, task, had_audio))
+        self._flushing = asyncio.create_task(self._cleared(task))
+        self._flushing.add_done_callback(self._flushed)
         return self._flushing
 
     async def close(self) -> None:
+        self._closed = True
+        await asyncio.gather(self.flush_now(), return_exceptions=True)
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
@@ -277,24 +288,46 @@ class RealtimeSpeaker:
                              return_exceptions=True)
 
     def _start(self) -> None:
-        if (self._task is None or self._task.done()) and (self._flushing is None or self._flushing.done()):
+        if (not self._closed and not self.failed.done()
+                and (self._task is None or self._task.done())
+                and (self._flushing is None or self._flushing.done())):
             self._task = asyncio.create_task(self._pace(), name="reachy-realtime-speaker")
+            self._task.add_done_callback(self._ended)
 
-    async def _cleared(self, previous, task, had_audio: bool) -> None:
-        await asyncio.gather(*(item for item in (previous, task) if item is not None), return_exceptions=True)
-        self._cursor = PlaybackCursor()
+    def _ended(self, task) -> None:
+        if not task.cancelled():
+            error = task.exception()
+            if error is not None and not self.failed.done():
+                self.failed.set_result(error)
+
+    def _flushed(self, task) -> None:
+        self._ended(task)
+        if not self._queue.empty():
+            self._start()
+
+    async def _cleared(self, task) -> None:
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+        self._cursor.end = 0.0
         self._sentence_open = False
         self._extras = {}
         self._audible_text = None
+        self._replies = []
         try:
-            if had_audio:
+            if self._owner is not None:
                 await asyncio.to_thread(self._hardware.clear_audio)
         finally:
-            if self._speaking:
-                self._speaking = False
-                await self._on_idle()
-            if not self._queue.empty():
-                self._task = asyncio.create_task(self._pace(), name="reachy-realtime-speaker")
+            speaking, self._speaking = self._speaking, False
+            try:
+                if speaking and self._owner is not None:
+                    await self._on_idle()
+            finally:
+                await self._release()
+
+    async def _release(self) -> None:
+        owner, self._owner = self._owner, None
+        if owner is not None:
+            await owner.__aexit__(None, None, None)
 
     async def _pace(self) -> None:
         player = PCMPlayer(self._rate, self._push, SpeechPlayback(), lead_s=SPEAKER_LEAD_S, cursor=self._cursor)
@@ -307,6 +340,9 @@ class RealtimeSpeaker:
                 continue
             if not self._speaking:
                 self._speaking = True
+                owner = self._own_speaker(self._cursor)
+                await owner.__aenter__()
+                self._owner = owner
                 await self._on_start()
             if item.response_id not in self._replies:
                 self._replies.append(item.response_id)
@@ -361,19 +397,23 @@ class RealtimeSpeaker:
             raise asyncio.CancelledError
 
     async def _finish(self, player: PCMPlayer) -> None:
+        await player.finish()
+        if not self._queue.empty():
+            return
         if self._timed and self._sentence_open:
             self._hardware.finish_sentence()
         self._sentence_open = False
-        await player.finish()
         self._audible_text = None
         replies, self._replies = self._replies, []
         for response_id in replies:
+            self._motion.audio_done(response_id)
             report = self._motion.report(response_id)
             if report is not None:
                 log.info("Reachy's motion for Muse's realtime reply: %s", report)
         if self._queue.empty():
             self._speaking = False
             await self._on_idle()
+            await self._release()
 
 
 class RealtimeCall:
@@ -434,7 +474,6 @@ class RealtimeCall:
             elif kind == "ResponseStarted":
                 self.motion.started(event.response_id)
             elif kind == "ResponseDone":
-                self.motion.done(event.response_id)
                 if event.status in (None, "completed"):
                     self._on_reply_done(event.response_id)
             elif kind == "Working":
@@ -449,9 +488,14 @@ class RealtimeCall:
         self._task = asyncio.create_task(self._run(build), name="reachy-realtime-call")
 
     async def _run(self, build) -> None:
+        running = None
         try:
             self.voice_call = await build(self)
-            self.reason = await self.voice_call.run(self.feed, _SilentOutput(self), realtime_input=True)
+            running = asyncio.create_task(self.voice_call.run(self.feed, _SilentOutput(self), realtime_input=True))
+            await asyncio.wait((running, self.speaker.failed), return_when=asyncio.FIRST_COMPLETED)
+            if self.speaker.failed.done():
+                raise self.speaker.failed.result()
+            self.reason = running.result()
             log.info("Muse realtime call ended: %s after %.1f s", self.reason, time.monotonic() - self.opened_at)
         except asyncio.CancelledError:
             if not self._closing:
@@ -460,6 +504,10 @@ class RealtimeCall:
             self.failure = exc
             log.warning("Muse realtime call failed (%s) after %.1f s", _failure_details(exc),
                         time.monotonic() - self.opened_at)
+        finally:
+            if running is not None:
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
 
     @property
     def done(self) -> bool:
@@ -487,7 +535,8 @@ class RealtimeCall:
 
     async def close(self) -> None:
         """End the call. The SDK's cleanup still hangs up with Muse when this task is cancelled again."""
-        self._closing = True
+        if not self.done:
+            self._closing = True
         self.feed.close()
         if self._task is not None and not self._task.done():
             self._task.cancel()
@@ -551,11 +600,11 @@ class RealtimeVoice:
             log.info("Muse realtime voice link is not ready yet (%s)", type(exc).__name__)
 
     def open(self, hardware, motion: ReplyMotion, *, on_audible, on_start, on_idle, on_working,
-             on_reply_done) -> RealtimeCall:
+             on_reply_done, own_speaker=None) -> RealtimeCall:
         """Start a call at once; it connects, if needed, and is admitted while the microphone buffers."""
         call = RealtimeCall(MicrophoneFeed(hardware.sample_rate),
                             RealtimeSpeaker(hardware, motion, on_audible=on_audible, on_start=on_start,
-                                            on_idle=on_idle),
+                                            on_idle=on_idle, own_speaker=own_speaker),
                             motion, on_working=on_working, on_reply_done=on_reply_done)
         call.start(self._build)
         log.info("Muse realtime call opening, %s duplex", "half" if self.half_duplex else "full")

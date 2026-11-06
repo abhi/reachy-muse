@@ -124,6 +124,7 @@ class ReplyAligner:
         self.received = 0
         self._anchors: List[Tuple[int, int, int]] = []
         self._finished: Optional[Tuple[int, float]] = None
+        self._audio_done = False
 
     def audio(self, offset: int, pcm: np.ndarray) -> None:
         """Record the loudness of int16 samples that start ``offset`` samples into the reply."""
@@ -132,6 +133,8 @@ class ReplyAligner:
             samples = np.concatenate([np.zeros(offset - self.received), samples])
         elif offset < self.received:
             samples = samples[self.received - offset:]
+        if len(samples):
+            self._audio_done = False
         data = np.concatenate([self._pending, samples])
         whole = len(data) // self._frame * self._frame
         if whole:
@@ -141,8 +144,11 @@ class ReplyAligner:
         self.received = len(self._levels) * self._frame + len(self._pending)
 
     def finish(self, total_chars: int, pause_s: float) -> None:
-        """The reply's whole transcript has arrived: anchor the rate to its length and its pauses."""
+        """The whole transcript, which can arrive before the rest of its speech."""
         self._finished = (total_chars, pause_s)
+
+    def audio_done(self) -> None:
+        self._audio_done = True
 
     @property
     def onset(self) -> Optional[int]:
@@ -182,7 +188,7 @@ class ReplyAligner:
     def _samples_per_char(self, onset: Optional[int]) -> float:
         if onset is None:
             return self._prior
-        if self._finished is not None and self._finished[0]:
+        if self._audio_done and self._finished is not None and self._finished[0]:
             chars, pause_s = self._finished
             end = self.speech_end
             speaking = (end or 0) - onset - pause_s * self.rate

@@ -1,7 +1,10 @@
 """Muse realtime voice calls driven through Reachy's whole conversation, with a scripted call."""
 
 import asyncio
+import base64
+import json
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -271,8 +274,55 @@ class _Call:
 
 
 def realtime_service(rig, transcripts, calls, muse=never_asked, **fields):
-    return service(rig, muse, transcripts, wake_detector=Wake(), wake_timeout_s=2, muse_path="realtime",
+    return service(rig, muse, transcripts, wake_detector=TimedWake(), wake_timeout_s=2, muse_path="realtime",
                    voice_link=calls.link, voice_call=calls, **fields)
+
+
+class TimedWake(Wake):
+    epoch = 0
+    feed_id = 0
+
+    def feed(self, samples):
+        self.feed_id += 1
+        detected = super().feed(samples)
+        if detected:
+            self.last_detection = SimpleNamespace(epoch=self.epoch, feed_id=self.feed_id, post_wake_samples=0)
+        return detected
+
+    def reset(self):
+        self.epoch += 1
+
+
+@pytest.mark.parametrize("sample_rate", [16000, 48000])
+def test_a_wake_without_a_trustworthy_audio_boundary_preserves_the_request_by_chat(monkeypatch, sample_rate):
+    rig = rig_for(monkeypatch)
+    rig.hardware.sample_rate = sample_rate
+    calls = ScriptedCalls()
+
+    class DelayedWake(TimedWake):
+        def feed(self, samples):
+            super().feed(samples)
+            self.last_detection = SimpleNamespace(epoch=self.epoch, feed_id=self.feed_id, post_wake_samples=0)
+            return self.feed_id == 26
+
+    wake = Wake() if sample_rate == 16000 else DelayedWake()
+
+    async def muse(session, request):
+        await session.answer(request, "Sunny tomorrow.")
+
+    conversation = service(rig, muse, StreamingTranscripts("Hey Muse, what's the weather tomorrow?"),
+                           wake_detector=wake, wake_timeout_s=2, muse_path="realtime",
+                           voice_link=calls.link, voice_call=calls)
+
+    async def user():
+        for index in range(51):
+            value = VOICE_SAMPLE if index < 25 else WAKE_SAMPLE if index == 25 else 0
+            rig.hardware.samples.put(np.full(sample_rate // 50, value, np.float32))
+
+    events = run(rig, conversation, user)
+    assert sent_to_muse(events) == ["what's the weather tomorrow?"]
+    assert played(events) == ["tts:Sunny tomorrow."]
+    assert calls.opened == []
 
 
 async def speak_live(rig, *, wake=False):
@@ -292,7 +342,7 @@ def rig_for(monkeypatch):
 
 def test_after_the_wake_word_muse_hears_the_microphone_and_answers_with_its_own_voice(monkeypatch):
     rig = rig_for(monkeypatch)
-    calls = ScriptedCalls()
+    calls = ScriptedCalls(reply="Great news! Want me to set a reminder?")
     transcripts = StreamingTranscripts("Hey Muse, what's the weather tomorrow?")
     conversation = realtime_service(rig, transcripts, calls)
 
@@ -396,6 +446,38 @@ def test_a_call_lost_after_muse_heard_the_request_asks_again_and_the_next_reques
     assert played(events)[-2:] == ["tts:I lost my line to Muse. Please say that again.", "tts:Sunny tomorrow."]
 
 
+def test_an_eof_after_upload_never_resends_the_request_by_chat_and_asks_the_user_to_repeat(monkeypatch):
+    rig = rig_for(monkeypatch)
+
+    class EOFCalls(ScriptedCalls):
+        def __call__(self, session, **options):
+            frames = self.frames
+
+            class Call:
+                async def run(self, source, output, *, realtime_input=False):
+                    async for frame in source:
+                        frames.append(frame)
+                        if len(frames) == 5:
+                            return "remote_end"
+
+            return Call()
+
+    calls = EOFCalls()
+
+    async def muse(session, request):
+        await session.answer(request, "The reservation is booked.")
+
+    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, book a table for two."), calls, muse)
+
+    async def user():
+        rig.say(wake=True)
+
+    events = run(rig, conversation, user)
+    assert sent_to_muse(events) == []
+    assert played(events) == ["tts:I lost my line to Muse. Please say that again."]
+    assert len(calls.frames) == 5
+
+
 def test_muse_answering_before_reachy_s_endpoint_keeps_the_call_listening_for_the_follow_up(monkeypatch):
     rig = rig_for(monkeypatch)
     calls = ScriptedCalls(answer_early=True)
@@ -421,6 +503,23 @@ async def keeps_working(sdk, emit, script):
     emit(sdk.Working(True))
 
 
+def test_reachy_say_is_busy_while_a_realtime_reply_is_audible(monkeypatch):
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(reply_s=2)
+    conversation = realtime_service(rig, StreamingTranscripts("Tell me a story."), calls)
+    results = []
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+        results.append(await asyncio.to_thread(conversation.run_command, "reachy.say",
+                                               {"text": "A notification."}, 2000))
+
+    events = run(rig, conversation, user)
+    assert results == [{"ok": True, "payload": {"spoken": False, "reason": "busy"}}]
+    assert "tts:A notification." not in played(events)
+
+
 async def room(rig, seconds):
     """A quiet room at real-time pace."""
     for _ in range(round(seconds * 16000 / CHUNK)):
@@ -443,6 +542,48 @@ def test_while_muse_works_past_the_follow_up_window_the_room_stops_reaching_muse
     run(rig, conversation, user, rest=("thinking",))
     assert [at for at in calls.frame_times if at > heard["until"] - 2.0] == []
     assert heard["call_open"] is True
+
+
+def test_new_speech_after_the_wake_deadline_needs_another_wake_even_while_muse_works(monkeypatch):
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(answer=keeps_working)
+    transcripts = StreamingTranscripts("Book me a table for two.", "Cancel that booking.")
+    conversation = realtime_service(rig, transcripts, calls)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        await room(rig, 2.5)
+        voice = conversation._voice[1]
+        before = len(calls.frames)
+        await speak_live(rig)
+        heard.append((len(calls.frames) - before, voice.call is not None and not voice.call.done))
+        assert len(calls.frames) == before
+        assert transcripts.texts == ["Cancel that booking."]
+        await speak_live(rig, wake=True)
+        heard.append(len(calls.frames) > before)
+
+    events = run(rig, conversation, user, rest=("thinking", "listening", "idle"))
+    assert heard == [(0, True), True]
+    assert sent_to_muse(events) == []
+
+
+def test_speech_admitted_before_the_wake_deadline_can_finish_after_it(monkeypatch):
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(answer=keeps_working)
+    conversation = realtime_service(rig, StreamingTranscripts("Book a table.", "Make it for three."), calls)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        voice._wake_deadline = time.monotonic() + .2
+        before = calls.loud_after_reply
+        await speak_live(rig)
+        heard.append(calls.loud_after_reply - before)
+
+    run(rig, conversation, user, rest=("thinking", "listening"))
+    assert heard[0] >= 10
 
 
 async def answer_then_hang_up(sdk, emit, script):
@@ -502,6 +643,77 @@ def test_a_short_sound_over_muse_s_reply_does_not_stop_it(monkeypatch, voiced_s)
     events = run(rig, conversation, user)
     assert calls.barge_ins == 0
     assert events.count({"robot": "clear_audio"}) == 1
+
+
+@pytest.mark.parametrize("voiced_s, partial", [(.1, "Mm-hm."), (.5, "Great news")])
+def test_playback_noise_never_triggers_the_sdk_s_speech_started_gate(monkeypatch, voiced_s, partial):
+    from musegadget import voice_call as sdk
+
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    flushed = []
+
+    class Call(sdk.VoiceCall):
+        async def _start(self):
+            self.events = asyncio.Queue()
+            self._stream = self.records()
+            self.loud = self.paused = 0
+            self.answered = False
+            self.ready.set()
+
+        async def records(self):
+            while True:
+                yield await self.events.get()
+
+        def publish(self, event):
+            self.events.put_nowait(json.dumps(event).encode() + b"\n")
+
+        async def _event(self, event):
+            if event["type"] != "input_audio_buffer.append":
+                return
+            pcm = base64.b64decode(event["audio"])
+            loud = sdk.pcm_rms(pcm) >= 300
+            if self.answered:
+                calls.loud_after_reply += loud
+                if loud:
+                    self.publish({"type": "input_audio_buffer.speech_started", "item_id": "noise"})
+            else:
+                self.loud += loud
+                self.paused += not loud and self.loud >= 10
+                if self.paused == 2:
+                    self.answered = True
+                    self.publish({"type": "response.created", "response": {"id": "r1"}})
+                    self.publish({"type": "response.output_audio_transcript.delta", "delta": REPLY})
+                    self.publish({"type": "response.audio.delta", "delta": base64.b64encode(voiced(3)).decode()})
+
+        async def _cleanup(self):
+            self._flush()
+
+    class SDKCalls(ScriptedCalls):
+        def __call__(self, session, **options):
+            original = options["on_event"]
+
+            def observe(event):
+                if isinstance(event, sdk.PlaybackFlushed):
+                    flushed.append(event)
+                original(event)
+
+            return Call(session, **{**options, "on_event": observe})
+
+    calls = SDKCalls()
+    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, tell me a story.", partial), calls)
+    heard = []
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+        rig.say(voiced_s=voiced_s)
+        await room(rig, .7)
+        heard.append((calls.loud_after_reply, len(flushed), conversation._voice[1].call.audible))
+
+    events = run(rig, conversation, user)
+    assert heard == [(0, 0, True)]
+    assert sent_to_muse(events) == []
 
 
 def expressions(events):

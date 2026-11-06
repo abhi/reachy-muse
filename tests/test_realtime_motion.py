@@ -65,10 +65,32 @@ def reply_pcm():
     return np.concatenate([voiced(2.0), quiet(.35), voiced(1.2), quiet(.2)])
 
 
+def test_stress_detected_behind_playback_is_delivered_once_at_the_current_chunk():
+    motion = ReplyMotion()
+    stressed = voiced(3.0, amp=2000)
+    stressed[int(1.5 * RATE):int(1.6 * RATE)] = voiced(.1, amp=12000)
+    marks = play_from(motion, "r1", stressed, 0)
+    assert [(at, mark.accent) for at, mark in marks if mark.accent] == [(38400, "exclamation")]
+
+
+def test_accents_from_40ms_audio_chunks_are_delivered_once_and_stale_accents_are_dropped():
+    motion = ReplyMotion()
+    stressed = voiced(3.0, amp=2000)
+    stressed[int(1.5 * RATE):int(1.6 * RATE)] = voiced(.1, amp=12000)
+    marks = []
+    for offset, data in chunks(stressed, 960):
+        motion.audio("r1", offset, data)
+        marks += [(offset + mark.sample, mark.accent) for mark in motion.marks("r1", offset, 960) if mark.accent]
+    assert marks == [(40320, "exclamation")]
+    motion.audio("r2", 0, stressed.astype("<i2").tobytes())
+    assert motion.marks("r2", 60000, 960) == []
+
+
 def play(motion, response_id, pcm):
     """Muse's audio arrives ahead of playback, as it does on a call; marks are asked chunk by chunk."""
     for offset, data in chunks(pcm):
         motion.audio(response_id, offset, data)
+    motion.audio_done(response_id)
     marks = []
     for offset, data in chunks(pcm):
         marks += [(offset + mark.sample, mark) for mark in motion.marks(response_id, offset, len(data) // 2)]
@@ -94,6 +116,21 @@ def test_each_sentence_gets_its_expression_at_the_sample_its_speech_starts():
         assert motion.closing("r1") is Expression.HAPPY
 
     asyncio.run(scenario())
+
+
+def test_a_complete_transcript_before_streamed_pcm_keeps_the_later_sentence_at_its_speech_start():
+    motion = ReplyMotion()
+    motion.transcript("r1", "Great news, your flight is booked! Want a window seat?")
+    pcm = reply_pcm()
+    motion.audio("r1", 0, pcm[:18000].astype("<i2").tobytes())
+    marks = [(offset + mark.sample, mark.text)
+             for offset in (0, 4800, 9600, 14400)
+             for mark in motion.marks("r1", offset, min(4800, 18000 - offset)) if mark.text is not None]
+    motion.audio("r1", 18000, pcm[18000:].astype("<i2").tobytes())
+    marks += [(offset + mark.sample, mark.text)
+              for offset in range(18000, len(pcm), 4800)
+              for mark in motion.marks("r1", offset, min(4800, len(pcm) - offset)) if mark.text is not None]
+    assert marks == [(0, "Great news, your flight is booked!"), (56400, "Want a window seat?")]
 
 
 def test_a_sentence_whose_words_come_late_starts_where_playback_is():

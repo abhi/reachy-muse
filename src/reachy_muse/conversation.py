@@ -1322,7 +1322,7 @@ class VoiceConversation:
                 blocked_episode = False
                 if wake is not None:
                     now = time.monotonic()
-                    if self._wake_deadline is None:
+                    if self._wake_deadline is None or (now >= self._wake_deadline and not recorder.active):
                         pre_roll.append(sample.copy())
                         pre_roll_samples += len(sample)
                         trim_pre_roll(pre_roll_limit)
@@ -1342,11 +1342,12 @@ class VoiceConversation:
                         await self._plan(plan.WakeHeard())
                         await asyncio.to_thread(wake.reset)
                         log.info("Reachy heard its wake phrase; microphone open")
-                        self._open_call()
                         if wake_tail is None:
                             # Untimed detectors retain the exact text boundary guard.
+                            await self._close_call()
                             recorder = make_recorder(initial_min_s=.06)
                         else:
+                            self._open_call()
                             # The acoustic detector supplies a fresh cut after the
                             # keyword. Discard all earlier audio and capture only
                             # the request; do not transcribe the invocation again.
@@ -2066,7 +2067,8 @@ class VoiceConversation:
         motion = ReplyMotion(library=library, muse_moving=lambda: self.muse_moving > 0)
         self.call = self.realtime.open(self.hardware, motion, on_audible=self._muse_audible,
                                        on_start=self._muse_speaks, on_idle=self._muse_quiet,
-                                       on_working=self._muse_working, on_reply_done=self._muse_replied)
+                                       on_working=self._muse_working, on_reply_done=self._muse_replied,
+                                       own_speaker=self._own_speaker)
 
     async def _call_ended(self, *, capturing: bool) -> None:
         call, self.call = self.call, None
@@ -2296,6 +2298,14 @@ class VoiceConversation:
         player = PCMPlayer(self.hardware.output_sample_rate, None, self._playback, cursor=cursor)
         await player.finish()
 
+    @contextlib.asynccontextmanager
+    async def _own_speaker(self, cursor: PlaybackCursor):
+        async with self._speaker_lock:
+            if self._speaker_cursor is not None and self._speaker_cursor is not cursor:
+                await self._drain_speech(self._speaker_cursor)
+            self._speaker_cursor = cursor
+            yield
+
     def _prepare_line(self, voice, line: SpokenLine):
         prepared = voice.prepare(line, self.hardware.output_sample_rate)
         return prepared if prepared is not None else PreparedSpeech(
@@ -2341,13 +2351,10 @@ class VoiceConversation:
         speech_serial = next(_SPEECH_SERIALS) if speech_serial is None else speech_serial
         self._speech_pending += 1
         try:
-            async with self._speaker_lock:
-                if self._speaker_cursor is not None and self._speaker_cursor is not playback_cursor:
-                    await self._drain_speech(self._speaker_cursor)
+            playback_cursor = playback_cursor if playback_cursor is not None else PlaybackCursor()
+            async with self._own_speaker(playback_cursor):
                 if speech_serial <= self._hush_floor or (is_current is not None and not is_current()):
                     raise _SpeechSuperseded
-                playback_cursor = playback_cursor if playback_cursor is not None else PlaybackCursor()
-                self._speaker_cursor = playback_cursor
                 accepted_audio = False
                 def accepted():
                     nonlocal accepted_audio
@@ -2381,7 +2388,8 @@ class VoiceConversation:
             return "asleep"
         if self._say_hushed:
             return "hushed"
-        if self._turn_active or self.job is not None or self._hearing_open() or self._playback.user_speaking:
+        if (self._turn_active or self.job is not None or self._hearing_open() or self._playback.user_speaking
+                or (self.call is not None and self.call.audible)):
             return "busy"
         if not (self.backends.command_voice or self.backends.voice).speaks_text:
             return "speech_unavailable"

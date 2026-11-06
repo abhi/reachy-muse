@@ -10,7 +10,7 @@ syllable or a rising question gets its accent where the PCM shows it, whether or
 have arrived. A sentence whose speech starts before all its words have arrived starts with the
 expression its first words suggest; once the rest arrive, a different feeling replaces it if the
 sentence is still playing. A sentence ends where the pause before the next one begins, or, for a
-reply's last sentence, where its speech ends once the reply is done; its terminal gesture plays
+reply's last sentence, once its audio drains; its terminal gesture plays
 there. While Muse moves Reachy itself, local marks are withheld.
 """
 
@@ -33,6 +33,7 @@ from reachy_muse.motion.sentence import SentenceMotion, classify_sentence
 log = logging.getLogger(__name__)
 
 ACCENT_CLEARANCE_S = 0.5
+ACCENT_LATE_LIMIT_S = 0.5
 LATE_LIMIT_S = 1.5
 
 
@@ -76,7 +77,6 @@ class _Reply:
     terminal: Optional[str] = None
     accented: int = 0
     unended: bool = False
-    done: bool = False
 
 
 class ReplyMotion:
@@ -108,17 +108,16 @@ class ReplyMotion:
         cutter = reply.cutter
         reply.aligner.finish(len(cutter.text), cutter.pause_s(len(cutter.text), max(0, len(reply.sentences) - 1)))
 
+    def audio_done(self, response_id: Optional[str]) -> None:
+        reply = self._replies.get(response_id)
+        if reply is not None:
+            reply.aligner.audio_done()
+
     def audio(self, response_id: Optional[str], offset: int, pcm: bytes) -> None:
         reply = self.reply(response_id)
         samples = np.frombuffer(pcm, dtype="<i2")
         reply.aligner.audio(offset, samples)
         reply.accents.extend(reply.prosody.feed(samples))
-
-    def done(self, response_id: Optional[str]) -> None:
-        """Muse finished the reply: the end of its speech received so far ends its last sentence."""
-        reply = self._replies.get(response_id)
-        if reply is not None:
-            reply.done = True
 
     def flushed(self, response_ids) -> None:
         for response_id in response_ids:
@@ -170,7 +169,7 @@ class ReplyMotion:
             if following is not None:
                 ends = reply.aligner.pause_before(following)
             else:
-                ends = reply.aligner.speech_end if reply.done else None
+                ends = None
             if ends is not None and ends < end:
                 marks.append(Mark(max(ends, offset) - offset, ends=True))
                 reply.unended = False
@@ -196,12 +195,13 @@ class ReplyMotion:
         clearance = ACCENT_CLEARANCE_S * SAMPLE_RATE
         remaining = []
         for accent in reply.accents:
+            at = max(accent.sample, offset)
             if accent.sample >= end:
                 remaining.append(accent)
-            elif (accent.sample >= offset and not moving
+            elif (offset - accent.sample <= ACCENT_LATE_LIMIT_S * SAMPLE_RATE and not moving
                   and not (accent.kind == "question" and reply.terminal == "question")
-                  and all(abs(accent.sample - item.sample) >= clearance for item in reply.scheduled[-3:])):
-                marks.append(Mark(accent.sample - offset, accent=accent.kind))
+                  and all(abs(at - item.sample) >= clearance for item in reply.scheduled[-3:])):
+                marks.append(Mark(at - offset, accent=accent.kind))
                 reply.accented += 1
         reply.accents = remaining
         return sorted(marks, key=lambda mark: (mark.sample, not mark.ends, mark.accent is not None))

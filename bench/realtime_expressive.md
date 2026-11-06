@@ -20,7 +20,8 @@ session, network, or model was used.
     has arrived; longer pauses win over nearer ones
 
   Each pause-confirmed sentence corrects the speaking rate, and
-  `TranscriptDone` anchors it to the whole reply. When the speaker is about to
+  the full transcript anchors it to the whole reply once its audio is complete.
+  `TranscriptDone` alone does not confirm audio completion. When the speaker is about to
   play a chunk, it asks `ReplyMotion.marks` for the motion inside it and splits
   the chunk there. The expression therefore rides on the first sample of its
   sentence. Recorded clips play, or a motion-library clip when one is ready.
@@ -31,10 +32,12 @@ session, network, or model was used.
   from the reply PCM. A loudness peak 5 dB above the running level gives a small
   nod, and 8 dB adds an antenna flick to it. A pitch climb of 15% into a pause
   gives a head tilt with the antennas. Accents are at least 1 s apart and 0.5 s clear of sentence
-  starts. They need no words, so motion starts with the first audio.
+  starts. Accents detected up to 0.5 s behind playback play at the current chunk;
+  older accents are dropped. They need no words.
 - **Lifecycle.** `Working` cues the thinking motion when Muse is still silent
-  0.3 s later. After `ResponseDone`, the reply's audio drains and the speaker
-  stays quiet for 0.3 s. Then a happy or surprised tone in the last two
+  0.3 s later. `ResponseDone` can precede more audio. The last sentence closes
+  when playback drains. Once the response is complete and the speaker stays
+  quiet for 0.3 s, a happy or surprised tone in the last two
   sentences gives a celebration and a sad one an apology. The companion motion
   library plays them when it is available, else recorded clips (`success1`,
   then the built-in `happy`; `sad`). `PlaybackFlushed` forgets the flushed
@@ -45,8 +48,8 @@ session, network, or model was used.
   hardware already skips sentence events during a commanded motion. Local
   inference resumes with the next sentence.
 
-Motion never delays audio. Marks only split a chunk, and the speaker pushes
-every chunk as soon as the call accepts it.
+Motion never waits for transcript data. Marks only split a chunk. Realtime
+replies share speaker ownership with local speech, so the two play in sequence.
 
 ## Measurements
 
@@ -71,6 +74,10 @@ There are three delivery regimes:
 - **with_audio:** each word arrives with the chunk that holds its start
 - **late:** each word arrives only when playback reaches it
 
+`TranscriptDone` follows the last delta in every regime. Audio completion is
+delivered separately, after the last PCM chunk. The replay asserts transcript
+ordering and checks that the deltas reconstruct the final text.
+
 ### Sentence start alignment
 
 The error is the absolute difference between the sample where a sentence's
@@ -80,47 +87,47 @@ expression was scheduled and the sentence's true first sample.
 |---|---|---|---|---|---|---|---|
 | clear | ahead | 1.0 ms | 5.2 ms | 5.8 ms | 100% | 100% | 0% |
 | clear | with_audio | 1.5 ms | 5.9 ms | 818 ms | 98.4% | 100% | 0% |
-| clear | late | 1.7 ms | 117 ms | 159 ms | 96.8% | 100% | 17.5% |
+| clear | late | 64.5 ms | 197.2 ms | 1069.8 ms | 77.8% | 96.8% | 57.1% |
 | tight | ahead | 1.1 ms | 309 ms | 641 ms | 92.1% | 100% | 0% |
 | tight | with_audio | 0.7 ms | 87 ms | 755 ms | 95.2% | 100% | 1.6% |
-| tight | late | 2.2 ms | 689 ms | 909 ms | 82.5% | 98.4% | 15.9% |
+| tight | late | 56.8 ms | 537.4 ms | 1889.0 ms | 69.4% | 93.5% | 46.8% |
 
 Most misses in the tight profile are sentences that open with a short clause,
 such as "First, we pick up groceries." When the comma pause is as long as the
 sentence pause, the snap lands after the comma. The expression then starts
-0.3 to 0.65 s into its own sentence, never in the previous one. "Committed
-late" means the sentence had no words yet when playback reached it. Its
-expression starts at the next chunk, at most 0.2 s later.
+0.3 to 0.65 s into its own sentence. Late transcripts also expose speaking-rate
+errors before the whole transcript is available. "Committed late" means the
+estimated start is already behind playback when the sentence is scheduled.
+These percentages describe scheduled sentences. The tight/late run scheduled
+62 of 63 sentences; the remaining estimate fell beyond the available audio.
 
-An earlier version used only the character rate and a 3-word minimum before
-committing a still-arriving sentence. On the clear profile it measured p95
-527 ms and 79% within 150 ms in the ahead regime, and p95 1,200 ms and 44%
-within 150 ms in the late regime. Modeling break pauses, preferring long
-pauses, and committing on time from the first words gave the table above.
+The previous replay delivered the full transcript before the remaining late
+deltas. That exposed future words and later appended duplicates. Correcting
+the event order reduced clear/late accuracy within 150 ms from 96.8% to 77.8%.
+Earlier comparisons using that event order are not valid for the late regime.
 
 ### Expression coverage
 
-- Every sentence got an expression at its start in all six runs (`shown` = 100%;
-  the late limit is 1.5 s).
+- All scheduled sentences got an expression (`shown` = 100%; the late limit
+  is 1.5 s). Five runs scheduled all 63 sentences; tight/late scheduled 62.
 - 30 of 63 sentences (48%) got a non-neutral expression (happy, sad, curious,
   surprised, or nod) when words arrived ahead or with audio. With late words,
-  27 to 28 did, because a few started from words that did not show a feeling.
+  27 did, because a few started from words that did not show a feeling.
   The rest stay neutral, with sway and accents.
 - Prosody gave 0.30 to 0.36 accents per second of speech, about one every 3 s,
   in addition to sentence motion.
-- 11 to 12 of 24 replies qualified for a closing celebration or apology.
+- 12 of 24 replies qualified for a closing celebration or apology.
 
 ### First audio and CPU
 
 | Measurement | Value |
 |---|---|
-| Chunk accepted to first speaker push, through the chunk's motion analysis, the real `RealtimeSpeaker` and its PyAV resampler (30 trials) | p50 0.6 ms, p95 0.7 ms, max 2.1 ms |
-| Motion inference CPU (aligner, prosody, classifier, marks) | 1.1 to 1.2 ms per second of reply audio |
-| Speaker path CPU (resampling, chunk splitting, pushes, and motion inference) | 9 to 11 ms per second of reply audio, over two runs |
+| Chunk accepted to first speaker push, through the chunk's motion analysis, the real `RealtimeSpeaker` and its PyAV resampler (30 trials) | p50 0.6 ms, p95 1.1 ms, max 3.8 ms |
+| Motion inference CPU (aligner, prosody, classifier, marks) | 1.07 to 1.29 ms per second of reply audio |
+| Speaker path CPU (resampling, chunk splitting, pushes, and motion inference) | 8.79 ms per second of reply audio |
 
-These figures are from an Apple M3 Ultra. The robot's Raspberry Pi CM4 is
-slower, so measure there before relying on them. Even at 15 times slower, the
-speaker path would use about 17% of one core, and motion inference about 1.8%.
+These figures are from the development host. Measure on the robot's
+Raspberry Pi CM4 before relying on them there.
 The 25 ms motion loop is unchanged: accents are extra sentence-end
 events in its existing bounded queue.
 
@@ -147,3 +154,5 @@ PYTHONPATH=src python bench/realtime_expressive.py --json realtime.json
 The script needs NumPy and PyAV. Its replies, seeds, and profiles are fixed,
 so alignment figures repeat exactly; CPU and timing figures vary with the
 machine.
+
+The corrected run's raw results are in [realtime_expressive.json](realtime_expressive.json).

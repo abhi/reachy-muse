@@ -119,17 +119,28 @@ def replay(text: str, pcm, sentences, starts, regime: str, *, muse_moving=lambda
     for offset in range(0, len(pcm), CHUNK):
         events.append((offset / RATE / 2.5, 1, "audio", offset))
         events.append((playback_start + offset / RATE, 2, "play", offset))
-    events.append((len(pcm) / RATE / 2.5 + .01, 3, "done", None))
+    transcript_end = max(event[0] for event in events if event[2] == "words")
+    audio_end = len(pcm) / RATE / 2.5 + .01
+    events.append((max(transcript_end, audio_end), 3, "done", None))
+    events.append((audio_end, 4, "audio_done", None))
     marks = []
     cpu = 0.0
+    transcript_done = False
+    received_text = ""
     for _, _, kind, value in sorted(events, key=lambda item: (item[0], item[1])):
         began = time.process_time()
         if kind == "words":
+            assert not transcript_done
+            received_text += value
             motion.words("r1", value)
         elif kind == "audio":
             motion.audio("r1", value, pcm[value:value + CHUNK].tobytes())
         elif kind == "done":
+            assert received_text == text
+            transcript_done = True
             motion.transcript("r1", text)
+        elif kind == "audio_done":
+            motion.audio_done("r1")
         else:
             count = len(pcm[value:value + CHUNK])
             marks += [(value + mark.sample, mark) for mark in motion.marks("r1", value, count)]
