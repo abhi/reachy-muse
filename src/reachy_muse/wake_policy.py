@@ -203,8 +203,14 @@ class WakePolicy:
         echo = contains_phrase(" ".join(context.playback), detector.phrase)
         if echo:
             self._echo_sample = self._samples
-        self._audio.append(audio.copy())
-        self._audio_samples += len(audio)
+        started = time.monotonic()
+        replay = getattr(detector, "candidate_replay", False)
+        found = await asyncio.to_thread(detector.feed, audio, **({"align": False} if replay else {}))
+        inference_ms = (time.monotonic() - started) * 1000
+        candidate = getattr(detector, "last_candidate", None) if found else None
+        consumed = len(audio) - getattr(candidate, "remaining", 0)
+        self._audio.append(audio[:consumed].copy())
+        self._audio_samples += consumed
         while self._audio_samples > self.verification_samples:
             first = self._audio.popleft()
             excess = self._audio_samples - self.verification_samples
@@ -212,13 +218,8 @@ class WakePolicy:
             if taken < len(first):
                 self._audio.appendleft(first[taken:])
             self._audio_samples -= taken
-        started = time.monotonic()
-        replay = getattr(detector, "candidate_replay", False)
-        found = await asyncio.to_thread(detector.feed, audio, **({"align": False} if replay else {}))
-        inference_ms = (time.monotonic() - started) * 1000
         if not found:
             return False
-        candidate = getattr(detector, "last_candidate", None)
         self._sequence += 1
         reason, source, floor = "accepted", "none", None
         verification = "not_run"

@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
+import io
 from pathlib import Path
 import sys
 import threading
 from types import SimpleNamespace
+import wave
 
 import pytest
 
@@ -182,6 +185,35 @@ def test_keyword_tail_includes_unaccepted_large_caller_remainder(timed_models):
     # The primary spotter confirmed after8000samples;4000caller samples were
     # never accepted by it, yet all of those request samples remain in the tail.
     assert sum(map(len, instances[0].streams[0].accepted)) == 8000
+
+
+@pytest.mark.parametrize("chunk_samples", [256, 1600, 16000])
+def test_policy_verifies_the_same_recording_across_capture_chunk_sizes(timed_models, chunk_samples):
+    from reachy_muse.wake_policy import WakePolicy, WakeVerifier
+
+    directory, _ = timed_models
+    detector = WakeWordDetector(directory, candidate_replay=True)
+    audio = np.zeros(48000, np.float32)
+    audio[6400:8000] = .25
+    audio[20000:20004] = [.1, .2, .3, .4]
+    received = []
+
+    class Local:
+        async def transcribe(self, wav):
+            with wave.open(io.BytesIO(wav), "rb") as recording:
+                pcm = np.frombuffer(recording.readframes(recording.getnframes()), dtype="<i2")
+            received.append(pcm)
+            return "hey muse" if 8192 in pcm and 13107 in pcm else "muse"
+
+    async def run():
+        policy = WakePolicy(WakeVerifier(local=Local()))
+        accepted = [await policy.feed(detector, audio[start:start + chunk_samples])
+                    for start in range(0, len(audio), chunk_samples)]
+        assert sum(accepted) == 1
+        assert len(received) == 1
+        assert len(received[0]) <= 24000
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize('tokens', [
