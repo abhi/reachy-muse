@@ -10,6 +10,7 @@ from reachy_muse.contract.expressions import Expression
 from reachy_muse.motion.prosody import Delivery, ProsodyTracker
 from reachy_muse.motion.sentence import SentenceMotion, classify_sentence
 from reachy_muse.motion.sentence_delivery import SentenceDelivery, SentenceSelector, neutral_motion
+from reachy_muse.realtime_call import realtime_supported
 from test_sentence_motion import controller
 
 
@@ -173,6 +174,8 @@ def test_command_preemption_cannot_restart_from_old_prosody():
 
 @pytest.mark.parametrize("path", ["chat", "realtime"])
 def test_chat_and_transcript_delta_replies_share_the_same_neutral_rotation(path):
+    if path == "realtime" and not realtime_supported():
+        pytest.skip("the Muse SDK has no voice call events")
     import asyncio
     from musegadget import voice_call as sdk
     from bench.expression_playback import Hardware
@@ -232,6 +235,8 @@ def test_flat_delivery_does_not_restart_a_factual_gesture():
 
 
 def test_a_greeting_split_across_realtime_deltas_corrects_the_playing_variant():
+    if not realtime_supported():
+        pytest.skip("the Muse SDK has no voice call events")
     import asyncio
     from musegadget import voice_call as sdk
     from bench.expression_playback import Hardware
