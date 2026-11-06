@@ -44,22 +44,22 @@
     }
   ],
   "classifier_cpu": {
-    "p50_ms": 0.006,
-    "p95_ms": 0.008,
-    "p99_ms": 0.01,
-    "max_ms": 0.046
+    "p50_ms": 0.009,
+    "p95_ms": 0.012,
+    "p99_ms": 0.016,
+    "max_ms": 0.103
   },
   "classifier_and_selection_cpu": {
-    "p50_ms": 0.007,
-    "p95_ms": 0.01,
-    "p99_ms": 0.011,
-    "max_ms": 0.054
+    "p50_ms": 0.01,
+    "p95_ms": 0.013,
+    "p99_ms": 0.018,
+    "max_ms": 0.109
   },
   "bounded_long_input_cpu": {
-    "p50_ms": 0.193,
-    "p95_ms": 0.212,
-    "p99_ms": 0.218,
-    "max_ms": 0.243
+    "p50_ms": 0.267,
+    "p95_ms": 0.316,
+    "p99_ms": 0.36002,
+    "max_ms": 0.417
   },
   "calls": 20000,
   "prosody_profiles": {
@@ -68,7 +68,7 @@
       "energy_dbfs": -35.802107147817274,
       "syllables_per_s": 7.5,
       "rise_semitones": 0.0,
-      "analysis_cpu_ms": 2.028,
+      "analysis_cpu_ms": 2.504,
       "semantic_changes": 0,
       "gestures": {
         "happy": 34,
@@ -87,7 +87,7 @@
       "energy_dbfs": -16.071683457228904,
       "syllables_per_s": 7.5,
       "rise_semitones": 0.0,
-      "analysis_cpu_ms": 0.929,
+      "analysis_cpu_ms": 1.39,
       "semantic_changes": 0,
       "gestures": {
         "happy": 34,
@@ -105,7 +105,7 @@
       "energy_dbfs": -19.59341394091943,
       "syllables_per_s": 7.5,
       "rise_semitones": 7.62282848642856,
-      "analysis_cpu_ms": 0.882,
+      "analysis_cpu_ms": 1.295,
       "semantic_changes": 0,
       "gestures": {
         "happy": 34,
@@ -122,10 +122,10 @@
   },
   "cm4_estimate_multiplier": 10,
   "cm4_estimated_classifier_cpu": {
-    "p50_ms": 0.06,
-    "p95_ms": 0.08,
-    "p99_ms": 0.1,
-    "max_ms": 0.46
+    "p50_ms": 0.09,
+    "p95_ms": 0.12,
+    "p99_ms": 0.16,
+    "max_ms": 1.03
   },
   "factual_run": {
     "gestures": {
