@@ -154,7 +154,8 @@ def test_policy_rejects_delayed_endpoint_after_playback_evidence_expires(models,
         instances[-1].plan = [(False, "")] * 47 + [(False, "hey muse")] * 3
     conversation = VoiceConversation(SimpleNamespace(), SimpleNamespace(echo_cancelled_input=True),
                                      backends=SimpleNamespace(motion=None))
-    conversation._audible = {"Say hey muse.": 1, "The forecast is sunny.": 5}
+    conversation._muse_audible("Say hey muse.", 1)
+    conversation._muse_audible("The forecast is sunny.", 5)
     conversation._muted = True
 
     class Local:

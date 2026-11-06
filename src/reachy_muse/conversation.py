@@ -267,9 +267,14 @@ class _CaptureBuffer:
             samples = chunk.samples
         context = None
         if contexts:
+            playback = ()
+            for item in contexts:
+                overlap = next((size for size in range(min(len(playback), len(item.playback)), 0, -1)
+                                if playback[-size:] == item.playback[:size]), 0)
+                playback += item.playback[overlap:]
             context = WakeContext(blocked=any(item.blocked for item in contexts),
                                   speaking=any(item.speaking for item in contexts),
-                                  playback=tuple(dict.fromkeys(text for item in contexts for text in item.playback)))
+                                  playback=playback)
         result = _CapturedAudio(samples, chunk.discard, self.gap, self.gap_reason, context)
         self.gap = False
         self.gap_reason = None
@@ -569,7 +574,7 @@ class VoiceConversation:
         self._muted = False
         self._echo_until = 0.0
         # Each line Reachy played recently, and when its echo has died away.
-        self._audible: dict[str, float] = {}
+        self._audible: deque[tuple[str, float]] = deque(maxlen=8)
         self._input_overflow = False
         self._turn_started = None
         self._logged_activity = None
@@ -725,7 +730,7 @@ class VoiceConversation:
     def _wake_capture_context(self, now):
         return WakeContext(blocked=self._input_blocked() or now < self._wake_unknown_output_until,
                            speaking=self._muted or now < self._echo_until,
-                           playback=tuple(text for text, until in self._audible.items() if until > now - 2.5))
+                           playback=tuple(text for text, until in self._audible if until > now - 2.5))
 
     async def run(self) -> None:
         await self.session.registered.wait()
@@ -975,7 +980,7 @@ class VoiceConversation:
             if recorder.active or recorder.speech_active:
                 if self.call is not None:
                     heard_over.update(self.call.audible_transcripts(ECHO_TAIL_S))
-                heard_over.update(text for text, until in self._audible.items() if until > endpoint_at)
+                heard_over.update(text for text, until in self._audible if until > endpoint_at)
             heard = recorder.take()
             for _ in range(heard.failures):
                 transcription_failed(self.call)
@@ -2202,9 +2207,10 @@ class VoiceConversation:
         if not text:
             self._wake_unknown_output_until = max(self._wake_unknown_output_until, until + ECHO_TAIL_S + 1.5)
         if text:
-            self._audible[text] = until + ECHO_TAIL_S
-            if len(self._audible) > 8:
-                del self._audible[min(self._audible, key=self._audible.get)]
+            if self._audible and self._audible[-1][0] == text:
+                self._audible[-1] = (text, until + ECHO_TAIL_S)
+            else:
+                self._audible.append((text, until + ECHO_TAIL_S))
 
     async def _muse_speaks(self) -> None:
         if self.call is not None:
@@ -2617,10 +2623,7 @@ class VoiceConversation:
                 raise _SpeechSuperseded
             self._audio_clear_attempted = False
             self._muted = True
-            self._echo_until = time.monotonic() + .13 + ECHO_TAIL_S
-            self._audible[line.text] = self._echo_until
-            if len(self._audible) > 8:
-                del self._audible[min(self._audible, key=self._audible.get)]
+            self._muse_audible(line.text, time.monotonic() + .13)
             current_sentence = sentence
             if timed_motion and samples_played == 0 and expression_task is not None:
                 if expression_task.done() and not expression_task.cancelled():

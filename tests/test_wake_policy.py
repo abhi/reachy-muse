@@ -153,6 +153,51 @@ def test_split_playback_echo_cannot_be_authorized_by_an_exact_verifier_match():
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("batched", [False, True])
+def test_repeated_playback_keeps_its_order_when_guarding_a_split_wake(batched):
+    from reachy_muse.conversation import VoiceConversation, _CaptureBuffer
+
+    async def run():
+        conversation = VoiceConversation(SimpleNamespace(), SimpleNamespace(echo_cancelled_input=True),
+                                         backends=SimpleNamespace(motion=None))
+        conversation._muse_audible("Muse is here.", 98)
+        conversation._muse_audible("Hey,", 100)
+        buffer = _CaptureBuffer(16000)
+        if batched:
+            buffer.push(np.full(800, .1), wake_context=conversation._wake_capture_context(100))
+        conversation._muse_audible("Muse is here.", 100.1)
+        buffer.push(np.full(800, .1), wake_context=conversation._wake_capture_context(100.1))
+        captured = await buffer.get()
+        local, detector = Local(), Detector()
+        policy = WakePolicy(WakeVerifier(local=local))
+        assert await policy.feed(detector, captured.samples, context=captured.wake_context) is False
+        assert policy.last_decision.reason == "echo"
+        assert captured.wake_context.playback == ("Muse is here.", "Hey,", "Muse is here.")
+        assert local.received == []
+        assert detector.aligned == 0
+
+    asyncio.run(run())
+
+
+def test_batching_repeated_playback_snapshots_does_not_invent_a_wake_phrase():
+    from reachy_muse.conversation import VoiceConversation, _CaptureBuffer
+
+    async def run():
+        conversation = VoiceConversation(SimpleNamespace(), SimpleNamespace(echo_cancelled_input=True),
+                                         backends=SimpleNamespace(motion=None))
+        conversation._muse_audible("Muse is here.", 100)
+        conversation._muse_audible("Hey,", 100.1)
+        buffer = _CaptureBuffer(16000)
+        for _ in range(2):
+            buffer.push(np.full(800, .1), wake_context=conversation._wake_capture_context(100.1))
+        captured = await buffer.get()
+        policy = WakePolicy(WakeVerifier(local=Local()))
+        assert await policy.feed(Detector(), captured.samples, context=captured.wake_context) is True
+        assert captured.wake_context.playback == ("Muse is here.", "Hey,")
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("strong, expected, reason", [(True, True, "accepted"), (False, False, "below_threshold")])
 def test_companion_down_requires_conservative_replay(strong, expected, reason):
     async def run():
