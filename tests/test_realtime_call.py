@@ -9,7 +9,7 @@ import reachy_muse.cli
 from musegadget.identity import Identity
 from reachy_muse.conversation import ReachyService
 from reachy_muse.motion.reply_motion import ReplyMotion
-from reachy_muse.realtime_call import (MicrophoneFeed, RealtimeSpeaker, RealtimeVoice, VoiceLink,
+from reachy_muse.realtime_call import (MicrophoneFeed, RealtimeCall, RealtimeSpeaker, RealtimeVoice, VoiceLink,
                                        realtime_supported)
 
 np = pytest.importorskip("numpy")
@@ -261,3 +261,50 @@ def test_after_a_failed_call_the_chat_turn_that_follows_reconnects_the_voice_lin
         return len(links), voice.usable
 
     assert asyncio.run(scenario()) == (2, True)
+
+
+def test_each_sentence_s_closing_gesture_lands_where_its_speech_ends_not_where_the_next_begins():
+    if not realtime_supported():
+        pytest.skip("the Muse SDK has no voice call events")
+    from musegadget import voice_call as sdk
+
+    class Timed(Speaker):
+        output_sample_rate = 24000
+
+        def __init__(self):
+            super().__init__()
+            self.ends = []
+
+        def play_audio(self, samples, *, sentence=None, accents=()):
+            self.played.append(len(samples))
+
+        def finish_sentence(self):
+            self.ends.append(sum(self.played))
+
+    async def scenario():
+        hardware = Timed()
+        idle = asyncio.Event()
+
+        async def nothing():
+            pass
+
+        async def quiet():
+            idle.set()
+
+        motion = ReplyMotion()
+        speaker = RealtimeSpeaker(hardware, motion, on_audible=lambda *args: None, on_start=nothing, on_idle=quiet)
+        call = RealtimeCall(MicrophoneFeed(16000), speaker, motion, on_working=lambda working: None,
+                            on_reply_done=lambda reply: None)
+        text = "Your table for two is booked. Shall I add a reminder?"
+        pcm = tone(1.6) + bytes(int(.5 * 24000) * 2) + tone(1.4) + bytes(int(.3 * 24000) * 2)
+        call.on_event(sdk.ResponseStarted("r1"))
+        call.on_event(sdk.TranscriptDelta("r1", text))
+        for offset in range(0, len(pcm), 4800):
+            call.on_event(sdk.AudioChunk("r1", offset // 2, pcm[offset:offset + 4800]))
+        call.on_event(sdk.TranscriptDone("r1", text))
+        call.on_event(sdk.ResponseDone("r1", "completed"))
+        await asyncio.wait_for(idle.wait(), 10)
+        await call.close()
+        return [round(sample / 24000, 2) for sample in hardware.ends]
+
+    assert asyncio.run(scenario()) == [1.6, 3.5]

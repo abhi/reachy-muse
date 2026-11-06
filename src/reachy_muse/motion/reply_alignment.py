@@ -153,9 +153,17 @@ class ReplyAligner:
 
     def start(self, sentence: Sentence) -> Tuple[int, bool]:
         """The best estimate of ``sentence``'s first sample now, and whether a pause confirmed it."""
+        sample, pause = self._place(sentence)
+        return sample, pause is not None
+
+    def pause_before(self, sentence: Sentence) -> Optional[int]:
+        """Where the pause that confirms ``sentence``'s start begins, so the speech before it ends."""
+        return self._place(sentence)[1]
+
+    def _place(self, sentence: Sentence) -> Tuple[int, Optional[int]]:
         onset = self.onset
         if sentence.start_char == 0 or sentence.index == 0:
-            return (onset, True) if onset is not None else (0, False)
+            return (onset, onset) if onset is not None else (0, None)
         base_char, base_sample, base_pause = 0, onset if onset is not None else 0, 0.0
         for char, sample, pause_s in self._anchors:
             if char < sentence.start_char:
@@ -164,7 +172,7 @@ class ReplyAligner:
         estimate += (sentence.start_char - base_char) * self._samples_per_char(onset)
         estimate = int(round(estimate))
         snapped = self._snap(estimate, estimate - base_sample, base_sample)
-        return (snapped, True) if snapped is not None else (estimate, False)
+        return (snapped[1], snapped[0]) if snapped is not None else (estimate, None)
 
     def confirm(self, sentence: Sentence, sample: int) -> None:
         """A pause-confirmed start becomes evidence for the speaking rate."""
@@ -176,7 +184,7 @@ class ReplyAligner:
             return self._prior
         if self._finished is not None and self._finished[0]:
             chars, pause_s = self._finished
-            end = self._speech_end()
+            end = self.speech_end
             speaking = (end or 0) - onset - pause_s * self.rate
             if end is not None and speaking > 0:
                 return speaking / chars
@@ -186,14 +194,16 @@ class ReplyAligner:
                 return speaking / char
         return self._prior
 
-    def _speech_end(self) -> Optional[int]:
+    @property
+    def speech_end(self) -> Optional[int]:
+        """The sample after the last loud frame received so far."""
         for index in range(len(self._levels) - 1, -1, -1):
             if self._levels[index] >= SPEECH_FLOOR:
                 return (index + 1) * self._frame
         return None
 
-    def _snap(self, estimate: int, span: int, after: int) -> Optional[int]:
-        """The end of the pause nearest ``estimate``, favouring longer pauses, once its window has arrived."""
+    def _snap(self, estimate: int, span: int, after: int) -> Optional[Tuple[int, int]]:
+        """The pause whose end is nearest ``estimate``, favouring longer pauses, once its window has arrived."""
         window = max(int(MIN_WINDOW_S * self.rate), min(int(MAX_WINDOW_S * self.rate), span // 3))
         if self.received < estimate + window and self._finished is None:
             return None
@@ -215,7 +225,7 @@ class ReplyAligner:
                 if distance <= 1:
                     score = distance - 0.8 * min(run / LONG_PAUSE_FRAMES, 1.0)
                     if best is None or score < best[0]:
-                        best = (score, sample)
+                        best = (score, (index - run) * self._frame, sample)
             run = 0
-        return None if best is None else best[1]
+        return None if best is None else best[1:]
 

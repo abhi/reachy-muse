@@ -249,6 +249,11 @@ class RealtimeSpeaker:
                     await player.play(samples)
 
     def _apply(self, mark: Mark) -> None:
+        if mark.ends:
+            if self._timed and self._sentence_open:
+                self._hardware.finish_sentence()
+            self._sentence_open = False
+            return
         if mark.revised:
             if self._timed:
                 self._extras["sentence"] = mark.sentence
@@ -281,10 +286,10 @@ class RealtimeSpeaker:
             raise asyncio.CancelledError
 
     async def _finish(self, player: PCMPlayer) -> None:
-        await player.finish()
         if self._timed and self._sentence_open:
             self._hardware.finish_sentence()
         self._sentence_open = False
+        await player.finish()
         self._audible_text = None
         replies, self._replies = self._replies, []
         for response_id in replies:
@@ -333,8 +338,10 @@ class RealtimeCall:
                 self.motion.transcript(event.response_id, event.text)
             elif kind == "ResponseStarted":
                 self.motion.started(event.response_id)
-            elif kind == "ResponseDone" and event.status in (None, "completed"):
-                self._on_reply_done(event.response_id)
+            elif kind == "ResponseDone":
+                self.motion.done(event.response_id)
+                if event.status in (None, "completed"):
+                    self._on_reply_done(event.response_id)
             elif kind == "Working":
                 self._on_working(event.working)
             elif kind == "PlaybackFlushed":
