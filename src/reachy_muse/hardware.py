@@ -33,7 +33,7 @@ import urllib.request
 from concurrent.futures import Future, TimeoutError as PresenceTimeout
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Collection, NamedTuple
+from typing import TYPE_CHECKING, Callable, Collection, NamedTuple, Sequence
 
 from reachy_muse.contract.commands import POSE_LIMITS, parse_command
 from reachy_muse.motion import MotionStyle
@@ -424,8 +424,13 @@ class ReachyController:
         except Exception as exc:
             raise ReachyHardwareError(f"Reachy Mini microphone failed: {exc}") from exc
 
-    def play_audio(self, samples: np.ndarray, *, sentence: SentenceMotion | None = None) -> None:
-        """Queue mono float32 samples at output_sample_rate without waiting."""
+    def play_audio(self, samples: np.ndarray, *, sentence: SentenceMotion | None = None,
+                   accents: Sequence[tuple[int, str]] = ()) -> None:
+        """Queue mono float32 samples at output_sample_rate without waiting.
+
+        ``accents`` are (sample index into ``samples``, terminal) pairs: a sentence-end accent
+        shape played when the speaker reaches that sample.
+        """
         self._require_running()
         audio = self._np.asarray(samples, dtype=self._np.float32)
         if audio.ndim != 1 or not self._np.isfinite(audio).all():
@@ -464,6 +469,12 @@ class ReachyController:
                         self._progress_started = None
                         self._sentences.offer(SentenceEvent(self._state_started, self._sentence_epoch,
                                                             "start", (sentence.expression.value, self._sentence_serial), move))
+                if accents:
+                    with self._state_lock:
+                        epoch = self._sentences.epoch
+                    for index, terminal in accents:
+                        self._sentences.offer(SentenceEvent(start + index / self._output_sample_rate + SWAY_LATENCY_S,
+                                                            epoch, "end", (terminal, -1)))
                 self._layers.feed_speech(audio, self._output_sample_rate, at)
 
     def finish_sentence(self) -> None:

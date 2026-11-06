@@ -45,6 +45,18 @@ def test_accepted_audio_sets_each_sentence_start_and_tail(monkeypatch):
         ('start', 11.06, ('happy', 2)), ('end', 11.56, ('exclamation', 2))]
 
 
+def test_prosody_accents_play_at_their_sample_without_ending_the_sentence(monkeypatch):
+    monkeypatch.setattr('reachy_muse.hardware.time.monotonic', lambda: 10.0)
+    hardware = controller()
+    hardware.play_audio(np.ones(100), sentence=SentenceMotion(Expression.CURIOUS, 'question'),
+                        accents=[(40, 'plain'), (90, 'exclamation')])
+    hardware.finish_sentence()
+    events = hardware._sentences.due(20)
+    assert [(e.kind, round(e.at, 2), e.value) for e in events] == [
+        ('start', 10.06, ('curious', 1)), ('end', 10.46, ('plain', -1)), ('end', 10.96, ('exclamation', -1)),
+        ('end', 11.06, ('question', 1))]
+
+
 def test_empty_failed_and_cleared_audio_never_cue(monkeypatch):
     monkeypatch.setattr('reachy_muse.hardware.time.monotonic', lambda: 10.0)
     hardware = controller()
