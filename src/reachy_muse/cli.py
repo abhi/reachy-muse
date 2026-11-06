@@ -297,6 +297,8 @@ def parser() -> argparse.ArgumentParser:
     pair.set_defaults(introduce=None)
     introduce = sub.add_parser("introduce", help="Preview Reachy's introduction to your main Muse chat")
     introduce.add_argument("--yes", action="store_true", help="Send the introduction once per text version")
+    from reachy_muse.wake_test import add_arguments as wake_test_arguments
+    wake_test_arguments(sub.add_parser("wake-test", help="Measure wake recall locally without a Muse session"))
     for command in ("run", "doctor"):
         item = sub.add_parser(command, help="Start conversations" if command == "run"
                               else "Check the robot and audio without a Muse connection")
@@ -348,6 +350,12 @@ def parser() -> argparse.ArgumentParser:
                               help="Local wake detector (default: sherpa); Vosk requires the reachy-wake-vosk extra")
             item.add_argument("--wake-phrase", default="hey muse",
                               help="Phrase that opens conversation when --wake-model is set (default: hey muse)")
+            item.add_argument("--wake-candidate-threshold", type=float, default=.1,
+                              help="Sherpa candidate floor; weak matches require verification (default: .1)")
+            item.add_argument("--wake-threshold", type=float, default=.25,
+                              help="Conservative replay threshold when verification is unavailable (default: .25)")
+            item.add_argument("--wake-score", type=float, default=1.0,
+                              help="Sherpa keyword boost, not a confidence score (default: 1)")
             item.add_argument("--wake-timeout", type=float, default=10.0,
                               help="Idle seconds before returning to wake-word detection; excludes thinking and speech")
             item.add_argument("--session-id", help="Existing Muse chat to use instead of Reachy's dedicated side chat")
@@ -557,6 +565,9 @@ async def run(args) -> int:
         raise ValueError("--wake-backend vosk requires --wake-model")
     if not math.isfinite(args.wake_timeout) or not 1 <= args.wake_timeout <= 300:
         raise ValueError("--wake-timeout must be between 1 and 300 seconds")
+    if (not all(math.isfinite(x) for x in (args.wake_candidate_threshold, args.wake_threshold, args.wake_score))
+            or not 0 < args.wake_candidate_threshold <= args.wake_threshold <= 1 or args.wake_score <= 0):
+        raise ValueError("Wake settings need 0 < candidate threshold <= threshold <= 1 and a positive boost")
     muse_path = realtime_path(args)
     if args.realtime_stt_model is not None and args.muse_path != "realtime":
         raise ValueError("--realtime-stt-model needs --muse-path realtime")
@@ -614,11 +625,18 @@ async def run(args) -> int:
                 from reachy_muse.wake_word import WakeWordDetector
                 wake_factory = WakeWordDetector
             wake_detector = await asyncio.to_thread(wake_factory, args.wake_model,
-                                                   phrase=args.wake_phrase)
+                                                   phrase=args.wake_phrase,
+                                                   **({"threshold": args.wake_candidate_threshold,
+                                                       "score": args.wake_score, "candidate_replay": True}
+                                                      if args.wake_backend == "sherpa" else {}))
             if getattr(wake_detector, "timing_supported", False):
                 logging.getLogger(__name__).info("Reachy timed wake handoff ready")
         startup.mark("wake_detector")
         link = None
+        from reachy_muse.wake_policy import WakePolicy, WakeVerifier
+        wake_policy = WakePolicy(WakeVerifier(
+            local=command_transcriber or (transcriber if args.stt_backend == "sherpa-streaming" else None),
+            companion=lambda: link), fallback_threshold=args.wake_threshold) if wake_detector is not None else None
 
         def backends(session):
             return backends_for(Mode(args.mode), session, speech=speech, progress_speech=progress_speech,
@@ -635,6 +653,7 @@ async def run(args) -> int:
                                local_chat=args.local_chat == "on",
                                arbitration_shadow=args.arbitration_shadow,
                                audio_diagnostics=args.audio_diagnostics, wake_detector=wake_detector,
+                               wake_policy=wake_policy,
                                wake_timeout_s=args.wake_timeout, speech_gate=speech_gate,
                                startup=startup, muse_path=muse_path,
                                morning=morning(robot) if morning is not None else None)
@@ -796,6 +815,9 @@ def main(argv=None) -> int:
             return pair_reachy(args)
         if args.command == "doctor":
             return doctor(args)
+        if args.command == "wake-test":
+            from reachy_muse.wake_test import run as wake_test
+            return asyncio.run(wake_test(args))
         if args.command == "companion":
             return companion_command(args)
         if args.command == "introduce":
