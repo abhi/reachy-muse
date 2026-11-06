@@ -3332,6 +3332,10 @@ class FakeHardware:
         self.read_count += 1
         return sample
 
+    def discard_microphone(self):
+        with self.samples.mutex:
+            self.samples.queue.clear()
+
 
 class FakeSession:
     def __init__(self, mp3=b"", *, acknowledgement=None, send_hook=None, speech_error=None):

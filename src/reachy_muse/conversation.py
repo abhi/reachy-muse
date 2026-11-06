@@ -1558,11 +1558,15 @@ class VoiceConversation:
         last_sample = time.monotonic()
         previous_duration = None
         generation = capture.generation
-        draining = False
         try:
             while True:
                 muted_at_start = self._input_blocked()
-                read = asyncio.create_task(asyncio.to_thread(self.hardware.read_audio))
+                reader = self.hardware.read_audio
+                if generation != capture.generation:
+                    generation = capture.generation
+                    previous_duration = None
+                    reader = self.hardware.discard_microphone
+                read = asyncio.create_task(asyncio.to_thread(reader))
                 try:
                     sample = await asyncio.shield(read)
                 except asyncio.CancelledError:
@@ -1570,12 +1574,8 @@ class VoiceConversation:
                     raise
                 now = time.monotonic()
                 if generation != capture.generation:
-                    generation = capture.generation
-                    draining = True
-                    previous_duration = None
+                    continue
                 if sample is None or not len(sample):
-                    if sample is None:
-                        draining = False
                     if now - last_sample > 15:
                         raise ReachyHardwareError("Reachy microphone supplied no audio for 15 seconds")
                     await asyncio.sleep(.002)
@@ -1585,8 +1585,6 @@ class VoiceConversation:
                 gap = previous_duration is not None and now - last_sample > max(duration, previous_duration) + .25
                 previous_duration = duration
                 last_sample = now
-                if draining:
-                    continue
                 capture.push(sample, discard=muted_at_start or self._input_blocked(), gap=gap,
                              gap_reason="SDK read or capture scheduling stall" if gap else None, captured_at=now)
         except asyncio.CancelledError:

@@ -99,6 +99,27 @@ def test_repeated_wake_from_the_same_speaker_keeps_the_turned_gaze(monkeypatch, 
     assert (second["yaw"], second["body_yaw"]) == pytest.approx((30, 10), abs=.01)
 
 
+@pytest.mark.parametrize("watch_tick", [10, 60])
+def test_arrival_watch_replaces_wake_direction_at_the_motors(monkeypatch, watch_tick):
+    from reachy_muse.arrival import WatchPose
+    from test_hardware import FakeWatcher
+
+    def watch(controller):
+        controller._arrival_watcher = FakeWatcher(None, None, None)
+        controller.set_state("idle")
+        controller.start_watching(WatchPose(-20, 5))
+
+    controller, robot, clock = simulate(monkeypatch, {
+        5: lambda c: c.look_at_speaker(math.pi / 3),
+        watch_tick: watch,
+        320: lambda c: c.stop_watching(),
+    }, ticks=520)
+    watching = pose_at(controller, robot, clock.times[300])
+    assert (watching["yaw"], watching["pitch"], watching["body_yaw"]) == pytest.approx((-20, 5, 0), abs=.1)
+    rested = pose_at(controller, robot, clock.now)
+    assert (rested["yaw"], rested["pitch"], rested["body_yaw"]) == pytest.approx((0, 0, 0), abs=.1)
+
+
 def test_direction_turn_and_sleep_lift_run_together_and_sleep_releases_the_hold(monkeypatch):
     def wake(controller):
         controller.look_at_speaker(math.pi / 3)

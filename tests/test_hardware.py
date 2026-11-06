@@ -1944,9 +1944,21 @@ def wait_until(condition, timeout=3.0):
         time.sleep(.005)
 
 
-def test_wave_watching_detects_with_default_idle_breathing_and_restores_it_afterward():
+@pytest.mark.parametrize("idle_follow", [False, True])
+def test_wave_watching_detects_with_default_idle_breathing_and_restores_it_afterward(idle_follow):
     from bench.wave import FPS, clip
     from reachy_muse.wave_wake import WaveWatcher
+    from test_face_tracking_motion import Follower
+
+    class MovingFace(Follower):
+        pitch = 0
+
+        def target(self):
+            self.yaw = .2 if int(time.monotonic() * 2) % 2 else -.2
+            return super().target()
+
+        def close(self):
+            pass
 
     robot = FakeRobot()
     gesture = list(clip("wave", 1001, seconds=3))
@@ -1967,8 +1979,10 @@ def test_wave_watching_detects_with_default_idle_breathing_and_restores_it_after
             return list(boxes)
 
     robot.media.get_frame = read
-    controller = start_controller(robot, wave_wake=True, wave_watcher_factory=lambda *args:
+    controller = start_controller(robot, wave_wake=True, face_follow_idle=idle_follow,
+                                  wave_watcher_factory=lambda *args:
                                   WaveWatcher(*args, detector_factory=lambda _: People()))
+    controller._face_follower = follower = MovingFace()
     try:
         controller.set_wave_watching(True)
         wait_until(controller.take_wave, timeout=12)
@@ -1977,6 +1991,7 @@ def test_wave_watching_detects_with_default_idle_breathing_and_restores_it_after
         resumed = time.monotonic()
         time.sleep(2.5)
         assert antenna_spread(frames_between(robot, resumed + .5, resumed + 2.5)) > 25
+        assert follower.active is idle_follow
     finally:
         controller.close()
 

@@ -35,9 +35,38 @@ class WaveCamera:
         return result
 
 
+def continuous_microphone(hardware):
+    import queue
+    import time
+    from types import SimpleNamespace
+    import numpy as np
+    from reachy_muse.hardware import ReachyController
+
+    class AppSink:
+        def try_pull_sample(self, timeout):
+            try:
+                return hardware.samples.get_nowait()
+            except queue.Empty:
+                if timeout:
+                    time.sleep(timeout / 1_000_000_000)
+                    return np.zeros(320, dtype=np.float32)
+                return None
+
+    sink = AppSink()
+    media = SimpleNamespace(audio=SimpleNamespace(_appsink_audio=sink),
+                            get_audio_sample=lambda: sink.try_pull_sample(20_000_000))
+    controller = ReachyController()
+    controller._np, controller._robot = np, SimpleNamespace(media=media)
+    hardware.read_audio = controller.read_audio
+    hardware.discard_microphone = lambda: controller.discard_microphone()
+
+
+@pytest.mark.parametrize("continuous", [False, True])
 @pytest.mark.parametrize("acoustic", [False, True])
-def test_wave_greets_and_only_fresh_speech_reaches_muse(monkeypatch, acoustic):
+def test_wave_greets_and_only_fresh_speech_reaches_muse(monkeypatch, acoustic, continuous):
     rig = rig_with(monkeypatch)
+    if continuous:
+        continuous_microphone(rig.hardware)
     camera = WaveCamera(rig.hardware)
     transcripts = Transcripts("What is the weather tomorrow?")
 
@@ -152,27 +181,35 @@ def test_pre_wave_in_flight_microphone_read_is_discarded():
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("continuous", [False, True])
 @pytest.mark.parametrize("post_wave_speech", [False, True])
-def test_wave_discards_sdk_backlog_before_recognition(monkeypatch, post_wave_speech):
+def test_wave_discards_sdk_backlog_before_recognition(monkeypatch, post_wave_speech, continuous):
     import io
     import threading
     import wave
     import numpy as np
 
     rig = rig_with(monkeypatch)
+    if continuous:
+        continuous_microphone(rig.hardware)
     camera = WaveCamera(rig.hardware)
     entered, release, drained = threading.Event(), threading.Event(), threading.Event()
     original_read = rig.hardware.read_audio
+    original_discard = rig.hardware.discard_microphone
     heard = []
 
     def read():
         sample = original_read()
-        if sample is not None and not entered.is_set():
+        if sample is not None and np.any(sample) and not entered.is_set():
             entered.set()
             assert release.wait(5)
         if sample is None and release.is_set():
             drained.set()
         return sample
+
+    def discard():
+        original_discard()
+        drained.set()
 
     class Recognizer:
         async def transcribe(self, wav):
@@ -186,6 +223,7 @@ def test_wave_discards_sdk_backlog_before_recognition(monkeypatch, post_wave_spe
         await session.answer(request, "Received.")
 
     rig.hardware.read_audio = read
+    rig.hardware.discard_microphone = discard
     conversation = service(rig, muse, Recognizer(), wave_wake=True, wake_timeout_s=30)
 
     async def user():
@@ -326,12 +364,15 @@ def test_arrival_watching_invalidates_a_wave_during_camera_drain(monkeypatch, mu
     assert transcripts.texts == ["Uninvited speech."]
 
 
-def test_wave_opens_realtime_after_camera_suspension_and_stays_suspended(monkeypatch):
+@pytest.mark.parametrize("continuous", [False, True])
+def test_wave_opens_realtime_after_camera_suspension_and_stays_suspended(monkeypatch, continuous):
     from reachy_muse.realtime_call import realtime_supported
     from test_realtime_turns import ScriptedCalls, StreamingTranscripts, rig_for, speak_live, room
     if not realtime_supported():
         pytest.skip("the Muse SDK has no voice call events")
     rig = rig_for(monkeypatch)
+    if continuous:
+        continuous_microphone(rig.hardware)
     camera = WaveCamera(rig.hardware)
     calls = ScriptedCalls(reply_s=.2)
     opened_while_camera_active = []
@@ -354,7 +395,7 @@ def test_wave_opens_realtime_after_camera_suspension_and_stays_suspended(monkeyp
         camera.pending = True
         await rig.wait_until_or_timeout(lambda: bool(calls.opened), 5)
         await rig.quiet("listening", "idle")
-        assert calls.frames == []
+        assert not any(any(frame) for frame in calls.frames)
         assert camera.active is False
         await speak_live(rig)
         await room(rig, .3)

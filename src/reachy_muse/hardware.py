@@ -553,6 +553,16 @@ class ReachyController:
         except Exception as exc:
             raise ReachyHardwareError(f"Reachy Mini microphone failed: {exc}") from exc
 
+    def discard_microphone(self) -> None:
+        """Drop queued input without the SDK's 20 ms wait for fresh audio."""
+        self._require_running()
+        try:
+            sink = self._robot.media.audio._appsink_audio
+            while sink.try_pull_sample(0) is not None:
+                pass
+        except Exception as exc:
+            raise ReachyHardwareError(f"Reachy Mini microphone flush failed: {exc}") from exc
+
     def play_audio(self, samples: np.ndarray, *, sentence: SentenceMotion | None = None,
                    accents: Sequence[tuple[int, str]] = ()) -> None:
         """Queue mono float32 samples at output_sample_rate without waiting.
@@ -1053,6 +1063,8 @@ class ReachyController:
             reason = "conversation"
         elif self._watching:
             reason = "arrival watching"
+        elif self._wave_watching:
+            reason = "wave watching"
         elif state == "idle" and self._face_follow_idle:
             reason = "idle follow"
         else:
@@ -1356,7 +1368,8 @@ class ReachyController:
                         previous_update = time.monotonic()
                         self._stop.wait(_MOTION_PERIOD_S)
                 else:
-                    if state == "sleeping" and previous_state != "sleeping":
+                    if ((state == "sleeping" and previous_state != "sleeping")
+                            or (self._watching and state in ("idle", "sleeping", "error"))):
                         self._clear_speaker()
                     self._update_speaker(now, state, occupied=(
                         self._clip is not None or self._generated is not None
