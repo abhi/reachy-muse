@@ -857,6 +857,8 @@ class ReachyController:
             reason = "command"
         elif state in ("listening", "thinking", "speaking"):
             reason = "conversation"
+        elif self._watching:
+            reason = "arrival watching"
         elif state == "idle" and self._face_follow_idle:
             reason = "idle follow" if self._style.breathing else "still mode"
         else:

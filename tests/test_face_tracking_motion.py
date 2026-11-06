@@ -9,13 +9,14 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from reachy_muse.arrival import WatchPose
 from reachy_muse.contract.expressions import Expression
 from reachy_muse.hardware import ReachyController, _Frames
 from reachy_muse.local_face_tracking import FaceTarget
 from reachy_muse.motion import MotionStyle
 from reachy_muse.motion.layers import MotionLayers, Ramp
 from reachy_muse.motion.sentence import SentenceMotion
-from test_hardware import FakeRobot, generated, pose_factory
+from test_hardware import FakeRobot, FakeWatcher, generated, pose_factory
 
 
 class Follower:
@@ -224,3 +225,33 @@ def test_idle_follow_reaches_motor_output_only_when_allowed(monkeypatch, idle, b
                                  style=MotionStyle(breathing=breathing))
     assert follower.active is expected
     assert samples[135]['yaw'] == pytest.approx(8 if expected else 0, abs=.1)
+
+
+@pytest.mark.parametrize('resume', ['idle', 'listening', 'thinking', 'speaking'])
+def test_arrival_watching_pauses_idle_follow_then_allows_idle_or_conversation_gaze(monkeypatch, resume):
+    stillness, tracking = [], []
+
+    def action(controller, follower, tick):
+        if tick == 70:
+            controller._arrival_watcher = FakeWatcher(None, controller._camera_still, None)
+            controller.start_watching(WatchPose(-20, 5))
+        if 300 <= tick < 350:
+            follower.yaw = 8 if tick % 20 < 10 else -8
+        if 330 <= tick < 350:
+            stillness.append(controller._arrival_watcher.is_still())
+            tracking.append(follower.active)
+        if tick == 350:
+            follower.yaw = 8
+            if resume == 'idle':
+                controller.stop_watching()
+            else:
+                controller.set_state(resume)
+
+    _, follower, samples = drive(monkeypatch, action, ticks=520, face_follow_idle=True)
+    assert samples[65]['yaw'] == pytest.approx(8, abs=.1)
+    assert samples[340]['yaw'] == pytest.approx(-20, abs=.1)
+    assert samples[340]['pitch'] == pytest.approx(5, abs=.1)
+    assert stillness == [True] * 20
+    assert tracking == [False] * 20
+    assert follower.active
+    assert samples[515]['yaw'] == pytest.approx(8, abs=.1)
