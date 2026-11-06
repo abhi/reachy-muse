@@ -153,6 +153,7 @@ class _RecordedTurn:
     endpoint_at: float
     speech_end_at: float
     heard_over: tuple[str, ...]    # Reachy's own lines that were audible while the user spoke
+    call_input: object = None
 
 
 @dataclass(frozen=True)
@@ -974,25 +975,24 @@ class VoiceConversation:
             if partial is not None and self.wake_detector is not None:
                 partial = replace(partial, text=self._without_wake(partial.text))
             speaking = recorder.speech_active
+            call_input = None
             if self.call is not None:
                 call = self.call
                 playback = call.audible or endpoint_at < self._echo_until or bool(heard_over)
                 if (send_to_call and self._wake_window not in (WakeWindow.DISMISSED, WakeWindow.ASLEEP)
                         and self._wake_deadline is not None and (
                         endpoint_at < self._wake_deadline or recorder.active or speaking or heard.ended is not None)):
+                    confirmed_before = call.input.confirmed
                     call.input.push(sample, speaking=speaking and quiet_s == 0,
                                     text=partial.text if partial else "", playback=playback,
                                     heard_over=tuple(heard_over))
                     speaking = speaking and (not playback or call.input.confirmed)
-                    if speaking and call.audible and call.input.confirmed:
+                    if call.audible and call.input.confirmed and not confirmed_before:
                         self._barge_in_call()
                 if heard.ended is not None:
-                    if playback and not call.input.sent_speech:
-                        heard.ended.cancel()
-                        turns_awaiting_transcript.discard(heard.ended)
-                        heard = replace(heard, ended=None)
-                        heard_over.clear()
-                    call.input.reset()
+                    from reachy_muse.realtime_call import CallInput
+                    call_input = call.input if playback else None
+                    call.input = CallInput(call.feed, self.hardware.sample_rate)
             elif (speaking and heard_over and recorder.supports_partials
                     and not self._playback.user_speaking):
                 # Hardware AEC can leave residual speech. Keep capturing it, but
@@ -1024,7 +1024,7 @@ class VoiceConversation:
                 return None
             over = tuple(sorted(heard_over))
             heard_over.clear()
-            return _RecordedTurn(heard.ended, endpoint_at, endpoint_at - quiet_s, over)
+            return _RecordedTurn(heard.ended, endpoint_at, endpoint_at - quiet_s, over, call_input)
 
         wake = self.wake_detector
         if wake is not None:
@@ -1079,11 +1079,41 @@ class VoiceConversation:
         turn_task = None
         pending_turns = deque()
         turns_awaiting_transcript = set()
+        call_recognitions = {}
         wake_epoch = 0
         active_wake_epoch = 0
         held = None
         follow_up_task = None
         self._hearing_open = lambda: turn_open or bool(turns_awaiting_transcript) or follow_up_task is not None
+
+        async def recognize_call(recorded, call):
+            from reachy_muse.streaming_transcription import StreamingTranscriptionError
+
+            recognition = asyncio.create_task(recorded.ended.endpoint())
+            try:
+                remaining = recorded.endpoint_at + CALL_COMMAND_DEADLINE_S - time.monotonic()
+                done, _ = await asyncio.wait({recognition}, timeout=max(0.0, remaining))
+                if not done and (call.audio_sent or not call.failed):
+                    raise asyncio.TimeoutError
+                endpoint = await recognition
+            except (asyncio.TimeoutError, CapabilityUnavailable, StreamingTranscriptionError):
+                recorded.ended.cancel()
+                endpoint = Endpoint(b"", "")
+            finally:
+                if not recognition.done():
+                    recognition.cancel()
+                await asyncio.gather(recognition, return_exceptions=True)
+            gate = recorded.call_input
+            if gate is not None and not gate.sent_speech:
+                text = (endpoint.text or "") if endpoint is not None else ""
+                if self.wake_detector is not None:
+                    text = self._without_wake(text)
+                if self.call is call and gate.finish(text, recorded.heard_over):
+                    if call.audible:
+                        await call.barge_in()
+                else:
+                    return None
+            return endpoint
 
         async def follow_up(request, held):
             try:
@@ -1104,6 +1134,9 @@ class VoiceConversation:
             if len(pending_turns) < PENDING_TURN_LIMIT:
                 if self.call is None and self._lost_call is None:
                     recorded.ended.start()
+                else:
+                    call_recognitions[recorded.ended] = asyncio.create_task(
+                        recognize_call(recorded, self.call or self._lost_call))
                 timeline = TurnTimeline()
                 if self._wake_first_request_pending and self._wake_at is not None:
                     timeline.mark("wake", self._wake_at)
@@ -1202,14 +1235,8 @@ class VoiceConversation:
                         try:
                             call = request.call
                             in_call = call is not None and (call.audio_sent or not call.failed)
-                            if in_call:
-                                from reachy_muse.streaming_transcription import StreamingTranscriptionError
-                                try:
-                                    remaining = request.timeline.marks["endpoint"] + CALL_COMMAND_DEADLINE_S - time.monotonic()
-                                    endpoint = await asyncio.wait_for(request.ended.endpoint(), max(0.0, remaining))
-                                except (asyncio.TimeoutError, CapabilityUnavailable, StreamingTranscriptionError):
-                                    request.ended.cancel()
-                                    endpoint = Endpoint(b"", "")
+                            if request.ended in call_recognitions:
+                                endpoint = await call_recognitions[request.ended]
                             else:
                                 endpoint = await request.ended.endpoint()
                             if endpoint is None:
@@ -1232,6 +1259,7 @@ class VoiceConversation:
                                 recognized_text=endpoint.text, defer_playback=True, timeline=timeline,
                                 heard_over=request.heard_over)
                         finally:
+                            call_recognitions.pop(request.ended, None)
                             turns_awaiting_transcript.discard(request.ended)
                     turn_task = asyncio.create_task(process())
                 if (turn_task is None and follow_up_task is None and held is None and not pending_turns
@@ -1415,6 +1443,9 @@ class VoiceConversation:
                     await asyncio.gather(task, return_exceptions=True)
             for ended in turns_awaiting_transcript:
                 ended.cancel()
+            for task in call_recognitions.values():
+                task.cancel()
+            await asyncio.gather(*call_recognitions.values(), return_exceptions=True)
             await asyncio.gather(*(ended.endpoint() for ended in turns_awaiting_transcript), return_exceptions=True)
             speaker.cancel()
             await asyncio.gather(speaker, return_exceptions=True)

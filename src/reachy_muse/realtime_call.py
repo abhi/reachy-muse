@@ -30,7 +30,7 @@ from musegadget.streaming import HTTPStatusError
 from reachy_muse.motion.reply_alignment import SAMPLE_RATE
 from reachy_muse.motion.reply_motion import Mark, ReplyMotion
 from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlayback
-from reachy_muse.follow_up import FollowUp, classify_follow_up, repeats_playback
+from reachy_muse.follow_up import FollowUp, classify_follow_up, repeats_playback, spoken_words
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ NATURAL_ENDS = frozenset({"remote_stop", "idle_timeout", "overall_timeout"})
 BARGE_IN_SPEECH_S = 0.3
 DISTINCT_WORDS_S = 0.12
 INTERRUPTION_BUFFER_S = 2.0
+INTERRUPTION_RECOGNITION_S = 0.75
 
 
 class CallInput:
@@ -68,6 +69,7 @@ class CallInput:
         self._samples = 0
         self._speech_samples = 0
         self._distinct_samples = 0
+        self._quiet_samples = 0
         self.confirmed = False
         self.sent_speech = False
 
@@ -77,26 +79,51 @@ class CallInput:
             self.feed.push(samples)
             self.sent_speech = self.sent_speech or speaking
             return speaking
+        if repeats_playback(text, heard_over):
+            self.reset()
+            self.feed.push(np.zeros_like(samples))
+            return False
+        if speaking and self._quiet_samples:
+            self._speech_samples = 0
+            self._distinct_samples = 0
+        self._quiet_samples = 0 if speaking else self._quiet_samples + len(samples)
+        if self._quiet_samples > self.rate * INTERRUPTION_RECOGNITION_S:
+            self.reset()
         self._pending.append(samples.copy())
         self._samples += len(samples)
         while self._pending and self._samples > self.rate * INTERRUPTION_BUFFER_S:
             self._samples -= len(self._pending.popleft())
-        self._speech_samples = self._speech_samples + len(samples) if speaking else 0
-        enough_words = len(re.findall(r"[\w']+", text)) >= 2 or classify_follow_up(text) in (
-            FollowUp.CANCEL, FollowUp.SILENCE)
-        distinct = speaking and enough_words and heard_over and not repeats_playback(text, heard_over)
+        if speaking:
+            self._speech_samples = min(self._speech_samples + len(samples), self._samples)
+        distinct = self._distinct(text, heard_over)
         self._distinct_samples = self._distinct_samples + len(samples) if distinct else 0
         if (self._speech_samples >= BARGE_IN_SPEECH_S * self.rate
                 and self._distinct_samples >= DISTINCT_WORDS_S * self.rate):
-            self.confirmed = True
-            self.sent_speech = True
-            for pending in self._pending:
-                self.feed.push(pending)
-            self._pending.clear()
-            self._samples = 0
+            self._confirm()
             return speaking
         self.feed.push(np.zeros_like(samples))
         return False
+
+    def finish(self, text: str, heard_over: tuple[str, ...]) -> bool:
+        if (not self.confirmed and self._speech_samples >= BARGE_IN_SPEECH_S * self.rate
+                and self._distinct(text, heard_over)):
+            self._confirm()
+        self._pending.clear()
+        self._samples = 0
+        return self.confirmed
+
+    def _distinct(self, text: str, heard_over: tuple[str, ...]) -> bool:
+        enough_words = len(spoken_words(text)) >= 2 or classify_follow_up(text) in (
+            FollowUp.CANCEL, FollowUp.SILENCE)
+        return bool(enough_words and heard_over and not repeats_playback(text, heard_over))
+
+    def _confirm(self) -> None:
+        self.confirmed = True
+        self.sent_speech = True
+        for pending in self._pending:
+            self.feed.push(pending)
+        self._pending.clear()
+        self._samples = 0
 
 
 def realtime_supported() -> bool:

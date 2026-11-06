@@ -106,7 +106,9 @@ def test_echo_or_unrecognized_noise_during_playback_neither_interrupts_nor_reach
     ("Hey Muse, stop following me.", [], [False], ["tts:Okay, I'll stop following you."]),
     ("Hey Muse, follow my face.", [], [True], ["tts:Okay, I'll look at you."]),
 ])
-def test_streamed_device_commands_during_a_call_still_run(monkeypatch, text, volume, face, spoken):
+@pytest.mark.parametrize("deadline", [0, .25])
+def test_streamed_device_commands_during_a_call_still_run(monkeypatch, text, volume, face, spoken, deadline):
+    monkeypatch.setattr("reachy_muse.conversation.CALL_COMMAND_DEADLINE_S", deadline)
     rig = rig_for(monkeypatch)
     faces = []
     rig.hardware.face_tracking_enabled = True
@@ -389,6 +391,49 @@ def test_the_user_talking_over_muse_stops_its_reply(monkeypatch):
     assert len(rig.hardware.played) < 6.0 * 8000 / 400
 
 
+@pytest.mark.parametrize("recognition", ["partial", "final"])
+def test_words_recognized_after_speech_still_interrupt_playback(monkeypatch, recognition):
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    calls = ScriptedCalls(reply_s=6)
+
+    class DelayedTranscripts(StreamingTranscripts):
+        def open_turn(self):
+            turn = super().open_turn()
+            partial = turn.partial
+            if partial.text == "stop talking":
+                turn.partial = Partial("", 0, partial.utterance_id)
+
+                def feed(pcm):
+                    if recognition == "partial" and not np.any(np.frombuffer(pcm, "<i2")[-320:]):
+                        turn.partial = partial
+
+                def finish():
+                    async def recognize():
+                        await asyncio.sleep(.05)
+                        return partial.text
+                    return asyncio.create_task(recognize())
+
+                turn.feed = feed
+                turn.finish = finish
+            return turn
+
+    transcripts = DelayedTranscripts("Hey Muse, tell me a story.", "stop talking")
+    conversation = realtime_service(rig, transcripts, calls)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+        await asyncio.sleep(.3)
+        await speak_live(rig)
+        await room(rig, .5)
+
+    events = run(rig, conversation, user)
+    assert calls.barge_ins == 1
+    assert calls.loud_after_reply >= 10
+    assert sent_to_muse(events) == []
+
+
 def test_a_spoken_device_command_runs_on_the_robot_and_muse_is_cut_off(monkeypatch):
     rig = rig_for(monkeypatch)
     calls = ScriptedCalls(reply=None)
@@ -442,7 +487,12 @@ def test_dismissal_closes_the_call_before_acknowledging_and_uploads_no_more_audi
     assert sent_to_muse(events) == []
 
 
-def test_a_call_opened_during_a_pending_chat_request_never_replays_its_turn_by_chat(monkeypatch):
+@pytest.mark.parametrize("call_text, acknowledgement", [
+    ("book a table for two", None),
+    ("stop listening", "tts:Okay, I'll stop listening."),
+])
+def test_a_call_opened_during_a_pending_chat_request_never_replays_its_turn_by_chat(
+        monkeypatch, call_text, acknowledgement):
     rig = rig_for(monkeypatch)
     calls = ScriptedCalls(reply=None)
     release = asyncio.Event()
@@ -459,7 +509,7 @@ def test_a_call_opened_during_a_pending_chat_request_never_replays_its_turn_by_c
             return detected
 
     conversation = service(rig, muse, StreamingTranscripts(
-        "Hey Muse, what's the weather tomorrow?", "Hey Muse, book a table for two."),
+        "Hey Muse, what's the weather tomorrow?", f"Hey Muse, {call_text}."),
         wake_detector=FirstWakeUntimed(), wake_timeout_s=.3, muse_path="realtime",
         voice_link=calls.link, voice_call=calls)
 
@@ -475,6 +525,8 @@ def test_a_call_opened_during_a_pending_chat_request_never_replays_its_turn_by_c
     events = run(rig, conversation, user)
     assert len(calls.frames) >= 10
     assert sent_to_muse(events) == ["what's the weather tomorrow?"]
+    if acknowledgement is not None:
+        assert acknowledgement in played(events)
 
 
 def test_a_call_that_fails_before_any_audio_reaches_muse_sends_the_request_by_chat(monkeypatch):

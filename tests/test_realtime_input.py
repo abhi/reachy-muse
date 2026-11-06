@@ -67,6 +67,66 @@ def test_a_transient_distinct_hypothesis_does_not_interrupt_echo():
     assert feed.samples == [0.0] * 400
 
 
+@pytest.mark.parametrize("text, playback", [
+    ("Привет мир", "Привет мир!"),
+    ("你好 世界", "你好 世界！"),
+    ("' ' ___", "It will be sunny tomorrow."),
+])
+def test_multilingual_echo_and_empty_normalized_words_never_release_audio(text, playback):
+    feed = Feed()
+    gate = CallInput(feed, 1000)
+    for _ in range(4):
+        gate.push(np.ones(100), speaking=True, text=text, playback=True, heard_over=(playback,))
+    assert feed.samples == [0.0] * 400
+    assert gate.confirmed is False
+
+
+@pytest.mark.parametrize("user_samples", [2048, 6144])
+def test_echo_before_user_speech_neither_counts_toward_interruption_nor_reaches_muse(user_samples):
+    feed = Feed()
+    gate = CallInput(feed, 16000)
+    for _ in range(31):
+        gate.push(np.ones(512), speaking=True, text="sunny tomorrow", playback=True,
+                  heard_over=("It will be sunny tomorrow.",))
+    for _ in range(user_samples // 512):
+        gate.push(np.full(512, .5), speaking=True, text="stop talking", playback=True,
+                  heard_over=("It will be sunny tomorrow.",))
+    if user_samples == 2048:
+        assert feed.samples == [0.0] * 17920
+        assert gate.confirmed is False
+    else:
+        assert feed.samples == [0.0] * 20480 + [.5] * 6144
+        assert gate.confirmed is True
+
+
+@pytest.mark.parametrize("quiet_frames, interrupted", [(0, True), (10, False)])
+def test_delayed_words_can_confirm_speech_only_within_the_recognition_window(quiet_frames, interrupted):
+    feed = Feed()
+    gate = CallInput(feed, 1000)
+    for _ in range(5):
+        gate.push(np.full(100, .5), speaking=True, text="", playback=True, heard_over=("Sunny tomorrow.",))
+    for _ in range(quiet_frames):
+        gate.push(np.zeros(100), speaking=False, text="", playback=True, heard_over=("Sunny tomorrow.",))
+    for _ in range(2):
+        gate.push(np.zeros(100), speaking=False, text="stop talking", playback=True,
+                  heard_over=("Sunny tomorrow.",))
+    assert gate.confirmed is interrupted
+    assert feed.samples == ([0.0] * 600 + [.5] * 500 + [0.0] * 200 if interrupted else [0.0] * 1700)
+
+
+def test_separate_short_sounds_do_not_combine_into_sustained_speech():
+    feed = Feed()
+    gate = CallInput(feed, 1000)
+    for _ in range(2):
+        for _ in range(2):
+            gate.push(np.ones(100), speaking=True, text="stop talking", playback=True,
+                      heard_over=("Sunny tomorrow.",))
+        gate.push(np.zeros(100), speaking=False, text="stop talking", playback=True,
+                  heard_over=("Sunny tomorrow.",))
+    assert feed.samples == [0.0] * 600
+    assert gate.confirmed is False
+
+
 def test_a_separate_streaming_command_model_preserves_whisper_for_chat_only():
     import asyncio
 

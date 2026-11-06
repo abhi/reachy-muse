@@ -45,12 +45,12 @@ _TOPIC_LEAD = frozenset((
 TOPIC_WORDS = 6
 
 
-def _words(text: str) -> List[str]:
-    return re.findall(r"[a-z0-9']+", text.replace("’", "'").casefold())
+def spoken_words(text: str) -> List[str]:
+    return re.findall(r"[^\W_]+(?:'[^\W_]+)*", text.replace("’", "'").casefold())
 
 
 def classify_follow_up(text: str) -> FollowUp:
-    words = _words(text)
+    words = spoken_words(text)
     rest = words
     while rest and rest[0] in _CANCEL_LEAD:
         rest = rest[1:]
@@ -72,13 +72,13 @@ FOLLOW_UP_WORDS = frozenset(("yes", "yeah", "yep", "no", "nope", "stop", "cancel
 
 
 def too_short_for_follow_up(text: str) -> bool:
-    words = _words(text)
+    words = spoken_words(text)
     return len(words) < 2 and not (words and words[0] in FOLLOW_UP_WORDS)
 
 
 def is_echo(text: str, heard_over: Tuple[str, ...]) -> bool:
     """Whether an utterance repeats a contiguous phrase from a recently spoken line."""
-    words = _words(text)
+    words = spoken_words(text)
     if (len(words) < 2 or (len(words) <= 3 and words[0] in FOLLOW_UP_WORDS)
             or words[0] in ("not", "actually", "instead")):
         return False
@@ -87,7 +87,7 @@ def is_echo(text: str, heard_over: Tuple[str, ...]) -> bool:
 
 def _matches_spoken_phrase(words: List[str], heard_over: Tuple[str, ...]) -> bool:
     for line in heard_over:
-        said = _words(line)
+        said = spoken_words(line)
         if any(said[start:start + len(words)] == words for start in range(len(said) - len(words) + 1)):
             return True
     return False
@@ -95,7 +95,7 @@ def _matches_spoken_phrase(words: List[str], heard_over: Tuple[str, ...]) -> boo
 
 def repeats_playback(text: str, heard_over: Tuple[str, ...]) -> bool:
     """Match even single words and stop phrases when filtering a call's microphone."""
-    words = _words(text)
+    words = spoken_words(text)
     return bool(words) and _matches_spoken_phrase(words, heard_over)
 
 
@@ -105,7 +105,7 @@ def interrupts_playback(text: str, heard_over: Tuple[str, ...]) -> bool:
     A single echoed word is common in partial transcripts. Final utterances still
     use ``is_echo`` so short answers are retained. Stop commands always win.
     """
-    words = _words(text)
+    words = spoken_words(text)
     if not words:
         return False
     if classify_follow_up(text) in (FollowUp.CANCEL, FollowUp.SILENCE):
