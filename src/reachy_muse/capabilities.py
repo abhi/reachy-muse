@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from reachy_muse.progress import ProgressPlan
     from reachy_muse.local_speech import SpeechRestart
 
-    SpeechRole = Literal["ack", "progress", "answer", "notice"]
+    SpeechRole = Literal["ack", "progress", "answer", "notice", "cue"]
 
 
 WAKE_CUE = "Yes?"
@@ -117,6 +117,7 @@ class HearingTurn(Protocol):
     partial: Optional[Partial]     # the open utterance's transcript so far; never sent to Muse
 
     def feed(self, samples: np.ndarray) -> None: ...
+    async def drain(self) -> None: ...
     def take(self) -> HeardAudio: ...
     def finish_initial_capture(self) -> None: ...
     def abort(self) -> None: ...

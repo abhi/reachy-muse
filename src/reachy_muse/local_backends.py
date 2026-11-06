@@ -102,6 +102,11 @@ class LocalHearingTurn:
     def feed(self, samples) -> None:
         self._wav = self._recorder.feed(samples)
 
+    async def drain(self) -> None:
+        drain = getattr(self._recognizer, "drain", None)
+        if drain is not None:
+            await drain()
+
     def finish_initial_capture(self) -> None:
         self._recorder.finish_initial_capture()
 

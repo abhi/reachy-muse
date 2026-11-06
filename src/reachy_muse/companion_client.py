@@ -669,6 +669,9 @@ class CompanionHearingTurn:
         if self._recorder.feed(samples) is not None:
             self._vad_ends.append(self._fed)
 
+    async def drain(self) -> None:
+        pass
+
     def finish_initial_capture(self) -> None:
         self._recorder.finish_initial_capture()
 

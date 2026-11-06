@@ -190,6 +190,7 @@ _SPEECH_LABELS = {
     "progress": ("Reachy progress", "progress audio"),
     "answer": ("Muse speech", "Muse audio"),
     "notice": ("Reachy notice", "notice audio"),
+    "cue": ("Reachy cue", "cue audio"),
 }
 
 
@@ -541,7 +542,7 @@ class VoiceConversation:
                  session_id: str | None = None,
                  silence_s: float = 2.0, reply_timeout_s: float = REPLY_TIMEOUT_S,
                  wake_detector=None, wake_timeout_s: float = 10.0, wave_wake: bool = False,
-                 wake_policy=None,
+                 wake_policy=None, voice_verifier=None,
                  owns_chat: bool = False, speech_gate=None, local_chat: bool = True,
                  arbitration_shadow: bool = False,
                  audio_diagnostics: bool = False, short_utterance_silence_s: float | None = None,
@@ -571,6 +572,8 @@ class VoiceConversation:
         self._wake_direction: WakeDirection | None = None
         self._wake_policy = wake_policy
         self._wake_unknown_output_until = 0.0
+        self.voice_verifier = voice_verifier
+        self._voice_rejection_at = -math.inf
         self.speech_gate = speech_gate
         self.audio_diagnostics = audio_diagnostics
         self.wake_timeout_s = wake_timeout_s
@@ -959,6 +962,16 @@ class VoiceConversation:
             self._closing_speech.add(closing)
             closing.add_done_callback(self._closing_speech.discard)
 
+    async def _voice_rejected(self) -> None:
+        if (self.voice_verifier.mode != "strict" or time.monotonic() - self._voice_rejection_at < 5
+                or self._output_queue.full()):
+            return
+        from reachy_muse.voice_verify import rejection_cue
+        self._voice_rejection_at = time.monotonic()
+        async def audio():
+            yield rejection_cue(self.hardware.output_sample_rate)
+        self._output_queue.put_nowait(_SpeechJob(None, "", prepared_stream=audio(), state="listening", role="cue"))
+
     async def _microphone(self) -> None:
         hearing = self.backends.hearing
         await self.session.chat_subscribed.wait()
@@ -973,6 +986,10 @@ class VoiceConversation:
         recorder = None
         recorder_for_call = False
         retry_notice_pending = False
+        voice_gate = None
+        if self.voice_verifier is not None:
+            from reachy_muse.voice_verify import RequestGate
+            voice_gate = RequestGate(self.voice_verifier, self.hardware.sample_rate)
 
         def transcription_failed(call=None):
             nonlocal retry_notice_pending
@@ -985,11 +1002,20 @@ class VoiceConversation:
         turn_open = False
 
         heard_over: set[str] = set()
+        admitted_turns = deque()
+        turns_awaiting_transcript = set()
 
-        def make_recorder(**options):
+        def make_recorder(*, reset_admission=True, **options):
             nonlocal gap_quiet_samples, turn_open, recorder_for_call
             turn_open = False
             heard_over.clear()
+            if reset_admission:
+                if voice_gate is not None:
+                    voice_gate.reset()
+                while admitted_turns:
+                    ended = admitted_turns.popleft().ended
+                    ended.cancel()
+                    turns_awaiting_transcript.discard(ended)
             recorder_for_call = self.call is not None
             if recorder_for_call:
                 options["commands_only"] = True
@@ -1006,7 +1032,7 @@ class VoiceConversation:
         recorder = make_recorder()
         recorder_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reachy-recorder")
         last_slow_feed = 0.0
-        async def record(sample, *, send_to_call=True):
+        async def record_admitted(sample, *, send_to_call=True):
             nonlocal last_slow_feed, gap_quiet_samples, turn_open
             # Keep VAD ahead of transcription/TTS work in the shared executor.
             started = time.monotonic()
@@ -1090,6 +1116,28 @@ class VoiceConversation:
             heard_over.clear()
             return _RecordedTurn(heard.ended, endpoint_at, endpoint_at - quiet_s, over, call_input)
 
+        def recording_active():
+            return recorder.active or (voice_gate is not None and voice_gate.active)
+
+        async def record(sample, *, send_to_call=True):
+            if voice_gate is None:
+                return await record_admitted(sample, send_to_call=send_to_call)
+            self.voice_verifier.realtime = self.call is not None
+            frame = max(1, self.hardware.sample_rate // 50)
+            for offset in range(0, max(1, len(sample)), frame):
+                admitted = await asyncio.to_thread(voice_gate.feed, sample[offset:offset + frame])
+                if voice_gate.rejected:
+                    await self._voice_rejected()
+                for start in range(0, max(1, len(admitted)), frame):
+                    if len(admitted):
+                        await recorder.drain()
+                    ended = await record_admitted(admitted[start:start + frame], send_to_call=send_to_call)
+                    if ended is not None:
+                        if self.wake_enabled and self.wake_timeout_s == 0:
+                            return ended
+                        admitted_turns.append(ended)
+            return admitted_turns.popleft() if admitted_turns else None
+
         wake = self.wake_detector
         if wake is not None:
             await asyncio.to_thread(wake.reset)
@@ -1150,13 +1198,13 @@ class VoiceConversation:
             await self._plan(plan.Started())
         turn_task = None
         pending_turns = deque()
-        turns_awaiting_transcript = set()
         call_recognitions = {}
         wake_epoch = 0
         active_wake_epoch = 0
         held = None
         follow_up_task = None
-        self._hearing_open = lambda: turn_open or bool(turns_awaiting_transcript) or follow_up_task is not None
+        self._hearing_open = lambda: (turn_open or bool(turns_awaiting_transcript) or follow_up_task is not None
+                                     or (voice_gate is not None and voice_gate.active))
 
         async def recognize_call(recorded, call):
             from reachy_muse.streaming_transcription import StreamingTranscriptionError
@@ -1278,7 +1326,7 @@ class VoiceConversation:
                 if self.call is not None and self.call.done:
                     await self._call_ended(capturing=recorder.active or recorder.speech_active)
                 if recorder_for_call != (self.call is not None) and not recorder.active:
-                    recorder = make_recorder()
+                    recorder = make_recorder(reset_admission=False)
                 if retry_notice_pending and not self._output_queue.full():
                     self._output_queue.put_nowait(_SpeechJob(
                         None, TRANSCRIPTION_RETRY_CUE, expression="curious", state="listening"))
@@ -1294,7 +1342,7 @@ class VoiceConversation:
                             window = self.wake_timeout_s or (10.0 if outcome is TurnOutcome.WAKE_CUE else 0.0)
                             self._wake_deadline = time.monotonic() + window
                         elif (self._wake_deadline is not None
-                              and time.monotonic() >= self._wake_deadline and not recorder.active):
+                              and time.monotonic() >= self._wake_deadline and not recording_active()):
                             # False speech must not keep authorizing new audio forever.
                             # Already admitted WAVs retain their own wake boundary.
                             self._wake_deadline = None
@@ -1384,7 +1432,7 @@ class VoiceConversation:
                         and not pending_turns and not self._has_output()):
                     if (self._wake_window is WakeWindow.WOKEN and not self._wake_strip_required
                             and self.call is None
-                            and self._wake_deadline is not None and not recorder.active
+                            and self._wake_deadline is not None and not recording_active()
                             and time.monotonic() >= self._wake_at + self.silence_s):
                         # The acoustic handoff yields no turn for the wake phrase alone.
                         self._wake_window = WakeWindow.AWAKE
@@ -1393,7 +1441,7 @@ class VoiceConversation:
                         await self._announce(WAKE_GREETING, started=None, defer_playback=True)
                     if self._wake_deadline is not None and (
                             self._wake_window in (WakeWindow.DISMISSED, WakeWindow.ASLEEP) or (
-                            time.monotonic() >= self._wake_deadline and not recorder.active
+                            time.monotonic() >= self._wake_deadline and not recording_active()
                             and not (self.call is not None and self.call.working))):
                         if self._wake_window is not WakeWindow.ASLEEP:
                             self._wake_window = WakeWindow.AWAKE
@@ -1412,7 +1460,7 @@ class VoiceConversation:
                 wave_eligible = (self._wake_deadline is None and self.call is None and not self._call_tasks
                                  and not self._input_blocked() and not self._has_output()
                                  and turn_task is None and follow_up_task is None and held is None
-                                 and not pending_turns and not self._briefing_slots and not recorder.active)
+                                 and not pending_turns and not self._briefing_slots and not recording_active())
                 await watch_wave(wave_eligible)
                 if self.wave_wake and wave_eligible and self.hardware.take_wave():
                     await watch_wave(False)
@@ -1465,7 +1513,7 @@ class VoiceConversation:
                 input_blocked = captured.discard or self._input_blocked()
                 observed_wake = None
                 now = time.monotonic()
-                wake_required = self._wake_deadline is None or (now >= self._wake_deadline and not recorder.active)
+                wake_required = self._wake_deadline is None or (now >= self._wake_deadline and not recording_active())
                 if wake is not None and self._wake_policy is not None:
                     if blocked_episode and not input_blocked:
                         await asyncio.to_thread(wake.reset)
@@ -1510,8 +1558,27 @@ class VoiceConversation:
                         await watch_wave(False)
                         self._attend_wake(captured.captured_at - wake_tail / self.hardware.sample_rate
                                           if wake_tail is not None else None)
+                        if self.voice_verifier is not None:
+                            import numpy as np
+                            self.voice_verifier.realtime = (self.call is not None or
+                                                            (self.realtime is not None and self.realtime.usable))
+                            candidate = np.concatenate(tuple(pre_roll))
+                            if wake_tail:
+                                candidate = candidate[:-wake_tail]
+                            candidate = candidate[-int(1.5 * self.hardware.sample_rate):]
+                            decision = await asyncio.to_thread(
+                                self.voice_verifier.verify, candidate, self.hardware.sample_rate)
+                            if not decision.allowed:
+                                pre_roll.clear()
+                                pre_roll_samples = 0
+                                await asyncio.to_thread(wake.reset)
+                                if wake_resampler is not None:
+                                    import av
+                                    wake_resampler = av.AudioResampler(format="flt", layout="mono", rate=16000)
+                                await self._voice_rejected()
+                                continue
                         wake_epoch += 1
-                        await self._admit_wake(now, strip_required=wake_tail is None)
+                        await self._admit_wake(time.monotonic(), strip_required=wake_tail is None)
                         await asyncio.to_thread(wake.reset)
                         log.info("Reachy heard its wake phrase; microphone open")
                         if wake_tail is None:
@@ -2306,9 +2373,9 @@ class VoiceConversation:
             log.info("Reachy stopped Muse's realtime reply for the user's speech")
             self._barging = self._background(self.call.barge_in())
 
-    def _muse_audible(self, text: str | None, until: float) -> None:
+    def _muse_audible(self, text: str | None, until: float, *, speech: bool = True) -> None:
         self._echo_until = max(self._echo_until, until + ECHO_TAIL_S)
-        if not text:
+        if speech and not text:
             self._wake_unknown_output_until = max(self._wake_unknown_output_until, until + ECHO_TAIL_S + 1.5)
         if text:
             if self._audible and self._audible[-1][0] == text:
@@ -2744,7 +2811,7 @@ class VoiceConversation:
                 raise _SpeechSuperseded
             self._audio_clear_attempted = False
             self._muted = True
-            self._muse_audible(line.text, time.monotonic() + .13)
+            self._muse_audible(line.text, time.monotonic() + .13, speech=line.role != "cue")
             current_sentence = sentence
             if timed_motion and samples_played == 0 and expression_task is not None:
                 if expression_task.done() and not expression_task.cancelled():
@@ -2792,7 +2859,7 @@ class VoiceConversation:
                            diagnostics=self.audio_diagnostics, cursor=playback_cursor)
         text = text or ""
         line = _line(message_id, text, expression, progress=progress, role=role)
-        if voice.speaks_text and not text:
+        if voice.speaks_text and not text and prepared_stream is None:
             if expression:
                 await self._express(expression)
                 return
@@ -3017,6 +3084,7 @@ class ReachyService(PairedService):
     wake_detector: object | None = None
     wave_wake: bool = False
     wake_policy: object | None = None
+    voice_verifier: object | None = None
     wake_timeout_s: float = 10.0
     speech_gate: object | None = None
     short_utterance_silence_s: float | None = None
@@ -3200,6 +3268,7 @@ class ReachyService(PairedService):
                                       wake_detector=self.wake_detector, wake_timeout_s=self.wake_timeout_s,
                                       wave_wake=self.wave_wake,
                                       wake_policy=self.wake_policy,
+                                      voice_verifier=self.voice_verifier,
                                       owns_chat=self.owns_chat, speech_gate=self.speech_gate,
                                       local_chat=self.local_chat, audio_diagnostics=self.audio_diagnostics,
                                       arbitration_shadow=self.arbitration_shadow,

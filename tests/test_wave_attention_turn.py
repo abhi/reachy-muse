@@ -9,16 +9,19 @@ import pytest
 from reachy_muse.motion import MotionStyle
 from reachy_muse.speaker_direction import DoAReading
 from reachy_muse.wake_policy import Verification, WakePolicy
+from reachy_muse.voice_verify import Decision
 from test_device_command_turns import played, rig_with, run, sent_to_muse, service
 from test_face_tracking_motion import Follower
 from test_hardware import FakeRobot, generated, np, start_controller
-from test_pins import Transcripts, Wake
+from test_pins import Transcripts, Vad, Wake
 
 
 @pytest.mark.parametrize("visual", [False, True])
 @pytest.mark.parametrize("acoustic", [False, True])
-def test_wave_turn_hands_over_to_face_tracking_through_a_whole_reply(monkeypatch, visual, acoustic):
+@pytest.mark.parametrize("verify_voice", [False, True])
+def test_wave_turn_hands_over_to_face_tracking_through_a_whole_reply(monkeypatch, visual, acoustic, verify_voice):
     rig = rig_with(monkeypatch)
+    monkeypatch.setattr("webrtcvad.Vad", lambda mode: Vad())
     robot = FakeRobot()
     robot.media.camera = SimpleNamespace(
         K=np.array([[320., 0, 320], [0, 320, 240], [0, 0, 1]]), D=np.zeros(5))
@@ -97,9 +100,20 @@ def test_wave_turn_hands_over_to_face_tracking_through_a_whole_reply(monkeypatch
             return Verification("no_match", "local")
 
     verifier = RejectAcousticWake()
+    voice_checks = []
+
+    class SpeakerVerifier:
+        mode = "strict"
+        enforcing = True
+
+        def verify(self, samples, rate):
+            voice_checks.append(samples.copy())
+            return Decision(1.0, True, True)
+
     options = {"wake_detector": Wake(), "wake_policy": WakePolicy(verifier)} if acoustic else {}
     conversation = service(rig, muse, Transcripts("What is the weather tomorrow?"),
-                           wave_wake=True, wake_timeout_s=30, **options)
+                           wave_wake=True, wake_timeout_s=30,
+                           voice_verifier=SpeakerVerifier() if verify_voice else None, **options)
 
     async def user():
         await rig.wait_until_or_timeout(lambda: len(reads) >= 5)
@@ -115,6 +129,7 @@ def test_wave_turn_hands_over_to_face_tracking_through_a_whole_reply(monkeypatch
         follower.visible = True
         await rig.wait_until_or_timeout(
             lambda: abs(controller._pose_parameters(robot.pose)["yaw"] - (expected_yaw - 5)) < .2)
+        assert voice_checks == []
         rig.say()
 
     try:
@@ -124,5 +139,6 @@ def test_wave_turn_hands_over_to_face_tracking_through_a_whole_reply(monkeypatch
         assert played(events) == ["tts:Yes?", "tts:Tomorrow will be sunny."]
         assert tracking == [(True, pytest.approx(expected_yaw - 2, abs=.2))]
         assert verifier.calls == 0
+        assert len(voice_checks) == (1 if verify_voice else 0)
     finally:
         controller.close()

@@ -23,6 +23,7 @@ test = ["pytest"]
 robot = ["reachy-mini>=1.9,<2", "numpy>=1.24", "av==16.1.0", "webrtcvad-wheels>=2.0.14"]
 wake = ["sherpa-onnx==1.13.8", "sentencepiece==0.2.2"]
 wake-vosk = ["vosk==0.3.45"]
+voice-verify = ["sherpa-onnx==1.13.8", "numpy>=1.24", "av>=12", "webrtcvad-wheels>=2.0.14"]
 stt-streaming = ["sherpa-onnx==1.13.8"]
 # Pinned to the versions mac-speech-bench-2 measured, on Apple Silicon.
 companion-server = [
