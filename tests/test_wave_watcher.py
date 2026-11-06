@@ -29,6 +29,11 @@ def test_periodic_wave_survives_idle_sampling_and_slow_person_inference():
         "reads": 26, "person_runs_at": [2.0, 3.32, 4.64], "cues_at": []}
 
 
+def test_short_wave_waits_for_the_second_person_observation():
+    from bench.wave import scheduled
+    assert scheduled("wave", 0, 1001, seconds=1.5)["cues_at"] == [3.25]
+
+
 def test_inactive_or_moving_robot_never_reads_camera():
     reads = []
     watcher = wave.WaveWatcher(lambda: reads.append(1), lambda: False,
@@ -79,8 +84,8 @@ def immediate_motion(monkeypatch):
     class Cue:
         score = 1.0
 
-        def observe(self, frame, boxes, now):
-            return True
+        def observe(self, frame, boxes, now, *, confirmed=True):
+            return confirmed
 
     monkeypatch.setattr(wave, "MotionGate", Gate)
     monkeypatch.setattr(wave, "WaveDetector", Cue)

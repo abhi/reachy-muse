@@ -1,5 +1,7 @@
 """Literal gesture outcomes on pixels; no models, camera or network."""
 
+from dataclasses import replace
+
 import pytest
 
 np = pytest.importorskip("numpy")
@@ -43,6 +45,36 @@ def test_robot_motion_reset_destroys_partial_wave():
         if detector.observe(frame, boxes, now):
             events.append(now)
     assert events == []
+
+
+@pytest.mark.parametrize("confirm_at, expected", [(1.5, [1.5]), (2.125, [])])
+def test_completed_wave_waits_briefly_for_confirmation_then_expires(confirm_at, expected):
+    detector = WaveDetector()
+    gesture = list(clip("wave", 1001, seconds=1.5))
+    assert [now for now, frame, boxes in gesture
+            if detector.observe(frame, boxes, now, confirmed=False)] == []
+    _, frame, boxes = gesture[-1]
+    detections = [now for now in np.arange(1.5, 2.5, .125)
+                  if detector.observe(frame, boxes, now, confirmed=now >= confirm_at)]
+    assert detections == expected
+
+
+@pytest.mark.parametrize("interruption", ["person_lost", "person_moved", "robot_moved", "lighting"])
+def test_completed_wave_is_discarded_when_the_scene_changes_before_confirmation(interruption):
+    detector = WaveDetector()
+    gesture = list(clip("wave", 1001, seconds=1.5))
+    for now, frame, boxes in gesture:
+        detector.observe(frame, boxes, now, confirmed=False)
+    _, frame, boxes = gesture[-1]
+    if interruption == "person_lost":
+        boxes = []
+    elif interruption == "person_moved":
+        boxes = [replace(boxes[0], x=.05)]
+    elif interruption == "robot_moved":
+        detector.reset()
+    else:
+        frame = np.full_like(frame, 255)
+    assert detector.observe(frame, boxes, 1.5) is False
 
 
 def test_wave_replay_is_an_explicit_camera_only_limit():

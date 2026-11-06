@@ -139,11 +139,10 @@ def evaluate(factory, seeds):
             "failures": dict(failures)}
 
 
-def scheduled(kind, inference_s, seed=0):
+def scheduled(kind, inference_s, seed=0, *, seconds=3):
     """Drive the actual worker iteration with a virtual camera and CPU delay."""
-    gesture = list(clip(kind, seed, seconds=3))
-    # Settle in a quiet room, then present a three-second action and hold still.
-    frames = [next(clip("still", seed))] * (2 * FPS) + gesture + [gesture[-1]] * (3 * FPS)
+    gesture = list(clip(kind, seed, seconds=seconds))
+    frames = [next(clip("still", seed))] * (2 * FPS) + gesture + [gesture[-1]] * (6 * FPS - len(gesture))
     now = [0.0]
     reads, runs, cues = [], [], []
     seen_boxes = []

@@ -41,6 +41,7 @@ class WaveDetector:
         self._at = -math.inf
         self._person = None
         self._paths = [deque(), deque()]
+        self._completed_at = -math.inf
         self.score = 0.0
 
     def _position(self, previous, gray, changed, bounds):
@@ -61,7 +62,7 @@ class WaveDetector:
             return None
         return float(xs.mean() + x1), float(ys.mean() + y1)
 
-    def observe(self, frame, boxes: list[PersonBox], now: float) -> bool:
+    def observe(self, frame, boxes: list[PersonBox], now: float, *, confirmed: bool = True) -> bool:
         import numpy as np
 
         gray = _gate_image(frame)
@@ -100,6 +101,9 @@ class WaveDetector:
         if abs(light) > 10 or outside.mean() > .08 or torso.size == 0 or torso.mean() > .08:
             self.reset()
             return False
+        if confirmed and now - self._completed_at <= .75:
+            self._completed_at = -math.inf
+            return True
         self.score = 0.0
         for side, (left, right) in enumerate(((-.45, .32), (.68, 1.45))):
             bounds = (max(0, int(x + left * w)), max(0, int(y - .12 * h)),
@@ -129,7 +133,8 @@ class WaveDetector:
             self.score = max(self.score, min(1.0, reversals / 3))
             if reversals >= 3 and now - path[0][0] >= 1:
                 self._paths = [deque(), deque()]
-                return True
+                self._completed_at = -math.inf if confirmed else now
+                return confirmed
         return False
 
 
@@ -241,7 +246,7 @@ class WaveWatcher:
                 else:
                     self._confirmations = 0
                 self._stats.detector_runs += 1
-            detected = self._decision.observe(frame, self._boxes, now)
+            detected = self._decision.observe(frame, self._boxes, now, confirmed=self._confirmations >= 2)
             self._stats.max_score = max(self._stats.max_score, self._decision.score)
             if detected and self._confirmations >= 2:
                 with self._condition:
