@@ -907,8 +907,11 @@ class VoiceConversation:
         recorder = None
         retry_notice_pending = False
 
-        def transcription_failed():
+        def transcription_failed(call=None):
             nonlocal retry_notice_pending
+            if call is not None and not call.failed:
+                log.info("Reachy could not transcribe a turn Muse heard in its call; Muse answers it")
+                return
             retry_notice_pending = True
             log.warning("Reachy discarded an incomplete transcription; retry notice pending")
 
@@ -948,7 +951,7 @@ class VoiceConversation:
                 heard_over.update(text for text, until in self._audible.items() if until > endpoint_at)
             heard = recorder.take()
             for _ in range(heard.failures):
-                transcription_failed()
+                transcription_failed(self.call)
             if heard.transcript_lost:
                 self._wake_strip_required = False
                 self._wake_first_request_pending = False
@@ -1167,7 +1170,7 @@ class VoiceConversation:
                         try:
                             endpoint = await request.ended.endpoint()
                             if endpoint is None:
-                                transcription_failed()
+                                transcription_failed(request.call)
                                 return TurnOutcome.EMPTY
                             turns_awaiting_transcript.discard(request.ended)
                             timeline = request.timeline
@@ -1529,10 +1532,11 @@ class VoiceConversation:
     async def _hear(self, wav: bytes, recognized_text: str | None, wake_strip_required: bool | None, *,
                     started: float, defer_playback: bool,
                     heard_over: tuple[str, ...] = (), woken: bool = False,
-                    held: _HeldRequest | None = None) -> str | None | TurnOutcome:
+                    held: _HeldRequest | None = None, quiet: bool = False) -> str | None | TurnOutcome:
         """The request's words with the wake phrase removed; None when Muse hears only the audio.
 
-        The wake phrase alone gets "Yes?", or the wake-up greeting when it just woke Reachy.
+        The wake phrase alone gets "Yes?", or the wake-up greeting when it just woke Reachy, unless
+        ``quiet``: Muse heard the request in a call and answers it in its own voice.
         """
         cue = WAKE_GREETING if woken else WAKE_CUE
         if not (self.backends.hearing.transcribes or recognized_text is not None):
@@ -1547,8 +1551,9 @@ class VoiceConversation:
             self._observe_arbitration(text, held)
             log.info("Speech recognition outcome empty")
             if self.wake_detector is not None and strip_required:
-                self._moments.cue(Moment.GREETING)
-                await self._announce(cue, started=started, defer_playback=defer_playback)
+                if not quiet:
+                    self._moments.cue(Moment.GREETING)
+                    await self._announce(cue, started=started, defer_playback=defer_playback)
                 return TurnOutcome.WAKE_CUE
             log.info("No words recognized in microphone input; listening again")
             return TurnOutcome.EMPTY
@@ -1563,8 +1568,9 @@ class VoiceConversation:
                 text = strip_wake_prefix(text, self.wake_detector.phrase)
             if not text:
                 self._observe_arbitration(text, held)
-                self._moments.cue(Moment.GREETING)
-                await self._announce(cue, started=started, defer_playback=defer_playback)
+                if not quiet:
+                    self._moments.cue(Moment.GREETING)
+                    await self._announce(cue, started=started, defer_playback=defer_playback)
                 return TurnOutcome.WAKE_CUE
         self._observe_arbitration(text, held)
         # "Stop" or "be quiet" said over Reachy's own line is a barge-in even when the line used those words.
@@ -2001,7 +2007,7 @@ class VoiceConversation:
         if woken:
             self._wake_window = WakeWindow.AWAKE
         text = await self._hear(endpoint.audio, endpoint.text, request.wake_strip_required, started=started,
-                                defer_playback=True, heard_over=request.heard_over, woken=woken)
+                                defer_playback=True, heard_over=request.heard_over, woken=woken, quiet=True)
         if isinstance(text, TurnOutcome):
             return text
         if text is None:

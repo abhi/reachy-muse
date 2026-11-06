@@ -7,7 +7,7 @@ import pytest
 
 from reachy_muse.realtime_call import VoiceLink, realtime_supported
 from test_device_command_turns import SpeakerHardware, never_asked, played, run, sent_to_muse, service
-from test_pins import CHUNK, VOICE_SAMPLE, WAKE_SAMPLE, Rig, Transcripts, Wake
+from test_pins import CHUNK, VOICE_SAMPLE, WAKE_SAMPLE, FailingStreamingTranscriber, Rig, Transcripts, Wake
 
 np = pytest.importorskip("numpy")
 pytest.importorskip("av")
@@ -331,6 +331,23 @@ def test_a_call_lost_after_muse_answered_does_not_ask_the_user_to_repeat(monkeyp
         await speak_live(rig, wake=True)
         await rig.wait_until_or_timeout(lambda: calls.hung_up.done(), 8)
         await room(rig, 1.0)
+
+    events = run(rig, conversation, user)
+    assert set(played(events)) == {"muse"}
+
+
+@pytest.mark.parametrize("transcriber", [Transcripts("And tomorrow?"), FailingStreamingTranscriber()],
+                         ids=["no wake boundary", "transcription failed"])
+def test_reachy_s_own_recognition_of_a_request_muse_heard_never_speaks_over_muse(monkeypatch, transcriber):
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    calls = ScriptedCalls(answer_early=True)
+    conversation = realtime_service(rig, transcriber, calls)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+        await room(rig, 3.0)
 
     events = run(rig, conversation, user)
     assert set(played(events)) == {"muse"}
