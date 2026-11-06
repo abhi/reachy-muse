@@ -1,6 +1,7 @@
 """Muse realtime voice calls driven through Reachy's whole conversation, with a scripted call."""
 
 import asyncio
+import time
 
 import pytest
 
@@ -41,19 +42,28 @@ class CallHardware(SpeakerHardware):
 
 class ScriptedCalls:
     """Stands in for the SDK ``VoiceCall``: once the microphone frames it receives show the user
-    spoke and then paused, it answers with ``reply`` (transcript, audio and lifecycle events)."""
+    spoke and then paused, it plays ``answer`` (by default ``reply``'s transcript, audio and
+    lifecycle events). ``hang_up`` ends the call with an error from inside an answer."""
 
-    def __init__(self, *, reply=REPLY, reply_s=1.0, fail=None, fail_after_frames=0, answer_early=False):
+    def __init__(self, *, reply=REPLY, reply_s=1.0, fail=None, fail_after_frames=0, answer_early=False,
+                 answer=None):
         self.reply = reply
         self.reply_s = reply_s
         self.answer_early = answer_early
+        self.answer = answer or (answers(reply, reply_s) if reply is not None else None)
         self.loud_after_reply = 0
         self.fail = fail
         self.fail_after_frames = fail_after_frames
         self.opened = []
         self.frames = []
+        self.frame_times = []
         self.barge_ins = 0
         self.links = 0
+        self.hung_up = None
+        self.answering = []
+
+    def hang_up(self, error):
+        self.hung_up.set_exception(error)
 
     async def link(self, vm):
         self.links += 1
@@ -67,6 +77,24 @@ class ScriptedCalls:
         return _Call(self, options["on_event"])
 
 
+def reply_events(sdk, emit, response_id, text, pcm):
+    emit(sdk.ResponseStarted(response_id))
+    for word in text.split(" "):
+        emit(sdk.TranscriptDelta(response_id, word + " "))
+    for offset in range(0, len(pcm), 9600):
+        emit(sdk.AudioChunk(response_id, offset // 2, pcm[offset:offset + 9600]))
+    emit(sdk.TranscriptDone(response_id, text))
+    emit(sdk.ResponseDone(response_id, "completed"))
+
+
+def answers(reply, reply_s):
+    async def answer(sdk, emit, script):
+        emit(sdk.Working(True))
+        reply_events(sdk, emit, "r1", reply, voiced(1.2) + b"\0\0" * int(.3 * RATE) + voiced(reply_s))
+        emit(sdk.Working(False))
+    return answer
+
+
 class _Call:
     def __init__(self, script, on_event):
         self.script = script
@@ -74,15 +102,28 @@ class _Call:
         self.ready = asyncio.Event()
 
     async def run(self, source, output, *, realtime_input=False):
-        from musegadget import voice_call as sdk
-
         self.ready.set()
-        loud = paused = 0
-        answered = False
         if self.script.fail is not None and self.script.fail_after_frames == 0:
             raise self.script.fail
+        self.script.hung_up = asyncio.get_running_loop().create_future()
+        listening = asyncio.create_task(self._listen(source))
+        try:
+            await asyncio.wait({listening, self.script.hung_up}, return_when=asyncio.FIRST_COMPLETED)
+            for done in (listening, self.script.hung_up):
+                if done.done():
+                    done.result()
+        finally:
+            listening.cancel()
+            await asyncio.gather(listening, return_exceptions=True)
+
+    async def _listen(self, source):
+        from musegadget import voice_call as sdk
+
+        loud = paused = 0
+        answered = False
         async for frame in source:
             self.script.frames.append(frame)
+            self.script.frame_times.append(time.monotonic())
             if np.sqrt(np.mean(np.frombuffer(frame, "<i2").astype(float) ** 2)) >= 300:
                 loud += 1
                 self.script.loud_after_reply += answered
@@ -91,18 +132,10 @@ class _Call:
             if self.script.fail is not None and len(self.script.frames) >= self.script.fail_after_frames:
                 raise self.script.fail
             due = paused == (2 if self.script.answer_early else 5)
-            if due and not answered and self.script.reply is not None:
+            if due and not answered and self.script.answer is not None:
                 answered = True
-                self.on_event(sdk.Working(True))
-                self.on_event(sdk.ResponseStarted("r1"))
-                for word in self.script.reply.split(" "):
-                    self.on_event(sdk.TranscriptDelta("r1", word + " "))
-                pcm = voiced(1.2) + b"\0\0" * int(.3 * RATE) + voiced(self.script.reply_s)
-                for offset in range(0, len(pcm), 9600):
-                    self.on_event(sdk.AudioChunk("r1", offset // 2, pcm[offset:offset + 9600]))
-                self.on_event(sdk.TranscriptDone("r1", self.script.reply))
-                self.on_event(sdk.ResponseDone("r1", "completed"))
-                self.on_event(sdk.Working(False))
+                self.script.answering.append(
+                    asyncio.create_task(self.script.answer(sdk, self.on_event, self.script)))
         await asyncio.Event().wait()
 
     async def barge_in(self):
@@ -252,3 +285,31 @@ def test_muse_answering_before_reachy_s_endpoint_keeps_the_call_listening_for_th
     assert sent_to_muse(events) == []
     assert "tts:Yes?" not in played(events)
     assert len(calls.opened) == 1
+
+
+async def keeps_working(sdk, emit, script):
+    emit(sdk.Working(True))
+
+
+async def room(rig, seconds):
+    """A quiet room at real-time pace."""
+    for _ in range(round(seconds * 16000 / CHUNK)):
+        rig.hardware.samples.put(np.zeros(CHUNK, np.float32))
+        await asyncio.sleep(CHUNK / 16000)
+
+
+def test_while_muse_works_past_the_follow_up_window_the_room_stops_reaching_muse_but_the_call_stays(monkeypatch):
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(answer=keeps_working)
+    conversation = realtime_service(rig, Transcripts("Book me a table for two."), calls)
+    heard = {}
+
+    async def user():
+        await speak_live(rig, wake=True)
+        await room(rig, 6.0)
+        voice = conversation._voice[1]
+        heard.update(until=time.monotonic(), call_open=voice.call is not None and not voice.call.done)
+
+    run(rig, conversation, user, rest=("thinking",))
+    assert [at for at in calls.frame_times if at > heard["until"] - 2.0] == []
+    assert heard["call_open"] is True

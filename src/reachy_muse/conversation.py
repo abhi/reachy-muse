@@ -1276,7 +1276,9 @@ class VoiceConversation:
                         blocked_episode = True
                     continue
                 blocked_episode = False
-                if self.call is not None and self._wake_deadline is not None:
+                # A call kept open while Muse works hears only speech once the follow-up window has passed.
+                if self.call is not None and self._wake_deadline is not None and (
+                        time.monotonic() < self._wake_deadline or recorder.active or recorder.speech_active):
                     self.call.feed.push(sample)
                 if wake is not None:
                     now = time.monotonic()
