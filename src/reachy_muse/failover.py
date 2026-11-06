@@ -179,6 +179,9 @@ class FailoverHearingTurn:
             samples, self._replay = np.concatenate([*self._replay, samples]), None
         self._turn.feed(samples)
 
+    async def drain(self) -> None:
+        await self._turn.drain()
+
     def _keep(self, samples) -> None:
         self._kept.append(samples.copy())
         self._kept_samples += len(samples)

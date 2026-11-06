@@ -9,11 +9,96 @@ import numpy as np
 from test_conversation import bounded
 from test_wake_handoff import handoff
 from test_voice_verify import Vad, verifier
+from test_streaming_transcription import hold_command, model, pcm, worker
 
 
 @pytest.fixture(autouse=True)
 def deterministic_vad(monkeypatch):
     monkeypatch.setattr("webrtcvad.Vad", lambda mode: Vad())
+
+
+@pytest.mark.parametrize("mode,inflight", [("off", False), ("soft", False), ("strict", False), ("strict", True)])
+def test_verified_paused_command_fits_cli_streaming_queue(handoff, model, worker, monkeypatch, mode, inflight):
+    from musegadget import config
+    from musegadget.identity import Identity
+    from reachy_muse import cli, streaming_transcription
+    from reachy_muse.conversation import TurnOutcome
+    from reachy_muse.realtime_call import CallInput
+
+    subject = None if mode == "off" else verifier(mode, True)
+
+    class Service:
+        def __init__(self, **options):
+            self.options = options
+
+        def stop(self):
+            pass
+
+        async def run(self):
+            hearing = self.options["backends"](object()).hearing
+            transcriber = hearing.command_transcriber
+            exchange = transcriber._exchange
+
+            async def slow_exchange(command):
+                await asyncio.sleep(.005)
+                return await exchange(command)
+
+            transcriber._exchange = slow_exchange
+            entered, release = hold_command(transcriber, streaming_transcription._FEED)
+            if mode == "off":
+                release.set()
+
+            async def run(conversation, session, hardware, wake, recognition, recordings, accepted, feed):
+                commands = []
+                call = SimpleNamespace(done=False, failed=False, audio_sent=True, awaiting_answer=False,
+                                       audible=False, feed=SimpleNamespace(push=lambda samples: None),
+                                       audible_transcripts=lambda seconds: ())
+                call.input = CallInput(call.feed, hardware.sample_rate)
+                conversation._open_call = lambda: setattr(conversation, "call", call)
+                conversation.silence_s = .3
+
+                async def command(endpoint, request):
+                    commands.append(endpoint.text)
+                    return TurnOutcome.ACCEPTED
+
+                conversation._realtime_turn = command
+                await feed((.25, 14))
+                try:
+                    if inflight:
+                        previous = transcriber.open_turn()
+                        previous.feed(pcm(11, 16000))
+                        previous.finish()
+                        await asyncio.wait_for(entered.wait(), 1)
+                    asyncio.get_running_loop().call_later(.1, release.set)
+                    for marker, frames in ((11 / 32768, 31), (0, 10), (11 / 32768, 9), (0, 25)):
+                        for _ in range(frames):
+                            await feed((marker, 1))
+                            if mode == "off":
+                                await asyncio.sleep(.02)
+                finally:
+                    release.set()
+                for _ in range(100):
+                    await feed((0, 1))
+                    if commands:
+                        break
+                    await asyncio.sleep(.01)
+                assert commands == ["Volume down."]
+                assert session.setup_messages == []
+
+            await handoff(run, verifier=self.options["voice_verifier"], hearing=hearing)
+
+    monkeypatch.setattr(config, "load_json", lambda *args: {"paired": True})
+    monkeypatch.setattr(config, "sdk_token", lambda: None)
+    monkeypatch.setattr(cli.identity, "load_or_create", lambda: Identity("02:00:00:ab:cd:ef"))
+    monkeypatch.setattr(cli, "_hardware", lambda args: SimpleNamespace(start=lambda: None, close=lambda: None))
+    monkeypatch.setattr(cli, "voice_verifier", lambda args: subject)
+    monkeypatch.setattr("reachy_muse.wake_word.WakeWordDetector", lambda *args, **kwargs:
+                        SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr("reachy_muse.conversation.ReachyService", Service)
+    args = cli.parser().parse_args(["run", "--mode", "on-robot", "--muse-path", "realtime",
+                                   "--wake-model", str(model), "--realtime-stt-model", str(model),
+                                   "--voice-verify", mode])
+    assert asyncio.run(cli.run(args)) == 0
 
 
 def test_strict_rejects_wake_before_hearing_or_call_and_then_accepts_operator(handoff):

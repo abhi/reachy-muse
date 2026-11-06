@@ -1059,14 +1059,14 @@ class VoiceConversation:
             if voice_gate is None:
                 return await record_admitted(sample, send_to_call=send_to_call)
             self.voice_verifier.realtime = self.call is not None
-            # Bound each release to one second; do not burst a long request into
-            # the existing bounded companion/STT/call queues.
             frame = max(1, self.hardware.sample_rate // 50)
             for offset in range(0, max(1, len(sample)), frame):
                 admitted = await asyncio.to_thread(voice_gate.feed, sample[offset:offset + frame])
                 if voice_gate.rejected:
                     await self._voice_rejected()
                 for start in range(0, max(1, len(admitted)), frame):
+                    if len(admitted):
+                        await recorder.drain()
                     ended = await record_admitted(admitted[start:start + frame], send_to_call=send_to_call)
                     if ended is not None:
                         if self.wake_detector is not None and self.wake_timeout_s == 0:

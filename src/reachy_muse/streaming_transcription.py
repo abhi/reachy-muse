@@ -243,6 +243,13 @@ call. A hung call kills/reaps the process and fails every affected turn.
             raise
         return await turn.finish()
 
+    async def drain(self) -> None:
+        """Wait for queued and in-flight PCM before replaying more captured audio."""
+        self._check_loop()
+        while self._accepting and self._pending_samples:
+            self._acknowledged.clear()
+            await self._acknowledged.wait()
+
     def _enqueue(self, command: _Command) -> None:
         self._commands.append(command)
         self._wake.set()
