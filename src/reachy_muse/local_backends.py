@@ -24,12 +24,13 @@ class _LocalEndedTurn:
     """A turn Silero or WebRTC ended, recognized by the streaming or the batch transcriber."""
 
     def __init__(self, wav: bytes, recognition: Optional[asyncio.Future],
-                 transcribe: Optional[Callable[[bytes], Awaitable[str]]], truncated: bool):
+                 transcribe: Optional[Callable[[bytes], Awaitable[str]]], truncated: bool, *, restart=None):
         self.wav = wav
         self.truncated = truncated
         self._recognition = recognition
         self._transcribe = transcribe
         self._cancelled = False
+        self._restart = restart
 
     def start(self) -> None:
         """Start whole-turn recognition at the endpoint, while earlier turns still play."""
@@ -51,6 +52,8 @@ class _LocalEndedTurn:
         try:
             text = await self._recognition
         except StreamingWorkerError:
+            if self._restart is not None:
+                self._restart()
             raise
         except StreamingTranscriptionError:
             return None
@@ -68,6 +71,7 @@ class LocalHearingTurn:
         self._failed = False
         self._wav = None
         self._commands_only = commands_only
+        self._restart = getattr(recognizer, "restart", None) if commands_only else None
 
     @property
     def recorder(self):
@@ -128,7 +132,8 @@ class LocalHearingTurn:
         failures += self._listen(audio)
         ended = None
         if wav is not None and not accepted_turn_lost:
-            ended = _LocalEndedTurn(wav, recognition, self._transcribe, self._recorder.last_truncated)
+            ended = _LocalEndedTurn(wav, recognition, self._transcribe, self._recorder.last_truncated,
+                                    restart=self._restart)
         return HeardAudio(ended, failures, transcript_lost)
 
     def _listen(self, audio: bytearray) -> int:
@@ -142,8 +147,11 @@ class LocalHearingTurn:
                 self._turn = self._recognizer.open_turn()
             self._turn.feed(bytes(audio))
         except StreamingTranscriptionError as error:
-            if isinstance(error, StreamingWorkerError) and not self._commands_only:
-                raise
+            if isinstance(error, StreamingWorkerError):
+                if not self._commands_only:
+                    raise
+                if self._restart is not None:
+                    self._restart()
             self.abort()
             self._failed = True
             return 1

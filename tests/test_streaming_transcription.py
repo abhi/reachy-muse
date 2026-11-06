@@ -92,6 +92,7 @@ class Model:
             stream.text = 'Remember the'
             stream.tail_waiting = True
         if value == 10: stream.text = 'Remember the violet umbrella'
+        if value == 11: stream.text = 'Volume down'
         if value == 'final' and stream.text and not stream.text.endswith('.'):
             stream.text += '.'
     def get_result(self, stream): return stream.text
@@ -429,6 +430,94 @@ def test_restart_joins_failed_worker_cleanup_before_accepting_new_audio(model, w
         finally:
             release.set()
             await transcriber.close()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure_at", ["capture", "endpoint"])
+def test_command_recognition_recovers_after_a_worker_failure(model, worker, failure_at):
+    import numpy as np
+
+    from reachy_muse.local_backends import LocalHearing
+    from test_local_backends import Vad
+
+    async def scenario():
+        transcriber = SherpaStreamingTranscriber(model)
+        hearing = LocalHearing(command_transcriber=transcriber)
+        original_exchange = transcriber._exchange
+
+        async def fail_once(command):
+            transcriber._exchange = original_exchange
+            raise ConnectionError("public fake worker lost its pipe")
+
+        try:
+            await hearing.start()
+            transcriber._exchange = fail_once
+            failed = transcriber.open_turn()
+            failed.feed(pcm(2))
+            if failure_at == "endpoint":
+                turn = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=True)
+                turn.feed(np.full(8000, 11 / 32767, np.float32))
+                turn.take()
+                turn.feed(np.zeros(4000, np.float32))
+                ended = turn.take().ended
+                with pytest.raises(StreamingWorkerError):
+                    await ended.endpoint()
+            else:
+                with pytest.raises(StreamingWorkerError):
+                    await failed.finish()
+                turn = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=True)
+                turn.feed(np.full(8000, 11 / 32767, np.float32))
+                assert turn.take().failures == 1
+                turn.abort()
+
+            async def recovered():
+                while len(worker[0]) < 2 or not transcriber._accepting:
+                    await asyncio.sleep(.01)
+            try:
+                await asyncio.wait_for(recovered(), 2)
+            except asyncio.TimeoutError:
+                pass
+            assert len(worker[0]) == 2
+            assert worker[0][0].returncode is not None
+            command = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=True)
+            command.feed(np.full(8000, 11 / 32767, np.float32))
+            command.take()
+            command.feed(np.zeros(4000, np.float32))
+            assert (await command.take().ended.endpoint()).text == "Volume down."
+        finally:
+            await transcriber.close()
+
+    asyncio.run(scenario())
+
+
+def test_worker_recovery_backs_off_failed_starts_and_stops_at_shutdown(model, worker, monkeypatch):
+    monkeypatch.setattr(streaming, "RESTART_BACKOFF_S", (.02, .04))
+
+    async def scenario():
+        transcriber = SherpaStreamingTranscriber(model)
+        await transcriber.start()
+        attempts = []
+        retried = asyncio.Event()
+
+        async def unavailable():
+            attempts.append(asyncio.get_running_loop().time())
+            if len(attempts) == 3:
+                retried.set()
+            raise StreamingTranscriptionError("public fake model unavailable")
+
+        transcriber.start = unavailable
+        try:
+            for _ in range(10):
+                transcriber.restart()
+            await asyncio.wait_for(retried.wait(), 2)
+            assert len(attempts) == 3
+            assert all(later - earlier >= .035 for earlier, later in zip(attempts, attempts[1:]))
+        finally:
+            await transcriber.close()
+        await asyncio.sleep(.1)
+        assert len(attempts) == 3
+        assert all(process.returncode is not None for process in worker[0])
+
     asyncio.run(scenario())
 
 

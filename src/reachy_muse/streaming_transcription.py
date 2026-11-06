@@ -24,6 +24,7 @@ from reachy_muse.capabilities import Partial
 SAMPLE_RATE = 16000
 MAX_TURN_SAMPLES = 60 * SAMPLE_RATE
 MAX_PACKET_BYTES = 64 * 1024
+RESTART_BACKOFF_S = (0.25, 5.0)
 MODEL_FILES = (
     "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
     "decoder-epoch-99-avg-1-chunk-16-left-128.onnx",
@@ -146,6 +147,7 @@ call. A hung call kills/reaps the process and fails every affected turn.
         self._lifecycle_lock = asyncio.Lock()
         self._process = None
         self._pump = None
+        self._restart_task = None
         self._accepting = False
         self._loop = None
         self._commands = deque()
@@ -199,6 +201,22 @@ call. A hung call kills/reaps the process and fails every affected turn.
         self._turns[turn._id] = turn
         self._enqueue(_Command(_OPEN, turn))
         return turn
+
+    def restart(self) -> None:
+        self._check_loop()
+        if self._restart_task is None or self._restart_task.done():
+            self._restart_task = asyncio.create_task(self._restart_worker())
+
+    async def _restart_worker(self) -> None:
+        delay, maximum = RESTART_BACKOFF_S
+        while True:
+            await asyncio.sleep(delay)
+            try:
+                await self.start()
+            except Exception:
+                delay = min(delay * 2, maximum)
+            else:
+                return
 
     async def transcribe(self, wav: bytes) -> str:
         """Recognize a finished 16 kHz recording, fed as the worker drains the shared budget."""
@@ -334,6 +352,10 @@ call. A hung call kills/reaps the process and fails every affected turn.
                 raise
 
     async def close(self) -> None:
+        restarting, self._restart_task = self._restart_task, None
+        if restarting is not None:
+            restarting.cancel()
+            await asyncio.gather(restarting, return_exceptions=True)
         async with self._lifecycle_lock:
             self._accepting = False
             for turn in list(self._turns.values()):
