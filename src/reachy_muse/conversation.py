@@ -1191,12 +1191,15 @@ class VoiceConversation:
         blocked_episode = False
         wave_active = False
         wave_poll_at = -math.inf
+        wave_operation = None
 
         async def watch_wave(active):
-            nonlocal wave_active, wave_poll_at
+            nonlocal wave_active, wave_poll_at, wave_operation
             if self.wave_wake and (active != wave_active or active and time.monotonic() - wave_poll_at >= .25):
-                await asyncio.to_thread(self.hardware.set_wave_watching, active)
+                wave_operation = asyncio.create_task(asyncio.to_thread(self.hardware.set_wave_watching, active))
+                await asyncio.shield(wave_operation)
                 wave_active, wave_poll_at = active, time.monotonic()
+                wave_operation = None
 
         try:
             while True:
@@ -1479,7 +1482,10 @@ class VoiceConversation:
                     # Retain resampler/VAD state and drain endpoints in this SDK chunk.
                     wav = await record(sample[:0])
         finally:
-            await watch_wave(False)
+            if self.wave_wake:
+                if wave_operation is not None:
+                    await asyncio.gather(wave_operation, return_exceptions=True)
+                await asyncio.to_thread(self.hardware.set_wave_watching, False)
             producer.cancel()
             await asyncio.gather(producer, return_exceptions=True)
             recorder.abort()

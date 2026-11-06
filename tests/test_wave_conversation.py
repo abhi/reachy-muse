@@ -145,6 +145,50 @@ def test_pre_wave_in_flight_microphone_read_is_discarded():
     asyncio.run(scenario())
 
 
+def test_cancelling_during_wave_activation_drains_and_disables_the_camera():
+    import threading
+    from reachy_muse.conversation import VoiceConversation
+    from test_conversation import FakeHardware, FakeSession
+    from reachy_muse.capabilities import Mode
+    from reachy_muse.local_backends import backends_for
+
+    async def scenario():
+        hardware, session = FakeHardware(), FakeSession()
+        camera = WaveCamera(hardware)
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+        def activate(active):
+            if active:
+                entered.set()
+                assert release.wait(3)
+            camera.set_active(active)
+            finished.set()
+
+        hardware.set_wave_watching = activate
+        session.chat_subscribed.set()
+        conversation = VoiceConversation(session, hardware, wave_wake=True,
+                                         backends=backends_for(Mode.MUSE_VOICE, session))
+        task = asyncio.create_task(conversation._microphone())
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            task.cancel()
+            await asyncio.sleep(.03)
+            cleanup_finished_early = task.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert await asyncio.to_thread(finished.wait, 2)
+            assert camera.active is False
+            assert camera.transitions == [True, False]
+            assert cleanup_finished_early is False
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
 def test_wave_opens_realtime_after_camera_suspension_and_stays_suspended(monkeypatch):
     from reachy_muse.realtime_call import realtime_supported
     from test_realtime_turns import ScriptedCalls, StreamingTranscripts, rig_for, speak_live, room
