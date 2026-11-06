@@ -32,7 +32,7 @@ import socket
 import threading
 import time
 import urllib.request
-from concurrent.futures import Future, TimeoutError as PresenceTimeout
+from concurrent.futures import Future, TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Collection, NamedTuple, Sequence
@@ -257,6 +257,7 @@ class ReachyController:
         self._still_since = None
         self._connect_options = dict(host=host, port=port, connection_mode=connection_mode,
                                      media_backend=media_backend)
+        self._doa_lock = threading.Lock()
         self._sleep_on_close = sleep_on_close
         self._enable_motion = enable_motion
         self.library_expressions = library_expressions and enable_motion and style.expression_clips
@@ -348,11 +349,32 @@ class ReachyController:
 
     def read_doa(self) -> DoAReading | None:
         """Read world geometry only; missing arrays and older daemons are optional."""
-        if self._robot is None:
+        started = time.monotonic()
+        if self._robot is None or not self._doa_lock.acquire(blocking=False):
             return None
+        result = Future()
+
+        def read():
+            try:
+                result.set_result(self._read_doa(started))
+            except Exception as exc:
+                result.set_exception(exc)
+            finally:
+                self._doa_lock.release()
+
+        try:
+            threading.Thread(target=read, name="muse-reachy-doa", daemon=True).start()
+        except Exception:
+            self._doa_lock.release()
+            raise
+        try:
+            return result.result(max(0.0, _DOA_TIMEOUT_S - (time.monotonic() - started)))
+        except FutureTimeout:
+            return None
+
+    def _read_doa(self, started: float) -> DoAReading | None:
         connection = http.client.HTTPConnection(self._connect_options["host"], self._connect_options["port"],
                                                 timeout=_DOA_TIMEOUT_S)
-        started = time.monotonic()
         try:
             pose = self._robot.get_current_head_pose().copy()
             connection.connect()
@@ -775,7 +797,7 @@ class ReachyController:
             def inspect():
                 try:
                     if time.monotonic() >= deadline:
-                        raise PresenceTimeout()
+                        raise FutureTimeout()
                     result.set_result(self._check_presence())
                 except Exception as exc:
                     result.set_exception(exc)
@@ -789,7 +811,7 @@ class ReachyController:
                 raise
             try:
                 return result.result(max(0.0, deadline - time.monotonic()))
-            except PresenceTimeout:
+            except FutureTimeout:
                 pass
         return Presence(last_seen_at=self._presence.last_seen_at).result(time.monotonic())
 

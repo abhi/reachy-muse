@@ -61,6 +61,59 @@ def doa_server():
         thread.join(2)
 
 
+@pytest.fixture(params=["getaddrinfo", "create_connection"], ids=["resolver", "connect"])
+def stalled_doa_setup(monkeypatch, request):
+    state = SimpleNamespace(entered=threading.Event(), release=threading.Event(),
+                            stopped=threading.Event(), calls=0)
+
+    def stalled(*args, **kwargs):
+        state.calls += 1
+        state.entered.set()
+        try:
+            state.release.wait(1)
+            raise OSError("connection setup failed")
+        finally:
+            state.stopped.set()
+
+    monkeypatch.setattr(f"socket.{request.param}", stalled)
+    controller = ReachyController(host="daemon.invalid", port=8123)
+    controller._robot = FakeRobot()
+    yield controller, state
+    state.release.set()
+    assert state.stopped.wait(2)
+
+
+def test_doa_deadline_covers_connection_setup_without_starting_more_lookups(stalled_doa_setup):
+    controller, state = stalled_doa_setup
+    started = time.monotonic()
+    assert controller.read_doa() is None
+    elapsed = time.monotonic() - started
+    assert elapsed < .35
+    assert not state.stopped.is_set()
+    for _ in range(3):
+        assert controller.read_doa() is None
+    assert state.calls == 1
+
+
+def test_sampler_shutdown_finishes_during_stalled_connection_setup(stalled_doa_setup):
+    controller, state = stalled_doa_setup
+
+    async def run():
+        direction = WakeDirection(controller.read_doa)
+        task = asyncio.create_task(direction.sample_while(lambda: True))
+        try:
+            assert await asyncio.to_thread(state.entered.wait, 2)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    started = time.monotonic()
+    asyncio.run(run())
+    elapsed = time.monotonic() - started
+    assert elapsed < .35
+    assert not state.stopped.is_set()
+
+
 @pytest.mark.parametrize("slow", ["headers", "body"])
 def test_doa_read_has_a_total_deadline_for_trickled_responses(doa_server, slow):
     controller, _ = doa_server('{"angle": 1, "speech_detected": true}', slow=slow)
