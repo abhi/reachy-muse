@@ -799,18 +799,19 @@ crossfades; the detector never writes motor targets.
 Tracking pauses during explicit robot commands and resumes when they finish.
 By default, it also pauses while waiting for the wake phrase. Add
 `--face-follow-idle` alongside `--face-follow` to keep watching while idle at
-two frames per second. Idle following stops during sleep or with
-`REACHY_MUSE_BREATHING=0`. Face following requires motion, so `--no-motion`
-cannot be combined with these flags. Disabling breathing does not disable gaze
-during a conversation. "Stop looking at me" disables both conversation and
-idle following until "look at me" enables them again.
+two frames per second, including in still mode with `REACHY_MUSE_BREATHING=0`.
+Idle following pauses during sleep and morning arrival watching.
+Face following requires motion, so `--no-motion` cannot be combined with these
+flags. "Stop looking at me" disables both conversation and idle following
+until "look at me" enables them again.
 
 When a face disappears, its target expires after 0.8 seconds and gaze eases
-back to normal expressions. The detector initially selects the largest face
-and stays with that face while it remains nearby. It does not identify people or distinguish which person is
-speaking in a group. Camera frames remain in memory on Reachy and are not sent
-to Muse or saved. Muse knows that local tracking is active but cannot describe
-the camera scene through this feature.
+back to normal expressions. In still mode, idle following returns to the still
+resting pose without breathing or antenna sway. The detector initially selects
+the largest face and stays with that face while it remains nearby. It does not
+identify people or distinguish which person is speaking in a group. Camera frames
+remain in memory on Reachy and are not sent to Muse or saved. Muse knows that local
+tracking is active but cannot describe the camera scene through this feature.
 
 The model's MIT license, pinned source and checksum are packaged alongside it.
 `--face-follow-model PATH` selects another compatible YuNet model and requires
@@ -818,7 +819,7 @@ The model's MIT license, pinned source and checksum are packaged alongside it.
 a later camera error disables tracking while voice stays available.
 `Local face tracking ready` confirms detector initialization. Separate
 `Local face tracking on/off` messages report gate transitions and their
-reasons, such as conversation, idle follow, command, sleeping or still mode.
+reasons, such as conversation, idle follow, command, sleeping or arrival watching.
 These logs contain no images, identities or conversation text.
 
 The local SDK 1.9 speaker path receives the official SDK 1.10 shell equalization

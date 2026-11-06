@@ -22,6 +22,7 @@ from test_hardware import FakeRobot, FakeWatcher, generated, pose_factory
 class Follower:
     failure = None
     active = False
+    visible = True
     yaw = 8
     pitch = -4
 
@@ -35,7 +36,8 @@ class Follower:
         self.rates.append(idle)
 
     def target(self):
-        return FaceTarget(math.radians(self.yaw), math.radians(self.pitch), 0) if self.active else None
+        return (FaceTarget(math.radians(self.yaw), math.radians(self.pitch), 0)
+                if self.active and self.visible else None)
 
 
 def drive(monkeypatch, action, *, ticks=140, **options):
@@ -113,9 +115,8 @@ def test_speech_clips_add_to_gaze_and_sentence_replacement_does_not_duplicate_it
     assert samples[135]['roll'] == pytest.approx(3.0, abs=.1)
 
 
-def test_idle_follow_is_opt_in_and_respects_sleep_still_mode_and_user_switch(monkeypatch):
-    controller = ReachyController()
-    controller._face_follow_idle = True
+def test_idle_follow_includes_still_mode_and_respects_sleep_and_user_switch():
+    controller = ReachyController(face_follow_idle=True)
     controller._face_follower = follower = Follower()
     for state in ('idle', 'listening', 'thinking', 'speaking', 'sleeping', 'error'):
         controller._update_face_tracking(state)
@@ -126,19 +127,26 @@ def test_idle_follow_is_opt_in_and_respects_sleep_still_mode_and_user_switch(mon
     controller._update_face_tracking('listening')
     controller.allow_face_tracking(False)
     controller._update_face_tracking('speaking')
-    assert follower.activity[-3:] == [False, True, False]
+    assert follower.activity[-3:] == [True, True, False]
+    assert follower.rates[-3:] == [True, False, False]
 
 
-def test_tracking_logs_only_transitions_with_content_free_reasons(caplog):
+@pytest.mark.parametrize('idle, breathing, idle_message', [
+    (False, True, 'Local face tracking off: idle'),
+    (False, False, 'Local face tracking off: idle'),
+    (True, True, 'Local face tracking on: idle follow'),
+    (True, False, 'Local face tracking on: idle follow'),
+])
+def test_tracking_logs_only_transitions_with_content_free_reasons(caplog, idle, breathing, idle_message):
     caplog.set_level('INFO', logger='reachy_muse.hardware')
-    controller = ReachyController()
+    controller = ReachyController(face_follow_idle=idle, style=MotionStyle(breathing=breathing))
     controller._face_follower = Follower()
     for state, commanded in [('idle', False), ('listening', False), ('thinking', False),
                              ('speaking', False), ('speaking', True), ('speaking', True),
                              ('speaking', False), ('sleeping', False)]:
         controller._update_face_tracking(state, commanded=commanded)
     assert [r.message for r in caplog.records] == [
-        'Local face tracking off: idle',
+        idle_message,
         'Local face tracking on: conversation',
         'Local face tracking off: command',
         'Local face tracking on: conversation',
@@ -231,25 +239,51 @@ def test_gaze_plus_clip_is_bounded_and_lost_face_returns_to_normal_motion(monkey
     assert max(abs(samples[t]['yaw'] - samples[t - 1]['yaw']) for t in range(2, 140)) < 3
 
 
-@pytest.mark.parametrize('idle, breathing, state, expected', [
-    (False, True, 'idle', False),
-    (True, True, 'idle', True),
-    (True, False, 'idle', False),
-    (True, True, 'sleeping', False),
+@pytest.mark.parametrize('idle, breathing, state, active, yaw', [
+    (False, True, 'idle', False, 0),
+    (False, False, 'idle', False, 0),
+    (True, True, 'idle', True, 8),
+    (True, False, 'idle', True, 8),
+    (True, True, 'sleeping', False, 0),
+    (True, False, 'sleeping', False, 0),
 ])
-def test_idle_follow_reaches_motor_output_only_when_allowed(monkeypatch, idle, breathing, state, expected):
+def test_idle_follow_reaches_motor_output_only_when_allowed(monkeypatch, idle, breathing, state,
+                                                          active, yaw):
     def action(controller, follower, tick):
         if tick == 1:
             controller.set_state(state)
 
     _, follower, samples = drive(monkeypatch, action, face_follow_idle=idle,
                                  style=MotionStyle(breathing=breathing))
-    assert follower.active is expected
-    assert samples[135]['yaw'] == pytest.approx(8 if expected else 0, abs=.1)
+    assert follower.active is active
+    assert samples[135]['yaw'] == pytest.approx(yaw, abs=.1)
 
 
+def test_still_idle_follow_smoothly_tracks_a_moving_face_then_returns_to_rest(monkeypatch):
+    def action(controller, follower, tick):
+        if tick == 70:
+            follower.yaw, follower.pitch = -8, 4
+        if tick == 140:
+            follower.visible = False
+
+    controller, follower, samples = drive(monkeypatch, action, ticks=280, face_follow_idle=True,
+                                          style=MotionStyle(breathing=False))
+    assert follower.active is True
+    assert samples[65] == pytest.approx(dict(x=0, y=0, z=0, roll=0, yaw=8, pitch=-4), abs=.1)
+    assert samples[135] == pytest.approx(dict(x=0, y=0, z=0, roll=0, yaw=-8, pitch=4), abs=.1)
+    for tick in range(230, 281):
+        assert samples[tick] == pytest.approx(dict(x=0, y=0, z=0, roll=0, yaw=0, pitch=0), abs=.01)
+    for axis in ('yaw', 'pitch'):
+        assert max(abs(samples[tick][axis] - samples[tick - 1][axis])
+                   for tick in range(2, 281)) < 1.5
+    for _, _, antennas, body_yaw in controller._robot.frames:
+        assert np.degrees(antennas) == pytest.approx([-10, 10], abs=.01)
+        assert body_yaw == 0
+
+
+@pytest.mark.parametrize('breathing', [True, False])
 @pytest.mark.parametrize('resume', ['idle', 'listening', 'thinking', 'speaking'])
-def test_arrival_watching_pauses_idle_follow_then_allows_idle_or_conversation_gaze(monkeypatch, resume):
+def test_arrival_watching_pauses_idle_follow_then_allows_idle_or_conversation_gaze(monkeypatch, resume, breathing):
     stillness, tracking = [], []
 
     def action(controller, follower, tick):
@@ -268,7 +302,8 @@ def test_arrival_watching_pauses_idle_follow_then_allows_idle_or_conversation_ga
             else:
                 controller.set_state(resume)
 
-    _, follower, samples = drive(monkeypatch, action, ticks=520, face_follow_idle=True)
+    _, follower, samples = drive(monkeypatch, action, ticks=520, face_follow_idle=True,
+                                 style=MotionStyle(breathing=breathing))
     assert samples[65]['yaw'] == pytest.approx(8, abs=.1)
     assert samples[340]['yaw'] == pytest.approx(-20, abs=.1)
     assert samples[340]['pitch'] == pytest.approx(5, abs=.1)

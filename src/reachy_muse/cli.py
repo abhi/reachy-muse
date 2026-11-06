@@ -317,7 +317,8 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--face-follow", action="store_true",
                               help="Follow a nearby face locally during conversations; camera frames stay on the robot")
             item.add_argument("--face-follow-idle", action="store_true",
-                              help="Also follow faces while idle at two frames per second; requires --face-follow; respects still mode")
+                              help="Also follow faces while idle at two frames per second, including in still mode; "
+                                   "pauses during sleep and arrival watching; requires --face-follow")
             item.add_argument("--face-follow-model", type=Path,
                               help="YuNet ONNX detector override; requires --face-follow")
             item.add_argument("--stt-model", type=Path,

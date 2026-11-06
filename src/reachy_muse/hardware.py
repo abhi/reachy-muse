@@ -903,7 +903,7 @@ class ReachyController:
         elif self._watching:
             reason = "arrival watching"
         elif state == "idle" and self._face_follow_idle:
-            reason = "idle follow" if self._style.breathing else "still mode"
+            reason = "idle follow"
         else:
             reason = state
         self._set_face_tracking(reason in ("conversation", "idle follow"), reason)
