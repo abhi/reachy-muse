@@ -2148,7 +2148,7 @@ class VoiceConversation:
         """
         deadline = time.monotonic() + 30
         quiet_since = None
-        while time.monotonic() < deadline:
+        while time.monotonic() < deadline and self.call is call:
             if call.audible or call.working:
                 quiet_since = None
             elif quiet_since is None:
