@@ -46,6 +46,20 @@ handoff lifecycle was rejected: bounded consumer waits use the existing capture
 queue and keep epoch/feed identity intact. Always-on ASR was rejected because it
 adds continuous CM4 work before candidate-only verification has been measured.
 
+Capture snapshots carry playback evidence through the queue and batch merge.
+Processing-time playback state can expire while old speaker audio is waiting.
+Unknown output remains blocked even when a batch also has known unrelated text.
+Independent operator trials reset cooldown; production gap resets retain it.
+
+Replay found encoder-phase sensitivity on one identical clean recording.
+Bounded candidate replay now trims its start to an original encoder boundary,
+so alignment does not silently change phase. Two staggered continuous streams
+added no tuning positives; four added one while consuming four times the CPU.
+They remain excluded from the live detector. Three BPE segmentations and the
+homophone spellings MEWS/HAY in the KWS graph also added no tuning candidates.
+The verifier accepts HAY MUSE because the local recognizer uses HAY for /heɪ/.
+It continues to reject PAY MUSE, HI MUSE, HEY NEWS, HEY MUSIC, and HEY MOOSE.
+
 The model has a 320 ms decode stride and additional lookahead. A universal
 300 ms acknowledgement bound is therefore not achievable with this artifact.
 Report detection, alignment, and verification latency separately. Preserve the

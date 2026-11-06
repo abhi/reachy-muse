@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 import logging
 import math
 from pathlib import Path
@@ -18,6 +19,12 @@ MODEL_FILES = (
     "graph/HCLr.fst", "graph/Gr.fst",
 )
 GRAMMAR = ("hey muse", "hey news", "hey music", "hey moose", "hey mouse", "[unk]")
+
+
+@dataclass(frozen=True)
+class VoskCandidate:
+    score: float | None
+    score_kind: str = "word_confidence_mean"
 
 
 class VoskWakeWordDetector:
@@ -90,6 +97,10 @@ class VoskWakeWordDetector:
             if self._model is None:
                 raise RuntimeError("Vosk wake detector is closed.")
             self._recognizer = self._recognizer_factory(self._model, self.sample_rate, self._grammar)
+            set_words = getattr(self._recognizer, "SetWords", None)
+            if set_words is not None:
+                set_words(True)
+            self.last_candidate = None
             self._audio_seconds = 0.0
             self._partial_started = None
             self._reset_diagnostics()
@@ -108,6 +119,7 @@ class VoskWakeWordDetector:
         with self._lock:
             if self._recognizer is None:
                 raise RuntimeError("Vosk wake detector is closed.")
+            self.last_candidate = None
             np = self._np
             audio = np.asarray(samples, dtype=np.float32)
             if audio.ndim != 1 or not np.isfinite(audio).all() or (np.abs(audio) > 1).any():
@@ -127,11 +139,22 @@ class VoskWakeWordDetector:
                 self._audio_seconds += part.size / self.sample_rate
                 pcm = np.rint(part * 32767).astype("<i2").tobytes()
                 if self._recognizer.AcceptWaveform(pcm):
-                    detected = self._result_has_phrase(self._recognizer.Result(), "text")
+                    raw = self._recognizer.Result()
+                    detected = self._result_has_phrase(raw, "text")
+                    result = json.loads(raw)
+                    confidences = [word["conf"] for word in result.get("result", [])
+                                   if isinstance(word, dict) and type(word.get("conf")) in (float, int)
+                                   and math.isfinite(word["conf"]) and 0 <= word["conf"] <= 1]
+                    score = sum(confidences) / len(confidences) if confidences else None
+                    candidate = VoskCandidate(score, "word_confidence_mean" if score is not None else "unavailable")
                     self._partial_started = None
                     if detected:
                         self.reset()
+                        self.last_candidate = candidate
                         return True
+                    if result.get("text", "").strip():
+                        log.info("Wake candidate %s", json.dumps({"backend": "vosk", "accepted": False,
+                                 "reason": "not_keyword", "score": score, "score_kind": candidate.score_kind}, sort_keys=True))
                 elif self.mode == "stable_partial":
                     if not self._result_has_phrase(self._recognizer.PartialResult(), "partial"):
                         self._partial_started = None

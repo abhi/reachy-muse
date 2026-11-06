@@ -100,6 +100,18 @@ def test_confusables_and_nonadjacent_words_do_not_activate(models, text):
     assert len(instances) == 1
 
 
+def test_rejected_vosk_candidate_logs_confidence_without_recognized_content(models, monkeypatch, caplog):
+    directory, instances, _ = models
+    detector = VoskWakeWordDetector(directory)
+    instances[-1].plan = [(True, "hey music")]
+    monkeypatch.setattr(instances[-1], "Result", lambda: json.dumps({
+        "text": "hey music", "result": [{"word": "hey", "conf": .8}, {"word": "music", "conf": .6}]}))
+    caplog.set_level("INFO", logger="reachy_muse.vosk_wake")
+    assert detector.feed(np.zeros(1600, dtype=np.float32)) is False
+    assert caplog.messages == ['Wake candidate {"accepted": false, "backend": "vosk", "reason": "not_keyword", '
+                               '"score": 0.7, "score_kind": "word_confidence_mean"}']
+
+
 def test_default_mode_waits_for_endpoint_even_when_partial_predictions_persist(models):
     directory, instances, _ = models
     detector = VoskWakeWordDetector(directory)

@@ -370,6 +370,29 @@ def test_punctuation_uses_the_same_acoustic_tokens(models):
     assert instances[0].keyword == "▁HE Y ▁MU SE @HEY_MUSE\n"
 
 
+def test_replay_preserves_encoder_phase_after_history_rollover(timed_models):
+    directory, instances = timed_models
+    detector = WakeWordDetector(directory, candidate_replay=True)
+    spotter = instances[0]
+    decode = spotter.decode_stream
+
+    def phase_sensitive(stream):
+        decode(stream)
+        if stream.raw_result is not None:
+            phase = round(stream.raw_result.timestamps[0] * 16000) % 5120
+            if phase != 2400:
+                stream.raw_result = None
+
+    spotter.decode_stream = phase_sensitive
+    assert detector.feed(np.zeros(51200, np.float32), align=False) is False
+    audio = np.concatenate((np.zeros(2400, np.float32), np.array([.1, .2, .3, .4], np.float32),
+                            np.zeros(8000, np.float32)))
+    assert detector.feed(audio, align=False) is True
+    assert detector.replay_candidate(.25) is True
+    detector.align_candidate()
+    assert detector.last_detection.post_wake_samples == 8001
+
+
 @pytest.fixture
 def phonetic_models(models, monkeypatch):
     directory, instances = models

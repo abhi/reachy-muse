@@ -47,6 +47,7 @@ from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlaybac
 from reachy_muse.local_speech import PreparedSpeech, SpeechRestart
 from reachy_muse.turn_timeline import TurnTimeline
 from reachy_muse.startup import StartupTimeline
+from reachy_muse.wake_policy import WakeContext
 
 log = logging.getLogger(__name__)
 REPLY_TIMEOUT_S = 180.0
@@ -145,6 +146,7 @@ class _CapturedAudio:
     discard: bool = False
     gap: bool = False
     gap_reason: str | None = None
+    wake_context: WakeContext | None = None
 
 
 @dataclass(frozen=True)
@@ -209,7 +211,7 @@ class _CaptureBuffer:
         self.gap_reason = None
 
     def push(self, samples, *, discard: bool = False, gap: bool = False,
-             gap_reason: str | None = None) -> None:
+             gap_reason: str | None = None, wake_context=None) -> None:
         if not len(samples):
             return
         if gap:
@@ -226,7 +228,7 @@ class _CaptureBuffer:
             self.samples = 0
             self.gap = True
             self.gap_reason = "capture buffer overflow"
-        self.chunks.append(_CapturedAudio(samples, discard))
+        self.chunks.append(_CapturedAudio(samples, discard, wake_context=wake_context))
         self.samples += len(samples)
         self.available.set()
 
@@ -248,19 +250,27 @@ class _CaptureBuffer:
         # Drain available chunks together without waiting for a batch to fill.
         # A discard boundary must never become authorized microphone input.
         parts = [chunk.samples]
+        contexts = [chunk.wake_context] if chunk.wake_context is not None else []
         size = len(chunk.samples)
         while (self.chunks and size < self.batch_limit
                and self.chunks[0].discard == chunk.discard):
-            following = self.chunks.popleft().samples
-            parts.append(following)
-            size += len(following)
-            self.samples -= len(following)
+            following = self.chunks.popleft()
+            parts.append(following.samples)
+            size += len(following.samples)
+            self.samples -= len(following.samples)
+            if following.wake_context is not None:
+                contexts.append(following.wake_context)
         if len(parts) > 1:
             import numpy as np
             samples = np.concatenate(parts)
         else:
             samples = chunk.samples
-        result = _CapturedAudio(samples, chunk.discard, self.gap, self.gap_reason)
+        context = None
+        if contexts:
+            context = WakeContext(blocked=any(item.blocked for item in contexts),
+                                  speaking=any(item.speaking for item in contexts),
+                                  playback=tuple(dict.fromkeys(text for item in contexts for text in item.playback)))
+        result = _CapturedAudio(samples, chunk.discard, self.gap, self.gap_reason, context)
         self.gap = False
         self.gap_reason = None
         return result
@@ -510,7 +520,7 @@ class VoiceConversation:
     def __init__(self, session: LinkSession, hardware, *, backends: Backends,
                  session_id: str | None = None,
                  silence_s: float = 2.0, reply_timeout_s: float = REPLY_TIMEOUT_S,
-                 wake_detector=None, wake_timeout_s: float = 10.0,
+                 wake_detector=None, wake_timeout_s: float = 10.0, wake_policy=None,
                  owns_chat: bool = False, speech_gate=None, local_chat: bool = True,
                  arbitration_shadow: bool = False,
                  audio_diagnostics: bool = False, short_utterance_silence_s: float | None = None,
@@ -535,6 +545,8 @@ class VoiceConversation:
         self._prepared_speech = {}
         self._closing_speech = set()
         self.wake_detector = wake_detector
+        self._wake_policy = wake_policy
+        self._wake_unknown_output_until = 0.0
         self.speech_gate = speech_gate
         self.audio_diagnostics = audio_diagnostics
         self.wake_timeout_s = wake_timeout_s
@@ -709,6 +721,11 @@ class VoiceConversation:
         if getattr(self.hardware, "echo_cancelled_input", False) is True:
             return False
         return self._muted or time.monotonic() < self._echo_until
+
+    def _wake_capture_context(self, now):
+        return WakeContext(blocked=self._input_blocked() or now < self._wake_unknown_output_until,
+                           speaking=self._muted or now < self._echo_until,
+                           playback=tuple(text for text, until in self._audible.items() if until > now - 2.5))
 
     async def run(self) -> None:
         await self.session.registered.wait()
@@ -1030,6 +1047,8 @@ class VoiceConversation:
         wake = self.wake_detector
         if wake is not None:
             await asyncio.to_thread(wake.reset)
+            if self._wake_policy is not None:
+                self._wake_policy.reset()
             self._wake_deadline = None
             self._wake_strip_required = False
             self._wake_first_request_pending = False
@@ -1051,12 +1070,18 @@ class VoiceConversation:
             import av
             wake_resampler = av.AudioResampler(format="flt", layout="mono", rate=16000)
 
-        async def detects_wake(sample) -> tuple[bool, int | None]:
+        async def detects_wake(sample, context=None) -> tuple[bool, int | None]:
+            async def feed(audio):
+                if context is not None:
+                    return await self._wake_policy.feed(wake, audio, context=context,
+                                                        valid=lambda: not capture.gap)
+                return await asyncio.to_thread(wake.feed, audio)
             if wake_resampler is None:
-                detected = await asyncio.to_thread(wake.feed, sample)
+                detected = await feed(sample)
                 event = getattr(wake, "last_detection", None) if detected else None
                 tail = getattr(event, "post_wake_samples", None)
-                if (type(tail) is int and 0 <= tail <= pre_roll_samples
+                available = pre_roll_samples + (len(sample) if context is not None else 0)
+                if (type(tail) is int and 0 <= tail <= available
                         and getattr(event, "epoch", None) == getattr(wake, "epoch", None)
                         and getattr(event, "feed_id", None) == getattr(wake, "feed_id", None)
                         and type(getattr(event, "epoch", None)) is int
@@ -1069,7 +1094,7 @@ class VoiceConversation:
                                               format="flt", layout="mono")
             frame.sample_rate = self.hardware.sample_rate
             for chunk in wake_resampler.resample(frame):
-                if await asyncio.to_thread(wake.feed, chunk.to_ndarray().reshape(-1)):
+                if await feed(chunk.to_ndarray().reshape(-1)):
                     return True, None
             return False, None
 
@@ -1321,6 +1346,8 @@ class VoiceConversation:
                     continue
                 sample = captured.samples
                 if captured.gap:
+                    if self._wake_policy is not None:
+                        self._wake_policy.reset()
                     recorder = make_recorder()
                     pre_roll.clear()
                     pre_roll_samples = 0
@@ -1338,7 +1365,18 @@ class VoiceConversation:
                     log.warning("Reachy microphone capture lost continuity (%s); speech detectors reset; %s",
                                 captured.gap_reason or "upstream gap",
                                 "microphone remains open" if self._wake_deadline is not None else "waiting for wake")
-                if captured.discard or self._input_blocked():
+                input_blocked = captured.discard or self._input_blocked()
+                observed_wake = None
+                if wake is not None and self._wake_policy is not None:
+                    if blocked_episode and not input_blocked:
+                        await asyncio.to_thread(wake.reset)
+                        self._wake_policy.reset()
+                    now = time.monotonic()
+                    observed_wake = await detects_wake(sample, replace(
+                        captured.wake_context or self._wake_capture_context(now),
+                        armed=self._wake_deadline is None or (now >= self._wake_deadline and not recorder.active),
+                    ))
+                if input_blocked:
                     # Unqualified speaker paths cannot stitch user speech across echo.
                     if not blocked_episode:
                         recorder = make_recorder()
@@ -1364,7 +1402,7 @@ class VoiceConversation:
                         pre_roll.append(sample.copy())
                         pre_roll_samples += len(sample)
                         trim_pre_roll(pre_roll_limit)
-                        detected, wake_tail = await detects_wake(sample)
+                        detected, wake_tail = observed_wake if observed_wake is not None else await detects_wake(sample)
                         if not detected:
                             continue
                         self._say_hushed = False
@@ -1485,7 +1523,8 @@ class VoiceConversation:
                 previous_duration = duration
                 last_sample = now
                 capture.push(sample, discard=muted_at_start or self._input_blocked(), gap=gap,
-                             gap_reason="SDK read or capture scheduling stall" if gap else None)
+                             gap_reason="SDK read or capture scheduling stall" if gap else None,
+                             **({"wake_context": self._wake_capture_context(now)} if self._wake_policy is not None else {}))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -2159,6 +2198,8 @@ class VoiceConversation:
 
     def _muse_audible(self, text: str | None, until: float) -> None:
         self._echo_until = max(self._echo_until, until + ECHO_TAIL_S)
+        if not text:
+            self._wake_unknown_output_until = max(self._wake_unknown_output_until, until + ECHO_TAIL_S + 1.5)
         if text:
             self._audible[text] = until + ECHO_TAIL_S
             if len(self._audible) > 8:
@@ -2849,6 +2890,7 @@ class ReachyService(PairedService):
     arbitration_shadow: bool = False
     audio_diagnostics: bool = False
     wake_detector: object | None = None
+    wake_policy: object | None = None
     wake_timeout_s: float = 10.0
     speech_gate: object | None = None
     short_utterance_silence_s: float | None = None
@@ -3030,6 +3072,7 @@ class ReachyService(PairedService):
             voice = VoiceConversation(session, hardware, backends=self.backends(session),
                                       session_id=session_id, silence_s=self.silence_s,
                                       wake_detector=self.wake_detector, wake_timeout_s=self.wake_timeout_s,
+                                      wake_policy=self.wake_policy,
                                       owns_chat=self.owns_chat, speech_gate=self.speech_gate,
                                       local_chat=self.local_chat, audio_diagnostics=self.audio_diagnostics,
                                       arbitration_shadow=self.arbitration_shadow,

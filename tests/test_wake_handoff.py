@@ -23,8 +23,9 @@ class Detection:
     feed_id: int
 
 
-@pytest.fixture
-def handoff(monkeypatch):
+@pytest.fixture(params=(False, True), ids=("native", "verified"))
+def handoff(monkeypatch, request):
+    verified = request.param
     np = pytest.importorskip("numpy")
     pytest.importorskip("av")
     monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
@@ -118,10 +119,18 @@ def handoff(monkeypatch):
         hardware = FakeHardware()
         wake = Wake(trusted=trusted, invalid=invalid, delayed=delayed)
         recognition = Recognition()
+        from reachy_muse.wake_policy import WakePolicy, WakeVerifier
+
+        class ConfirmWake:
+            async def transcribe(self, wav):
+                await asyncio.sleep(.01)
+                return "hey muse"
+
+        policy = WakePolicy(WakeVerifier(local=ConfirmWake())) if verified else None
         conversation = VoiceConversation(session, hardware,
                                          backends=backends_for(Mode.ON_ROBOT, session, speech=speech or object(),
                                                                transcriber=recognition),
-                                         wake_detector=wake, silence_s=.14)
+                                         wake_detector=wake, wake_policy=policy, silence_s=.14)
         conversation.backends.voice.phrases["Yes?"] = (np.full(80, .1, np.float32),)
 
         async def capture(buffer):

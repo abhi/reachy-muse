@@ -55,6 +55,7 @@ class WakeCandidate:
     boost: float
     audio: object = field(repr=False, compare=False)
     remaining: int = 0
+    start_sample: int = 0
     score: float | None = None
 
 
@@ -137,7 +138,7 @@ class WakeWordDetector:
 
     def __init__(self, model_dir: str | Path, phrase: str = "hey muse", *,
                  threshold: float = 0.25, score: float = 1.0,
-                 candidate_replay: bool = False) -> None:
+                 candidate_replay: bool = False, token_variants: int = 1) -> None:
         if not isinstance(phrase, str):
             raise ValueError("Wake phrase must contain English words.")
         phrase = " ".join(phrase.lower().replace(",", " ").split())
@@ -147,6 +148,8 @@ class WakeWordDetector:
             raise ValueError("Wake threshold must be between zero and one.")
         if not math.isfinite(score) or score <= 0:
             raise ValueError("Wake keyword score must be positive.")
+        if type(token_variants) is not int or not 1 <= token_variants <= 4:
+            raise ValueError("Wake token variants must be between one and four.")
         self.phrase = phrase
         self.threshold, self.boost = threshold, score
         self.candidate_replay = candidate_replay
@@ -182,6 +185,7 @@ class WakeWordDetector:
         table = self._read_tokens(files["tokens"])
         if phonetic:
             pieces = self._phonetic_pieces(files["lexicon"], phrase, table)
+            sequences = [pieces]
         else:
             try:
                 import sentencepiece
@@ -192,12 +196,16 @@ class WakeWordDetector:
                 ) from exc
             tokenizer = sentencepiece.SentencePieceProcessor(model_file=str(files["bpe"]))
             pieces = tokenizer.encode(phrase.upper(), out_type=str)
-        if (not pieces or any(not isinstance(piece, str) or piece not in table
-                              or piece == "<unk>" or any(char.isspace() for char in piece)
-                              for piece in pieces)):
+            sequences = ([pieces] if token_variants == 1 else
+                         tokenizer.nbest_encode(phrase.upper(), out_type=str, nbest_size=token_variants))
+        if (not sequences or any(not sequence or any(
+                not isinstance(piece, str) or piece not in table
+                or piece == "<unk>" or any(char.isspace() for char in piece)
+                for piece in sequence) for sequence in sequences)):
             raise ValueError("Wake phrase cannot be encoded by this model's vocabulary.")
         # Sherpa's symbol table renders a leading SentencePiece boundary as a space.
-        self._pieces = tuple(" " + piece[1:] if piece.startswith("▁") else piece for piece in pieces)
+        self._piece_variants = {tuple(" " + piece[1:] if piece.startswith("▁") else piece for piece in sequence)
+                                for sequence in sequences}
         self._timing = _encoder_timing(files["encoder"])
         if self._timing is not None:
             chunk, shift = self._timing
@@ -207,8 +215,8 @@ class WakeWordDetector:
             self._alignment_steps = self._history_limit = 0
         if candidate_replay:
             self._history_limit = max(self._history_limit, 2 * self.sample_rate)
-        keyword = " ".join(pieces) + " @" + self._label + "\n"
-        self._keyword_tokens = " ".join(pieces)
+        self._keyword_tokens = tuple(" ".join(sequence) for sequence in sequences)
+        keyword = "".join(tokens + " @" + self._label + "\n" for tokens in self._keyword_tokens)
         # Sherpa loads the keyword graph during construction. Keep its one-phrase
         # file temporary so a read-only model directory remains usable.
         with tempfile.TemporaryDirectory(prefix="muse-wake-") as temporary:
@@ -307,10 +315,11 @@ class WakeWordDetector:
             return self._spotter.create_stream()
         floor = self.threshold if threshold is None else threshold
         return self._spotter.create_stream(
-            keywords=f"{self._keyword_tokens} :{self.boost} #{floor} @{self._label}")
+            keywords="\n".join(f"{tokens} :{self.boost} #{floor} @{self._label}" for tokens in self._keyword_tokens))
 
     def _reset_stream(self) -> None:
         self._stream = self._new_stream()
+        self._stream_samples = 0
         self._history.clear()
         self._history_samples = 0
         self._diagnostic_start = None
@@ -343,13 +352,23 @@ class WakeWordDetector:
             else:
                 self._history_samples -= len(oldest)
 
-    def _align_detection(self, remaining: int, *, audio=None, threshold=None) -> WakeDetection | None:
+    def _phase_audio(self, audio, start_sample):
+        if self._timing is None:
+            return audio
+        # Replaying at a different encoder phase can miss an identical phrase.
+        # Trim pre-keyword history to the next original 320 ms chunk boundary.
+        skip = -start_sample % (self._timing[1] * 160)
+        return audio[skip:]
+
+    def _align_detection(self, remaining: int, *, audio=None, start_sample=None) -> WakeDetection | None:
         if self._timing is None or getattr(self._spotter, "keyword_spotter", None) is None:
             return None
         started = time.monotonic()
-        replay = self._new_stream(threshold)
+        replay = self._new_stream()
         if audio is None:
             audio = self._np.concatenate(tuple(self._history))
+            start_sample = self._stream_samples - self._history_samples
+        audio = self._phase_audio(audio, start_sample)
         replay.accept_waveform(self.sample_rate, audio)
         aligned = None
         _, shift = self._timing
@@ -362,7 +381,7 @@ class WakeWordDetector:
             keyword, tokens, timestamps = self._result(replay)
             if not keyword:
                 continue
-            if keyword != self._label or tokens != self._pieces or len(timestamps) != len(tokens):
+            if keyword != self._label or tokens not in self._piece_variants or len(timestamps) != len(tokens):
                 return None
             if (any(isinstance(value, bool) or not isinstance(value, (int, float))
                     or not math.isfinite(value) or value < 0 for value in timestamps)
@@ -389,7 +408,7 @@ class WakeWordDetector:
                     or candidate.epoch != self._epoch or candidate.feed_id != self._feed_id):
                 return False
             replay = self._new_stream(threshold)
-            replay.accept_waveform(self.sample_rate, candidate.audio)
+            replay.accept_waveform(self.sample_rate, self._phase_audio(candidate.audio, candidate.start_sample))
             found = False
             while self._spotter.is_ready(replay):
                 self._spotter.decode_stream(replay)
@@ -404,7 +423,7 @@ class WakeWordDetector:
             if (candidate is not None and candidate.epoch == self._epoch
                     and candidate.feed_id == self._feed_id):
                 self._last_detection = self._align_detection(
-                    candidate.remaining, audio=candidate.audio)
+                    candidate.remaining, audio=candidate.audio, start_sample=candidate.start_sample)
 
     def feed(self, samples, *, align: bool = True) -> bool:
         """Consume normalized mono 16 kHz audio, returning True for this phrase."""
@@ -431,6 +450,7 @@ class WakeWordDetector:
             for offset in range(0, len(audio), 1600):
                 part = np.ascontiguousarray(audio[offset:offset + 1600])
                 self._retain_audio(part)
+                self._stream_samples += len(part)
                 self._stream.accept_waveform(self.sample_rate, part)
                 while self._spotter.is_ready(self._stream):
                     self._spotter.decode_stream(self._stream)
@@ -443,7 +463,8 @@ class WakeWordDetector:
                             retained = (np.concatenate(tuple(self._history)) if self._history
                                         else part.copy())
                             candidate = WakeCandidate(self._epoch, self._feed_id, self.threshold,
-                                                      self.boost, retained, remaining)
+                                                      self.boost, retained, remaining,
+                                                      self._stream_samples - len(retained))
                         event = self._align_detection(remaining) if detected and align else None
                         self._reset_stream()
                         self._last_detection = event
