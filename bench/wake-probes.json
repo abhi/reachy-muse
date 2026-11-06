@@ -1,0 +1,88 @@
+{
+  "threshold": 0.1,
+  "provider": "cpu",
+  "streams": [
+    {
+      "streams": 1,
+      "hits": 24,
+      "positives": 33,
+      "false_clips": 17,
+      "negative_clips": 54,
+      "audio_s": 347.688,
+      "host_cpu_s": 4.191
+    },
+    {
+      "streams": 2,
+      "hits": 24,
+      "positives": 33,
+      "false_clips": 17,
+      "negative_clips": 54,
+      "audio_s": 347.688,
+      "host_cpu_s": 8.353
+    },
+    {
+      "streams": 4,
+      "hits": 25,
+      "positives": 33,
+      "false_clips": 17,
+      "negative_clips": 54,
+      "audio_s": 347.688,
+      "host_cpu_s": 16.839
+    }
+  ],
+  "same_waveform_offsets": [
+    {
+      "prefix_s": 0,
+      "triggers": 0
+    },
+    {
+      "prefix_s": 0.08,
+      "triggers": 0
+    },
+    {
+      "prefix_s": 0.16,
+      "triggers": 0
+    },
+    {
+      "prefix_s": 0.24,
+      "triggers": 1
+    },
+    {
+      "prefix_s": 0.32,
+      "triggers": 0
+    },
+    {
+      "prefix_s": 0.56,
+      "triggers": 1
+    },
+    {
+      "prefix_s": 0.88,
+      "triggers": 1
+    },
+    {
+      "prefix_s": 1.2,
+      "triggers": 1
+    },
+    {
+      "prefix_s": 2,
+      "triggers": 0
+    },
+    {
+      "prefix_s": 10,
+      "triggers": 0
+    }
+  ],
+  "keyword_aliases": [
+    {
+      "alias": "HEY MEWS",
+      "hits": 24,
+      "false_clips": 17
+    },
+    {
+      "alias": "HAY MUSE",
+      "hits": 24,
+      "false_clips": 17
+    }
+  ],
+  "note": "Raw candidate observations, not verified wake accepts. No batching wait is introduced."
+}

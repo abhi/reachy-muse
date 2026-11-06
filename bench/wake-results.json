@@ -1,0 +1,1060 @@
+{
+  "platform": "macOS-26.4-arm64-arm-64bit-Mach-O",
+  "provider": "cpu",
+  "kws_threads": 1,
+  "versions": {
+    "sherpa-onnx": "1.13.8",
+    "sentencepiece": "0.2.2",
+    "kokoro-onnx": "0.6.1",
+    "soundfile": "0.14.0",
+    "numpy": "2.5.3"
+  },
+  "baseline_ref": "dd1ed17",
+  "baseline_source_sha256": "e351b1bd973afbb6fe7619162f35c26c9c9e3aca3876a1102216fc296db416a8",
+  "model_sha256": {
+    "encoder": "1e721676515bcd42a186979733981213c66c80db680e1cc582dfedf3be76e678",
+    "decoder": "e40ff43297abe815e8898494c17e71bba2152d9d40fa3eb803f75d0f7533329a",
+    "joiner": "eae9da0c7e1e6c6a3f4cc42d167899c388f6c6701b94cb96320e4f55df79624c",
+    "tokens": "fd2ded4050a55d2b1578870ba8697d02371980217806b7558bd0a5cc60f3ba53",
+    "bpe": "c8a2a0129c4ab8e463164c142f82d25649661b122c8cd0b7aab5c9e80b90ad24"
+  },
+  "baseline": {
+    "threshold": 0.25,
+    "boost": 1,
+    "variants": 1,
+    "verification_window_s": 1.5,
+    "baseline": true,
+    "offline": false,
+    "summary": {
+      "positives": 97,
+      "hits": 55,
+      "recall": 0.5670103092783505,
+      "negative_audio_s": 571.118,
+      "false_accepts": 46,
+      "false_accepts_per_hour": 289.957,
+      "latency_ms_p50": 201.51,
+      "latency_ms_p95": 396.64
+    },
+    "by_split": {
+      "tune": {
+        "positives": 32,
+        "hits": 20,
+        "recall": 0.625,
+        "negative_audio_s": 155.84,
+        "false_accepts": 17,
+        "false_accepts_per_hour": 392.71,
+        "latency_ms_p50": 175.61,
+        "latency_ms_p95": 324.24
+      },
+      "development": {
+        "positives": 32,
+        "hits": 18,
+        "recall": 0.5625,
+        "negative_audio_s": 162.688,
+        "false_accepts": 13,
+        "false_accepts_per_hour": 287.667,
+        "latency_ms_p50": 142.76,
+        "latency_ms_p95": 365.15
+      },
+      "holdout": {
+        "positives": 33,
+        "hits": 17,
+        "recall": 0.5151515151515151,
+        "negative_audio_s": 252.59,
+        "false_accepts": 16,
+        "false_accepts_per_hour": 228.038,
+        "latency_ms_p50": 292.33,
+        "latency_ms_p95": 416.42
+      }
+    },
+    "by_kind": {
+      "confusable": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 243.137,
+        "false_accepts": 13,
+        "false_accepts_per_hour": 192.484,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "long_idle": {
+        "positives": 1,
+        "hits": 0,
+        "recall": 0.0,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "ordinary_speech": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 140.416,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "own_voice": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 95.488,
+        "false_accepts": 33,
+        "false_accepts_per_hour": 1244.136,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "recorded_negative": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 24.6,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "silence_noise": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 40.0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "synthetic_positive": {
+        "positives": 96,
+        "hits": 55,
+        "recall": 0.5729166666666666,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": 201.51,
+        "latency_ms_p95": 396.64
+      },
+      "tv_like": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 27.477,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      }
+    },
+    "by_snr": {
+      "None": {
+        "positives": 24,
+        "hits": 22,
+        "recall": 0.9166666666666666,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": 171.16,
+        "latency_ms_p95": 354.92
+      },
+      "20": {
+        "positives": 24,
+        "hits": 23,
+        "recall": 0.9583333333333334,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": 201.97,
+        "latency_ms_p95": 410.26
+      },
+      "10": {
+        "positives": 24,
+        "hits": 10,
+        "recall": 0.4166666666666667,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": 224.53,
+        "latency_ms_p95": 392.27
+      },
+      "0": {
+        "positives": 24,
+        "hits": 0,
+        "recall": 0.0,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      }
+    },
+    "host_parent_cpu_s": 12.792,
+    "host_wall_s": 13.148,
+    "decisions": {},
+    "verification": {},
+    "audio_s": 906.774,
+    "alignment_available_accepts": 0
+  },
+  "sweep": [
+    {
+      "threshold": 0.05,
+      "boost": 1.0,
+      "variants": 1,
+      "verification_window_s": 1.5,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 22,
+        "recall": 0.6875,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 244.45,
+        "latency_ms_p95": 392.0
+      },
+      "host_parent_cpu_s": 4.089,
+      "host_wall_s": 6.369,
+      "decisions": {
+        "accepted": 22,
+        "verification_rejected": 7,
+        "echo": 12
+      },
+      "verification": {
+        "local:match": 22,
+        "local:no_match": 7,
+        "none:not_run": 12
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 22
+    },
+    {
+      "threshold": 0.05,
+      "boost": 1.5,
+      "variants": 1,
+      "verification_window_s": 1.5,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 22,
+        "recall": 0.6875,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 244.52,
+        "latency_ms_p95": 392.74
+      },
+      "host_parent_cpu_s": 4.052,
+      "host_wall_s": 6.489,
+      "decisions": {
+        "accepted": 22,
+        "verification_rejected": 10,
+        "echo": 12
+      },
+      "verification": {
+        "local:match": 22,
+        "local:no_match": 10,
+        "none:not_run": 12
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 22
+    },
+    {
+      "threshold": 0.1,
+      "boost": 1.0,
+      "variants": 1,
+      "verification_window_s": 1.5,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 22,
+        "recall": 0.6875,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 244.33,
+        "latency_ms_p95": 394.91
+      },
+      "host_parent_cpu_s": 3.953,
+      "host_wall_s": 6.05,
+      "decisions": {
+        "accepted": 22,
+        "verification_rejected": 7,
+        "echo": 12
+      },
+      "verification": {
+        "local:match": 22,
+        "local:no_match": 7,
+        "none:not_run": 12
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 22
+    },
+    {
+      "threshold": 0.1,
+      "boost": 1.5,
+      "variants": 1,
+      "verification_window_s": 1.5,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 22,
+        "recall": 0.6875,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 243.28,
+        "latency_ms_p95": 391.89
+      },
+      "host_parent_cpu_s": 4.047,
+      "host_wall_s": 6.363,
+      "decisions": {
+        "accepted": 22,
+        "verification_rejected": 10,
+        "echo": 12
+      },
+      "verification": {
+        "local:match": 22,
+        "local:no_match": 10,
+        "none:not_run": 12
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 22
+    },
+    {
+      "threshold": 0.15,
+      "boost": 1.0,
+      "variants": 1,
+      "verification_window_s": 1.5,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 21,
+        "recall": 0.65625,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 246.04,
+        "latency_ms_p95": 399.19
+      },
+      "host_parent_cpu_s": 4.064,
+      "host_wall_s": 6.111,
+      "decisions": {
+        "accepted": 21,
+        "verification_rejected": 7,
+        "echo": 12
+      },
+      "verification": {
+        "local:match": 21,
+        "local:no_match": 7,
+        "none:not_run": 12
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 21
+    },
+    {
+      "threshold": 0.15,
+      "boost": 1.5,
+      "variants": 1,
+      "verification_window_s": 1.5,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 21,
+        "recall": 0.65625,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 244.44,
+        "latency_ms_p95": 391.53
+      },
+      "host_parent_cpu_s": 4.015,
+      "host_wall_s": 6.223,
+      "decisions": {
+        "accepted": 21,
+        "verification_rejected": 10,
+        "echo": 12
+      },
+      "verification": {
+        "local:match": 21,
+        "local:no_match": 10,
+        "none:not_run": 12
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 21
+    },
+    {
+      "threshold": 0.25,
+      "boost": 1.0,
+      "variants": 1,
+      "verification_window_s": 1.5,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 19,
+        "recall": 0.59375,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 245.44,
+        "latency_ms_p95": 397.61
+      },
+      "host_parent_cpu_s": 4.009,
+      "host_wall_s": 5.863,
+      "decisions": {
+        "accepted": 19,
+        "verification_rejected": 6,
+        "echo": 12
+      },
+      "verification": {
+        "local:match": 19,
+        "local:no_match": 6,
+        "none:not_run": 12
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 19
+    },
+    {
+      "threshold": 0.25,
+      "boost": 1.5,
+      "variants": 1,
+      "verification_window_s": 1.5,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 16,
+        "recall": 0.5,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 245.28,
+        "latency_ms_p95": 375.24
+      },
+      "host_parent_cpu_s": 3.795,
+      "host_wall_s": 5.514,
+      "decisions": {
+        "accepted": 16,
+        "verification_rejected": 8,
+        "echo": 12
+      },
+      "verification": {
+        "local:match": 16,
+        "local:no_match": 8,
+        "none:not_run": 12
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 16
+    },
+    {
+      "threshold": 0.05,
+      "boost": 1.0,
+      "variants": 3,
+      "verification_window_s": 1.5,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 22,
+        "recall": 0.6875,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 242.99,
+        "latency_ms_p95": 392.76
+      },
+      "host_parent_cpu_s": 3.898,
+      "host_wall_s": 5.96,
+      "decisions": {
+        "accepted": 22,
+        "verification_rejected": 7,
+        "echo": 12
+      },
+      "verification": {
+        "local:match": 22,
+        "local:no_match": 7,
+        "none:not_run": 12
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 22
+    },
+    {
+      "threshold": 0.1,
+      "boost": 1.0,
+      "variants": 3,
+      "verification_window_s": 1.5,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 22,
+        "recall": 0.6875,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 243.94,
+        "latency_ms_p95": 392.55
+      },
+      "host_parent_cpu_s": 4.048,
+      "host_wall_s": 6.112,
+      "decisions": {
+        "accepted": 22,
+        "verification_rejected": 7,
+        "echo": 12
+      },
+      "verification": {
+        "local:match": 22,
+        "local:no_match": 7,
+        "none:not_run": 12
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 22
+    },
+    {
+      "threshold": 0.25,
+      "boost": 1.0,
+      "variants": 3,
+      "verification_window_s": 1.5,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 19,
+        "recall": 0.59375,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 246.75,
+        "latency_ms_p95": 394.42
+      },
+      "host_parent_cpu_s": 4.142,
+      "host_wall_s": 5.985,
+      "decisions": {
+        "accepted": 19,
+        "verification_rejected": 6,
+        "echo": 12
+      },
+      "verification": {
+        "local:match": 19,
+        "local:no_match": 6,
+        "none:not_run": 12
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 19
+    },
+    {
+      "threshold": 0.05,
+      "boost": 3.0,
+      "variants": 1,
+      "verification_window_s": 1.5,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 17,
+        "recall": 0.53125,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 232.29,
+        "latency_ms_p95": 348.26
+      },
+      "host_parent_cpu_s": 4.18,
+      "host_wall_s": 6.25,
+      "decisions": {
+        "accepted": 17,
+        "verification_rejected": 11,
+        "echo": 12
+      },
+      "verification": {
+        "local:match": 17,
+        "local:no_match": 11,
+        "none:not_run": 12
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 17
+    },
+    {
+      "threshold": 0.1,
+      "boost": 3.0,
+      "variants": 1,
+      "verification_window_s": 1.5,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 14,
+        "recall": 0.4375,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 227.84,
+        "latency_ms_p95": 319.02
+      },
+      "host_parent_cpu_s": 4.016,
+      "host_wall_s": 5.716,
+      "decisions": {
+        "accepted": 14,
+        "verification_rejected": 9,
+        "echo": 11
+      },
+      "verification": {
+        "local:match": 14,
+        "local:no_match": 9,
+        "none:not_run": 11
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 14
+    },
+    {
+      "threshold": 0.1,
+      "boost": 5.0,
+      "variants": 1,
+      "verification_window_s": 1.5,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 7,
+        "recall": 0.21875,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 206.73,
+        "latency_ms_p95": 310.74
+      },
+      "host_parent_cpu_s": 3.87,
+      "host_wall_s": 4.743,
+      "decisions": {
+        "accepted": 7,
+        "verification_rejected": 4,
+        "echo": 5
+      },
+      "verification": {
+        "local:match": 7,
+        "local:no_match": 4,
+        "none:not_run": 5
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 7
+    },
+    {
+      "threshold": 0.1,
+      "boost": 1.0,
+      "variants": 1,
+      "verification_window_s": 2.0,
+      "baseline": false,
+      "offline": false,
+      "summary": {
+        "positives": 32,
+        "hits": 20,
+        "recall": 0.625,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 246.43,
+        "latency_ms_p95": 395.99
+      },
+      "host_parent_cpu_s": 4.058,
+      "host_wall_s": 6.225,
+      "decisions": {
+        "accepted": 20,
+        "verification_rejected": 9,
+        "echo": 12
+      },
+      "verification": {
+        "local:match": 20,
+        "local:no_match": 9,
+        "none:not_run": 12
+      },
+      "audio_s": 225.685,
+      "alignment_available_accepts": 20
+    }
+  ],
+  "after": {
+    "threshold": 0.1,
+    "boost": 1.0,
+    "variants": 1,
+    "verification_window_s": 1.5,
+    "baseline": false,
+    "offline": false,
+    "summary": {
+      "positives": 97,
+      "hits": 56,
+      "recall": 0.5773195876288659,
+      "negative_audio_s": 571.118,
+      "false_accepts": 0,
+      "false_accepts_per_hour": 0.0,
+      "latency_ms_p50": 256.77,
+      "latency_ms_p95": 464.6
+    },
+    "by_split": {
+      "tune": {
+        "positives": 32,
+        "hits": 22,
+        "recall": 0.6875,
+        "negative_audio_s": 155.84,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 243.72,
+        "latency_ms_p95": 391.37
+      },
+      "development": {
+        "positives": 32,
+        "hits": 17,
+        "recall": 0.53125,
+        "negative_audio_s": 162.688,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 193.13,
+        "latency_ms_p95": 375.88
+      },
+      "holdout": {
+        "positives": 33,
+        "hits": 17,
+        "recall": 0.5151515151515151,
+        "negative_audio_s": 252.59,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": 363.27,
+        "latency_ms_p95": 488.32
+      }
+    },
+    "by_kind": {
+      "confusable": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 243.137,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "long_idle": {
+        "positives": 1,
+        "hits": 0,
+        "recall": 0.0,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "ordinary_speech": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 140.416,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "own_voice": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 95.488,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "recorded_negative": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 24.6,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "silence_noise": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 40.0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "synthetic_positive": {
+        "positives": 96,
+        "hits": 56,
+        "recall": 0.5833333333333334,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": 256.77,
+        "latency_ms_p95": 464.6
+      },
+      "tv_like": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 27.477,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      }
+    },
+    "by_snr": {
+      "None": {
+        "positives": 24,
+        "hits": 22,
+        "recall": 0.9166666666666666,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": 259.67,
+        "latency_ms_p95": 423.05
+      },
+      "20": {
+        "positives": 24,
+        "hits": 22,
+        "recall": 0.9166666666666666,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": 279.51,
+        "latency_ms_p95": 483.66
+      },
+      "10": {
+        "positives": 24,
+        "hits": 12,
+        "recall": 0.5,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": 234.85,
+        "latency_ms_p95": 444.53
+      },
+      "0": {
+        "positives": 24,
+        "hits": 0,
+        "recall": 0.0,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      }
+    },
+    "host_parent_cpu_s": 16.328,
+    "host_wall_s": 22.716,
+    "decisions": {
+      "accepted": 56,
+      "verification_rejected": 22,
+      "echo": 33
+    },
+    "verification": {
+      "local:match": 56,
+      "local:no_match": 22,
+      "none:not_run": 33
+    },
+    "audio_s": 906.774,
+    "alignment_available_accepts": 56
+  },
+  "companion_down_local_down": {
+    "threshold": 0.1,
+    "boost": 1.0,
+    "variants": 1,
+    "verification_window_s": 1.5,
+    "baseline": false,
+    "offline": true,
+    "summary": {
+      "positives": 97,
+      "hits": 56,
+      "recall": 0.5773195876288659,
+      "negative_audio_s": 571.118,
+      "false_accepts": 13,
+      "false_accepts_per_hour": 81.945,
+      "latency_ms_p50": 219.77,
+      "latency_ms_p95": 414.63
+    },
+    "by_split": {
+      "tune": {
+        "positives": 32,
+        "hits": 20,
+        "recall": 0.625,
+        "negative_audio_s": 155.84,
+        "false_accepts": 5,
+        "false_accepts_per_hour": 115.503,
+        "latency_ms_p50": 194.12,
+        "latency_ms_p95": 343.17
+      },
+      "development": {
+        "positives": 32,
+        "hits": 19,
+        "recall": 0.59375,
+        "negative_audio_s": 162.688,
+        "false_accepts": 4,
+        "false_accepts_per_hour": 88.513,
+        "latency_ms_p50": 181.17,
+        "latency_ms_p95": 386.71
+      },
+      "holdout": {
+        "positives": 33,
+        "hits": 17,
+        "recall": 0.5151515151515151,
+        "negative_audio_s": 252.59,
+        "false_accepts": 4,
+        "false_accepts_per_hour": 57.009,
+        "latency_ms_p50": 309.86,
+        "latency_ms_p95": 437.35
+      }
+    },
+    "by_kind": {
+      "confusable": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 243.137,
+        "false_accepts": 13,
+        "false_accepts_per_hour": 192.484,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "long_idle": {
+        "positives": 1,
+        "hits": 0,
+        "recall": 0.0,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "ordinary_speech": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 140.416,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "own_voice": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 95.488,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "recorded_negative": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 24.6,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "silence_noise": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 40.0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      },
+      "synthetic_positive": {
+        "positives": 96,
+        "hits": 56,
+        "recall": 0.5833333333333334,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": 219.77,
+        "latency_ms_p95": 414.63
+      },
+      "tv_like": {
+        "positives": 0,
+        "hits": 0,
+        "recall": null,
+        "negative_audio_s": 27.477,
+        "false_accepts": 0,
+        "false_accepts_per_hour": 0.0,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      }
+    },
+    "by_snr": {
+      "None": {
+        "positives": 24,
+        "hits": 23,
+        "recall": 0.9583333333333334,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": 193.63,
+        "latency_ms_p95": 380.6
+      },
+      "20": {
+        "positives": 24,
+        "hits": 23,
+        "recall": 0.9583333333333334,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": 222.35,
+        "latency_ms_p95": 431.14
+      },
+      "10": {
+        "positives": 24,
+        "hits": 10,
+        "recall": 0.4166666666666667,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": 246.99,
+        "latency_ms_p95": 414.11
+      },
+      "0": {
+        "positives": 24,
+        "hits": 0,
+        "recall": 0.0,
+        "negative_audio_s": 0,
+        "false_accepts": 0,
+        "false_accepts_per_hour": null,
+        "latency_ms_p50": null,
+        "latency_ms_p95": null
+      }
+    },
+    "host_parent_cpu_s": 17.949,
+    "host_wall_s": 19.12,
+    "decisions": {
+      "accepted": 69,
+      "below_threshold": 9,
+      "echo": 33
+    },
+    "verification": {
+      "conservative_replay:unavailable": 78,
+      "none:not_run": 33
+    },
+    "audio_s": 906.774,
+    "alignment_available_accepts": 69
+  },
+  "latency_note": "Audio-time detection lag plus final call wall time; synthetic phrase end is rendered audio end, not phonetic annotation. Unpaced replay.",
+  "cpu_note": "Parent process includes KWS/replay, excludes local recognizer child CPU. Not a CM4 measurement."
+}

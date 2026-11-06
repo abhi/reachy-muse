@@ -221,5 +221,3 @@ def test_companion_wake_stream_always_aborts_and_forgets_audio():
             await task
         assert (closed, stream.audio) == ([CloseHow.ABORT], bytearray())
     asyncio.run(run())
-
-
