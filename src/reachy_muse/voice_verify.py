@@ -264,9 +264,10 @@ class RequestGate:
             self._voiced_run = self._voiced_run + 1 if voiced else 0
             self._quiet = 0 if voiced else self._quiet + 1
             if not self._speech:
+                if len(self._history) == self._history.maxlen:
+                    output.append(np.zeros(320, np.float32))
                 self._history.append(audio_frame)
                 if self._voiced_run < 3:
-                    output.append(np.zeros(320, np.float32))
                     continue
                 self._speech = list(self._history)
                 self._history.clear()

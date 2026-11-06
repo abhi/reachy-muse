@@ -211,7 +211,7 @@ def test_rejection_waits_for_speaker_without_blocking_capture_and_accounts_for_e
             await conversation._voice_rejected()
             assert hardware.played == []
             assert cursor.end == 0
-            await feed((.25, 14), (0, 16))
+            await feed((.25, 14), (0, 20))
             assert conversation._wake_deadline is not None
         started = time.monotonic()
         await conversation._output_queue.join()

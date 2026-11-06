@@ -130,11 +130,11 @@ def test_changed_model_cannot_reuse_enrollment():
 def test_request_gate_holds_genuine_and_masks_next_speaker_at_input_rate(rate):
     gate = RequestGate(verifier(), rate, vad=Vad())
     held = gate.feed(np.full(rate // 2, .25, np.float32))
-    assert set(held) == {0.}
+    assert len(held) == 0
     accepted = gate.feed(np.zeros(rate // 2, np.float32))
     # Resampling filters introduce a few edge samples at 48 kHz.
     assert accepted[rate // 4] == pytest.approx(.25, abs=1e-4)
-    assert len(accepted) == pytest.approx(rate, abs=rate // 50)
+    assert len(accepted) == pytest.approx(rate * .8, abs=rate // 50)
     rejected = gate.feed(np.concatenate((np.full(rate // 2, .5), np.zeros(rate // 2))).astype(np.float32))
     assert set(rejected) == {0.}
     assert gate.rejected is True
@@ -152,7 +152,7 @@ def test_gap_discards_pending_speech_and_soft_chat_passes_original_audio():
 def test_policy_changes_release_held_samples_once_without_replaying_observed_audio():
     subject = verifier("soft", True)
     gate = RequestGate(subject, 16000, vad=Vad())
-    assert set(gate.feed(np.full(4817, .25, np.float32))) == {0.}
+    assert len(gate.feed(np.full(4817, .25, np.float32))) == 0
     subject.realtime = False
     assert gate.feed(np.full(320, .5, np.float32)).tolist() == [.25] * 4817 + [.5] * 320
     subject.realtime = True
@@ -168,7 +168,7 @@ def test_long_speech_rechecks_every_segment_without_losing_first_samples():
     released.append(gate.feed(np.zeros(4800, np.float32)))
     joined = np.concatenate(released)
     assert joined[joined != 0].tolist() == [.25] * 160000
-    assert joined[:640].tolist() == [0.] * 640
+    assert joined.tolist() == [.25] * 160000 + [0.] * 4800
 
 
 @pytest.mark.parametrize("frames", [51, 55, 60, 101, 105])

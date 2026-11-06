@@ -58,6 +58,20 @@ def test_a_mid_sentence_pause_of_point_four_seconds_keeps_remind_me_at_eight_not
     assert turns(paused, .8, 1.2) == [(4.2, 4.08)]
 
 
+def test_voice_verification_keeps_a_below_threshold_pause_in_one_complete_turn():
+    from types import SimpleNamespace
+    from reachy_muse.voice_verify import Decision, RequestGate
+
+    reminder = speech("reminder")
+    audio = np.concatenate([reminder[:round(2.04 * RATE)], silence(.58), reminder[round(2.04 * RATE):], silence(2)])
+    gate = RequestGate(SimpleNamespace(enforcing=True, verify=lambda *args: Decision(1., True, True)), RATE)
+    admitted = np.concatenate([gate.feed(audio[start:start + 320]) for start in range(0, len(audio), 320)])
+
+    assert turns(audio, .8, 1.2) == [(4.38, 4.26)]
+    assert turns(admitted, .8, 1.2) == [(4.38, 4.26)]
+    np.testing.assert_array_equal(admitted[round(2.76 * RATE):round(3.58 * RATE)], reminder[round(2.18 * RATE):])
+
+
 def test_a_hesitation_after_a_short_fragment_waits_for_the_rest_of_the_request():
     reminder = speech("reminder")
     hesitant = np.concatenate([reminder[:round(.7 * RATE)], silence(1), reminder[round(.7 * RATE):], silence(2)])
