@@ -231,6 +231,48 @@ def test_flat_delivery_does_not_restart_a_factual_gesture():
     assert selector.choose(sentence, Delivery(1, -23, 3, 0), revise=True).variant == "attentive"
 
 
+def test_a_greeting_split_across_realtime_deltas_corrects_the_playing_variant():
+    import asyncio
+    from musegadget import voice_call as sdk
+    from bench.expression_playback import Hardware
+    from reachy_muse.motion.reply_motion import ReplyMotion
+    from reachy_muse.realtime_call import MicrophoneFeed, RealtimeCall, RealtimeSpeaker
+
+    async def scenario():
+        hardware = Hardware()
+        motion = ReplyMotion()
+
+        async def nothing():
+            pass
+
+        speaker = RealtimeSpeaker(hardware, motion, on_audible=lambda *args: None,
+                                  on_start=nothing, on_idle=nothing)
+        call = RealtimeCall(MicrophoneFeed(16000), speaker, motion, on_working=lambda working: None,
+                            on_reply_done=lambda reply: None)
+        try:
+            call.on_event(sdk.ResponseStarted("r1"))
+            call.on_event(sdk.TranscriptDelta("r1", "Good "))
+            call.on_event(sdk.AudioChunk("r1", 0, bytes(4800 * 2)))
+            while not hardware.pushes:
+                await asyncio.sleep(0)
+            call.on_event(sdk.TranscriptDelta("r1", "morning. "))
+            call.on_event(sdk.AudioChunk("r1", 4800, bytes(4800 * 2)))
+            call.on_event(sdk.TranscriptDone("r1", "Good morning. "))
+            call.on_event(sdk.ResponseDone("r1", "completed"))
+            await asyncio.wait_for(speaker.drain(), 2)
+            events = hardware.controller._sentences.due(100000000)
+            return ([(e.value, np.max(np.abs(e.move.frames), axis=0).tolist())
+                     for e in events if e.kind == "start"],
+                    hardware.controller._sentence_delivery.selector.recent)
+        finally:
+            await call.close()
+
+    assert asyncio.run(asyncio.wait_for(scenario(), 3)) == ([
+        (("neutral", 1), [0, 0, 0, 0, 3, 0, 2, 2, 0]),
+        (("neutral", 1), [0, 0, 2, 3, 0, 0, 8, 8, 0]),
+    ], ["warm"])
+
+
 def test_an_unplayed_or_empty_chunk_does_not_consume_a_variant():
     hardware = controller()
     hardware._output_sample_rate = 24000

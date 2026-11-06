@@ -163,6 +163,7 @@ class ReplyMotion:
             if (latest.index == index and latest.shown and not moving
                     and offset - latest.sample <= LATE_LIMIT_S * SAMPLE_RATE):
                 reply.expressions[-1] = motion.expression
+                reply.motions[index] = motion
                 marks.append(Mark(0, sentence=replace(motion, revised=True), revised=True))
         if reply.unended:
             following = next(self._due(reply), None)
@@ -185,6 +186,7 @@ class ReplyMotion:
             at = max(sample, offset)
             shown = not moving and offset - sample <= LATE_LIMIT_S * SAMPLE_RATE
             motion = self._motion(reply, sentence)
+            reply.motions[sentence.index] = motion
             reply.expressions.append(motion.expression)
             reply.terminal = motion.terminal
             reply.scheduled.append(Scheduled(sentence.index, at, confirmed, sample < offset, shown))
@@ -220,8 +222,9 @@ class ReplyMotion:
             reply.sentences.append(sentence)
             motion = classify_sentence(sentence.text)
             if sentence.index in reply.committed:
+                previous = reply.motions[sentence.index]
                 if (sentence.index in reply.partial and reply.scheduled[-1].index == sentence.index
-                        and motion.expression is not reply.expressions[-1]):
+                        and (motion.expression, motion.variant) != (previous.expression, previous.variant)):
                     reply.revision = (sentence.index, motion)
                 continue
             reply.motions[sentence.index] = motion
