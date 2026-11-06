@@ -177,11 +177,13 @@ class WakePolicy:
         self._last_accept = -self.cooldown_samples
         self._audio = deque()
         self._audio_samples = 0
+        self._echo_sample = 0
 
     def reset(self, *, new_trial=False):
         """Discard candidate context after a gap; keep exposure and cooldown clocks."""
         self._audio.clear()
         self._audio_samples = 0
+        self._echo_sample = 0
         self.last_decision = None
         if new_trial:
             self._last_accept = self._samples - self.cooldown_samples
@@ -198,6 +200,9 @@ class WakePolicy:
             return False
         self.levels.feed(audio)
         self._samples += len(audio)
+        echo = contains_phrase(" ".join(context.playback), detector.phrase)
+        if echo:
+            self._echo_sample = self._samples
         self._audio.append(audio.copy())
         self._audio_samples += len(audio)
         while self._audio_samples > self.verification_samples:
@@ -213,17 +218,18 @@ class WakePolicy:
         inference_ms = (time.monotonic() - started) * 1000
         if not found:
             return False
+        candidate = getattr(detector, "last_candidate", None)
         self._sequence += 1
         reason, source, floor = "accepted", "none", None
         verification = "not_run"
         verification_ms = alignment_ms = 0.0
-        if any(contains_phrase(text, detector.phrase) for text in context.playback):
+        if echo or self._echo_sample > self._samples - getattr(candidate, "segment_lookback_samples", 0):
             reason = "echo"
         elif context.blocked or context.speaking and not context.playback:
             reason = "speaking"
         elif not context.armed or self._samples - self._last_accept < self.cooldown_samples:
             reason = "cooldown"
-        elif getattr(getattr(detector, "last_candidate", None), "phrase_verified", False):
+        elif getattr(candidate, "phrase_verified", False):
             source, verification = "native", "match"
         else:
             pcm = np.rint(np.concatenate(tuple(self._audio)) * 32767).astype("<i2").tobytes()

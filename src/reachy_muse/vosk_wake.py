@@ -26,6 +26,7 @@ class VoskCandidate:
     score: float | None
     score_kind: str = "word_confidence_mean"
     phrase_verified: bool = False
+    segment_lookback_samples: int = 0
 
 
 class VoskWakeWordDetector:
@@ -103,6 +104,7 @@ class VoskWakeWordDetector:
                 set_words(True)
             self.last_candidate = None
             self._audio_seconds = 0.0
+            self._segment_samples = 0
             self._partial_started = None
             self._reset_diagnostics()
 
@@ -138,6 +140,7 @@ class VoskWakeWordDetector:
             for offset in range(0, audio.size, 1600):
                 part = audio[offset:offset + 1600]
                 self._audio_seconds += part.size / self.sample_rate
+                self._segment_samples += part.size
                 pcm = np.rint(part * 32767).astype("<i2").tobytes()
                 if self._recognizer.AcceptWaveform(pcm):
                     raw = self._recognizer.Result()
@@ -148,7 +151,9 @@ class VoskWakeWordDetector:
                                    and math.isfinite(word["conf"]) and 0 <= word["conf"] <= 1]
                     score = sum(confidences) / len(confidences) if confidences else None
                     candidate = VoskCandidate(score, "word_confidence_mean" if score is not None else "unavailable",
-                                              phrase_verified=detected)
+                                              phrase_verified=detected,
+                                              segment_lookback_samples=self._segment_samples + audio.size - offset - part.size)
+                    self._segment_samples = 0
                     self._partial_started = None
                     if detected:
                         self.reset()
@@ -163,7 +168,10 @@ class VoskWakeWordDetector:
                     elif self._partial_started is None:
                         self._partial_started = self._audio_seconds
                     elif self._audio_seconds - self._partial_started >= self._stable_partial_s:
+                        candidate = VoskCandidate(None, "unavailable",
+                                                  segment_lookback_samples=self._segment_samples + audio.size - offset - part.size)
                         self.reset()
+                        self.last_candidate = candidate
                         return True
             if self._diagnostic_start is not None:
                 ended = time.monotonic()

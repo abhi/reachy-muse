@@ -141,6 +141,18 @@ def test_duplex_wake_during_unrelated_known_output_requires_verification():
     asyncio.run(run())
 
 
+def test_split_playback_echo_cannot_be_authorized_by_an_exact_verifier_match():
+    async def run():
+        local, detector = Local("Hey, Muse!"), Detector()
+        policy = WakePolicy(WakeVerifier(local=local))
+        context = WakeContext(speaking=True, playback=("Hey,", "Muse is here."))
+        assert await policy.feed(detector, np.full(1600, .1), context=context) is False
+        assert policy.last_decision.reason == "echo"
+        assert local.received == []
+        assert detector.aligned == 0
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("strong, expected, reason", [(True, True, "accepted"), (False, False, "below_threshold")])
 def test_companion_down_requires_conservative_replay(strong, expected, reason):
     async def run():
