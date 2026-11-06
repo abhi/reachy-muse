@@ -111,7 +111,10 @@ def test_cooldown_survives_disable_and_enable_and_cue_is_consumed_once(immediate
         watcher.start()
         watcher.set_active(True)
         until(watcher.take_wave)
+        assert watcher.wave_position == pytest.approx(
+            ((BOX.x + BOX.width / 2) * 160, (BOX.y + BOX.height / 2) * 120))
         assert watcher.take_wave() is False
+        assert watcher.wave_position is None
         assert inferences == [.25, 1.5]
         assert reads == [.25, .5, .75, 1.0, 1.25, 1.5]
         watcher.set_active(False)
@@ -151,6 +154,7 @@ def test_old_cue_expires_instead_of_waking_a_later_conversation(immediate_motion
         time.sleep(.02)
         now[0] += .76
         assert watcher.take_wave() is False
+        assert watcher.wave_position is None
         assert watcher.take_wave() is False
     finally:
         watcher.close()

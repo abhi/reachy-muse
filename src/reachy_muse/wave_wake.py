@@ -156,6 +156,7 @@ class WaveWatcher:
         self._active = self._closed = False
         self._thread = None
         self._pending = None
+        self.wave_position: tuple[float, float] | None = None
         self._cooldown_until = -math.inf
         self._failed = False
         self._idle_tick = False
@@ -183,6 +184,7 @@ class WaveWatcher:
                 return
             self._active = active
             self._pending = None
+            self.wave_position = None
             self._condition.notify_all()
         if not active:
             # The caller uses to_thread: wait off the audio loop before opening a call.
@@ -194,9 +196,13 @@ class WaveWatcher:
 
     def take_wave(self) -> bool:
         with self._condition:
-            at, self._pending = self._pending, None
-            return (self._active and not self._closed and at is not None
-                    and 0 <= self._clock() - at <= .75 and self._is_still())
+            pending, self._pending = self._pending, None
+            self.wave_position = None
+            if (self._active and not self._closed and pending is not None
+                    and 0 <= self._clock() - pending[0] <= .75 and self._is_still()):
+                self.wave_position = pending[1]
+                return True
+            return False
 
     def close(self, timeout=2.0):
         self.set_active(False)
@@ -251,7 +257,11 @@ class WaveWatcher:
             if detected and self._confirmations >= 2:
                 with self._condition:
                     if self._active and self._is_still():
-                        self._pending = self._clock()
+                        box = self._boxes[0]
+                        height, width = frame.shape[:2]
+                        position = ((box.x + box.width / 2) * width,
+                                    (box.y + box.height / 2) * height)
+                        self._pending = (self._clock(), position)
                         self._cooldown_until = self._clock() + 15
                         self._stats.cues += 1
                 self._reset()
@@ -291,4 +301,5 @@ class WaveWatcher:
                 self._failed = True
                 self._active = False
                 self._pending = None
+                self.wave_position = None
             log.warning("Wave stats failures=1")

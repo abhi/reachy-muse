@@ -2,11 +2,16 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import math
 import threading
 import time
+from types import SimpleNamespace
 
-from test_hardware import FakeRobot, start_controller
+import pytest
+
+from test_hardware import FakeRobot, np, pose_factory, start_controller
 from reachy_muse.arrival import WatchPose
+from reachy_muse.hardware import ReachyController
 from reachy_muse import cli
 
 
@@ -92,3 +97,29 @@ def test_wave_can_authorize_realtime_without_an_acoustic_model(monkeypatch):
     monkeypatch.setattr("reachy_muse.realtime_call.realtime_supported", lambda: True)
     args = cli.parser().parse_args(["run", "--mode", "on-robot", "--muse-path", "realtime", "--wave-wake"])
     assert cli.realtime_path(args) == "realtime"
+
+
+@pytest.mark.parametrize("x, yaw, expected", [(160, 0, 45), (480, 0, 135), (320, 20, 70)])
+def test_wave_bearing_uses_current_head_pose_and_survives_camera_drain(x, yaw, expected):
+    controller = ReachyController(wave_wake=True)
+    controller._np, controller._robot = np, FakeRobot()
+    controller._robot.pose = pose_factory(yaw=yaw)
+    controller._robot.media.camera = SimpleNamespace(
+        K=np.array([[160., 0, 320], [0, 160, 240], [0, 0, 1]]))
+
+    class Watcher:
+        wave_position = (x, 240)
+
+        def take_wave(self):
+            return True
+
+        def set_active(self, active):
+            self.wave_position = None
+
+    controller._wave_watcher = Watcher()
+    assert controller.take_wave() is True
+    controller.set_wave_watching(False)
+    assert controller.claim_wave() is True
+    assert controller.wave_direction == pytest.approx(math.radians(expected))
+    assert controller.claim_wave() is False
+    assert controller.wave_direction is None

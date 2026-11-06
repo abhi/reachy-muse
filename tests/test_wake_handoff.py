@@ -87,7 +87,7 @@ def handoff(monkeypatch):
             return True
 
     async def scenario(run, *, trusted=True, invalid=None, recognized=None, pause_asr=False, delayed=False,
-                       speech=None):
+                       speech=None, hardware=None):
         incoming = asyncio.Queue()
         accepted = asyncio.Event()
         consumer_ready = asyncio.Event()
@@ -115,7 +115,7 @@ def handoff(monkeypatch):
         monkeypatch.setattr(voice_audio, "TurnRecorder", Recorder)
         session = FakeSession(send_hook=request)
         session.chat_subscribed.set()
-        hardware = FakeHardware()
+        hardware = hardware or FakeHardware()
         wake = Wake(trusted=trusted, invalid=invalid, delayed=delayed)
         recognition = Recognition()
         conversation = VoiceConversation(session, hardware,
