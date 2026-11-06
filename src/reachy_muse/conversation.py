@@ -1349,6 +1349,8 @@ class VoiceConversation:
                 await watch_wave(wave_eligible)
                 if self.wave_wake and wave_eligible and self.hardware.take_wave():
                     await watch_wave(False)
+                    if not self.hardware.claim_wave():
+                        continue
                     asleep = self._wake_window is WakeWindow.ASLEEP
                     wake_epoch += 1
                     await self._admit_wake(time.monotonic(), strip_required=False)
@@ -1510,10 +1512,11 @@ class VoiceConversation:
         from reachy_muse.hardware import ReachyHardwareError
         last_sample = time.monotonic()
         previous_duration = None
+        generation = capture.generation
+        draining = False
         try:
             while True:
                 muted_at_start = self._input_blocked()
-                generation = capture.generation
                 read = asyncio.create_task(asyncio.to_thread(self.hardware.read_audio))
                 try:
                     sample = await asyncio.shield(read)
@@ -1522,8 +1525,12 @@ class VoiceConversation:
                     raise
                 now = time.monotonic()
                 if generation != capture.generation:
-                    continue
+                    generation = capture.generation
+                    draining = True
+                    previous_duration = None
                 if sample is None or not len(sample):
+                    if sample is None:
+                        draining = False
                     if now - last_sample > 15:
                         raise ReachyHardwareError("Reachy microphone supplied no audio for 15 seconds")
                     await asyncio.sleep(.002)
@@ -1533,6 +1540,8 @@ class VoiceConversation:
                 gap = previous_duration is not None and now - last_sample > max(duration, previous_duration) + .25
                 previous_duration = duration
                 last_sample = now
+                if draining:
+                    continue
                 capture.push(sample, discard=muted_at_start or self._input_blocked(), gap=gap,
                              gap_reason="SDK read or capture scheduling stall" if gap else None)
         except asyncio.CancelledError:

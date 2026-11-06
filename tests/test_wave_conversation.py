@@ -12,9 +12,11 @@ class WaveCamera:
     def __init__(self, hardware):
         self.active = False
         self.pending = False
+        self.claimable = False
         self.transitions = []
         hardware.set_wave_watching = self.set_active
         hardware.take_wave = self.take
+        hardware.claim_wave = self.claim
 
     def set_active(self, active):
         if active != self.active:
@@ -25,6 +27,11 @@ class WaveCamera:
 
     def take(self):
         result, self.pending = self.active and self.pending, False
+        self.claimable = result
+        return result
+
+    def claim(self):
+        result, self.claimable = self.claimable, False
         return result
 
 
@@ -145,6 +152,63 @@ def test_pre_wave_in_flight_microphone_read_is_discarded():
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("post_wave_speech", [False, True])
+def test_wave_discards_sdk_backlog_before_recognition(monkeypatch, post_wave_speech):
+    import io
+    import threading
+    import wave
+    import numpy as np
+
+    rig = rig_with(monkeypatch)
+    camera = WaveCamera(rig.hardware)
+    entered, release, drained = threading.Event(), threading.Event(), threading.Event()
+    original_read = rig.hardware.read_audio
+    heard = []
+
+    def read():
+        sample = original_read()
+        if sample is not None and not entered.is_set():
+            entered.set()
+            assert release.wait(5)
+        if sample is None and release.is_set():
+            drained.set()
+        return sample
+
+    class Recognizer:
+        async def transcribe(self, wav):
+            with wave.open(io.BytesIO(wav), "rb") as audio:
+                pcm = np.frombuffer(audio.readframes(audio.getnframes()), dtype="<i2")
+            values = np.unique(pcm[pcm != 0]).tolist()
+            heard.append(values)
+            return "Post-wave speech." if values == [16384] else "Pre-wave speech."
+
+    async def muse(session, request):
+        await session.answer(request, "Received.")
+
+    rig.hardware.read_audio = read
+    conversation = service(rig, muse, Recognizer(), wave_wake=True, wake_timeout_s=30)
+
+    async def user():
+        rig.say()
+        assert await asyncio.to_thread(entered.wait, 2)
+        camera.pending = True
+        await rig.wait_until_or_timeout(lambda: "tts:Yes?" in played(rig.recording.events))
+        await rig.quiet("listening", "idle")
+        release.set()
+        assert await asyncio.to_thread(drained.wait, 2)
+        await rig.quiet("listening", "idle")
+        if post_wave_speech:
+            for value in [.5] * 25 + [0] * 25:
+                rig.hardware.samples.put(np.full(320, value, dtype=np.float32))
+
+    try:
+        events = run(rig, conversation, user, rest=("listening", "idle"))
+    finally:
+        release.set()
+    assert heard == ([[16384]] if post_wave_speech else [])
+    assert sent_to_muse(events) == (["Post-wave speech."] if post_wave_speech else [])
+
+
 def test_cancelling_during_wave_activation_drains_and_disables_the_camera():
     import threading
     from reachy_muse.conversation import VoiceConversation
@@ -187,6 +251,79 @@ def test_cancelling_during_wave_activation_drains_and_disables_the_camera():
             await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("muse_path", ["chat", "realtime"])
+def test_arrival_watching_invalidates_a_wave_during_camera_drain(monkeypatch, muse_path):
+    import threading
+    from reachy_muse.arrival import WatchPose
+    from reachy_muse.hardware import ReachyController
+    from reachy_muse.realtime_call import realtime_supported
+    from test_hardware import FakeRobot, FakeWatcher
+    from test_realtime_turns import ScriptedCalls
+
+    if muse_path == "realtime" and not realtime_supported():
+        pytest.skip("the Muse SDK has no voice call events")
+    rig = rig_with(monkeypatch)
+    camera = WaveCamera(rig.hardware)
+    consumed, draining, release = threading.Event(), threading.Event(), threading.Event()
+    controller = ReachyController(wave_wake=True)
+    controller._robot = FakeRobot()
+    controller._arrival_watcher = arrival = FakeWatcher(None, None, None)
+
+    class Watcher:
+        def set_active(self, active):
+            camera.set_active(active)
+            if not active and consumed.is_set() and not draining.is_set():
+                draining.set()
+                assert release.wait(5)
+
+        def take_wave(self):
+            wave = camera.take()
+            if wave:
+                consumed.set()
+            return wave
+
+        def close(self):
+            pass
+
+    controller._wave_watcher = Watcher()
+    rig.hardware.set_wave_watching = controller.set_wave_watching
+    rig.hardware.take_wave = controller.take_wave
+    rig.hardware.claim_wave = lambda: controller.claim_wave()
+    calls = ScriptedCalls()
+    transcripts = Transcripts("Uninvited speech.")
+
+    async def muse(session, request):
+        await session.answer(request, "Received.")
+
+    options = {"voice_link": calls.link, "voice_call": calls} if muse_path == "realtime" else {}
+    conversation = service(rig, muse, transcripts, wave_wake=True, wake_timeout_s=30,
+                           muse_path=muse_path, **options)
+
+    async def user():
+        camera.pending = True
+        assert await asyncio.to_thread(draining.wait, 2)
+        watching = asyncio.create_task(asyncio.to_thread(controller.start_watching, WatchPose()))
+        try:
+            await rig.wait_until_or_timeout(lambda: controller._watching)
+            assert controller._watching is True
+        finally:
+            release.set()
+            await watching
+        await rig.quiet("idle", "listening")
+        rig.say()
+
+    try:
+        events = run(rig, conversation, user, rest=("idle", "listening"))
+        assert arrival.watching == [True]
+    finally:
+        release.set()
+        controller.close()
+    assert played(events) == []
+    assert sent_to_muse(events) == []
+    assert calls.opened == []
+    assert transcripts.texts == ["Uninvited speech."]
 
 
 def test_wave_opens_realtime_after_camera_suspension_and_stays_suspended(monkeypatch):

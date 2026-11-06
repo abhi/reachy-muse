@@ -231,6 +231,7 @@ class ReachyController:
         self._arrival_watcher = None
         self._wave_enabled = wave_wake
         self._wave_watching = False
+        self._wave_pending = False
         self._wave_watcher_factory = wave_watcher_factory
         self._wave_watcher = None
         self._wave_lock = threading.Lock()
@@ -639,7 +640,9 @@ class ReachyController:
                   for axis, value in requested.items()}
         if angles != requested:
             log.info("Watch pose limited to yaw %.0f, pitch %.0f degrees", angles["yaw"], angles["pitch"])
-        self._watching = True
+        with self._state_lock:
+            self._watching = True
+            self._wave_pending = False
         self.set_wave_watching(False)
         self._turn_watch(angles, 1.0)
         failed = self._arrival_watcher
@@ -652,7 +655,8 @@ class ReachyController:
             watcher.set_watching(True)
 
     def stop_watching(self) -> None:
-        self._watching = False
+        with self._state_lock:
+            self._watching = False
         self._turn_watch(None, 0.0)
         if self._arrival_watcher is not None:
             self._arrival_watcher.set_watching(False)
@@ -814,8 +818,15 @@ class ReachyController:
             self._wave_watching = active
 
     def take_wave(self) -> bool:
-        return (not self._watching and self._wave_watcher is not None
-                and self._wave_watcher.take_wave())
+        with self._state_lock:
+            self._wave_pending = (not self._watching and self._wave_watcher is not None
+                                  and self._wave_watcher.take_wave())
+            return self._wave_pending
+
+    def claim_wave(self) -> bool:
+        with self._state_lock:
+            pending, self._wave_pending = self._wave_pending, False
+            return pending and not self._watching and not self._stop.is_set()
 
     def close(self) -> None:
         self._stop.set()
