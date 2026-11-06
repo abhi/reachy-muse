@@ -1944,6 +1944,43 @@ def wait_until(condition, timeout=3.0):
         time.sleep(.005)
 
 
+def test_wave_watching_detects_with_default_idle_breathing_and_restores_it_afterward():
+    from bench.wave import FPS, clip
+    from reachy_muse.wave_wake import WaveWatcher
+
+    robot = FakeRobot()
+    gesture = list(clip("wave", 1001, seconds=3))
+    frames = [next(clip("still", 1001))] * (2 * FPS) + gesture
+    started = []
+    boxes = []
+
+    def read():
+        if not started:
+            started.append(time.monotonic())
+        index = int((time.monotonic() - started[0]) * FPS)
+        _, frame, people = frames[min(index, len(frames) - 1)]
+        boxes[:] = people
+        return frame
+
+    class People:
+        def detect(self, frame):
+            return list(boxes)
+
+    robot.media.get_frame = read
+    controller = start_controller(robot, wave_wake=True, wave_watcher_factory=lambda *args:
+                                  WaveWatcher(*args, detector_factory=lambda _: People()))
+    try:
+        controller.set_wave_watching(True)
+        wait_until(controller.take_wave, timeout=12)
+        assert controller.take_wave() is False
+        controller.set_wave_watching(False)
+        resumed = time.monotonic()
+        time.sleep(2.5)
+        assert antenna_spread(frames_between(robot, resumed + .5, resumed + 2.5)) > 25
+    finally:
+        controller.close()
+
+
 def test_camera_is_still_only_while_resting_without_a_gesture_or_speech():
     robot = FakeRobot()
     controller, watchers = watched_controller(robot)

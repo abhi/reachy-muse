@@ -137,6 +137,20 @@ class FakeCamera:
         return self.watching_since + self.arrive_after_s
 
 
+@pytest.fixture(autouse=True)
+def virtual_camera_executor(monkeypatch):
+    run_in_executor = asyncio.BaseEventLoop.run_in_executor
+
+    def submit(loop, executor, function, *args):
+        if isinstance(getattr(function, "__self__", None), FakeCamera):
+            result = loop.create_future()
+            result.set_result(function(*args))
+            return result
+        return run_in_executor(loop, executor, function, *args)
+
+    monkeypatch.setattr(asyncio.BaseEventLoop, "run_in_executor", submit)
+
+
 class FakeVoice:
     def __init__(self, clock, *answers):
         self.clock = clock
@@ -573,3 +587,73 @@ def test_camera_opens_offline_logs_each_minute_and_closes_at_the_window_boundary
     assert [record.getMessage() for record in caplog.records] == [
         "Arrival watcher started: window opened",
         "Arrival watcher stopped: window closed"]
+
+
+@pytest.mark.parametrize("cancel_start", [False, True])
+def test_camera_priority_transition_keeps_the_asyncio_loop_responsive(cancel_start):
+    import threading
+    from reachy_muse.hardware import ReachyController
+    from reachy_muse.wave_wake import WaveWatcher
+    from test_hardware import FakeRobot, FakeWatcher
+
+    async def check():
+        entered, release, loaded = threading.Event(), threading.Event(), threading.Event()
+
+        def load(_):
+            entered.set()
+            release.wait(.35)
+            loaded.set()
+            return object()
+
+        camera = ReachyController(wave_wake=True, wave_watcher_factory=lambda *args:
+                                 WaveWatcher(*args, detector_factory=load))
+        camera._robot = FakeRobot()
+        arrival = FakeWatcher(None, None, None)
+        arrival.seen_at = 1.0
+        camera._arrival_watcher = arrival
+        camera.set_wave_watching(True)
+        task = briefing = None
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            routine = MorningRoutine(WINDOW, "Brief me.", camera, DayLedger(None),
+                                     clock=FakeClock(SATURDAY), poll_s=.01)
+            voice = FakeVoice(routine.clock, (600, BRIEFING))
+            task = asyncio.create_task(routine.watch_camera(), name="camera")
+            briefing = asyncio.create_task(routine.run(voice))
+            await asyncio.sleep(.01)
+            heartbeat_during_load = not loaded.is_set()
+            arrival_before_release = list(arrival.watching)
+            greetings_before_release = [entry[0] for entry in voice.said if entry[0] == "greet"]
+            if cancel_start:
+                task.cancel()
+                await asyncio.sleep(.01)
+                cleanup_finished_early = task.done()
+            release.set()
+            async def started():
+                while not arrival.watching:
+                    await asyncio.sleep(.001)
+
+            assert heartbeat_during_load is True
+            assert arrival_before_release == []
+            assert greetings_before_release == []
+            if cancel_start:
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                assert cleanup_finished_early is False
+                assert arrival.watching == [True, False]
+                assert camera._watching is False
+            else:
+                await asyncio.wait_for(started(), 2)
+                assert arrival.watching == [True]
+            assert camera._wave_watcher.take_wave() is False
+        finally:
+            release.set()
+            if briefing is not None:
+                briefing.cancel()
+                await asyncio.gather(briefing, return_exceptions=True)
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            camera.close()
+
+    asyncio.run(check())

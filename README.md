@@ -22,6 +22,13 @@ In `on-robot` and `companion` modes, the robot handles requests about itself wit
 After "go to sleep", Reachy bows its head and folds its antennas. "Hey Muse" wakes it: the head lifts and the antennas unfold over one second. Said alone, "Hey Muse" gets "I'm awake."; a question in the same breath goes straight to Muse.
 In `companion` mode, the Mac's narrator model also recognizes paraphrases such as "could you quiet down a little".
 
+Add `--wave-wake` in `on-robot` or `companion` mode to also wake Reachy with a
+raised hand moving side to side for about 1-3 seconds. It works with or without
+`--wake-model`, opens the same microphone window, and has a 15-second cooldown.
+Frames stay on the robot. Detection pauses during conversations and morning
+arrival watching. Keep screens showing people outside its view: a video of a
+waving person can also trigger it. See [wave measurements and limitations](bench/wave.md).
+
 ## Install on the robot
 
 reachy-muse needs Python 3.10 or later. The robot's own environment uses Python 3.12.

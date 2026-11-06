@@ -211,6 +211,7 @@ class MorningRoutine:
 
     async def watch_camera(self) -> None:
         diagnostics_at = self.clock.monotonic() + 60
+        starting = None
         try:
             while True:
                 day = self.schedule.window_date(self.clock.now_local())
@@ -222,11 +223,14 @@ class MorningRoutine:
                     if self._camera_day is not None:
                         self.camera.stop_watching()
                         log.info("Arrival watcher stopped: %s", reason)
-                    self._camera_day = day
                     if day is not None:
-                        self.camera.start_watching(self.pose)
+                        starting = asyncio.get_running_loop().run_in_executor(
+                            None, self.camera.start_watching, self.pose)
+                        await asyncio.shield(starting)
+                        starting = None
                         diagnostics_at = self.clock.monotonic() + 60
                         log.info("Arrival watcher started: window opened")
+                    self._camera_day = day
                 if day is not None and self.clock.monotonic() >= diagnostics_at:
                     self.camera.log_arrival_diagnostics()
                     diagnostics_at = self.clock.monotonic() + 60
@@ -235,7 +239,9 @@ class MorningRoutine:
             log.warning("Arrival watcher supervision failed: %s", type(exc).__name__)
             raise
         finally:
-            if self._camera_day is not None:
+            if starting is not None:
+                await asyncio.gather(starting, return_exceptions=True)
+            if starting is not None or self._camera_day is not None:
                 self.camera.stop_watching()
                 self._camera_day = None
                 log.info("Arrival watcher stopped: service shutdown")
