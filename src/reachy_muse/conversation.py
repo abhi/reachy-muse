@@ -21,11 +21,10 @@ from enum import Enum
 from functools import partial
 from typing import Awaitable, Callable
 
-from reachy_muse import __version__
 from reachy_muse import expression_plan as plan
 from musegadget.link_client import DeviceDescription, LinkSession, Outcome, acknowledgement
 from musegadget.muse_turn import AgentStatus, MuseTurn, ReplayScope, Reply, TaskFinished, TurnEvent
-from reachy_muse.contract.commands import COMMAND_SPECS, parse_command
+from reachy_muse.contract.commands import parse_command
 from reachy_muse.contract.expressions import Expression
 from reachy_muse.contract.prompts import STOP_REQUEST, muse_request
 from reachy_muse.contract.replies import (ReplyProtocolError, ReplyRevisionError, ReplyStyle, SentenceStream,
@@ -42,6 +41,7 @@ from reachy_muse.motion.moments import Moment, MomentDirector
 from reachy_muse.motion.sentence import classify_sentence
 from reachy_muse.progress import BackendStatus, ProgressPlan, ProgressUpdate, backend_status_from_event
 from reachy_muse.pairing import PairedService
+from reachy_muse.registration import reachy_description
 from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlayback
 from reachy_muse.local_speech import PreparedSpeech, SpeechRestart
 from reachy_muse.turn_timeline import TurnTimeline
@@ -2560,7 +2560,7 @@ class ReachyService(PairedService):
             raise self._hardware_error
 
     def describe(self) -> DeviceDescription:
-        return DeviceDescription(self.identity.node_id, "Reachy Mini", __version__, COMMAND_SPECS)
+        return reachy_description(self.identity.node_id)
 
     def run_command(self, name: str, params: dict, timeout_ms: int | None = None, *,
                     session: LinkSession | None = None) -> dict:

@@ -66,10 +66,12 @@ COMMAND_SPECS = {
     },
     "reachy.expression": {
         "description": (
-            "Express an emotion with Reachy Mini. Built-in names: neutral, happy, "
-            "sad, surprised, curious, nod, shake, listening, thinking, error. "
-            "Any other name must exactly match a recorded emotion on the robot. "
-            "No sound effect is played, so this can accompany Muse speech."
+            "Show a deliberate gesture or feeling on Reachy Mini now, also during a voice call while "
+            "you speak: nod for yes, shake for no, or neutral, happy, sad, surprised, curious, "
+            "listening, thinking, error. Reachy already animates its own speech, so use this only "
+            "when the gesture means something; it takes over while it plays, then Reachy's own "
+            "motion resumes. Any other name must exactly match a recorded emotion on the robot. "
+            "No sound effect is played."
         ),
         "required": {"name": {"type": "string", "description": "Expression name."}},
         "optional": {
@@ -80,10 +82,11 @@ COMMAND_SPECS = {
     },
     "reachy.move": {
         "description": (
-            "Move Reachy Mini smoothly. Head translation uses millimeters; "
-            "rotation and antenna positions use degrees. Commands are bounded "
-            "and serialized with expressions. Omitted coordinates keep their "
-            "current position."
+            "Move Reachy Mini's head, antennas or body smoothly, also during a voice call while you "
+            "speak, for example to look at the user (pitch -5, yaw 0) or toward something. Head "
+            "translation uses millimeters; rotation and antenna positions use degrees. Commands are "
+            "bounded and serialized with expressions. Omitted coordinates keep their current "
+            "position. Reachy's own speech motion resumes afterwards."
         ),
         "required": {},
         "optional": {

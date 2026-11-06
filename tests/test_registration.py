@@ -20,9 +20,9 @@ def test_exact_sdk_registration_and_byte_budget():
     assert set(commands) == {"reachy.say", "reachy.presence", "reachy.expression", "reachy.move"}
     assert REACHY_PERSONA in commands["reachy.say"]["description"]
     assert {name: len(spec["description"].encode("utf-8")) for name, spec in commands.items()} == {
-        "reachy.say": 1439, "reachy.presence": 499, "reachy.expression": 262, "reachy.move": 208,
+        "reachy.say": 1439, "reachy.presence": 499, "reachy.expression": 446, "reachy.move": 393,
     }
     wire = encode_message(message)
-    assert int.from_bytes(wire[:4], "little") == len(wire[4:]) == 4176
-    assert len(wire) == 4180
+    assert int.from_bytes(wire[:4], "little") == len(wire[4:]) == 4545
+    assert len(wire) == 4549
     assert len(wire) < 8192

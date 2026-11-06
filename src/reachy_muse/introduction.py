@@ -15,14 +15,13 @@ from pathlib import Path
 import time
 
 from musegadget import config, identity, muse_api
-from musegadget.link_client import DeviceDescription, LinkSession, acknowledgement
+from musegadget.link_client import LinkSession, acknowledgement
 from musegadget.muse_turn import MuseTurn
 from musegadget.service import DEFAULT_NOISE_HOST
 
-from reachy_muse import __version__
-from reachy_muse.contract.commands import COMMAND_SPECS
 from reachy_muse.contract.prompts import REACHY_INTRODUCTION
 from reachy_muse.pairing import PairedService
+from reachy_muse.registration import reachy_description
 
 
 INTRODUCTION_VERSION = hashlib.sha256(REACHY_INTRODUCTION.encode("utf-8")).hexdigest()
@@ -233,7 +232,7 @@ async def introduce_paired(*, confirm: Callable[[], bool] | None = None) -> None
         session = LinkSession(
             noise_host=pairing.get("noise_host") or DEFAULT_NOISE_HOST,
             vm_id=vm_id, vm_auth_token=vm["vm_auth_token"],
-            device=DeviceDescription(ident.node_id, "Reachy Mini", __version__, COMMAND_SPECS),
+            device=reachy_description(ident.node_id),
             register_device=False,
             run_command=lambda *args: {"ok": False, "error": "Reachy is not running"})
         stop = asyncio.Event()
