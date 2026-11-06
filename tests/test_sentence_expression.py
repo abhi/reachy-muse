@@ -74,6 +74,30 @@ def test_direction_can_find_a_following_subject_in_its_own_clause(text, expected
 
 
 @pytest.mark.parametrize("text, expected", [
+    ("Traffic deaths were reported, while inflation fell.", Expression.NEUTRAL),
+    ("Traffic deaths were reported, while temperatures fell.", Expression.SAD),
+    ("Traffic deaths were reported, while infection deaths fell.", Expression.NEUTRAL),
+    ("Traffic deaths fell, while infection deaths were reported.", Expression.NEUTRAL),
+    ("Traffic deaths fell this year.", Expression.HAPPY),
+    ("A drop in traffic deaths.", Expression.HAPPY),
+])
+def test_decline_only_suppresses_its_own_adverse_subject(text, expected):
+    assert classify_sentence(text) == SentenceMotion(expected)
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("We have enough information to answer.", Expression.NEUTRAL),
+    ("We don't have enough information to answer.", Expression.THINKING),
+    ("We do not have enough information to answer.", Expression.THINKING),
+    ("There is enough information to be certain.", Expression.NEUTRAL),
+    ("There isn't enough information to be certain.", Expression.THINKING),
+    ("There is not enough information to be certain.", Expression.THINKING),
+])
+def test_enough_information_is_uncertain_only_when_negated(text, expected):
+    assert classify_sentence(text) == SentenceMotion(expected)
+
+
+@pytest.mark.parametrize("text, expected", [
     ("This is not an unexpected discovery.", Expression.NEUTRAL),
     ("The result is not uncertain.", Expression.NEUTRAL),
     ("Do not tell me more about the file.", Expression.NEUTRAL),

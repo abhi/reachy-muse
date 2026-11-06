@@ -51,7 +51,8 @@ _PHRASES = {
     Expression.SURPRISED: ("who would have expected", "than anyone expected", "unexpected discovery"),
     Expression.THINKING: ("not sure", "don't know", "uncertain", "unclear", "perhaps", "maybe",
                           "unconfirmed", "too early to tell", "can't verify", "it depends",
-                          "enough information", "tentative", "unsure", "inconclusive", "missing some context"),
+                          "not enough information", "isn't enough information", "don't have enough information",
+                          "not have enough information", "tentative", "unsure", "inconclusive", "missing some context"),
     Expression.CURIOUS: ("tell me more", "like to hear how"),
     Expression.NOD: ("try", "you could", "i'd suggest", "remember to", "make sure", "my advice",
                      "consider", "it may help", "take your time", "let's break", "you should",
@@ -93,10 +94,8 @@ def classify_sentence(text: str, hint: Expression | None = None) -> SentenceMoti
     literal = ("great depression" in folded or "great recession" in folded
                or folded.startswith(("the word ", "word ")) and " is " in folded
                or (" whether " in folded or folded.startswith("if ")) and " would " in folded)
-    sad_words = words & _SAD
-    if words & _DOWN:
-        sad_words -= _HARM
-    sad = bool(sad_words) and not literal
+    sad_indices = {index for index, word in enumerate(tokens) if active[index] and word in _SAD}
+    sad = False
     happy = bool(words & _HAPPY) and not literal
     for matches, target in ((phrases[Expression.SAD], "sad"), (phrases[Expression.HAPPY], "happy")):
         for match in matches:
@@ -110,23 +109,27 @@ def classify_sentence(text: str, hint: Expression | None = None) -> SentenceMoti
         if not active[index] or word not in _DIRECTION or literal:
             continue
         # Do not borrow the subject across a comma or contrast clause.
-        left = tokens[max(0, index - 5):index]
-        for boundary in _BOUNDARIES:
-            if boundary in left:
-                left = left[len(left) - left[::-1].index(boundary):]
-        subject = next((token for token in reversed(left) if token in _SUBJECTS), None)
-        if subject is None:
-            right = tokens[index + 1:index + 4]
-            for boundary in _BOUNDARIES:
-                if boundary in right:
-                    right = right[:right.index(boundary)]
-            subject = next((token for token in right if token in _SUBJECTS), None)
+        subject_index = None
+        for neighbors in (range(index - 1, max(-1, index - 6), -1),
+                          range(index + 1, min(len(tokens), index + 4))):
+            for candidate in neighbors:
+                if tokens[candidate] in _BOUNDARIES:
+                    break
+                if tokens[candidate] in _SUBJECTS:
+                    subject_index = candidate
+                    break
+            if subject_index is not None:
+                break
+        subject = tokens[subject_index] if subject_index is not None else None
         if subject in _HARM:
             sad |= word in _UP
             happy |= word in _DOWN
+            if word in _DOWN:
+                sad_indices.discard(subject_index)
         elif subject in _MARKET:
             happy |= word in _UP
             sad |= word in _DOWN
+    sad |= bool(sad_indices) and not literal
     if sad and happy:
         expression = Expression.NEUTRAL
     elif sad:
