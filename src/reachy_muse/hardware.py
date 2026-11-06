@@ -23,10 +23,12 @@ Neither replaces this driver's primary poses.
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import math
 import queue
+import socket
 import threading
 import time
 import urllib.request
@@ -51,6 +53,8 @@ log = logging.getLogger(__name__)
 EMOTIONS_DATASET = "pollen-robotics/reachy-mini-emotions-library"
 STATES = frozenset({"idle", "listening", "thinking", "speaking", "error", "sleeping"})
 VOLUME_TIMEOUT_S = 1.0
+_DOA_TIMEOUT_S = .1
+_DOA_RESPONSE_BYTES = 4096
 BUILTIN_EXPRESSIONS = frozenset({
     "neutral", "happy", "sad", "surprised", "curious", "nod", "shake",
     "listening", "thinking", "error",
@@ -343,20 +347,51 @@ class ReachyController:
             return None
 
     def read_doa(self) -> DoAReading | None:
-        """Read array geometry only; missing arrays and older daemons are optional."""
-        base = f"http://{self._connect_options['host']}:{self._connect_options['port']}"
+        """Read world geometry only; missing arrays and older daemons are optional."""
+        if self._robot is None:
+            return None
+        connection = http.client.HTTPConnection(self._connect_options["host"], self._connect_options["port"],
+                                                timeout=_DOA_TIMEOUT_S)
+        started = time.monotonic()
         try:
-            with urllib.request.urlopen(f"{base}/api/state/doa", timeout=.1) as response:
-                info = json.load(response)
+            pose = self._robot.get_current_head_pose().copy()
+            connection.connect()
+            remaining = _DOA_TIMEOUT_S - (time.monotonic() - started)
+            if remaining <= 0:
+                return None
+            sock = connection.sock
+
+            def expire():
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+            deadline = threading.Timer(remaining, expire)
+            deadline.daemon = True
+            deadline.start()
+            try:
+                connection.request("GET", "/api/state/doa")
+                with connection.getresponse() as response:
+                    payload = response.read(_DOA_RESPONSE_BYTES + 1)
+                    if (response.status != 200 or len(payload) > _DOA_RESPONSE_BYTES
+                            or time.monotonic() - started >= _DOA_TIMEOUT_S):
+                        return None
+                info = json.loads(payload)
+            finally:
+                deadline.cancel()
             if not isinstance(info, dict):
                 return None
             angle, speech = info.get("angle"), info.get("speech_detected")
             if (isinstance(angle, bool) or not isinstance(angle, (int, float))
                     or not math.isfinite(angle) or not 0 <= angle <= math.pi or not isinstance(speech, bool)):
                 return None
-            return DoAReading(float(angle), speech)
-        except (OSError, ValueError, TypeError):
+            direction = pose[:3, :3] @ [math.sin(angle), math.cos(angle), 0.0]
+            return DoAReading(math.pi / 2 - math.atan2(direction[1], direction[0]), speech)
+        except (OSError, ValueError, TypeError, AssertionError, http.client.HTTPException):
             return None
+        finally:
+            connection.close()
 
     def look_at_speaker(self, angle: float) -> None:
         """Queue wake attention for the motion owner. An occupied motion is never interrupted."""
@@ -1142,8 +1177,10 @@ class ReachyController:
                     except queue.Empty:
                         pass
                 if request is not None or commanded:
-                    self._clear_speaker()
                     with self._state_lock:
+                        if request is not None:
+                            self._command_active = True
+                        self._speaker_pending = self._speaker_look = self._speaker_turn = None
                         self._sentences.cancel()
                         self._sentence_active = False
                         self._sentence_terminal = None
@@ -1158,8 +1195,6 @@ class ReachyController:
                     if self._face_follower is not None:
                         self._face_follower.set_active(False)
                     try:
-                        with self._state_lock:
-                            self._command_active = True
                         self._check_command(request)
                         result = {"ok": True, "payload": self._execute_motion(request)}
                     except Exception as exc:
@@ -1363,7 +1398,10 @@ class ReachyController:
                     break
             coordinates["pitch" if name == "nod" else "yaw"] += (8 if name == "nod" else 10) * wave
         for axis, limit in (("yaw", 20), ("pitch", 12), ("roll", 20)):
-            coordinates[axis] = max(-limit, min(limit, coordinates[axis]))
+            center = self._speaker_gaze if axis == "yaw" and self._speaker_look is not None else 0.0
+            low, high = POSE_LIMITS[axis]
+            low, high = max(low, center - limit), min(high, center + limit)
+            coordinates[axis] = max(low, min(high, coordinates[axis]))
         return self._head(**coordinates)
 
     def _state_pose(self, state: str, now: float, expression: str | None = None,

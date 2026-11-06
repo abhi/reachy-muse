@@ -435,13 +435,16 @@ recording and keeps the listening window open for a fresh question.
 
 While waiting for the wake phrase, Reachy also reads the daemon's microphone
 direction at `/api/state/doa`. Silence polls run at 5 Hz and speech polls at
-15 Hz, outside audio capture and the motion thread. A short ring stores only
-speech angles and monotonic times. Reachy's own output and echo tail invalidate
+15 Hz, outside audio capture and the motion thread. Each reading is transformed
+through the current head rotation into a world bearing. A short ring stores only
+speech bearings and monotonic times. Reachy's own output and echo tail invalidate
 the ring, including with echo-cancelled input. Capture gaps also clear it.
 At wake, capture timing bounds the estimate to the most recent speech segment
 within 1.5 seconds before the keyword boundary. A confident estimate needs at
 least three recent, consistent speech samples; its direction is their median.
-Missing or uncertain direction keeps the usual wake behavior.
+Missing or uncertain direction, including unverified keyword timing, keeps the
+usual wake behavior. Direction HTTP requests have a 0.1-second deadline and a
+4096-byte body limit. Microphone cleanup does not wait for an unfinished read.
 
 The wake gaze eases over 0.65 seconds alongside the greeting and the existing
 one-second sleep lift. Small angles turn the head; beyond 20 degrees the body

@@ -722,13 +722,13 @@ class VoiceConversation:
                 and (self._wake_deadline is None or now >= self._wake_deadline)
                 and not self._muted and now >= self._echo_until and not self._has_output())
 
-    def _attend_wake(self, phrase_end: float | None = None) -> None:
-        """Freeze attention before a wake greeting; shared with future nonverbal wake cues."""
+    def _attend_wake(self, phrase_end: float | None) -> None:
+        """Freeze attention at a verified keyword boundary before a wake greeting."""
         direction = self._wake_direction
         if direction is None:
             return
-        angle = (direction.estimate(time.monotonic() if phrase_end is None else phrase_end)
-                 if self._direction_eligible() else None)
+        angle = (direction.estimate(phrase_end)
+                 if phrase_end is not None and self._direction_eligible() else None)
         direction.clear()
         if angle is None:
             log.info("Wake direction decision=no_confidence")
@@ -1402,7 +1402,8 @@ class VoiceConversation:
                         detected, wake_tail = await detects_wake(sample)
                         if not detected:
                             continue
-                        self._attend_wake(captured.captured_at - (wake_tail or 0) / self.hardware.sample_rate)
+                        self._attend_wake(captured.captured_at - wake_tail / self.hardware.sample_rate
+                                          if wake_tail is not None else None)
                         self._say_hushed = False
                         wake_epoch += 1
                         self._wake_at = now

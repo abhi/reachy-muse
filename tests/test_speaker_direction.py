@@ -1,7 +1,6 @@
 """Offline wake direction estimates, with a scripted source and clock."""
 
 import asyncio
-import io
 import math
 import time
 from types import SimpleNamespace
@@ -10,46 +9,42 @@ import pytest
 
 from reachy_muse.hardware import ReachyController
 from reachy_muse.speaker_direction import DoAReading, WakeDirection, speaker_yaw
+from test_doa_http import doa_server
+from test_hardware import FakeRobot, pose_factory
 
 
 @pytest.mark.parametrize("angle, head, body", [
+    (-math.pi / 6, 35, 15), (7 * math.pi / 6, -35, -15),
     (0, 35, 15), (math.pi / 6, 35, 15), (math.pi / 3, 30, 10),
     (math.radians(80), 10, 0), (math.pi / 2, 0, 0),
     (2 * math.pi / 3, -30, -10), (math.pi, -35, -15),
 ])
-def test_array_direction_maps_to_absolute_sdk_yaw(angle, head, body):
+def test_world_direction_maps_to_absolute_sdk_yaw(angle, head, body):
     target = speaker_yaw(angle)
     assert (target.head, target.body) == pytest.approx((head, body))
 
 
-@pytest.mark.parametrize("angle", [True, None, "left", -0.1, 3.2, math.inf, math.nan])
+@pytest.mark.parametrize("angle", [True, None, "left", -1.6, 4.8, math.inf, math.nan])
 def test_invalid_directions_cannot_make_motor_targets(angle):
     with pytest.raises(ValueError, match="finite radians"):
         speaker_yaw(angle)
 
 
-def test_daemon_read_uses_controller_address_and_returns_only_geometry(monkeypatch):
-    requests = []
-
-    def read(url, *, timeout):
-        requests.append((url, timeout))
-        return io.StringIO('{"angle": 0.5, "speech_detected": true, "unused": "discard"}')
-
-    monkeypatch.setattr("reachy_muse.hardware.urllib.request.urlopen", read)
-    reading = ReachyController(host="daemon.invalid", port=8123).read_doa()
+def test_daemon_read_uses_controller_address_and_returns_only_geometry(doa_server):
+    controller, state = doa_server('{"angle": 0.5, "speech_detected": true, "unused": "discard"}')
+    reading = controller.read_doa()
     assert (reading.angle, reading.speech_detected) == (0.5, True)
-    assert requests == [("http://daemon.invalid:8123/api/state/doa", .1)]
+    assert state.paths == ["/api/state/doa"]
 
 
 @pytest.mark.parametrize("payload", [
     'null', '[]', '{}', 'broken', '{"angle": true, "speech_detected": true}',
     '{"angle": NaN, "speech_detected": true}', '{"angle": 3.2, "speech_detected": true}',
+    '{"angle": -0.1, "speech_detected": true}',
     '{"angle": 0, "speech_detected": 1}', '{"angle": "0", "speech_detected": true}',
 ])
-def test_unsupported_daemon_data_falls_back_to_a_later_valid_read(monkeypatch, payload):
-    responses = iter([payload, '{"angle": 0, "speech_detected": false}'])
-    monkeypatch.setattr("reachy_muse.hardware.urllib.request.urlopen", lambda *a, **k: io.StringIO(next(responses)))
-    controller = ReachyController()
+def test_unsupported_daemon_data_falls_back_to_a_later_valid_read(doa_server, payload):
+    controller, _ = doa_server(payload, '{"angle": 0, "speech_detected": false}')
     assert controller.read_doa() is None
     assert controller.read_doa() == DoAReading(0, False)
 
@@ -58,9 +53,43 @@ def test_unreachable_daemon_is_optional(monkeypatch):
     def unavailable(*args, **kwargs):
         raise OSError("offline")
 
-    monkeypatch.setattr("reachy_muse.hardware.urllib.request.urlopen", unavailable)
-    assert ReachyController().read_doa() is None
+    monkeypatch.setattr("socket.create_connection", unavailable)
+    controller = ReachyController(host="daemon.invalid", port=8123)
+    controller._robot = FakeRobot()
+    assert controller.read_doa() is None
     assert speaker_yaw(math.pi / 2).head == 0
+
+
+@pytest.mark.parametrize("yaw, roll, pitch, angle, head, body", [
+    (30, 0, 0, 90, 30, 10), (-30, 0, 0, 90, -30, -10),
+    (30, 0, 0, 60, 35, 15), (-30, 0, 0, 120, -35, -15),
+    (35, 0, 0, 0, 35, 15), (-35, 0, 0, 180, -35, -15),
+    (10, 60, 0, 60, 26.10211375, 6.10211375),
+    (10, 0, 60, 60, 35, 15),
+])
+def test_reading_uses_the_current_head_rotation_before_yaw_limits(
+        doa_server, yaw, roll, pitch, angle, head, body):
+    controller, _ = doa_server(f'{{"angle": {math.radians(angle)}, "speech_detected": true}}')
+    controller._robot.pose = pose_factory(yaw=yaw, roll=roll, pitch=pitch)
+    reading = controller.read_doa()
+    target = speaker_yaw(reading.angle)
+    assert (target.head, target.body) == pytest.approx((head, body))
+
+
+def test_direction_history_uses_each_readings_head_pose(doa_server):
+    controller, _ = doa_server(*[f'{{"angle": {math.radians(angle)}, "speech_detected": true}}'
+                                 for angle in (80, 50, 90, 60)])
+    readings = []
+    for yaw in (20, -10, 30, 0):
+        controller._robot.pose = pose_factory(yaw=yaw)
+        readings.append(controller.read_doa())
+
+    def check(direction, clock, delays):
+        assert direction.estimate(clock.now) == pytest.approx(math.pi / 3)
+        target = speaker_yaw(direction.estimate(clock.now))
+        assert (target.head, target.body) == pytest.approx((30, 10))
+
+    sampled(readings, check)
 
 
 async def sample_script(readings, check, *, eligible=None):

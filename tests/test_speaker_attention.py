@@ -1,6 +1,7 @@
 """Run the real motion owner against fake motors and a deterministic clock."""
 
 import math
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +12,7 @@ import reachy_muse.hardware as hardware
 from reachy_muse.hardware import ReachyController, _Command
 from reachy_muse.motion import MotionStyle
 from reachy_muse.motion.layers import MotionLayers, Ramp
+from test_doa_http import doa_server
 from test_hardware import FakeRobot, generated, pose_factory
 
 
@@ -78,6 +80,23 @@ def test_wake_yaw_eases_over_650ms_and_holds_without_a_face(monkeypatch, angle, 
     yaws = [controller._pose_parameters(frame[1])["yaw"] for frame in robot.frames]
     assert max(abs(b - a) for a, b in zip(yaws, yaws[1:])) < 2.6
     assert len(robot.writers) == 1
+
+
+def test_repeated_wake_from_the_same_speaker_keeps_the_turned_gaze(monkeypatch, doa_server):
+    source, _ = doa_server(*[f'{{"angle": {angle}, "speech_detected": true}}'
+                             for angle in (math.pi / 3, math.pi / 2)])
+
+    def wake(controller):
+        controller._connect_options = source._connect_options
+        reading = controller.read_doa()
+        controller.look_at_speaker(reading.angle)
+        controller.set_state("listening")
+
+    controller, robot, clock = simulate(monkeypatch, {5: wake, 60: wake}, ticks=120)
+    first = pose_at(controller, robot, clock.times[55])
+    second = pose_at(controller, robot, clock.now)
+    assert (first["yaw"], first["body_yaw"]) == pytest.approx((30, 10), abs=.01)
+    assert (second["yaw"], second["body_yaw"]) == pytest.approx((30, 10), abs=.01)
 
 
 def test_direction_turn_and_sleep_lift_run_together_and_sleep_releases_the_hold(monkeypatch):
@@ -195,6 +214,52 @@ def test_a_wake_during_blocking_motion_does_not_turn_after_the_command(monkeypat
     assert (rested["yaw"], rested["body_yaw"]) == pytest.approx((0, 0), abs=.1)
     turned = pose_at(controller, robot, clock.now)
     assert (turned["yaw"], turned["body_yaw"]) == pytest.approx((30, 10), abs=.01)
+
+
+def test_command_claims_attention_before_disabling_face_tracking(monkeypatch):
+    request = _Command("reachy.move", {"yaw": -12, "duration": .2, "hold": .1}, 1010)
+
+    class Follower:
+        failure = None
+        controller = None
+        attempted = False
+
+        def set_active(self, active):
+            if active or self.controller is None or self.attempted:
+                return
+            self.attempted = True
+            thread = threading.Thread(target=self.controller.look_at_speaker, args=(math.pi / 3,))
+            thread.start()
+            thread.join(2)
+            assert not thread.is_alive()
+
+        def target(self):
+            return None
+
+    follower = Follower()
+
+    def command(controller):
+        follower.controller = controller
+        controller._commands.put_nowait(request)
+
+    controller, robot, clock = simulate(monkeypatch, {2: command}, ticks=100, follower=follower)
+    assert follower.attempted
+    assert request.result["ok"]
+    rested = pose_at(controller, robot, clock.now)
+    assert (rested["yaw"], rested["body_yaw"]) == pytest.approx((0, 0), abs=.1)
+
+
+@pytest.mark.parametrize("gesture", ["nod", "tilt"])
+@pytest.mark.parametrize("angle, yaw", [(0, 35), (math.pi, -35)])
+def test_gestures_keep_a_side_directed_wake_gaze(monkeypatch, gesture, angle, yaw):
+    controller, robot, clock = simulate(monkeypatch, {
+        5: lambda c: c.look_at_speaker(angle), 50: lambda c: c.gesture(gesture),
+    }, ticks=130)
+    before = pose_at(controller, robot, clock.times[49])
+    assert before["yaw"] == pytest.approx(yaw, abs=.01)
+    during = [controller._pose_parameters(frame[1])["yaw"] for frame in robot.frames
+              if clock.times[50] <= frame[0] <= clock.times[50] + 1.6]
+    assert (min(during), max(during)) == pytest.approx((yaw, yaw), abs=.01)
 
 
 def test_a_later_greeting_clip_waits_for_the_direction_turn(monkeypatch):

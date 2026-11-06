@@ -18,6 +18,8 @@ from reachy_muse.contract.commands import POSE_LIMITS
 
 @dataclass(frozen=True)
 class DoAReading:
+    """World bearing in radians, with left=0 and front=pi/2."""
+
     angle: float
     speech_detected: bool
 
@@ -31,10 +33,10 @@ class SpeakerYaw:
 
 
 def speaker_yaw(angle: float) -> SpeakerYaw:
-    """Map array radians (left=0, front=pi/2) into the app's safe yaw range."""
+    """Map a world bearing into the app's safe absolute yaw range."""
     if (isinstance(angle, bool) or not isinstance(angle, (int, float))
-            or not math.isfinite(angle) or not 0 <= angle <= math.pi):
-        raise ValueError("Direction must be finite radians between zero and pi")
+            or not math.isfinite(angle) or not -math.pi / 2 <= angle <= 3 * math.pi / 2):
+        raise ValueError("Direction must be finite radians between -pi/2 and 3pi/2")
     low, high = POSE_LIMITS["yaw"]
     head = max(low, min(high, math.degrees(math.pi / 2 - angle)))
     body = math.copysign(max(0.0, abs(head) - 20.0), head)
@@ -91,12 +93,8 @@ class WakeDirection:
                     continue
                 generation = self._generation
                 started = self._clock()
-                reading_task = asyncio.create_task(asyncio.to_thread(self._read))
                 try:
-                    reading = await asyncio.shield(reading_task)
-                except asyncio.CancelledError:
-                    await asyncio.gather(reading_task, return_exceptions=True)
-                    raise
+                    reading = await asyncio.to_thread(self._read)
                 except Exception:
                     reading = None
                 delay = .2
