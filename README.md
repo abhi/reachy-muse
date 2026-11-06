@@ -32,6 +32,28 @@ Then follow [Install on a Wireless robot](docs/reachy-mini.md#install-on-a-wirel
 It creates `~/muse-reachy-venv` next to Reachy's own environment and installs both checkouts into it.
 The same guide covers the speech models, pairing with the Muse app, wake words and startup at boot.
 
+## Optional speaker verification
+
+Install the `voice-verify` extra and obtain the local speaker ONNX model described
+in [the CPU benchmark](bench/voice_verify.md). On the robot, enroll three prompted
+phrases with `muse-reachy enroll-voice --voice-model models/speaker.onnx`. Add
+`--voice-model models/speaker.onnx --voice-verify strict` to your usual `run`
+command with `--wake-model` to check wakes and request segments locally.
+
+`off` is the default. `soft` logs scores in chat and gates realtime calls;
+chat fallback returns to observation. `strict` also gates chat and gives a
+quiet local chime when it rejects speech. Request checking adds roughly one
+second of delay, including for interruptions. The embedding stays in the
+robot's state directory as `voice-profile.json`, mode 600; recordings are not
+saved or transmitted. `muse-reachy enroll-voice --forget` deletes it without
+opening the microphone. Restart a running conversation after replacing or
+forgetting enrollment so it discards its in-memory profile.
+
+This is experimental. Synthetic evaluation found substantial false accepts and
+noise-related false rejects; it does not establish a secure identity check.
+See the benchmark for the threshold, error rates, model license, and unmeasured
+robot checks.
+
 ## Install the companion on a Mac
 
 The companion needs a Mac with Apple Silicon, Python 3.10 or later and about 15 GB of free memory.
