@@ -65,6 +65,17 @@ def test_the_microphone_reaches_muse_as_24_khz_frames_and_a_backlog_sheds_silenc
     assert (count, loud, sent) == (10, 4, 10)
 
 
+def test_the_microphone_keeps_a_whole_request_while_the_call_is_still_being_admitted():
+    async def scenario():
+        feed = MicrophoneFeed(24000)
+        for _ in range(12):
+            feed.push(np.full(24000, .3, np.float32))
+        feed.close()
+        return len([frame async for frame in feed])
+
+    assert asyncio.run(scenario()) == 300
+
+
 class Speaker:
     sample_rate = 16000
     output_sample_rate = 8000
@@ -213,3 +224,40 @@ def test_calls_open_with_reachy_s_identity_thread_and_duplex_and_reuse_one_voice
 
     assert asyncio.run(scenario()) == [("remote_stop", False)] * 2
     assert opened == [(links[0], "homelink-abcdef", "robot-chat", False)] * 2
+
+
+def test_after_a_failed_call_the_chat_turn_that_follows_reconnects_the_voice_link_for_the_next_call():
+    async def scenario():
+        links = []
+
+        async def connect():
+            links.append(object())
+
+            async def close():
+                pass
+            return VoiceLink(links[-1], lambda: True, close)
+
+        def broken(*args, **kwargs):
+            raise ConnectionError("media reset")
+
+        voice = RealtimeVoice(connect, device_id="homelink-abcdef", voice_call=broken)
+
+        async def nothing():
+            pass
+
+        await voice.warm()
+        call = voice.open(Speaker(), ReplyMotion(), on_audible=lambda *args: None, on_start=nothing,
+                          on_idle=nothing, on_working=lambda working: None, on_reply_done=lambda reply: None)
+        while not call.done:
+            await asyncio.sleep(.01)
+        await call.close()
+        await voice.call_failed()
+        voice.chat_turn()
+        for _ in range(100):
+            if len(links) == 2:
+                break
+            await asyncio.sleep(.01)
+        await voice.close()
+        return len(links), voice.usable
+
+    assert asyncio.run(scenario()) == (2, True)

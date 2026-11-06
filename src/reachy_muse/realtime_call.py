@@ -31,12 +31,13 @@ from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlaybac
 log = logging.getLogger(__name__)
 
 FRAME_SAMPLES = 960
-BACKLOG_S = 3.0
+LINK_TIMEOUT_S = 10.0
+READY_TIMEOUT_S = 8.0
+BACKLOG_S = LINK_TIMEOUT_S + READY_TIMEOUT_S + 2.0
 CATCH_UP_FRAMES = 10
 QUIET_RMS = 300.0
 SPEAKER_LEAD_S = 0.1
 IDLE_AFTER_S = 0.3
-READY_TIMEOUT_S = 8.0
 CALL_LIMIT_S = 900.0
 NATURAL_ENDS = frozenset({"remote_stop", "idle_timeout", "overall_timeout"})
 
@@ -84,9 +85,10 @@ def _rms(pcm: bytes) -> float:
 
 
 class MicrophoneFeed:
-    """Reachy's microphone as a call's input: 24 kHz PCM16 frames, the newest few seconds kept.
+    """Reachy's microphone as a call's input: 24 kHz PCM16 frames.
 
-    Frames wait here until the call is ready, then go out at the call's real-time pace. While
+    Frames wait here until the call is ready, for as long as connecting and admission can take,
+    so Muse hears a request from its first word. Then they go out at the call's real-time pace. While
     more than ``CATCH_UP_FRAMES`` wait, quiet frames are skipped so the backlog shrinks without
     losing speech. ``sent`` counts frames the call has taken.
     """
@@ -431,6 +433,7 @@ class RealtimeVoice:
         self._voice_call = voice_call
         self._link: Optional[VoiceLink] = None
         self._connecting: Optional[asyncio.Task] = None
+        self._warming: Optional[asyncio.Task] = None
         self._failed = False
 
     @property
@@ -480,12 +483,16 @@ class RealtimeVoice:
         await self._drop_link()
 
     def chat_turn(self) -> None:
-        self._failed = False
+        """A request went to Muse by chat: calls open again, on a link reconnected ahead of the next one."""
+        if self._failed:
+            self._failed = False
+            self._warming = asyncio.ensure_future(self.warm())
 
     async def close(self) -> None:
-        if self._connecting is not None and not self._connecting.done():
-            self._connecting.cancel()
-            await asyncio.gather(self._connecting, return_exceptions=True)
+        for task in (self._warming, self._connecting):
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
         await self._drop_link()
 
     async def _drop_link(self) -> None:

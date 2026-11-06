@@ -2863,7 +2863,7 @@ class ReachyService(PairedService):
         """A connection for voice calls only. It never registers, so this service keeps Muse's commands."""
         from musegadget import config
         from musegadget.service import DEFAULT_NOISE_HOST
-        from reachy_muse.realtime_call import VoiceLink
+        from reachy_muse.realtime_call import LINK_TIMEOUT_S, VoiceLink
         pairing = config.load_json(config.PAIRING_FILE) or {}
         link = LinkSession(noise_host=pairing.get("noise_host") or DEFAULT_NOISE_HOST,
                            vm_id=vm["vm_id"] or vm["vm_name"], vm_auth_token=vm["vm_auth_token"],
@@ -2880,7 +2880,7 @@ class ReachyService(PairedService):
                 running.cancel()
                 await asyncio.gather(running, return_exceptions=True)
         try:
-            await link.wait_transport_ready(10)
+            await link.wait_transport_ready(LINK_TIMEOUT_S)
         except BaseException:
             await close()
             raise
