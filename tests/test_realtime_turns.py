@@ -371,3 +371,54 @@ def test_a_short_sound_over_muse_s_reply_does_not_stop_it(monkeypatch):
     events = run(rig, conversation, user)
     assert calls.barge_ins == 0
     assert events.count({"robot": "clear_audio"}) == 1
+
+
+def expressions(events):
+    return [event["params"]["name"] for event in events
+            if event.get("robot") == "command" and event["name"] == "reachy.expression"]
+
+
+async def looks_it_up_then_answers(sdk, emit, script):
+    emit(sdk.Working(True))
+    reply_events(sdk, emit, "r1", "Great question, let me look that up.", voiced(1.2))
+    await asyncio.sleep(2.5)
+    reply_events(sdk, emit, "r2", REPLY, voiced(1.2) + b"\0\0" * int(.3 * RATE) + voiced(1.0))
+    emit(sdk.Working(False))
+
+
+def test_muse_s_aside_while_it_works_gets_no_closing_and_its_answer_gets_one(monkeypatch):
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(answer=looks_it_up_then_answers)
+    conversation = realtime_service(rig, Transcripts("Hey Muse, what's the weather tomorrow?"), calls)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "success1" in expressions(rig.recording.events), 10)
+
+    events = run(rig, conversation, user)
+    assert expressions(events) == ["success1"]
+    assert events.index({"robot": "command", "name": "reachy.expression",
+                         "params": {"name": "success1", "intensity": 0.6}}) > max(
+        index for index, event in enumerate(events) if event.get("audio") == "muse")
+
+
+def test_muse_moving_reachy_during_its_reply_replaces_reachy_s_own_closing(monkeypatch):
+    rig = rig_for(monkeypatch)
+    services = []
+
+    async def answers_with_a_gesture(sdk, emit, script):
+        await answers(REPLY, 1.0)(sdk, emit, script)
+        await asyncio.sleep(1.5)
+        await asyncio.to_thread(services[0].run_command, "reachy.expression", {"name": "happy"}, 5000)
+
+    calls = ScriptedCalls(answer=answers_with_a_gesture)
+    conversation = realtime_service(rig, Transcripts("Hey Muse, what's the weather tomorrow?"), calls)
+    services.append(conversation)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "happy" in expressions(rig.recording.events), 10)
+        await asyncio.sleep(2.0)
+
+    events = run(rig, conversation, user)
+    assert expressions(events) == ["happy"]

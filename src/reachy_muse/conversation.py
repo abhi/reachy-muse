@@ -2126,22 +2126,30 @@ class VoiceConversation:
         call = self.call
         if call is None:
             return
-        closing = partial(call.motion.closing, response_id)
+        closing = partial(self._reply_closing, call, response_id)
         if self._moments.active:
-            self._moments.finish_turn(lambda: not call.audible, expression=closing)
+            self._moments.finish_turn(lambda: not call.audible and not call.working, expression=closing)
         else:
             self._background(self._close_with_clip(call, closing))
+
+    def _reply_closing(self, call, response_id: str | None) -> Expression | None:
+        """The closing a reply earns, unless Muse still works, has started another reply, or moved Reachy itself."""
+        if (self.call is not call or call.working or call.latest_response != response_id
+                or call.muse_moved or self.muse_moving > 0):
+            return None
+        return call.motion.closing(response_id)
 
     async def _close_with_clip(self, call, closing: Callable[[], Expression | None]) -> None:
         """Without companion motion, a reply's closing is a recorded clip, else a built-in expression.
 
         Muse reports a reply done while its audio still streams, so the closing waits until the
-        speaker has been quiet for a moment and every sentence has had its expression.
+        speaker has been quiet for a moment, every sentence has had its expression, and Muse's
+        work on the turn has settled.
         """
         deadline = time.monotonic() + 30
         quiet_since = None
         while time.monotonic() < deadline:
-            if call.audible:
+            if call.audible or call.working:
                 quiet_since = None
             elif quiet_since is None:
                 quiet_since = time.monotonic()
@@ -2149,7 +2157,7 @@ class VoiceConversation:
                 break
             await asyncio.sleep(.05)
         moment = CLOSINGS.get(closing())
-        if moment is None or call.audible or self._playback.user_speaking or self.call is not call:
+        if moment is None or call.audible or self._playback.user_speaking:
             return
         for name in CLOSING_CLIPS[moment]:
             result = await asyncio.to_thread(self.hardware.run_command, "reachy.expression",
@@ -2161,8 +2169,10 @@ class VoiceConversation:
     def muse_moved(self, change: int) -> None:
         """Muse started (+1) or finished (-1) moving Reachy itself; local reply motion waits meanwhile."""
         self.muse_moving = max(0, self.muse_moving + change)
-        if change > 0 and self.call is not None and self.call.audible:
-            log.info("Muse moved Reachy during its realtime reply; Reachy's own expressions wait")
+        if change > 0 and self.call is not None:
+            self.call.muse_moved = True
+            if self.call.audible:
+                log.info("Muse moved Reachy during its realtime reply; Reachy's own expressions wait")
 
     def _hush(self) -> None:
         self._moments.stop()

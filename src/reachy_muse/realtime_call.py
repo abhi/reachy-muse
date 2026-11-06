@@ -302,7 +302,11 @@ class RealtimeSpeaker:
 
 
 class RealtimeCall:
-    """One call: the SDK ``VoiceCall`` plus Reachy's microphone feed, speaker and reply motion."""
+    """One call: the SDK ``VoiceCall`` plus Reachy's microphone feed, speaker and reply motion.
+
+    ``latest_response`` is the reply Muse started last, and ``muse_moved`` whether Muse has moved
+    Reachy itself since then.
+    """
 
     def __init__(self, feed: MicrophoneFeed, speaker: RealtimeSpeaker, motion: ReplyMotion, *,
                  on_working: Callable[[bool], None], on_reply_done: Callable[[Optional[str]], None]) -> None:
@@ -314,6 +318,8 @@ class RealtimeCall:
         self._on_reply_done = on_reply_done
         self.working = False
         self.awaiting_answer = False
+        self.latest_response: Optional[str] = None
+        self.muse_moved = False
         self.reason: Optional[str] = None
         self.failure: Optional[BaseException] = None
         self.opened_at = time.monotonic()
@@ -329,6 +335,9 @@ class RealtimeCall:
             self.speaker.flush_now()
         elif kind == "Working":
             self.working = event.working
+        elif kind == "ResponseStarted":
+            self.latest_response = event.response_id
+            self.muse_moved = False
         try:
             if kind == "AudioChunk":
                 self.motion.audio(event.response_id, event.offset, event.pcm)
