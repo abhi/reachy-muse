@@ -422,3 +422,28 @@ def test_muse_moving_reachy_during_its_reply_replaces_reachy_s_own_closing(monke
 
     events = run(rig, conversation, user)
     assert expressions(events) == ["happy"]
+
+
+async def acknowledges_then_works(sdk, emit, script):
+    emit(sdk.Working(True))
+    reply_events(sdk, emit, "r1", "Sure, one moment.", voiced(1.0))
+    await asyncio.sleep(3.0)
+    emit(sdk.Working(False))
+
+
+def test_after_muse_s_spoken_acknowledgement_reachy_looks_thoughtful_until_muse_s_work_settles(monkeypatch):
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(answer=acknowledges_then_works)
+    conversation = realtime_service(rig, Transcripts("Hey Muse, book me a table for two."), calls)
+    seen = []
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+        await asyncio.sleep(2.0)
+        seen.append(rig.states()[-1])
+        await asyncio.sleep(1.5)
+        seen.append(rig.states()[-1])
+
+    run(rig, conversation, user)
+    assert seen == ["thinking", "listening"]

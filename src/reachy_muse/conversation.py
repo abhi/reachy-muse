@@ -2103,16 +2103,19 @@ class VoiceConversation:
         await asyncio.to_thread(self.hardware.set_state, "speaking")
 
     async def _muse_quiet(self) -> None:
+        working = self.call is not None and self.call.working
         if self._wake_deadline is not None:
             self._wake_deadline = time.monotonic() + (self.wake_timeout_s or 10.0)
-        await self._plan(plan.OutputIdle(user_speaking=self._playback.user_speaking, turn_open=False,
+        await self._plan(plan.OutputIdle(user_speaking=self._playback.user_speaking, turn_open=working,
                                          wake_open=self._wake_deadline is not None))
+        if working and not self._playback.user_speaking:
+            self._moments.cue(Moment.THINKING)
 
     def _muse_working(self, working: bool) -> None:
         if working:
             self._background(self._think_unless_answered())
-        elif self._wake_deadline is not None:
-            self._wake_deadline = max(self._wake_deadline, time.monotonic() + (self.wake_timeout_s or 10.0))
+        elif self.call is not None and not self.call.audible:
+            self._background(self._muse_quiet())
 
     async def _think_unless_answered(self) -> None:
         await asyncio.sleep(THINKING_AFTER_S)
