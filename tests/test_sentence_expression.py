@@ -49,3 +49,43 @@ def test_a_neutral_hint_lets_the_text_show_its_feeling(text, expected):
 
 def test_long_text_bounds_lexical_scan_but_keeps_terminal_punctuation():
     assert classify_sentence("a " * 10000 + "wonderful!") == SentenceMotion(Expression.NEUTRAL, "exclamation")
+
+
+@pytest.mark.parametrize("text", [
+    "The temperature fell, but stocks held steady.",
+    "Rainfall dropped, while crime stayed constant.",
+    "The temperature fell; stocks held steady.",
+    "The temperature fell. Stocks held steady.",
+    "The temperature fell! Stocks held steady.",
+    "The temperature fell? Stocks held steady.",
+    "The temperature fell but stocks held steady.",
+    "Rainfall dropped while crime stayed constant.",
+])
+def test_direction_does_not_borrow_a_subject_from_the_next_clause(text):
+    assert classify_sentence(text) == SentenceMotion(Expression.NEUTRAL)
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("A drop in stocks.", Expression.SAD),
+    ("A drop in crime.", Expression.HAPPY),
+])
+def test_direction_can_find_a_following_subject_in_its_own_clause(text, expected):
+    assert classify_sentence(text) == SentenceMotion(expected)
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("This is not an unexpected discovery.", Expression.NEUTRAL),
+    ("The result is not uncertain.", Expression.NEUTRAL),
+    ("Do not tell me more about the file.", Expression.NEUTRAL),
+    ("I'm not sure about the time.", Expression.THINKING),
+    ("I don't know the time.", Expression.THINKING),
+    ("I can't verify the time.", Expression.THINKING),
+    ("The building is without power.", Expression.SAD),
+    ("No, good news followed.", Expression.HAPPY),
+    ("No, bad news followed.", Expression.SAD),
+    ("No, an unexpected discovery followed.", Expression.SURPRISED),
+    ("No, maybe tomorrow.", Expression.THINKING),
+    ("No, tell me more about the file.", Expression.CURIOUS),
+])
+def test_phrase_negation_stays_in_its_clause(text, expected):
+    assert classify_sentence(text) == SentenceMotion(expected)

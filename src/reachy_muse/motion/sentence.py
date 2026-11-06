@@ -23,6 +23,7 @@ class SentenceMotion:
 
 
 _WORDS = re.compile(r"[a-z]+(?:'[a-z]+)?|[,;.!?]")
+_BOUNDARIES = (",", ";", ".", "!", "?", "but", "while")
 _SAD = frozenset("sorry unfortunately unfortunate sad sadly failed failure condolences cancelled canceled "
                  "delayed worse worst layoffs layoff slump slumped slumps selloff plunged plummeted "
                  "killed injured deaths tragedy destroyed painful disappointing terrible bankruptcy "
@@ -74,16 +75,20 @@ def classify_sentence(text: str, hint: Expression | None = None) -> SentenceMoti
     if hint is not None and hint is not Expression.NEUTRAL:
         return SentenceMotion(hint, terminal)
     folded = text[:2048].lower().replace("’", "'").strip()
-    tokens = _WORDS.findall(folded)
+    token_matches = list(_WORDS.finditer(folded))
+    tokens = [match[0] for match in token_matches]
     active = []
     clause = []
     for word in tokens:
-        if word in (",", ";", ".", "!", "?", "but", "while"):
+        if word in _BOUNDARIES:
             clause = []
         negated = bool(_NEGATIONS.intersection(clause[-4:]))
         active.append(not negated)
         clause.append(word)
     words = {word for word, enabled in zip(tokens, active) if enabled}
+    active_starts = {match.start() for match, enabled in zip(token_matches, active) if enabled}
+    phrases = {expression: [match for match in pattern.finditer(folded) if match.start() in active_starts]
+               for expression, pattern in _PATTERNS.items()}
     # Idioms, quoted vocabulary, and hypothetical markets are not a sentiment claim.
     literal = ("great depression" in folded or "great recession" in folded
                or folded.startswith(("the word ", "word ")) and " is " in folded
@@ -93,27 +98,29 @@ def classify_sentence(text: str, hint: Expression | None = None) -> SentenceMoti
         sad_words -= _HARM
     sad = bool(sad_words) and not literal
     happy = bool(words & _HAPPY) and not literal
-    for pattern, target in ((_PATTERNS[Expression.SAD], "sad"), (_PATTERNS[Expression.HAPPY], "happy")):
-        for match in pattern.finditer(folded):
+    for matches, target in ((phrases[Expression.SAD], "sad"), (phrases[Expression.HAPPY], "happy")):
+        for match in matches:
             if target == "happy" and terminal == "question" and match[0] == "keep going":
                 continue
-            before = _WORDS.findall(folded[max(0, match.start() - 45):match.start()])[-4:]
-            if not _NEGATIONS.intersection(before):
-                if target == "sad":
-                    sad = True
-                else:
-                    happy = True
+            if target == "sad":
+                sad = True
+            else:
+                happy = True
     for index, word in enumerate(tokens):
         if not active[index] or word not in _DIRECTION or literal:
             continue
         # Do not borrow the subject across a comma or contrast clause.
         left = tokens[max(0, index - 5):index]
-        for boundary in (",", ";", "but", "while", "."):
+        for boundary in _BOUNDARIES:
             if boundary in left:
                 left = left[len(left) - left[::-1].index(boundary):]
         subject = next((token for token in reversed(left) if token in _SUBJECTS), None)
         if subject is None:
-            subject = next((token for token in tokens[index + 1:index + 4] if token in _SUBJECTS), None)
+            right = tokens[index + 1:index + 4]
+            for boundary in _BOUNDARIES:
+                if boundary in right:
+                    right = right[:right.index(boundary)]
+            subject = next((token for token in right if token in _SUBJECTS), None)
         if subject in _HARM:
             sad |= word in _UP
             happy |= word in _DOWN
@@ -128,13 +135,13 @@ def classify_sentence(text: str, hint: Expression | None = None) -> SentenceMoti
         expression = Expression.HAPPY
     elif terminal == "question":
         expression = Expression.CURIOUS
-    elif words & _SURPRISED or _PATTERNS[Expression.SURPRISED].search(folded):
+    elif words & _SURPRISED or phrases[Expression.SURPRISED]:
         expression = Expression.SURPRISED
-    elif _PATTERNS[Expression.THINKING].search(folded):
+    elif phrases[Expression.THINKING]:
         expression = Expression.THINKING
-    elif _PATTERNS[Expression.CURIOUS].search(folded):
+    elif phrases[Expression.CURIOUS]:
         expression = Expression.CURIOUS
-    elif tokens and tokens[0] in _AGREEING or _PATTERNS[Expression.NOD].match(folded):
+    elif tokens and tokens[0] in _AGREEING or any(match.start() == 0 for match in phrases[Expression.NOD]):
         expression = Expression.NOD
     else:
         expression = Expression.NEUTRAL
