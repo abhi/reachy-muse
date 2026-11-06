@@ -275,12 +275,20 @@ class RealtimeSpeaker:
         self._sentence_open = False
         self._extras: dict = {}
         self._audible_text: Optional[str] = None
+        self._response_id: Optional[str] = None
+        self._audible_responses: dict[Optional[str], float] = {}
         self._replies: list = []
         self.reply_started: Optional[float] = None
 
     @property
     def busy(self) -> bool:
         return self._speaking or self._owner is not None or not self._queue.empty()
+
+    def audible_responses(self, tail_s: float) -> tuple[Optional[str], ...]:
+        now = time.monotonic()
+        self._audible_responses = {reply: until for reply, until in self._audible_responses.items()
+                                   if until + tail_s > now}
+        return tuple(self._audible_responses)
 
     def chunk(self, response_id: Optional[str], offset: int, pcm: bytes) -> None:
         if self._closed or self.failed.done():
@@ -351,6 +359,8 @@ class RealtimeSpeaker:
             if self._owner is not None:
                 await asyncio.to_thread(self._hardware.clear_audio)
         finally:
+            now = time.monotonic()
+            self._audible_responses = {reply: min(until, now) for reply, until in self._audible_responses.items()}
             speaking, self._speaking = self._speaking, False
             try:
                 if speaking and self._owner is not None:
@@ -381,6 +391,7 @@ class RealtimeSpeaker:
             if item.response_id not in self._replies:
                 self._replies.append(item.response_id)
                 self.reply_started = time.monotonic()
+            self._response_id = item.response_id
             count = len(item.pcm) // 2
             marks = self._motion.marks(item.response_id, item.offset, count)
             cuts = sorted({0, count, *(mark.sample for mark in marks if 0 < mark.sample < count)})
@@ -426,7 +437,11 @@ class RealtimeSpeaker:
                     raise
                 cancelled = True
         now = time.monotonic()
-        self._on_audible(self._audible_text, max(self._cursor.end, now) + len(samples) / self._rate)
+        until = max(self._cursor.end, now) + len(samples) / self._rate
+        self._audible_responses[self._response_id] = until
+        if len(self._audible_responses) > 8:
+            del self._audible_responses[min(self._audible_responses, key=self._audible_responses.get)]
+        self._on_audible(self._audible_text, until)
         if cancelled:
             raise asyncio.CancelledError
 
@@ -477,9 +492,9 @@ class RealtimeCall:
         self._closing = False
         self._transcripts: dict[Optional[str], str] = {}
 
-    @property
-    def recent_transcripts(self) -> tuple[str, ...]:
-        return tuple(self._transcripts.values())
+    def audible_transcripts(self, tail_s: float) -> tuple[str, ...]:
+        return tuple(self._transcripts[reply] for reply in self.speaker.audible_responses(tail_s)
+                     if reply in self._transcripts)
 
     def on_event(self, event) -> None:
         """The SDK's event callback: it runs on the event loop and an exception here would end the call."""

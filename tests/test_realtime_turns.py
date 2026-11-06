@@ -101,6 +101,85 @@ def test_echo_or_unrecognized_noise_during_playback_neither_interrupts_nor_reach
     assert set(played(events)) == {"muse"}
 
 
+def test_failed_recognition_after_an_interruption_keeps_the_next_reply_s_echo_out(monkeypatch):
+    from reachy_muse.streaming_transcription import StreamingWorkerError
+
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    emit_reply = []
+
+    async def answer(sdk, emit, script):
+        emit_reply.append(lambda: reply_events(sdk, emit, "r2", REPLY, voiced(3)))
+        reply_events(sdk, emit, "r1", REPLY, voiced(3))
+
+    class FailedInterruption(StreamingTranscripts):
+        def open_turn(self):
+            turn = super().open_turn()
+            if turn.partial.text == "Actually, tell me about trains.":
+                def feed(pcm):
+                    if not np.any(np.frombuffer(pcm, "<i2")[-320:]):
+                        raise StreamingWorkerError("command worker stopped")
+                turn.feed = feed
+            return turn
+
+    calls = ScriptedCalls(answer=answer)
+    transcripts = FailedInterruption("Tell me a story.", "Actually, tell me about trains.", REPLY)
+    conversation = realtime_service(rig, transcripts, calls)
+    echo_frames = []
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+        await speak_live(rig)
+        assert calls.barge_ins == 1
+        assert calls.loud_after_reply >= 10
+        before = calls.loud_after_reply
+        emit_reply[0]()
+        await room(rig, .3)
+        await speak_live(rig)
+        echo_frames.append(calls.loud_after_reply - before)
+
+    events = run(rig, conversation, user)
+    assert echo_frames == [0]
+    assert calls.barge_ins == 1
+    assert sent_to_muse(events) == []
+
+
+@pytest.mark.parametrize("ending", ["finished", "flushed", "unplayed"])
+def test_a_command_repeating_an_expired_reply_still_interrupts_the_current_reply(monkeypatch, ending):
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    emit_reply = []
+
+    async def answer(sdk, emit, script):
+        emit_reply.append(lambda: reply_events(sdk, emit, "r2", REPLY, voiced(4)))
+        if ending == "unplayed":
+            emit(sdk.TranscriptDone("r1", "You can tell me to stop talking."))
+        else:
+            reply_events(sdk, emit, "r1", "You can tell me to stop talking.",
+                         voiced(4 if ending == "flushed" else .5))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, StreamingTranscripts("Tell me a story.", "stop talking"), calls)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: bool(emit_reply), 5)
+        voice = conversation._voice[1]
+        if ending == "flushed":
+            await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+            await voice.call.barge_in()
+        await rig.wait_until_or_timeout(lambda: not voice.call.audible and time.monotonic() > voice._echo_until, 3)
+        emit_reply[0]()
+        await room(rig, .3)
+        await speak_live(rig)
+
+    events = run(rig, conversation, user)
+    assert calls.barge_ins == (2 if ending == "flushed" else 1)
+    assert calls.loud_after_reply >= 10
+    assert sent_to_muse(events) == []
+
+
 @pytest.mark.parametrize("text, volume, face, spoken", [
     ("Hey Muse, volume down.", [-10], [], []),
     ("Hey Muse, stop following me.", [], [False], ["tts:Okay, I'll stop following you."]),
@@ -519,32 +598,80 @@ def test_a_call_opened_during_a_pending_chat_request_never_replays_its_turn_by_c
             await rig.quiet("thinking")
             await speak_live(rig, wake=True)
             await room(rig, .3)
+            if acknowledgement is not None:
+                assert acknowledgement in played(rig.recording.events)
+                assert conversation._voice[1].call is None
+                before = len(calls.frames)
+                await speak_live(rig)
+                assert len(calls.frames) == before
         finally:
             release.set()
 
     events = run(rig, conversation, user)
     assert len(calls.frames) >= 10
-    assert sent_to_muse(events) == ["what's the weather tomorrow?"]
+    expected = ["what's the weather tomorrow?"]
+    if acknowledgement is not None:
+        expected.append("Please stop working on my previous request.")
+    assert sent_to_muse(events) == expected
     if acknowledgement is not None:
         assert acknowledgement in played(events)
 
 
-def test_a_call_that_fails_before_any_audio_reaches_muse_sends_the_request_by_chat(monkeypatch):
+@pytest.mark.parametrize("failure_at", ["opening", "recognition"])
+def test_a_call_that_fails_before_any_audio_reaches_muse_sends_the_request_by_chat(monkeypatch, failure_at):
     rig = rig_for(monkeypatch)
-    calls = ScriptedCalls(fail=ConnectionError("no media"))
+    finalizing = asyncio.Event()
+    release = asyncio.Event()
+
+    class WaitingCalls(ScriptedCalls):
+        def __call__(self, session, **options):
+            call = super().__call__(session, **options)
+
+            async def run(source, output, *, realtime_input=False):
+                self.hung_up = asyncio.get_running_loop().create_future()
+                await self.hung_up
+
+            call.run = run
+            return call
+
+    class DelayedTranscripts(StreamingTranscripts):
+        def open_turn(self):
+            turn = super().open_turn()
+
+            def finish():
+                async def recognize():
+                    finalizing.set()
+                    await release.wait()
+                    return turn.partial.text
+                return asyncio.create_task(recognize())
+
+            turn.finish = finish
+            return turn
+
+    calls = WaitingCalls() if failure_at == "recognition" else ScriptedCalls(fail=ConnectionError("no media"))
+    recognizer = DelayedTranscripts if failure_at == "recognition" else StreamingTranscripts
 
     async def muse(session, request):
         await session.answer(request, "Sunny tomorrow. [reachy:happy]")
 
-    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, what's the weather tomorrow?"), calls, muse,
+    conversation = realtime_service(rig, recognizer("Hey Muse, what's the weather tomorrow?"), calls, muse,
                                     voice=rig.voice())
 
     async def user():
         rig.say(wake=True)
+        if failure_at == "recognition":
+            try:
+                await asyncio.wait_for(finalizing.wait(), 3)
+                await room(rig, .1)
+                calls.hang_up(ConnectionError("no media"))
+                await rig.wait_until_or_timeout(lambda: conversation._voice[1].call is None, 3)
+            finally:
+                release.set()
 
     events = run(rig, conversation, user)
     assert sent_to_muse(events) == ["what's the weather tomorrow?"]
     assert played(events)[-1] == "tts:Sunny tomorrow."
+    assert calls.frames == []
 
 
 def test_a_call_lost_after_muse_heard_the_request_asks_again_and_the_next_request_goes_by_chat(monkeypatch):

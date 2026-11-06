@@ -956,9 +956,8 @@ class VoiceConversation:
             endpoint_at = time.monotonic()
             quiet_s = recorder.quiet_s
             if recorder.active or recorder.speech_active:
-                if self.call is not None and (self.call.audible or endpoint_at < self._echo_until):
-                    heard_over.clear()
-                    heard_over.update(self.call.recent_transcripts)
+                if self.call is not None:
+                    heard_over.update(self.call.audible_transcripts(ECHO_TAIL_S))
                 heard_over.update(text for text, until in self._audible.items() if until > endpoint_at)
             heard = recorder.take()
             for _ in range(heard.failures):
@@ -989,7 +988,7 @@ class VoiceConversation:
                     speaking = speaking and (not playback or call.input.confirmed)
                     if call.audible and call.input.confirmed and not confirmed_before:
                         self._barge_in_call()
-                if heard.ended is not None:
+                if heard.ended is not None or heard.transcript_lost:
                     from reachy_muse.realtime_call import CallInput
                     call_input = call.input if playback else None
                     call.input = CallInput(call.feed, self.hardware.sample_rate)
@@ -1021,6 +1020,8 @@ class VoiceConversation:
                             elapsed, len(sample) / self.hardware.sample_rate)
                 last_slow_feed = started
             if heard.ended is None:
+                if heard.transcript_lost:
+                    heard_over.clear()
                 return None
             over = tuple(sorted(heard_over))
             heard_over.clear()
@@ -1117,15 +1118,22 @@ class VoiceConversation:
 
         async def follow_up(request, held):
             try:
-                endpoint = await request.ended.endpoint()
+                if request.ended in call_recognitions:
+                    endpoint = await call_recognitions[request.ended]
+                else:
+                    endpoint = await request.ended.endpoint()
                 if endpoint is None:
-                    transcription_failed()
+                    transcription_failed(request.call)
                     return held
                 request.timeline.facts["forced"] = "yes" if endpoint.forced else "no"
                 if endpoint.text is not None:
                     request.timeline.mark("transcript")
+                if request.call is not None and (request.call.audio_sent or not request.call.failed):
+                    await self._realtime_turn(endpoint, request)
+                    return held
                 return await self._follow_up(endpoint, request, held)
             finally:
+                call_recognitions.pop(request.ended, None)
                 turns_awaiting_transcript.discard(request.ended)
         async def queue_turn(recorded: _RecordedTurn) -> None:
             nonlocal recorder
@@ -1234,7 +1242,6 @@ class VoiceConversation:
                     async def process(request=request):
                         try:
                             call = request.call
-                            in_call = call is not None and (call.audio_sent or not call.failed)
                             if request.ended in call_recognitions:
                                 endpoint = await call_recognitions[request.ended]
                             else:
@@ -1245,7 +1252,7 @@ class VoiceConversation:
                             turns_awaiting_transcript.discard(request.ended)
                             timeline = request.timeline
                             timeline.facts["forced"] = "yes" if endpoint.forced else "no"
-                            if in_call:
+                            if call is not None and (call.audio_sent or not call.failed):
                                 return await self._realtime_turn(endpoint, request)
                             if endpoint.text is None:
                                 return await self.turn(endpoint.audio,
@@ -1266,8 +1273,8 @@ class VoiceConversation:
                         and self._briefing_slots):
                     turn_task = asyncio.create_task(self._collect_briefing(self._briefing_slots.popleft()))
                 if (turn_task is not None and follow_up_task is None and pending_turns
-                        and pending_turns[0].call is None
-                        and self.job is not None and self.job.turn.acknowledged):
+                        and (pending_turns[0].call is not None
+                             or self.job is not None and self.job.turn.acknowledged)):
                     follow_up_task = asyncio.create_task(follow_up(pending_turns.popleft(), held))
                 if not ready and turn_task is None:
                     log.info("Reachy speech yield ready: microphone priority, ordered background replies")
