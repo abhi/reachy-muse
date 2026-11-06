@@ -1,0 +1,24 @@
+{
+  "host": "Darwin arm64",
+  "chunk_ms": 16,
+  "vad": "silero",
+  "pipeline": {
+    "audio_s": 138.0,
+    "cpu_s": 0.6175,
+    "wall_s": 0.6256,
+    "cpu_fraction_of_one_core": 0.00447,
+    "feed_p95_ms": 0.119,
+    "feed_max_ms": 11.321,
+    "endpoints": 20
+  },
+  "sherpa_native": {
+    "audio_s": 138.0,
+    "cpu_s": 4.96,
+    "wall_s": 4.9813,
+    "cpu_fraction_of_one_core": 0.03594,
+    "feed_p95_ms": 0.061,
+    "feed_max_ms": 23.908,
+    "model_load_s": 0.604,
+    "final_max_ms": 22.822
+  }
+}

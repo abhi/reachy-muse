@@ -624,7 +624,7 @@ class CompanionHearingTurn:
 
     supports_partials = True
 
-    def __init__(self, link: CompanionLink, recorder):
+    def __init__(self, link: CompanionLink, recorder, *, commands_only: bool = False):
         self._link = link
         self._recorder = recorder
         self._open: Optional[_HearStream] = None
@@ -632,6 +632,7 @@ class CompanionHearingTurn:
         self._fed = 0
         self._vad_ends = deque()
         self.partial: Optional[Partial] = None
+        self._commands_only = commands_only
 
     @property
     def active(self) -> bool:
@@ -663,7 +664,16 @@ class CompanionHearingTurn:
                 self._open.send(event.pcm)
             elif isinstance(event, SpeechEnd) and self._open is not None:
                 stream, self._open = self._open, None
-                if event.accepted:
+                if self._commands_only:
+                    text = self.partial.text if self.partial is not None else ""
+                    for message in stream.inbox:
+                        text = message.text
+                    end_sample = self._vad_ends.popleft() if self._vad_ends else self._fed
+                    if event.accepted:
+                        self._ended.append(_HeardTurn(Endpoint(_wav(bytes(stream.audio)), text),
+                                                      self._recorder.last_truncated, end_sample))
+                    stream.close(CloseHow.ABORT)
+                elif event.accepted:
                     stream.finish()
                     self._ended.append(_FinishedTurn(stream, self._recorder.last_truncated,
                                                      self._vad_ends.popleft() if self._vad_ends else self._fed))
@@ -711,7 +721,7 @@ class CompanionHearing:
         pass
 
     def open_turn(self, sample_rate: int, *, silence_s: float, vad=None, recorder=None,
-                  **options) -> CompanionHearingTurn:
+                  commands_only: bool = False, **options) -> CompanionHearingTurn:
         from reachy_muse.voice_audio import TurnRecorder
 
         if recorder is None:
@@ -719,7 +729,7 @@ class CompanionHearing:
                                     **({"vad": vad} if vad is not None else {}), **options)
         else:
             recorder.enable_streaming()
-        return CompanionHearingTurn(self.link, recorder)
+        return CompanionHearingTurn(self.link, recorder, commands_only=commands_only)
 
     async def transcribe(self, wav: bytes) -> str:
         raise CapabilityUnavailable("the companion transcribes live turns only", link_down=False)

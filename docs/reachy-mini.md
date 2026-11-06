@@ -599,14 +599,34 @@ Realtime needs a wake word (`--wake-model`) and `--mode on-robot` or
 uses chat. Muse hears everything said after the wake word until the follow-up
 window closes, so Reachy's local chat does not answer greetings in a call.
 
-- Reachy still recognizes speech itself. Sleep, stop talking, volume, and face
-  following run on the robot at once; Reachy cuts off Muse's answer to them.
-- Talking over Muse stops its reply. Without verified hardware echo
+- Reachy uses streaming words only to detect sleep, stop talking, volume, and
+  face following. Local recognition does not create requests or conversational
+  cues. It never runs Whisper during a call or waits for the companion's final
+  endpoint. A local streaming final has a 250 ms deadline.
+- During playback, an interruption needs 300 ms of speech and distinct words
+  for at least 120 ms. Two words are required, except for stop commands. Reply
+  transcript deltas filter echo, including single words and quoted stop commands.
+  Until that evidence arrives, Muse receives silence; a confirmed interruption
+  releases up to two seconds of buffered audio so its opening words survive.
+  Without verified hardware echo
   cancellation, the call is half duplex and Muse's voice mutes the microphone.
 - The call ends when the follow-up window closes, or when Muse ends it.
 - If a call fails before any audio reached Muse, the request goes to Muse by
   chat. If Muse may have heard it, Reachy asks the user to say it again and the
   next request goes by chat; the same audio is never sent twice.
+
+Companion mode uses the companion's partial transcripts while it is available.
+Local recognition uses `--stt-backend sherpa-streaming` if selected. To keep
+Whisper for chat fallback and use a separate streaming model for calls, add
+`--realtime-stt-model /path/to/zipformer-en-2023-06-26`. It uses the same assets
+and optional dependency as [incremental local recognition](#incremental-local-recognition).
+No model downloads happen at startup. With neither streaming recognition nor
+companion partials, Muse still hears speech between replies, but playback-time
+interruptions and local spoken device commands are unavailable. Unknown sounds
+are not treated as proof of an interruption.
+
+The [call input replay](../bench/realtime_input.md) records the offline CPU
+measurement and its limits.
 
 Reachy animates Muse's voice itself while it plays. The head sways with the
 output audio. Each sentence of Muse's transcript gets an expression from the

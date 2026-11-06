@@ -322,6 +322,9 @@ def parser() -> argparse.ArgumentParser:
                               help="Local model directory for the selected speech recognition backend")
             item.add_argument("--stt-backend", choices=("whisper", "moonshine", "sherpa-streaming"),
                               help="Local speech recognizer; whisper when omitted")
+            item.add_argument("--realtime-stt-model", type=Path,
+                              help="Sherpa streaming model directory for device commands and barge-in during calls; "
+                                   "otherwise use companion partials or the selected streaming STT backend")
             item.add_argument("--tts-model", type=Path,
                               help="Piper ONNX model for speaking normal Muse answers locally")
             item.add_argument("--stream-replies", action="store_true",
@@ -555,6 +558,8 @@ async def run(args) -> int:
     if not math.isfinite(args.wake_timeout) or not 1 <= args.wake_timeout <= 300:
         raise ValueError("--wake-timeout must be between 1 and 300 seconds")
     muse_path = realtime_path(args)
+    if args.realtime_stt_model is not None and args.muse_path != "realtime":
+        raise ValueError("--realtime-stt-model needs --muse-path realtime")
     morning = morning_routine(args)
     companion = None
     if Mode(args.mode) is Mode.COMPANION:
@@ -570,6 +575,7 @@ async def run(args) -> int:
     speech = None
     progress_speech = None
     transcriber = None
+    command_transcriber = None
     wake_detector = None
     speech_gate = None
     link_task = None
@@ -596,6 +602,10 @@ async def run(args) -> int:
                 from reachy_muse.local_transcription import WhisperTranscriber
                 transcriber = WhisperTranscriber(args.stt_model)
         startup.mark("transcriber_configuration")
+        if args.realtime_stt_model is not None:
+            from reachy_muse.streaming_transcription import SherpaStreamingTranscriber
+            command_transcriber = SherpaStreamingTranscriber(args.realtime_stt_model,
+                                                            max_buffer_s=1.0, max_turns=2)
         if args.wake_model is not None:
             if args.wake_backend == "vosk":
                 from reachy_muse.vosk_wake import VoskWakeWordDetector
@@ -613,7 +623,8 @@ async def run(args) -> int:
         def backends(session):
             return backends_for(Mode(args.mode), session, speech=speech, progress_speech=progress_speech,
                                 transcriber=transcriber, stream_replies=args.stream_replies,
-                                wake=wake_detector is not None, companion=link)
+                                wake=wake_detector is not None, companion=link,
+                                command_transcriber=command_transcriber)
         service = ReachyService(identity=ident, executor=robot, sdk_token=config.sdk_token(),
                                display_name="Reachy Mini", session_id=session_id,
                                prepare_chat=dedicated_chat.prepare if dedicated_chat else None,
@@ -660,8 +671,12 @@ async def run(args) -> int:
                         if transcriber is not None:
                             await transcriber.close()
                     finally:
-                        if wake_detector is not None:
-                            await asyncio.to_thread(wake_detector.close)
+                        try:
+                            if command_transcriber is not None:
+                                await command_transcriber.close()
+                        finally:
+                            if wake_detector is not None:
+                                await asyncio.to_thread(wake_detector.close)
     return 0
 
 

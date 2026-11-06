@@ -13,12 +13,36 @@ from reachy_muse.capabilities import Heard, Hold, CapabilityUnavailable, HeardAu
 from reachy_muse.companion_client import (
     CompanionHearing, CompanionHearingTurn, CompanionLink, LinkState, _Connection, _HearStream,
 )
-from reachy_muse.protocol import HearEndpoint, Op, encode
+from reachy_muse.protocol import HearEndpoint, HearPartial, Op, encode
 from reachy_muse.failover import CompanionRoute, FailoverHearing, FailoverNarrator
 from reachy_muse.local_backends import LocalHearing
 from reachy_muse.voice_audio import SpeechAudio, SpeechEnd
 
 np = pytest.importorskip("numpy")
+
+
+@pytest.mark.parametrize("text", ["volume down", "", "stop talking"])
+def test_call_commands_use_companion_partials_without_requesting_or_waiting_for_its_endpoint(text):
+    from test_pins import Vad
+
+    async def scenario():
+        link = CompanionLink("ws://localhost:9", token="test", out_rate=16000, insecure=True)
+        link._connection = _Connection(None, (Op.HEAR,))
+        link._set(LinkState.UP)
+        hearing = FailoverHearing(CompanionHearing(link), LocalHearing(), CompanionRoute(link).hearing)
+        turn = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=True)
+        turn.feed(np.full(8000, .2, np.float32))
+        assert turn.take().ended is None
+        stream, = link._connection.hearing.values()
+        stream.inbox.append(HearPartial(stream.id, 1, text))
+        turn.feed(np.zeros(1600, np.float32))
+        ended = turn.take().ended
+        endpoint = await asyncio.wait_for(ended.endpoint(), .05)
+        assert endpoint.text == text
+        assert stream.finished_at is None
+        assert link._connection.hearing == {}
+
+    asyncio.run(scenario())
 
 
 class EndedLate:

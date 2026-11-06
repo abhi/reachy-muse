@@ -30,6 +30,7 @@ from musegadget.streaming import HTTPStatusError
 from reachy_muse.motion.reply_alignment import SAMPLE_RATE
 from reachy_muse.motion.reply_motion import Mark, ReplyMotion
 from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlayback
+from reachy_muse.follow_up import FollowUp, classify_follow_up, repeats_playback
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,58 @@ SPEAKER_LEAD_S = 0.1
 IDLE_AFTER_S = 0.3
 CALL_LIMIT_S = 900.0
 NATURAL_ENDS = frozenset({"remote_stop", "idle_timeout", "overall_timeout"})
+BARGE_IN_SPEECH_S = 0.3
+DISTINCT_WORDS_S = 0.12
+INTERRUPTION_BUFFER_S = 2.0
+
+
+class CallInput:
+    """Hold playback-time audio until sustained speech has words distinct from Muse's.
+
+    Silence keeps the remote VAD clock moving while local recognition catches up. Only
+    a confirmed interruption releases the bounded pre-roll, preserving its first words.
+    Echo and unrecognized room sounds never enter Muse's microphone stream.
+    """
+
+    def __init__(self, feed, sample_rate: int):
+        self.feed = feed
+        self.rate = sample_rate
+        self.reset()
+
+    def reset(self) -> None:
+        self._pending = deque()
+        self._samples = 0
+        self._speech_samples = 0
+        self._distinct_samples = 0
+        self.confirmed = False
+        self.sent_speech = False
+
+    def push(self, samples, *, speaking: bool, text: str, playback: bool,
+             heard_over: tuple[str, ...]) -> bool:
+        if not playback or self.confirmed:
+            self.feed.push(samples)
+            self.sent_speech = self.sent_speech or speaking
+            return speaking
+        self._pending.append(samples.copy())
+        self._samples += len(samples)
+        while self._pending and self._samples > self.rate * INTERRUPTION_BUFFER_S:
+            self._samples -= len(self._pending.popleft())
+        self._speech_samples = self._speech_samples + len(samples) if speaking else 0
+        enough_words = len(re.findall(r"[\w']+", text)) >= 2 or classify_follow_up(text) in (
+            FollowUp.CANCEL, FollowUp.SILENCE)
+        distinct = speaking and enough_words and heard_over and not repeats_playback(text, heard_over)
+        self._distinct_samples = self._distinct_samples + len(samples) if distinct else 0
+        if (self._speech_samples >= BARGE_IN_SPEECH_S * self.rate
+                and self._distinct_samples >= DISTINCT_WORDS_S * self.rate):
+            self.confirmed = True
+            self.sent_speech = True
+            for pending in self._pending:
+                self.feed.push(pending)
+            self._pending.clear()
+            self._samples = 0
+            return speaking
+        self.feed.push(np.zeros_like(samples))
+        return False
 
 
 def realtime_supported() -> bool:
@@ -115,6 +168,7 @@ class MicrophoneFeed:
     """
 
     def __init__(self, input_rate: int) -> None:
+        self.input_rate = input_rate
         self._resample = _Resampler(input_rate, SAMPLE_RATE, output="s16")
         self._pending = np.zeros(0, dtype=np.int16)
         self._frames: deque[bytes] = deque(maxlen=int(BACKLOG_S * SAMPLE_RATE / FRAME_SAMPLES))
@@ -123,7 +177,7 @@ class MicrophoneFeed:
         self.sent = 0
 
     def push(self, samples: np.ndarray) -> None:
-        if self._closed:
+        if self._closed or not len(samples):
             return
         data = np.concatenate([self._pending, self._resample(samples)])
         whole = len(data) // FRAME_SAMPLES * FRAME_SAMPLES
@@ -333,6 +387,7 @@ class RealtimeCall:
                  on_working: Callable[[bool], None], on_reply_done: Callable[[Optional[str]], None]) -> None:
         self.voice_call = None
         self.feed = feed
+        self.input = CallInput(feed, feed.input_rate)
         self.speaker = speaker
         self.motion = motion
         self._on_working = on_working
@@ -346,10 +401,20 @@ class RealtimeCall:
         self.opened_at = time.monotonic()
         self._task: Optional[asyncio.Task] = None
         self._closing = False
+        self._transcripts: dict[Optional[str], str] = {}
+
+    @property
+    def recent_transcripts(self) -> tuple[str, ...]:
+        return tuple(self._transcripts.values())
 
     def on_event(self, event) -> None:
         """The SDK's event callback: it runs on the event loop and an exception here would end the call."""
         kind = type(event).__name__
+        if kind in ("TranscriptDelta", "TranscriptDone"):
+            previous = self._transcripts.get(event.response_id, "") if kind == "TranscriptDelta" else ""
+            self._transcripts[event.response_id] = (previous + event.text)[-8000:]
+            if len(self._transcripts) > 8:
+                del self._transcripts[next(iter(self._transcripts))]
         if kind == "AudioChunk":
             self.speaker.chunk(event.response_id, event.offset, event.pcm)
         elif kind == "PlaybackFlushed":

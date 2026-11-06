@@ -60,13 +60,14 @@ class _LocalEndedTurn:
 class LocalHearingTurn:
     """One TurnRecorder, fed to a streaming recognizer while the user speaks."""
 
-    def __init__(self, recorder, recognizer=None, transcribe=None):
+    def __init__(self, recorder, recognizer=None, transcribe=None, *, commands_only=False):
         self._recorder = recorder
         self._recognizer = recognizer
         self._transcribe = transcribe
         self._turn = None
         self._failed = False
         self._wav = None
+        self._commands_only = commands_only
 
     @property
     def recorder(self):
@@ -140,9 +141,9 @@ class LocalHearingTurn:
             if self._turn is None:
                 self._turn = self._recognizer.open_turn()
             self._turn.feed(bytes(audio))
-        except StreamingWorkerError:
-            raise
-        except StreamingTranscriptionError:
+        except StreamingTranscriptionError as error:
+            if isinstance(error, StreamingWorkerError) and not self._commands_only:
+                raise
             self.abort()
             self._failed = True
             return 1
@@ -157,8 +158,9 @@ class LocalHearingTurn:
 
 
 class LocalHearing:
-    def __init__(self, transcriber=None):
+    def __init__(self, transcriber=None, *, command_transcriber=None):
         self.transcriber = transcriber
+        self.command_transcriber = command_transcriber
         self._streaming = callable(getattr(transcriber, "open_turn", None))
         self._batch = callable(getattr(transcriber, "transcribe", None))
         self._lock = None
@@ -179,15 +181,22 @@ class LocalHearing:
                 log.warning("Local speech recognition warm-up timed out; retrying on the next turn")
         if self._streaming:
             log.info("Reachy streaming recognition ready: audio processed before endpoint")
+        if self.command_transcriber is not None:
+            await self.command_transcriber.start()
 
-    def open_turn(self, sample_rate: int, *, silence_s: float, vad=None, **options) -> LocalHearingTurn:
+    def open_turn(self, sample_rate: int, *, silence_s: float, vad=None,
+                  commands_only: bool = False, **options) -> LocalHearingTurn:
         from reachy_muse.voice_audio import TurnRecorder
 
+        recognizer = self.transcriber if self._streaming else None
+        if commands_only and self.command_transcriber is not None:
+            recognizer = self.command_transcriber
         recorder = TurnRecorder(sample_rate, silence_s=silence_s, max_s=60.0,
-                                **({"stream_audio": True} if self._streaming else {}),
+                                **({"stream_audio": True} if recognizer is not None else {}),
                                 **({"vad": vad} if vad is not None else {}), **options)
-        return LocalHearingTurn(recorder, self.transcriber if self._streaming else None,
-                                self.transcribe if self._batch else None)
+        return LocalHearingTurn(recorder, recognizer,
+                                self.transcribe if self._batch and not commands_only else None,
+                                commands_only=commands_only)
 
     async def transcribe(self, wav: bytes) -> str:
         if self._lock is None:
@@ -350,11 +359,13 @@ def split_sentences(text: str) -> Tuple[str, ...]:
 
 
 def backends_for(mode: Mode, session, *, speech=None, progress_speech=None, transcriber=None,
-                 stream_replies: bool = False, wake: bool = False, companion=None) -> Backends:
+                 stream_replies: bool = False, wake: bool = False, companion=None,
+                 command_transcriber=None) -> Backends:
     if mode is Mode.COMPANION:
         from reachy_muse.failover import companion_backends
         local = backends_for(Mode.ON_ROBOT, session, speech=speech, progress_speech=progress_speech,
-                             transcriber=transcriber, stream_replies=stream_replies, wake=wake)
+                             transcriber=transcriber, stream_replies=stream_replies, wake=wake,
+                             command_transcriber=command_transcriber)
         local.voice.fixed_phrases += CHAT_PHRASES
         return companion_backends(local, companion)
     if mode is Mode.MUSE_VOICE:
@@ -362,7 +373,7 @@ def backends_for(mode: Mode, session, *, speech=None, progress_speech=None, tran
                         local_style=ReplyStyle.MUSE_VOICE)
     voice = LocalVoice(speech, (*ACKNOWLEDGEMENTS, *((WAKE_CUE,) if wake else ())))
     return Backends(
-        hearing=LocalHearing(transcriber),
+        hearing=LocalHearing(transcriber, command_transcriber=command_transcriber),
         voice=voice,
         narrator=RuleNarrator(presynthesized=voice.is_presynthesized),
         local_style=ReplyStyle.EXPRESSIVE_JSON if stream_replies else ReplyStyle.MARKER,

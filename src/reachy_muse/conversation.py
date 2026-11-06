@@ -34,7 +34,7 @@ from reachy_muse.capabilities import EMOJI, MARKUP, WAKE_CUE, Backends, Capabili
 from reachy_muse.protocol import MAX_LINE_BYTES
 from reachy_muse.device_command import COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow, executable
 from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, interrupts_playback, request_topic,
-                                   too_short_for_follow_up)
+                                   too_short_for_follow_up, repeats_playback)
 from reachy_muse.contract.intent import Intent, maybe_chat
 from reachy_muse.morning_briefing import MorningRoutine, briefing_lines
 from reachy_muse.recent import Recent
@@ -67,8 +67,7 @@ STOP_REPLY_WINDOW_S = 5.0
 BUSY_CUE = "One at a time, please."
 CALL_LOST_CUE = "I lost my line to Muse. Please say that again."
 THINKING_AFTER_S = 0.3
-# Talk over Muse's realtime reply this long stops it; a cough or an "mm-hm" does not.
-BARGE_IN_SPEECH_S = 0.3
+CALL_COMMAND_DEADLINE_S = 0.25
 CLOSING_CLIPS = {Moment.CELEBRATION: ("success1", "happy"), Moment.APOLOGY: ("sad",)}
 CLOSING_QUIET_S = 0.3
 # The daemon plays a sound at a new volume, outside Reachy's own echo gate.
@@ -908,6 +907,7 @@ class VoiceConversation:
                 break
         gap_quiet_samples = 0
         recorder = None
+        recorder_for_call = False
         retry_notice_pending = False
 
         def transcription_failed(call=None):
@@ -923,9 +923,13 @@ class VoiceConversation:
         heard_over: set[str] = set()
 
         def make_recorder(**options):
-            nonlocal gap_quiet_samples, turn_open
+            nonlocal gap_quiet_samples, turn_open, recorder_for_call
             turn_open = False
             heard_over.clear()
+            recorder_for_call = self.call is not None
+            if recorder_for_call:
+                options["commands_only"] = True
+                self.call.input.reset()
             if recorder is not None:
                 recorder.abort()
             if self._playback.user_speaking:
@@ -938,9 +942,8 @@ class VoiceConversation:
         recorder = make_recorder()
         recorder_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reachy-recorder")
         last_slow_feed = 0.0
-        talk_over_samples = 0
-        async def record(sample):
-            nonlocal last_slow_feed, gap_quiet_samples, turn_open, talk_over_samples
+        async def record(sample, *, send_to_call=True):
+            nonlocal last_slow_feed, gap_quiet_samples, turn_open
             # Keep VAD ahead of transcription/TTS work in the shared executor.
             started = time.monotonic()
             feed = asyncio.get_running_loop().run_in_executor(recorder_worker, recorder.feed, sample)
@@ -952,6 +955,9 @@ class VoiceConversation:
             endpoint_at = time.monotonic()
             quiet_s = recorder.quiet_s
             if recorder.active or recorder.speech_active:
+                if self.call is not None and (self.call.audible or endpoint_at < self._echo_until):
+                    heard_over.clear()
+                    heard_over.update(self.call.recent_transcripts)
                 heard_over.update(text for text, until in self._audible.items() if until > endpoint_at)
             heard = recorder.take()
             for _ in range(heard.failures):
@@ -968,25 +974,35 @@ class VoiceConversation:
             if partial is not None and self.wake_detector is not None:
                 partial = replace(partial, text=self._without_wake(partial.text))
             speaking = recorder.speech_active
-            worded = False
-            if (speaking and heard_over and recorder.supports_partials
+            if self.call is not None:
+                call = self.call
+                playback = call.audible or endpoint_at < self._echo_until or bool(heard_over)
+                if send_to_call and self._wake_deadline is not None and (
+                        endpoint_at < self._wake_deadline or recorder.active or speaking or heard.ended is not None):
+                    call.input.push(sample, speaking=speaking and quiet_s == 0,
+                                    text=partial.text if partial else "", playback=playback,
+                                    heard_over=tuple(heard_over))
+                    speaking = speaking and (not playback or call.input.confirmed)
+                    if speaking and call.audible and call.input.confirmed:
+                        self._barge_in_call()
+                if heard.ended is not None:
+                    if playback and not call.input.sent_speech:
+                        heard.ended.cancel()
+                        turns_awaiting_transcript.discard(heard.ended)
+                        heard = replace(heard, ended=None)
+                        heard_over.clear()
+                    call.input.reset()
+            elif (speaking and heard_over and recorder.supports_partials
                     and not self._playback.user_speaking):
                 # Hardware AEC can leave residual speech. Keep capturing it, but
                 # require words distinct from our output before pausing playback.
-                speaking = worded = partial is not None and interrupts_playback(partial.text, tuple(heard_over))
+                speaking = partial is not None and interrupts_playback(partial.text, tuple(heard_over))
             if speaking:
                 gap_quiet_samples = 0
             else:
                 gap_quiet_samples = max(0, gap_quiet_samples - len(sample))
             was_speaking = self._playback.user_speaking
             self._playback.set_user_speaking(speaking or gap_quiet_samples > 0)
-            # Only speech over Muse's voice interrupts it. Half duplex mutes the microphone then.
-            talking_over = (speaking and self.call is not None and self.call.audible
-                            and not self.realtime.half_duplex)
-            talk_over_samples = talk_over_samples + len(sample) if talking_over else 0
-            if talking_over and (worded or talk_over_samples >= BARGE_IN_SPEECH_S * self.hardware.sample_rate):
-                talk_over_samples = 0
-                self._barge_in_call()
             if was_speaking and not self._playback.user_speaking:
                 self._user_quiet_at = time.monotonic()
             if self._playback.user_speaking != was_speaking:
@@ -994,9 +1010,9 @@ class VoiceConversation:
                                                  output=self._has_output(),
                                                  turn_running=turn_task is not None,
                                                  turns_waiting=bool(pending_turns)))
-            if partial is not None:
+            if partial is not None and self.call is None:
                 await self._plan(plan.Heard(partial, speech_active=speaking, output=self._has_output()))
-            if recorder.active:
+            if recorder.active and self.call is None:
                 await self._plan(plan.Pause(recorder.quiet_s, output=self._has_output()))
             elapsed = time.monotonic() - started
             if elapsed > max(.1, len(sample) / self.hardware.sample_rate * 2) and started - last_slow_feed > 10:
@@ -1085,7 +1101,8 @@ class VoiceConversation:
             if recorded.ended.truncated:
                 log.info("voice turn reached the 60-second recording limit; continuing capture")
             if len(pending_turns) < PENDING_TURN_LIMIT:
-                recorded.ended.start()
+                if self.call is None and self._lost_call is None:
+                    recorded.ended.start()
                 timeline = TurnTimeline()
                 if self._wake_first_request_pending and self._wake_at is not None:
                     timeline.mark("wake", self._wake_at)
@@ -1100,12 +1117,14 @@ class VoiceConversation:
                     recorder.finish_initial_capture()
                 self._wake_strip_required = False
                 self._wake_first_request_pending = False
-                log.info("Reachy queued a voice turn; %d pending", len(pending_turns))
+                if pending_turns[-1].call is None:
+                    log.info("Reachy queued a voice turn; %d pending", len(pending_turns))
             else:
                 recorded.ended.cancel()
                 turns_awaiting_transcript.discard(recorded.ended)
-                self._input_overflow = True
-                log.warning("Reachy question queue full; saved turns retained, retry notice pending")
+                if self.call is None and self._lost_call is None:
+                    self._input_overflow = True
+                    log.warning("Reachy question queue full; saved turns retained, retry notice pending")
             if wake is not None and self.wake_timeout_s == 0:
                 self._wake_deadline = None
                 self._wake_strip_required = False
@@ -1126,6 +1145,8 @@ class VoiceConversation:
                     log.warning("Reachy's companion stopped answering; using on-robot speech")
                 if self.call is not None and self.call.done:
                     await self._call_ended(capturing=recorder.active or recorder.speech_active)
+                if recorder_for_call != (self.call is not None) and not recorder.active:
+                    recorder = make_recorder()
                 if retry_notice_pending and not self._output_queue.full():
                     self._output_queue.put_nowait(_SpeechJob(
                         None, TRANSCRIPTION_RETRY_CUE, expression="curious", state="listening"))
@@ -1172,19 +1193,30 @@ class VoiceConversation:
                 if turn_task is None and follow_up_task is None and pending_turns:
                     request = pending_turns.popleft()
                     active_wake_epoch = request.wake_epoch
-                    await self._plan(plan.Working(output=self._has_output(),
-                                                  user_speaking=self._playback.user_speaking))
+                    if request.call is None:
+                        await self._plan(plan.Working(output=self._has_output(),
+                                                      user_speaking=self._playback.user_speaking))
                     async def process(request=request):
                         try:
-                            endpoint = await request.ended.endpoint()
+                            call = request.call
+                            in_call = call is not None and (call.audio_sent or not call.failed)
+                            if in_call:
+                                from reachy_muse.streaming_transcription import StreamingTranscriptionError
+                                try:
+                                    remaining = request.timeline.marks["endpoint"] + CALL_COMMAND_DEADLINE_S - time.monotonic()
+                                    endpoint = await asyncio.wait_for(request.ended.endpoint(), max(0.0, remaining))
+                                except (asyncio.TimeoutError, CapabilityUnavailable, StreamingTranscriptionError):
+                                    request.ended.cancel()
+                                    endpoint = Endpoint(b"", "")
+                            else:
+                                endpoint = await request.ended.endpoint()
                             if endpoint is None:
                                 transcription_failed(request.call)
                                 return TurnOutcome.EMPTY
                             turns_awaiting_transcript.discard(request.ended)
                             timeline = request.timeline
                             timeline.facts["forced"] = "yes" if endpoint.forced else "no"
-                            call = request.call
-                            if call is not None and (call.audio_sent or not call.failed):
+                            if in_call:
                                 return await self._realtime_turn(endpoint, request)
                             if endpoint.text is None:
                                 return await self.turn(endpoint.audio,
@@ -1221,6 +1253,7 @@ class VoiceConversation:
                         and follow_up_task is None and held is None
                         and not pending_turns and not self._has_output()):
                     if (self._wake_window is WakeWindow.WOKEN and not self._wake_strip_required
+                            and self.call is None
                             and self._wake_deadline is not None and not recorder.active
                             and time.monotonic() >= self._wake_at + self.silence_s):
                         # The acoustic handoff yields no turn for the wake phrase alone.
@@ -1287,10 +1320,6 @@ class VoiceConversation:
                         blocked_episode = True
                     continue
                 blocked_episode = False
-                # A call kept open while Muse works hears only speech once the follow-up window has passed.
-                if self.call is not None and self._wake_deadline is not None and (
-                        time.monotonic() < self._wake_deadline or recorder.active or recorder.speech_active):
-                    self.call.feed.push(sample)
                 if wake is not None:
                     now = time.monotonic()
                     if self._wake_deadline is None:
@@ -1313,6 +1342,7 @@ class VoiceConversation:
                         await self._plan(plan.WakeHeard())
                         await asyncio.to_thread(wake.reset)
                         log.info("Reachy heard its wake phrase; microphone open")
+                        self._open_call()
                         if wake_tail is None:
                             # Untimed detectors retain the exact text boundary guard.
                             recorder = make_recorder(initial_min_s=.06)
@@ -1324,13 +1354,9 @@ class VoiceConversation:
                             recorder = make_recorder()
                             log.info("Wake handoff retained %.3fs of post-keyword audio; request capture open",
                                      wake_tail / self.hardware.sample_rate)
-                        self._open_call()
-                        if self.call is not None and wake_tail is not None:
-                            for retained in pre_roll:
-                                self.call.feed.push(retained)
                         wav = None
                         for captured in pre_roll:
-                            completed = await record(captured)
+                            completed = await record(captured, send_to_call=wake_tail is not None)
                             while completed is not None:
                                 if wake_tail is not None:
                                     await queue_turn(completed)
@@ -1342,7 +1368,7 @@ class VoiceConversation:
                                         turns_awaiting_transcript.discard(wav.ended)
                                     wav = completed
                                 # Drain any same-buffer speech after an older pre-roll endpoint.
-                                completed = await record(captured[:0])
+                                completed = await record(captured[:0], send_to_call=wake_tail is not None)
                             if wake_tail is not None and self.wake_timeout_s == 0 and self._wake_deadline is None:
                                 break
                         if recorder.active:
@@ -2011,17 +2037,15 @@ class VoiceConversation:
     async def _realtime_turn(self, endpoint: Endpoint, request: _QueuedTurn) -> TurnOutcome:
         """A turn Muse already heard in a realtime call: Reachy acts only on its own device commands."""
         started = time.monotonic()
-        woken = self._wake_window is WakeWindow.WOKEN
-        if woken:
+        if self._wake_window is WakeWindow.WOKEN:
             self._wake_window = WakeWindow.AWAKE
-        text = await self._hear(endpoint.audio, endpoint.text, request.wake_strip_required, started=started,
-                                defer_playback=True, heard_over=request.heard_over, woken=woken, quiet=True)
-        if isinstance(text, TurnOutcome):
-            return text
-        if text is None:
-            return TurnOutcome.ACCEPTED
-        self._say_hushed = False
-        if await self._obey(text, started, request.timeline) is not None:
+        text = endpoint.text or ""
+        if self.wake_detector is not None:
+            text = (question_after_wake(text, self.wake_detector.phrase) or "" if request.wake_strip_required
+                    else strip_wake_prefix(text, self.wake_detector.phrase))
+        if request.heard_over and (not text.strip() or repeats_playback(text, request.heard_over)):
+            return TurnOutcome.EMPTY
+        if text.strip() and await self._obey(text, started, request.timeline) is not None:
             return TurnOutcome.ACCEPTED
         call = request.call
         if call.failed:
@@ -2030,7 +2054,6 @@ class VoiceConversation:
         replied_at = call.speaker.reply_started
         if not call.audible and (replied_at is None or replied_at < request.timeline.marks["speech_end"]):
             call.awaiting_answer = True
-        self._recent.asked(text)
         request.timeline.facts["path"] = "realtime"
         request.timeline.report()
         return TurnOutcome.ACCEPTED

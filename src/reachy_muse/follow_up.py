@@ -93,6 +93,12 @@ def _matches_spoken_phrase(words: List[str], heard_over: Tuple[str, ...]) -> boo
     return False
 
 
+def repeats_playback(text: str, heard_over: Tuple[str, ...]) -> bool:
+    """Match even single words and stop phrases when filtering a call's microphone."""
+    words = _words(text)
+    return bool(words) and _matches_spoken_phrase(words, heard_over)
+
+
 def interrupts_playback(text: str, heard_over: Tuple[str, ...]) -> bool:
     """Require distinct recognized words before microphone VAD can pause output.
 
