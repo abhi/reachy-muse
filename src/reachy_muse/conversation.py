@@ -207,6 +207,14 @@ class _CaptureBuffer:
         self.error = None
         self.gap = False
         self.gap_reason = None
+        self.generation = 0
+
+    def discard_pending(self) -> None:
+        self.generation += 1
+        self.chunks.clear()
+        self.samples = 0
+        self.gap = False
+        self.gap_reason = None
 
     def push(self, samples, *, discard: bool = False, gap: bool = False,
              gap_reason: str | None = None) -> None:
@@ -510,7 +518,7 @@ class VoiceConversation:
     def __init__(self, session: LinkSession, hardware, *, backends: Backends,
                  session_id: str | None = None,
                  silence_s: float = 2.0, reply_timeout_s: float = REPLY_TIMEOUT_S,
-                 wake_detector=None, wake_timeout_s: float = 10.0,
+                 wake_detector=None, wake_timeout_s: float = 10.0, wave_wake: bool = False,
                  owns_chat: bool = False, speech_gate=None, local_chat: bool = True,
                  arbitration_shadow: bool = False,
                  audio_diagnostics: bool = False, short_utterance_silence_s: float | None = None,
@@ -535,6 +543,8 @@ class VoiceConversation:
         self._prepared_speech = {}
         self._closing_speech = set()
         self.wake_detector = wake_detector
+        self.wave_wake = wave_wake
+        self.wake_enabled = wake_detector is not None or wave_wake
         self.speech_gate = speech_gate
         self.audio_diagnostics = audio_diagnostics
         self.wake_timeout_s = wake_timeout_s
@@ -1167,17 +1177,27 @@ class VoiceConversation:
                 if self.call is None and self._lost_call is None:
                     self._input_overflow = True
                     log.warning("Reachy question queue full; saved turns retained, retry notice pending")
-            if wake is not None and self.wake_timeout_s == 0:
+            if self.wake_enabled and self.wake_timeout_s == 0:
                 self._wake_deadline = None
                 self._wake_strip_required = False
                 self._wake_first_request_pending = False
                 recorder = make_recorder()
-                await asyncio.to_thread(wake.reset)
+                if wake is not None:
+                    await asyncio.to_thread(wake.reset)
         capture = _CaptureBuffer(self.hardware.sample_rate, capacity_s=3.0)
         producer = asyncio.create_task(self._capture_microphone(capture), name="reachy-microphone-capture")
         speaker = asyncio.create_task(self._play_output(), name="reachy-speaker")
         ready = False
         blocked_episode = False
+        wave_active = False
+        wave_poll_at = -math.inf
+
+        async def watch_wave(active):
+            nonlocal wave_active, wave_poll_at
+            if self.wave_wake and (active != wave_active or active and time.monotonic() - wave_poll_at >= .25):
+                await asyncio.to_thread(self.hardware.set_wave_watching, active)
+                wave_active, wave_poll_at = active, time.monotonic()
+
         try:
             while True:
                 if speaker.done():
@@ -1196,7 +1216,7 @@ class VoiceConversation:
                 if turn_task is not None and turn_task.done():
                     outcome = turn_task.result()
                     turn_task = None
-                    if wake is not None and active_wake_epoch == wake_epoch:
+                    if self.wake_enabled and active_wake_epoch == wake_epoch:
                         if (outcome in (TurnOutcome.WAKE_CUE, TurnOutcome.ACCEPTED)
                                 and self._wake_window not in (WakeWindow.DISMISSED, WakeWindow.ASLEEP)):
                             self._wake_first_request_pending = False
@@ -1214,14 +1234,15 @@ class VoiceConversation:
                             pre_roll.clear()
                             pre_roll_samples = 0
                             self._wake_window_closed()
-                            await asyncio.to_thread(wake.reset)
+                            if wake is not None:
+                                await asyncio.to_thread(wake.reset)
                             if wake_resampler is not None:
                                 import av
                                 wake_resampler = av.AudioResampler(format="flt", layout="mono", rate=16000)
                             log.info("Reachy's wake window closed after empty recognition and inactivity")
                     await self._plan(plan.TurnDone(
                         turns_waiting=bool(pending_turns) or held is not None, output=self._has_output(),
-                        recording=recorder.active, wake_open=wake is not None and self._wake_deadline is not None))
+                        recording=recorder.active, wake_open=self.wake_enabled and self._wake_deadline is not None))
                 if follow_up_task is not None and follow_up_task.done():
                     held = follow_up_task.result()
                     follow_up_task = None
@@ -1282,12 +1303,13 @@ class VoiceConversation:
                              self.silence_s, PENDING_TURN_LIMIT,
                              "echo-cancelled duplex" if getattr(self.hardware, "echo_cancelled_input", False) is True
                              else "playback echo gate")
-                    log.info("Reachy is ready. %s", "Say Hey Muse to open the microphone." if wake is not None
+                    log.info("Reachy is ready. %s", "Wave to open the microphone." if self.wave_wake and wake is None
+                             else "Say Hey Muse to open the microphone." if wake is not None
                              else "Speak naturally; pause to send your turn to Muse.")
                     self._startup.mark("microphone_ready")
                     self._ready.set()
                     ready = True
-                if (wake is not None and not self._input_blocked() and turn_task is None
+                if (self.wake_enabled and not self._input_blocked() and turn_task is None
                         and follow_up_task is None and held is None
                         and not pending_turns and not self._has_output()):
                     if (self._wake_window is WakeWindow.WOKEN and not self._wake_strip_required
@@ -1310,12 +1332,37 @@ class VoiceConversation:
                         self._wake_first_request_pending = False
                         self._wake_window_closed()
                         recorder = make_recorder()
-                        await asyncio.to_thread(wake.reset)
+                        if wake is not None:
+                            await asyncio.to_thread(wake.reset)
                         if wake_resampler is not None:
                             import av
                             wake_resampler = av.AudioResampler(format="flt", layout="mono", rate=16000)
                         await self._plan(plan.WakeClosed())
                         log.info("Reachy's wake window closed after inactivity")
+                wave_eligible = (self._wake_deadline is None and self.call is None and not self._call_tasks
+                                 and not self._input_blocked() and not self._has_output()
+                                 and turn_task is None and follow_up_task is None and held is None
+                                 and not pending_turns and not self._briefing_slots and not recorder.active)
+                await watch_wave(wave_eligible)
+                if self.wave_wake and wave_eligible and self.hardware.take_wave():
+                    await watch_wave(False)
+                    asleep = self._wake_window is WakeWindow.ASLEEP
+                    wake_epoch += 1
+                    await self._admit_wake(time.monotonic(), strip_required=False)
+                    self._wake_window = WakeWindow.AWAKE
+                    self._wake_first_request_pending = False
+                    recorder.abort()
+                    recorder = make_recorder()
+                    pre_roll.clear()
+                    pre_roll_samples = 0
+                    if wake is not None:
+                        await asyncio.to_thread(wake.reset)
+                    self._moments.cue(Moment.GREETING)
+                    await self._announce(WAKE_GREETING if asleep else WAKE_CUE, started=None, defer_playback=True)
+                    capture.discard_pending()
+                    self._open_call()
+                    log.info("Wave cues=1")
+                    continue
                 captured = await capture.get()
                 if captured is None:
                     continue
@@ -1358,28 +1405,20 @@ class VoiceConversation:
                         blocked_episode = True
                     continue
                 blocked_episode = False
-                if wake is not None:
+                if self.wake_enabled:
                     now = time.monotonic()
                     if self._wake_deadline is None or (now >= self._wake_deadline and not recorder.active):
+                        if wake is None:
+                            continue
                         pre_roll.append(sample.copy())
                         pre_roll_samples += len(sample)
                         trim_pre_roll(pre_roll_limit)
                         detected, wake_tail = await detects_wake(sample)
                         if not detected:
                             continue
-                        self._say_hushed = False
+                        await watch_wave(False)
                         wake_epoch += 1
-                        self._wake_at = now
-                        self._wake_deadline = now + (self.wake_timeout_s or 10.0)
-                        self._wake_strip_required = wake_tail is None
-                        self._wake_first_request_pending = True
-                        if self._wake_window is WakeWindow.ASLEEP:
-                            await self._wake_up(WakeWindow.WOKEN)
-                        elif self._wake_window is WakeWindow.DISMISSED:
-                            self._wake_window = WakeWindow.AWAKE
-                        if self._has_output() or self._muted:
-                            self._playback.set_user_speaking(True)
-                        await self._plan(plan.WakeHeard())
+                        await self._admit_wake(now, strip_required=wake_tail is None)
                         await asyncio.to_thread(wake.reset)
                         log.info("Reachy heard its wake phrase; microphone open")
                         if wake_tail is None:
@@ -1435,11 +1474,12 @@ class VoiceConversation:
                     continue
                 while wav is not None:
                     await queue_turn(wav)
-                    if wake is not None and self.wake_timeout_s == 0:
+                    if self.wake_enabled and self.wake_timeout_s == 0:
                         break
                     # Retain resampler/VAD state and drain endpoints in this SDK chunk.
                     wav = await record(sample[:0])
         finally:
+            await watch_wave(False)
             producer.cancel()
             await asyncio.gather(producer, return_exceptions=True)
             recorder.abort()
@@ -1467,6 +1507,7 @@ class VoiceConversation:
         try:
             while True:
                 muted_at_start = self._input_blocked()
+                generation = capture.generation
                 read = asyncio.create_task(asyncio.to_thread(self.hardware.read_audio))
                 try:
                     sample = await asyncio.shield(read)
@@ -1474,6 +1515,8 @@ class VoiceConversation:
                     await asyncio.gather(read, return_exceptions=True)
                     raise
                 now = time.monotonic()
+                if generation != capture.generation:
+                    continue
                 if sample is None or not len(sample):
                     if now - last_sample > 15:
                         raise ReachyHardwareError("Reachy microphone supplied no audio for 15 seconds")
@@ -1684,7 +1727,7 @@ class VoiceConversation:
             observe(Snapshot(str(self._shadow_turn), text, context_epoch=self._shadow_turn,
                              admission="follow_up" if job is not None else "wake",
                              capabilities=executable(
-                                 wake=self.wake_detector is not None, output=output,
+                                 wake=self.wake_enabled, output=output,
                                  face=getattr(self.hardware, "face_tracking_enabled", False) is True,
                                  volume=callable(getattr(self.hardware, "change_volume", None))),
                              local_chat=self.local_chat, output=output, owns_chat=self.owns_chat,
@@ -2035,7 +2078,7 @@ class VoiceConversation:
         return _HeldRequest(endpoint.audio, text, request.wake_epoch, request.timeline)
 
     async def _obey(self, text: str, started: float, timeline: TurnTimeline) -> DeviceCommand | None:
-        allowed = executable(wake=self.wake_detector is not None, output=self._has_output(),
+        allowed = executable(wake=self.wake_enabled, output=self._has_output(),
                              face=getattr(self.hardware, "face_tracking_enabled", False) is True,
                              volume=callable(getattr(self.hardware, "change_volume", None)))
         command = await self.backends.commands.recognize(text, allowed)
@@ -2255,6 +2298,21 @@ class VoiceConversation:
         self._say_hushed = True
         for task in self._command_tasks:
             task.cancel()
+
+    async def _admit_wake(self, now: float, *, strip_required: bool) -> None:
+        """Shared acoustic/visual wake state and greeting motion."""
+        self._say_hushed = False
+        self._wake_at = now
+        self._wake_deadline = now + (self.wake_timeout_s or 10.0)
+        self._wake_strip_required = strip_required
+        self._wake_first_request_pending = True
+        if self._wake_window is WakeWindow.ASLEEP:
+            await self._wake_up(WakeWindow.WOKEN)
+        elif self._wake_window is WakeWindow.DISMISSED:
+            self._wake_window = WakeWindow.AWAKE
+        if self._has_output() or self._muted:
+            self._playback.set_user_speaking(True)
+        await self._plan(plan.WakeHeard())
 
     async def _wake_up(self, window: WakeWindow) -> None:
         """Leave the sleep pose; the wake phrase and "wake up" both come here.
@@ -2749,7 +2807,7 @@ class VoiceConversation:
         return time.monotonic() - started[0] if started else 0.0
 
     def _open_follow_up_window(self) -> None:
-        if self.wake_detector is not None:
+        if self.wake_enabled:
             self._wake_deadline = time.monotonic() + (self.wake_timeout_s or 10.0)
 
     async def _collect_briefing(self, slot: _BriefingSlot) -> TurnOutcome:
@@ -2849,6 +2907,7 @@ class ReachyService(PairedService):
     arbitration_shadow: bool = False
     audio_diagnostics: bool = False
     wake_detector: object | None = None
+    wave_wake: bool = False
     wake_timeout_s: float = 10.0
     speech_gate: object | None = None
     short_utterance_silence_s: float | None = None
@@ -3030,6 +3089,7 @@ class ReachyService(PairedService):
             voice = VoiceConversation(session, hardware, backends=self.backends(session),
                                       session_id=session_id, silence_s=self.silence_s,
                                       wake_detector=self.wake_detector, wake_timeout_s=self.wake_timeout_s,
+                                      wave_wake=self.wave_wake,
                                       owns_chat=self.owns_chat, speech_gate=self.speech_gate,
                                       local_chat=self.local_chat, audio_diagnostics=self.audio_diagnostics,
                                       arbitration_shadow=self.arbitration_shadow,

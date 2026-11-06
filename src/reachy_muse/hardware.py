@@ -197,6 +197,8 @@ class ReachyController:
         face_follower_factory: Callable | None = None,
         arrival_model: Path | None = None,
         arrival_watcher_factory: Callable | None = None,
+        wave_wake: bool = False,
+        wave_watcher_factory: Callable | None = None,
         robot_factory: Callable | None = None,
         pose_factory: Callable | None = None, pose_interpolator: Callable | None = None,
         moves_factory: Callable | None = None,
@@ -224,6 +226,11 @@ class ReachyController:
         self._arrival_model = arrival_model
         self._arrival_watcher_factory = arrival_watcher_factory
         self._arrival_watcher = None
+        self._wave_enabled = wave_wake
+        self._wave_watcher_factory = wave_watcher_factory
+        self._wave_watcher = None
+        self._wave_lock = threading.Lock()
+        self._camera_lock = threading.Lock()
         self._arrival_warned = False
         self._presence = Presence()
         self._presence_detector = None
@@ -629,6 +636,7 @@ class ReachyController:
         if angles != requested:
             log.info("Watch pose limited to yaw %.0f, pitch %.0f degrees", angles["yaw"], angles["pitch"])
         self._watching = True
+        self.set_wave_watching(False)
         self._turn_watch(angles, 1.0)
         failed = self._arrival_watcher
         if failed is not None and failed.failure is not None:
@@ -714,7 +722,7 @@ class ReachyController:
             present = None
             try:
                 if self._robot is not None and not self._stop.is_set():
-                    frame = self._robot.media.get_frame()
+                    frame = self._read_camera_frame()
                     try:
                         if frame is not None:
                             if self._presence_detector is None:
@@ -756,7 +764,7 @@ class ReachyController:
             from reachy_muse.arrival import ArrivalWatcher
             factory = ArrivalWatcher
         try:
-            watcher = factory(self._robot.media.get_frame, self._camera_still, self._arrival_model)
+            watcher = factory(self._read_camera_frame, self._camera_still, self._arrival_model)
             watcher.start()
         except Exception as exc:
             self._warn_arrival_unavailable(type(exc).__name__)
@@ -775,8 +783,41 @@ class ReachyController:
         return (self._failure is None and still_since is not None
                 and time.monotonic() - still_since >= CAMERA_STILL_S)
 
+    def _read_camera_frame(self):
+        """All local vision consumers share this reader; no frame cache survives it."""
+        with self._camera_lock:
+            if self._robot is None or self._stop.is_set():
+                return None
+            return self._robot.media.get_frame()
+
+    def _wave_still(self) -> bool:
+        return (not self._watching and not self._stop.is_set()
+                and self._state in ("idle", "sleeping") and self._camera_still())
+
+    def set_wave_watching(self, active: bool) -> None:
+        """Called off the audio loop: disabling waits for in-flight inference."""
+        with self._wave_lock:
+            active = (active and self._wave_enabled and not self._watching
+                      and not self._stop.is_set() and self._robot is not None)
+            if active and self._wave_watcher is None:
+                from reachy_muse.wave_wake import WaveWatcher
+                factory = self._wave_watcher_factory or WaveWatcher
+                self._wave_watcher = factory(self._read_camera_frame, self._wave_still,
+                                             self._arrival_model)
+                self._wave_watcher.start()
+            if self._wave_watcher is not None:
+                self._wave_watcher.set_active(active)
+
+    def take_wave(self) -> bool:
+        return (not self._watching and self._wave_watcher is not None
+                and self._wave_watcher.take_wave())
+
     def close(self) -> None:
         self._stop.set()
+        with self._wave_lock:
+            if self._wave_watcher is not None:
+                self._wave_watcher.close()
+                self._wave_watcher = None
         if self._face_follower is not None:
             self._face_follower.set_active(False)
         if self._motion_thread is not None:
@@ -792,7 +833,7 @@ class ReachyController:
             self._arrival_watcher = None
         if self._robot is not None:
             robot, self._robot = self._robot, None
-            with self._audio_lock:
+            with self._audio_lock, self._camera_lock:
                 robot.__exit__(None, None, None)
         self._sample_rate = 0
         self._output_sample_rate = 0
@@ -812,7 +853,7 @@ class ReachyController:
             from reachy_muse.local_face_tracking import FaceFollower
             factory = FaceFollower
         self._face_follower = factory(
-            self._robot.media.get_frame, self._face_follow_model,
+            self._read_camera_frame, self._face_follow_model,
             read_head_angles=self._read_head_angles,
             camera_matrix=self._robot.media.camera.K,
             distortion=self._robot.media.camera.D,

@@ -332,7 +332,7 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--muse-path", choices=("chat", "realtime"), default="chat",
                               help="chat: Reachy recognizes each request and Muse answers in its side chat (default). "
                                    "realtime: after the wake word Reachy opens a Muse voice call, streams the "
-                                   "microphone and plays Muse's voice while animating itself; needs --wake-model "
+                                   "microphone and plays Muse's voice while animating itself; needs --wake-model or --wave-wake "
                                    "and --mode on-robot or companion, and falls back to chat when a call fails")
             item.add_argument("--local-chat", choices=("on", "off"), default="on",
                               help="Let Reachy answer pure social chat itself instead of sending it to Muse")
@@ -344,6 +344,8 @@ def parser() -> argparse.ArgumentParser:
                               help="Log playback timing counters without audio or transcript content")
             item.add_argument("--wake-model", type=Path,
                               help="Local model directory for the selected wake backend; enables wake-word invocation")
+            item.add_argument("--wave-wake", action="store_true",
+                              help="Wake with a raised hand wave; local camera processing, 15-second cooldown")
             item.add_argument("--wake-backend", choices=("sherpa", "vosk"), default="sherpa",
                               help="Local wake detector (default: sherpa); Vosk requires the reachy-wake-vosk extra")
             item.add_argument("--wake-phrase", default="hey muse",
@@ -451,6 +453,8 @@ def _hardware(args, *, motion=True):
     if getattr(args, "face_follow", False) and motion and not args.no_motion:
         face_model = args.face_follow_model or default_face_model()
     watcher = {}
+    if getattr(args, "wave_wake", False):
+        watcher["wave_wake"] = True
     if getattr(args, "morning_briefing", None) or getattr(args, "morning_test_in", None) is not None:
         from reachy_muse.arrival import default_person_model
         watcher["arrival_model"] = default_person_model()
@@ -513,8 +517,8 @@ def realtime_path(args) -> str:
     """The Muse path this run uses: realtime only when the installed Muse SDK reports voice call events."""
     if args.muse_path != "realtime":
         return "chat"
-    if args.wake_model is None:
-        raise ValueError("--muse-path realtime needs --wake-model")
+    if args.wake_model is None and not args.wave_wake:
+        raise ValueError("--muse-path realtime needs --wake-model or --wave-wake")
     if Mode(args.mode) is Mode.MUSE_VOICE:
         raise ValueError("--muse-path realtime needs --mode on-robot or companion")
     from reachy_muse.realtime_call import realtime_supported
@@ -522,7 +526,7 @@ def realtime_path(args) -> str:
         logging.getLogger(__name__).warning(
             "Muse realtime voice is unavailable: the installed Muse SDK has no voice call events; using chat")
         return "chat"
-    logging.getLogger(__name__).info("Reachy's Muse path: realtime voice calls after the wake word")
+    logging.getLogger(__name__).info("Reachy's Muse path: realtime voice calls after a wake cue")
     return "realtime"
 
 
@@ -550,6 +554,8 @@ async def run(args) -> int:
         raise ValueError("--face-follow-model requires --face-follow")
     if args.face_follow and args.no_motion:
         raise ValueError("--face-follow requires motion to be enabled")
+    if args.wave_wake and (args.no_motion or Mode(args.mode) is Mode.MUSE_VOICE):
+        raise ValueError("--wave-wake needs motion and --mode on-robot or companion")
     silence_s = end_of_turn_silence(Mode(args.mode), args.silence)
     if not 0.3 <= silence_s <= 3:
         raise ValueError("--silence must be between 0.3 and 3 seconds")
@@ -623,7 +629,7 @@ async def run(args) -> int:
         def backends(session):
             return backends_for(Mode(args.mode), session, speech=speech, progress_speech=progress_speech,
                                 transcriber=transcriber, stream_replies=args.stream_replies,
-                                wake=wake_detector is not None, companion=link,
+                                wake=wake_detector is not None or args.wave_wake, companion=link,
                                 command_transcriber=command_transcriber)
         service = ReachyService(identity=ident, executor=robot, sdk_token=config.sdk_token(),
                                display_name="Reachy Mini", session_id=session_id,
@@ -635,6 +641,7 @@ async def run(args) -> int:
                                local_chat=args.local_chat == "on",
                                arbitration_shadow=args.arbitration_shadow,
                                audio_diagnostics=args.audio_diagnostics, wake_detector=wake_detector,
+                               wave_wake=args.wave_wake,
                                wake_timeout_s=args.wake_timeout, speech_gate=speech_gate,
                                startup=startup, muse_path=muse_path,
                                morning=morning(robot) if morning is not None else None)
