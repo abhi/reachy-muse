@@ -41,7 +41,7 @@ PYTHONPATH=src python bench/voice_verify.py \
 
 `--synthesize` uses installed macOS `say` voices and writes WAVs only to the
 specified directory. Omit it to evaluate the same WAVs on another CPU. Output
-contains scores, aggregate metrics, and hardware/model identifiers, with no
+contains scores, request retention, aggregate metrics, and hardware/model identifiers, with no
 machine paths or embeddings. The script uses a fixed noise seed. OS voice
 updates can change the corpus; preserve the WAVs privately for comparisons.
 
@@ -51,9 +51,18 @@ Three clean Samantha phrases form enrollment. Calibration uses two different
 phrases from Samantha and impostors Daniel, Fred, and Kathy. Evaluation uses
 two held-out Samantha phrases and four phrases from held-out impostor voices
 Karen, Junior, and Ralph. Voices, phrases, and exact split rules are in
-`voice_verify.py`. Every phrase begins with the wake phrase. Windows are the
-first 1.5 seconds for approximate wake timing and the first second for request
-segments. This does not benchmark the keyword detector's trigger timestamps.
+`voice_verify.py`. Wake trials use the first 1.5 seconds of the wake-prefixed
+phrases. Request trials use separate `VOICE-INDEX-request.wav` files synthesized
+from the words after "Hey Muse,". This avoids cutting off request words with an
+estimated keyword timestamp. Wake-only phrase 3 has no request trial. Existing
+corpora need another `--synthesize` run to create the request files.
+
+Every complete request passes through the runtime `RequestGate` in 20 ms frames,
+followed by one second of silence to flush its final segment. The report records
+every segment score and counts input and retained nonzero samples. A complete
+request retains all its nonzero samples. In noisy conditions this includes noise.
+These trials isolate speaker verification; they do not measure keyword detection,
+continuous wake-to-request prosody, or transcript accuracy.
 
 Each trial has four conditions: clean; a distance approximation with 0.25 gain
 and a 40 ms delayed reflection at 0.25 relative amplitude; and additive Gaussian
@@ -61,49 +70,63 @@ noise at 20 and 10 dB SNR. These are correlated synthetic augmentations, not
 recordings at physical distances or independent human speakers. No confidence
 interval from these counts would establish real-world performance.
 
-Cosine similarity accepts at `score >= threshold`. The threshold is the maximum
-calibration impostor score plus 0.02, rounded upward to a hundredth. It is 0.74
-for the pinned ResNet34 model. Evaluation scores do not set this threshold.
+Cosine similarity accepts at `score >= threshold`. Calibration includes every
+wake and request segment. The threshold is the maximum calibration impostor
+segment score plus 0.02, rounded upward to a hundredth. Recalibration with complete
+requests still selects 0.74 for the pinned ResNet34 model. Evaluation scores do
+not set this threshold. This margin rejects every calibration impostor segment
+but also truncates genuine requests; it is not a demonstrated usable strict-mode
+threshold.
 Unknown models require an explicit calibrated `--voice-threshold` at enrollment.
 The profile saves that threshold and the exact model hash. EER is the mean FAR
-and FRR at the closest empirical crossing, without interpolation.
+and FRR at the closest empirical crossing, without interpolation. Request EER,
+FAR, and FRR use the minimum segment score, so acceptance requires all segments
+to match. Separate retention counts reveal partial audio release and VAD loss.
 
 ## Measured results
 
 Run on 2026-11-06, Apple M3 Ultra, arm64, CPU only, one inference thread.
 
-| Split | Genuine trials | Impostor trials | EER | FAR at 0.74 | FRR at 0.74 |
+| Path and split | Genuine trials | Impostor trials | EER | FAR at 0.74 | FRR at 0.74 |
 |---|---:|---:|---:|---:|---:|
-| Calibration | 16 | 48 | 30.21% | 0/48, 0% | 8/16, 50% |
-| Evaluation | 16 | 96 | 31.25% | 11/96, 11.46% | 8/16, 50% |
+| Wake calibration | 8 | 24 | 35.42% | 0/24, 0% | 4/8, 50% |
+| Wake evaluation | 8 | 48 | 25% | 7/48, 14.58% | 4/8, 50% |
+| Request calibration | 4 | 12 | 0% | 0/12, 0% | 4/4, 100% |
+| Request evaluation | 8 | 36 | 25% | 1/36, 2.78% | 6/8, 75% |
 
-| Evaluation condition | False accepts / impostors | False rejects / genuine |
-|---|---:|---:|
-| Clean | 8/24 | 0/4 |
-| Distance approximation | 3/24 | 0/4 |
-| 20 dB SNR | 0/24 | 4/4 |
-| 10 dB SNR | 0/24 | 4/4 |
+| Evaluation condition | Wake false accepts | Wake false rejects | Complete genuine requests | Impostor requests releasing any audio |
+|---|---:|---:|---:|---:|
+| Clean | 4/12 | 0/2 | 1/2 | 3/9 |
+| Distance approximation | 3/12 | 0/2 | 1/2 | 2/9 |
+| 20 dB SNR | 0/12 | 2/2 | 0/2 | 0/9 |
+| 10 dB SNR | 0/12 | 2/2 | 0/2 | 0/9 |
 
-Warm preprocessing plus embedding CPU latency across 224 windows was 51.78 ms
-p50, 78.13 ms p95, and 91.36 ms maximum. Model loading and warmup occur before
+Only 2/8 held-out genuine requests retain all their audio across the four
+conditions. The clean Samantha-5 request retains all 13,141 nonzero samples.
+Samantha-6 retains 19,198 of 24,737; its final segment scores 0.569919 and loses
+5,539 nonzero samples. Prefix-only scoring missed this failure. Calibration
+retains no complete genuine request. Five of 36 held-out impostor requests
+release some audio, even though only one passes every segment. Request trials
+run independently of wake acceptance so a rejected wake cannot hide these losses.
+
+Warm preprocessing plus verification CPU latency across 219 decisions was 52.54 ms
+p50, 77.95 ms p95, and 79.82 ms maximum. Model loading and warmup occur before
 capture and are excluded. This meets the 150 ms inference target on this Mac;
 it does not prove the target on the robot CPU or include the wake detector,
 thread scheduling, or 48 kHz resampling cost. Request gating additionally holds
 roughly one second of speech before release. It can delay interruptions too.
 
-An exploratory comparison with WeSpeaker CAM++ used the same corpus, CPU
-provider, and one thread. Its calibrated threshold was 0.80, evaluation EER
-56.25%, FAR 7/96, FRR 12/16, and latency 25.15 ms p95. We retained ResNet34 for
-its lower EER. Evaluation was used for this model comparison, so it is not an
-independent final qualification set. Neither result is a production security
-claim. Similar synthetic voices and noise expose substantial failure cases.
+The earlier comparison with WeSpeaker CAM++ scored prefixes only. It does not
+establish which model retains complete requests. The ResNet34 evaluation set was
+used in that comparison, so these results are not an independent final qualification.
 
 ## Runtime behavior and next measurements
 
 Wake audio uses the latest 1.5 seconds ending at the trusted keyword boundary;
 untimed detectors use the latest buffered audio. Rejected wakes never open the
 listening window or reach hearing. Strict rejection emits a quiet 160 ms local
-descending chime, rate limited to once per five seconds.
+descending chime, rate limited to once per five seconds. The cue uses the shared
+speaker queue, playback pacing, echo suppression, and cancellation handling.
 
 Requests and interruptions are checked repeatedly in bounded segments before
 hearing or realtime forwarding. The gate retains 0.4 seconds of unforwarded

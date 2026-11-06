@@ -7,6 +7,7 @@ another CPU without TTS. No network, robot, companion, or Muse connections.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 import math
 from pathlib import Path
@@ -17,7 +18,7 @@ import wave
 
 import numpy as np
 
-from reachy_muse.voice_verify import SpeakerEncoder, enroll
+from reachy_muse.voice_verify import RequestGate, SpeakerEncoder, VoiceVerifier, enroll
 
 VOICES = ("Samantha", "Daniel", "Fred", "Kathy", "Karen", "Junior", "Ralph")
 PHRASES = (
@@ -76,6 +77,51 @@ def conditions(audio, seed):
         yield f"snr_{snr}", np.clip(audio + noise, -1, 1)
 
 
+class MeasuredVerifier(VoiceVerifier):
+    def __init__(self, encoder, profile):
+        super().__init__(encoder, profile, "strict")
+        self.scores = []
+        self.latency = []
+
+    def verify(self, audio, rate):
+        started = time.perf_counter()
+        decision = super().verify(audio, rate)
+        self.latency.append((time.perf_counter() - started) * 1000)
+        self.scores.append(round(decision.score, 6) if decision.score is not None else -1.)
+        return decision
+
+
+def evaluate(encoder, profile, audio, window):
+    verifier = MeasuredVerifier(encoder, profile)
+    retention = {}
+    if window == "wake":
+        verifier.verify(audio[:24000], 16000)
+    else:
+        gate = RequestGate(verifier, 16000)
+        padded = np.pad(audio, (0, 16000 + (-len(audio) % 320)))
+        admitted = np.concatenate([gate.feed(padded[start:start + 320])
+                                   for start in range(0, len(padded), 320)])
+        incoming = int(np.count_nonzero(audio))
+        retained = int(np.count_nonzero(admitted))
+        retention = {"input_nonzero": incoming, "retained_nonzero": retained,
+                     "complete": incoming > 0 and incoming == retained}
+    return {"score": min(verifier.scores, default=-1.), "segment_scores": verifier.scores,
+            **retention}, verifier.latency
+
+
+def summarize(rows, threshold):
+    genuine = [row for row in rows if row["genuine"]]
+    impostor = [row for row in rows if not row["genuine"]]
+    positive, negative = [row["score"] for row in genuine], [row["score"] for row in impostor]
+    result = {"genuine": len(genuine), "impostor": len(impostor),
+              "eer": eer(positive, negative), **rates(positive, negative, threshold)}
+    if rows[0]["window"] == "request":
+        result.update(genuine_complete=sum(row["complete"] for row in genuine),
+                      complete_request_retention=sum(row["complete"] for row in genuine) / len(genuine),
+                      impostor_with_audio=sum(row["retained_nonzero"] > 0 for row in impostor))
+    return result
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, type=Path)
@@ -87,45 +133,52 @@ def main(argv=None):
         args.audio_dir.mkdir(parents=True, exist_ok=True)
         for voice in VOICES:
             for index, phrase in enumerate(PHRASES):
-                path = args.audio_dir / f"{voice}-{index}.wav"
-                subprocess.run(["say", "-v", voice, "-r", "170", "-o", str(path),
-                                "--file-format=WAVE", "--data-format=LEI16@16000", phrase], check=True)
-                load(path)
+                utterances = [(f"{voice}-{index}.wav", phrase)]
+                if index > 3:
+                    utterances.append((f"{voice}-{index}-request.wav", phrase.partition(", ")[2]))
+                for filename, text in utterances:
+                    path = args.audio_dir / filename
+                    subprocess.run(["say", "-v", voice, "-r", "170", "-o", str(path),
+                                    "--file-format=WAVE", "--data-format=LEI16@16000", text], check=True)
+                    load(path)
     encoder = SpeakerEncoder(args.model)
     profile = enroll(encoder, [(load(args.audio_dir / f"Samantha-{i}.wav"), 16000)
                                for i in range(3)], threshold=.3)
-    reference = np.asarray(profile.embedding)
-    rows = []
-    latency = []
+    trials = []
     for voice_index, voice in enumerate(VOICES):
         for phrase in range(3, len(PHRASES)):
-            original = load(args.audio_dir / f"{voice}-{phrase}.wav")
-            for condition, audio in conditions(original, 20261106 + voice_index * 100 + phrase):
-                # Every phrase starts with Hey Muse. Approximate the KWS trigger
-                # at 1.5s; do not score the unrelated end of a long TTS sentence.
-                for window, candidate in (("wake", audio[:24000]), ("segment", audio[:16000])):
-                    started = time.perf_counter()
-                    try:
-                        score = float(np.dot(reference, encoder.embed(candidate, 16000)))
-                    except ValueError:
-                        score = -1.  # Insufficient speech is a rejection in the real verifier.
-                    latency.append((time.perf_counter() - started) * 1000)
-                    split = "calibration" if phrase in (3, 4) and voice in VOICES[:4] else "evaluation"
-                    # Impostor voices used for calibration must not enter held-out evaluation.
-                    if split == "evaluation" and voice in ("Daniel", "Fred", "Kathy"):
-                        continue
-                    if split == "evaluation" and voice == "Samantha" and phrase in (3, 4):
-                        continue
-                    rows.append({"split": split, "genuine": voice == "Samantha", "condition": condition,
-                                 "window": window, "score": round(score, 6)})
-    def scores(split, genuine):
-        return [row["score"] for row in rows if row["split"] == split and row["genuine"] == genuine]
-    threshold = calibrate(scores("calibration", True), scores("calibration", False))
+            split = "calibration" if phrase in (3, 4) and voice in VOICES[:4] else "evaluation"
+            if split == "evaluation" and (voice in ("Daniel", "Fred", "Kathy")
+                                           or voice == "Samantha" and phrase in (3, 4)):
+                continue
+            for window in (("wake",) if phrase == 3 else ("wake", "request")):
+                suffix = "-request" if window == "request" else ""
+                original = load(args.audio_dir / f"{voice}-{phrase}{suffix}.wav")
+                for condition, audio in conditions(original, 20261106 + voice_index * 100 + phrase):
+                    trials.append(({"split": split, "genuine": voice == "Samantha", "voice": voice,
+                                    "phrase": phrase, "condition": condition, "window": window}, audio))
+    calibration = {True: [], False: []}
+    for trial, audio in trials:
+        if trial["split"] == "calibration":
+            measured, _ = evaluate(encoder, profile, audio, trial["window"])
+            calibration[trial["genuine"]].extend(measured["segment_scores"])
+    threshold = calibrate(calibration[True], calibration[False])
+    profile = replace(profile, threshold=threshold)
+    rows, latency = [], []
+    for trial, audio in trials:
+        measured, elapsed = evaluate(encoder, profile, audio, trial["window"])
+        rows.append({**trial, **measured})
+        latency.extend(elapsed)
     results = {}
     for split in ("calibration", "evaluation"):
-        genuine, impostor = scores(split, True), scores(split, False)
-        results[split] = {"genuine": len(genuine), "impostor": len(impostor),
-                          "eer": eer(genuine, impostor), **rates(genuine, impostor, threshold)}
+        results[split] = {window: summarize([row for row in rows if row["split"] == split
+                                             and row["window"] == window], threshold)
+                          for window in ("wake", "request")}
+        results[split]["conditions"] = {
+            condition: {window: summarize([row for row in rows if row["split"] == split
+                                            and row["window"] == window and row["condition"] == condition], threshold)
+                        for window in ("wake", "request")}
+            for condition in sorted({row["condition"] for row in rows})}
     report = {"model_sha256": encoder.model_id, "model_bytes": args.model.stat().st_size,
               "platform": platform.system(), "machine": platform.machine(),
               "cpu": subprocess.check_output(["sysctl", "-n", "machdep.cpu.brand_string"], text=True).strip()
