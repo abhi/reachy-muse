@@ -586,6 +586,42 @@ restores the motor mode it found at startup. Terminal robot connection errors
 exit so systemd can recreate the hardware controller. Network failures reconnect and
 rotate Muse credentials through the existing Linux service.
 
+## Realtime voice calls
+
+With `--muse-path realtime`, the wake word opens a Muse voice call instead of
+sending each recognized request to Reachy's side chat. Reachy streams its
+microphone to Muse at 24 kHz and plays Muse's own voice through its speaker,
+with the speaker equalization. The default, `--muse-path chat`, is unchanged.
+
+Realtime needs a wake word (`--wake-model`) and `--mode on-robot` or
+`companion`, and a Muse SDK whose `VoiceCall` reports reply events
+(`on_event`). On an older SDK, Reachy logs that realtime is unavailable and
+uses chat. Muse hears everything said after the wake word until the follow-up
+window closes, so Reachy's local chat does not answer greetings in a call.
+
+- Reachy still recognizes speech itself. Sleep, stop talking, volume, and face
+  following run on the robot at once; Reachy cuts off Muse's answer to them.
+- Talking over Muse stops its reply. Without verified hardware echo
+  cancellation, the call is half duplex and Muse's voice mutes the microphone.
+- The call ends when the follow-up window closes, or when Muse ends it.
+- If a call fails before any audio reached Muse, the request goes to Muse by
+  chat. If Muse may have heard it, Reachy asks the user to say it again and the
+  next request goes by chat; the same audio is never sent twice.
+
+Reachy animates Muse's voice itself while it plays. The head sways with the
+output audio. Each sentence of Muse's transcript gets an expression from the
+local sentence rules, started where that sentence's speech starts. Reachy
+estimates that sample from the transcript's character position and the
+reply's pauses. Loudness peaks give small nods and antenna flicks, and a pitch
+rise into a pause tilts the head, before the words arrive. Reachy looks
+thoughtful while Muse works and closes a happy or sorry reply with a
+celebration or apology. When Muse calls `reachy.expression` or `reachy.move`
+during a call, Muse's gesture plays and Reachy's own reply motion waits until
+it finishes. When the Muse SDK registers device guides, Reachy also gives Muse
+a `device.guide` that says when such gestures are worth calling.
+[`bench/realtime_expressive.md`](../bench/realtime_expressive.md) has the
+offline measurements.
+
 ## Ask Muse to remember Reachy
 
 Run `muse-reachy introduce` to preview the exact introduction without connecting

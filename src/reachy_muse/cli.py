@@ -326,6 +326,11 @@ def parser() -> argparse.ArgumentParser:
                               help="Piper ONNX model for speaking normal Muse answers locally")
             item.add_argument("--stream-replies", action="store_true",
                               help="Speak incoming Muse chunks with per-chunk expressions")
+            item.add_argument("--muse-path", choices=("chat", "realtime"), default="chat",
+                              help="chat: Reachy recognizes each request and Muse answers in its side chat (default). "
+                                   "realtime: after the wake word Reachy opens a Muse voice call, streams the "
+                                   "microphone and plays Muse's voice while animating itself; needs --wake-model "
+                                   "and --mode on-robot or companion, and falls back to chat when a call fails")
             item.add_argument("--local-chat", choices=("on", "off"), default="on",
                               help="Let Reachy answer pure social chat itself instead of sending it to Muse")
             item.add_argument("--arbitration-shadow", action="store_true",
@@ -501,6 +506,23 @@ def morning_routine(args):
                              ledger=ledger, pose=pose)
 
 
+def realtime_path(args) -> str:
+    """The Muse path this run uses: realtime only when the installed Muse SDK reports voice call events."""
+    if args.muse_path != "realtime":
+        return "chat"
+    if args.wake_model is None:
+        raise ValueError("--muse-path realtime needs --wake-model")
+    if Mode(args.mode) is Mode.MUSE_VOICE:
+        raise ValueError("--muse-path realtime needs --mode on-robot or companion")
+    from reachy_muse.realtime_call import realtime_supported
+    if not realtime_supported():
+        logging.getLogger(__name__).warning(
+            "Muse realtime voice is unavailable: the installed Muse SDK has no voice call events; using chat")
+        return "chat"
+    logging.getLogger(__name__).info("Reachy's Muse path: realtime voice calls after the wake word")
+    return "realtime"
+
+
 def end_of_turn_silence(mode: Mode, given: float | None) -> float:
     """The robot's end-of-turn silence: ``--silence`` when given, else the mode's default."""
     if given is not None:
@@ -532,6 +554,7 @@ async def run(args) -> int:
         raise ValueError("--wake-backend vosk requires --wake-model")
     if not math.isfinite(args.wake_timeout) or not 1 <= args.wake_timeout <= 300:
         raise ValueError("--wake-timeout must be between 1 and 300 seconds")
+    muse_path = realtime_path(args)
     morning = morning_routine(args)
     companion = None
     if Mode(args.mode) is Mode.COMPANION:
@@ -602,7 +625,7 @@ async def run(args) -> int:
                                arbitration_shadow=args.arbitration_shadow,
                                audio_diagnostics=args.audio_diagnostics, wake_detector=wake_detector,
                                wake_timeout_s=args.wake_timeout, speech_gate=speech_gate,
-                               startup=startup,
+                               startup=startup, muse_path=muse_path,
                                morning=morning(robot) if morning is not None else None)
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
