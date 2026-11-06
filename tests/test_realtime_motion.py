@@ -90,10 +90,10 @@ def play(motion, response_id, pcm):
     """Muse's audio arrives ahead of playback, as it does on a call; marks are asked chunk by chunk."""
     for offset, data in chunks(pcm):
         motion.audio(response_id, offset, data)
-    motion.audio_done(response_id)
     marks = []
     for offset, data in chunks(pcm):
         marks += [(offset + mark.sample, mark) for mark in motion.marks(response_id, offset, len(data) // 2)]
+    motion.audio_done(response_id)
     return marks
 
 

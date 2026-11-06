@@ -756,6 +756,50 @@ def test_each_sentence_s_closing_gesture_lands_where_its_speech_ends_not_where_t
     assert asyncio.run(scenario()) == [1.6, 3.8]
 
 
+def test_buffered_fast_speech_gets_each_expression_before_playback_finishes():
+    from musegadget import voice_call as sdk
+
+    class Hardware(Speaker):
+        output_sample_rate = 24000
+
+        def __init__(self):
+            super().__init__()
+            self.expressions = []
+
+        def play_audio(self, samples, *, sentence=None, accents=()):
+            if sentence is not None:
+                self.expressions.append((sum(self.played) / 24000, sentence.expression.value))
+            self.played.append(len(samples))
+
+        def finish_sentence(self):
+            pass
+
+    async def scenario():
+        hardware = Hardware()
+
+        async def nothing():
+            pass
+
+        motion = ReplyMotion()
+        speaker = RealtimeSpeaker(hardware, motion, on_audible=lambda *args: None,
+                                  on_start=nothing, on_idle=nothing)
+        call = RealtimeCall(MicrophoneFeed(16000), speaker, motion, on_working=lambda working: None,
+                            on_reply_done=lambda reply: None)
+        text = "Great news, your flight and hotel are booked for tomorrow! Want a reminder?"
+        pcm = tone(1.5) + bytes(7200 * 2) + tone(1.2)
+        try:
+            call.on_event(sdk.TranscriptDone("r1", text))
+            for offset in range(0, len(pcm), 4800):
+                call.on_event(sdk.AudioChunk("r1", offset // 2, pcm[offset:offset + 4800]))
+            call.on_event(sdk.ResponseDone("r1", "completed"))
+            await asyncio.wait_for(speaker.drain(), 5)
+            return hardware.expressions
+        finally:
+            await call.close()
+
+    assert asyncio.run(scenario()) == [(0.0, "happy"), (1.8, "curious")]
+
+
 def test_response_done_before_the_remaining_pcm_does_not_end_a_question_at_its_internal_pause():
     from musegadget import voice_call as sdk
 

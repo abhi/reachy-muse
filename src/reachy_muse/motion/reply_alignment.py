@@ -178,6 +178,12 @@ class ReplyAligner:
         estimate += (sentence.start_char - base_char) * self._samples_per_char(onset)
         estimate = int(round(estimate))
         snapped = self._snap(estimate, estimate - base_sample, base_sample)
+        if snapped is None and not self._audio_done:
+            rate = self._transcript_rate(onset)
+            if rate is not None:
+                calibrated = int(round(base_sample + (sentence.pause_s - base_pause) * self.rate
+                                       + (sentence.start_char - base_char) * rate))
+                snapped = self._snap(calibrated, calibrated - base_sample, base_sample)
         return (snapped[1], snapped[0]) if snapped is not None else (estimate, None)
 
     def confirm(self, sentence: Sentence, sample: int) -> None:
@@ -188,17 +194,24 @@ class ReplyAligner:
     def _samples_per_char(self, onset: Optional[int]) -> float:
         if onset is None:
             return self._prior
-        if self._audio_done and self._finished is not None and self._finished[0]:
-            chars, pause_s = self._finished
-            end = self.speech_end
-            speaking = (end or 0) - onset - pause_s * self.rate
-            if end is not None and speaking > 0:
-                return speaking / chars
+        if self._audio_done:
+            rate = self._transcript_rate(onset)
+            if rate is not None:
+                return rate
         for char, sample, pause_s in reversed(self._anchors):
             speaking = sample - onset - pause_s * self.rate
             if char > 0 and speaking > 0:
                 return speaking / char
         return self._prior
+
+    def _transcript_rate(self, onset: Optional[int]) -> Optional[float]:
+        if onset is not None and self._finished is not None and self._finished[0]:
+            chars, pause_s = self._finished
+            end = self.speech_end
+            speaking = (end or 0) - onset - pause_s * self.rate
+            if end is not None and speaking > 0:
+                return speaking / chars
+        return None
 
     @property
     def speech_end(self) -> Optional[int]:

@@ -31,7 +31,7 @@ def test_replayed_replies_start_each_sentence_s_expression_where_its_speech_star
     report = alignment(8, 20261105, PROFILES["clear"])
     assert {regime: (item["sentences"], item["within_150ms"], item["shown"], item["non_neutral_expressions"])
             for regime, item in report.items()} == {
-        "ahead": (21, 1.0, 1.0, 10), "with_audio": (20, .9, 1.0, 9), "late": (21, .905, 1.0, 9)}
+        "ahead": (21, 1.0, 1.0, 10), "with_audio": (21, .905, 1.0, 10), "late": (21, .905, 1.0, 9)}
 
 
 @pytest.mark.parametrize("regime", ["ahead", "with_audio", "late"])
