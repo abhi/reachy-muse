@@ -33,6 +33,7 @@ def setup_wire_message():
 
 
 @pytest.mark.parametrize('options, enabled', [([], False), (['--face-follow'], True),
+                                            (['--face-follow', '--face-follow-idle'], True),
                                             (['--face-follow', '--face-follow-model', '/tmp/yunet.onnx'], True)])
 def test_camera_following_is_explicit_and_passes_local_model_to_motion_owner(monkeypatch, options, enabled):
     from reachy_muse.local_face_tracking import default_face_model
@@ -48,6 +49,7 @@ def test_camera_following_is_explicit_and_passes_local_model_to_motion_owner(mon
     expected = args.face_follow_model or default_face_model() if enabled else None
     assert captured['face_follow_model'] == expected
     assert captured['enable_motion'] is True
+    assert captured['face_follow_idle'] is ('--face-follow-idle' in options)
 
 
 def test_doctor_does_not_activate_the_camera_detector(monkeypatch):
@@ -61,6 +63,7 @@ def test_doctor_does_not_activate_the_camera_detector(monkeypatch):
 @pytest.mark.parametrize('options, error', [
     (['--face-follow-model', '/tmp/yunet.onnx'], '--face-follow-model requires --face-follow'),
     (['--face-follow', '--no-motion'], '--face-follow requires motion'),
+    (['--face-follow-idle'], '--face-follow-idle requires --face-follow'),
 ])
 def test_invalid_camera_configuration_fails_before_hardware_start(tmp_path, monkeypatch, options, error):
     monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
@@ -582,7 +585,7 @@ def test_native_media_connects_to_local_daemon(monkeypatch):
     reachy_muse.cli._hardware(reachy_muse.cli.parser().parse_args(['run']))
     assert captured == {'host': 'localhost', 'port': 8000,
                         'connection_mode': 'localhost_only', 'media_backend': 'local',
-                        'enable_motion': True, 'library_expressions': False, 'antenna_mode': 'both', 'face_follow_model': None,
+                        'enable_motion': True, 'library_expressions': False, 'antenna_mode': 'both', 'face_follow_model': None, 'face_follow_idle': False,
                         'speaker_eq_gains': SPEAKER_EQ_GAINS, 'style': MotionStyle(sway='sdk', breathing=False)}
 
 

@@ -194,6 +194,7 @@ class ReachyController:
         library_expressions: bool = False,
         antenna_mode: str = "both",
         face_follow_model: Path | None = None,
+        face_follow_idle: bool = False,
         face_follower_factory: Callable | None = None,
         arrival_model: Path | None = None,
         arrival_watcher_factory: Callable | None = None,
@@ -216,10 +217,12 @@ class ReachyController:
         self._interpolate_pose = pose_interpolator
         self._moves_factory = moves_factory
         self._face_follow_model = face_follow_model
+        self._face_follow_idle = face_follow_idle
         self._face_follower_factory = face_follower_factory
         self._face_follower = None
         self._face_failure_logged = False
         self._face_tracking_on = True
+        self._face_tracking_status = None
         self._head_angles = (0.0, 0.0)
         self._arrival_model = arrival_model
         self._arrival_watcher_factory = arrival_watcher_factory
@@ -778,7 +781,7 @@ class ReachyController:
     def close(self) -> None:
         self._stop.set()
         if self._face_follower is not None:
-            self._face_follower.set_active(False)
+            self._set_face_tracking(False, "shutdown")
         if self._motion_thread is not None:
             self._motion_thread.join(timeout=10)
             if self._motion_thread.is_alive():
@@ -819,6 +822,7 @@ class ReachyController:
         )
         self._face_follower.start()
         self._face_failure_logged = False
+        self._face_tracking_status = None
         log.info("Local face tracking ready; camera frames remain on Reachy")
 
     def _read_head_angles(self) -> tuple[float, float]:
@@ -839,8 +843,37 @@ class ReachyController:
         if failure is not None and not self._face_failure_logged:
             log.warning("Local face tracking stopped: %s; voice remains available", type(failure).__name__)
             self._face_failure_logged = True
-        follower.set_active(failure is None and not commanded and self._face_tracking_on
-                            and state in ("listening", "thinking", "speaking"))
+        if self._stop.is_set():
+            reason = "shutdown"
+        elif failure is not None:
+            reason = "camera failure"
+        elif not self._enable_motion:
+            reason = "motion disabled"
+        elif not self._face_tracking_on:
+            reason = "disabled by user"
+        elif state == "sleeping":
+            reason = "sleeping"
+        elif commanded:
+            reason = "command"
+        elif state in ("listening", "thinking", "speaking"):
+            reason = "conversation"
+        elif self._watching:
+            reason = "arrival watching"
+        elif state == "idle" and self._face_follow_idle:
+            reason = "idle follow" if self._style.breathing else "still mode"
+        else:
+            reason = state
+        self._set_face_tracking(reason in ("conversation", "idle follow"), reason)
+
+    def _set_face_tracking(self, active: bool, reason: str) -> None:
+        if reason == "idle follow":
+            self._face_follower.set_active(active, idle=True)
+        else:
+            self._face_follower.set_active(active)
+        status = (active, reason)
+        if status != self._face_tracking_status:
+            self._face_tracking_status = status
+            log.info("Local face tracking %s: %s", "on" if active else "off", reason)
 
     def _face_pose(self, pose):
         follower = self._face_follower
@@ -979,6 +1012,8 @@ class ReachyController:
         wobbling_active = False
         previous_state = None
         previous_written = None
+        gaze = self._np.zeros(9)
+        gesture_offset = self._np.zeros(9)
         try:
             if hasattr(self._robot, "client"):
                 status = self._robot.client.get_status()
@@ -1061,7 +1096,13 @@ class ReachyController:
                 if request is not None:
                     self._still_since = None
                     if self._face_follower is not None:
-                        self._face_follower.set_active(False)
+                        self._update_face_tracking(state, commanded=True)
+                    # Commands own absolute poses, including the gaze we were showing.
+                    rest = self._pose_vector(*self._rest) + gaze + gesture_offset
+                    self._rest = (self._head(**dict(zip(POSE_LIMITS, rest[:6]))),
+                                  self._rest[1], self._rest[2])
+                    gaze.fill(0)
+                    gesture_offset.fill(0)
                     try:
                         self._check_command(request)
                         result = {"ok": True, "payload": self._execute_motion(request)}
@@ -1082,7 +1123,7 @@ class ReachyController:
                         previous_update = time.monotonic()
                         self._stop.wait(_MOTION_PERIOD_S)
                 else:
-                    self._update_face_tracking(state, commanded=commanded or self._generated is not None)
+                    self._update_face_tracking(state, commanded=commanded or self._deferred is not None)
                     if self._motion_epoch != self._sentences.epoch:
                         self._motion_epoch = self._sentences.epoch
                         self._clip_line = state_started
@@ -1136,10 +1177,20 @@ class ReachyController:
                     if not commanded and self._deferred is None:
                         self._cue_clip(now, state, expression, state_started)
                     pose, antennas = self._state_pose(state, elapsed, expression, progress_age=progress_age)
-                    pose = self._face_pose(pose)
-                    gesture_active = gesture_active and (gesture_epoch is None or gesture_epoch == self._sentences.epoch)
+                    followed = self._face_pose(pose)
+                    tracking = followed is not pose
+                    gaze_target = self._np.zeros(9)
+                    if tracking:
+                        coordinates = self._pose_parameters(followed)
+                        gaze_target[4:6] = coordinates["pitch"], coordinates["yaw"]
+                        coordinates["pitch"] = coordinates["yaw"] = 0.0
+                        pose = self._head(**coordinates)
+                    gesture_active = (gesture_active and not commanded
+                                      and (gesture_epoch is None or gesture_epoch == self._sentences.epoch))
+                    gesture_target = self._np.zeros(9)
                     if gesture_active:
-                        pose = self._gesture_pose(pose, gesture, gesture_age)
+                        gesture_pose = self._gesture_pose(self._head(), gesture, gesture_age)
+                        gesture_target[:6] = list(self._pose_parameters(gesture_pose).values())
                     if previous_state == "sleeping" and state != "sleeping" and self._clip is None:
                         self._wake_up(now, pose, antennas)
                     previous_state = state
@@ -1158,6 +1209,8 @@ class ReachyController:
                     previous_update = now
                     head_blend = _blend_factor(head_blend, dt)
                     antenna_blend = _blend_factor(antenna_blend, dt)
+                    gaze += (gaze_target - gaze) * head_blend
+                    gesture_offset += (gesture_target - gesture_offset) * head_blend
                     rest_pose, rest_antennas, rest_body_yaw = self._rest
                     self._rest = (self._interpolate_pose(rest_pose, pose, head_blend),
                                   rest_antennas * (1 - antenna_blend) + antennas * antenna_blend,
@@ -1168,7 +1221,10 @@ class ReachyController:
                     generated = self._show_generated(now, resting, yielding=gesture_active or accenting)
                     composed = self._show_clip(now, generated)
                     self._last_written_vector = self._np.asarray(composed).copy()
-                    written = (composed + self._layers.sway_offset(now, active=state == "speaking")
+                    # Clips and their replacement sources contain expression offsets only.
+                    # Add gaze once, after crossfades, so a full-strength clip cannot erase it.
+                    written = (composed + gaze + gesture_offset
+                               + self._layers.sway_offset(now, active=state == "speaking")
                                + self._np.asarray(self._sentences.offset(now)))
                     self._write_vector(written)
                     settled = ((state in ("idle", "sleeping") or (state == "error" and self._watching))

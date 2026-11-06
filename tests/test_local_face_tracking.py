@@ -247,3 +247,25 @@ def test_unbounded_detector_rate_is_rejected(rate):
     with pytest.raises(ValueError, match='sample rate'):
         FaceFollower(lambda: None, read_head_angles=lambda: (0, 0), camera_matrix=None,
                      sample_hz=rate)
+
+
+def test_idle_sampling_uses_less_camera_work_and_wake_preserves_the_target():
+    reads = []
+    item = follower(lambda: reads.append(time.monotonic()) or object())
+    try:
+        item.start()
+        item.set_active(True, idle=True)
+        wait_for(lambda: item.target() is not None)
+        time.sleep(.6)
+        assert len(reads) == 2
+        assert reads[1] - reads[0] >= .45
+        target = item.target()
+        assert target is not None
+        item.set_active(True)
+        assert item.target() is not None
+        wait_for(lambda: len(reads) >= 5)
+        assert reads[4] - reads[2] < .4
+        item.set_active(False)
+        assert item.target() is None
+    finally:
+        item.close()

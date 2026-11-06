@@ -1749,7 +1749,7 @@ def test_with_breathing_off_reachy_is_still_when_idle_and_after_generated_motion
     assert pose_at(controller, robot, ended + .5)["z"] == pytest.approx(0, abs=.01)
 
 
-def test_generated_motion_pauses_face_tracking_and_hands_it_back():
+def test_generated_motion_keeps_face_tracking_active_until_shutdown():
     robot = FakeRobot()
     robot.media.get_frame = lambda: None
     robot.media.camera = SimpleNamespace(K=np.eye(3), D=np.zeros(5))
@@ -1783,7 +1783,7 @@ def test_generated_motion_pauses_face_tracking_and_hands_it_back():
         time.sleep(1.2)
     finally:
         controller.close()
-    assert activity == [True, False, True, False]
+    assert activity == [True, False]
 
 
 def test_generated_motion_refuses_frames_that_are_not_poses(hardware):
