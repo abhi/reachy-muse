@@ -162,6 +162,14 @@ def test_phrase_boundary_excludes_later_speech_and_stale_or_cleared_history():
             + [DoAReading(math.radians(120), True)] * 4, check)
 
 
+def test_a_short_pause_and_changed_speaker_cannot_select_the_earlier_speaker():
+    def check(direction, clock, delays):
+        assert direction.estimate(clock.now) is None
+
+    sampled([DoAReading(math.radians(60), True)] * 18 + [DoAReading(0, False)]
+            + [DoAReading(math.radians(120), True)] * 4, check)
+
+
 def test_failed_source_clears_old_speech_but_new_speech_can_restore_attention():
     def check(direction, clock, delays):
         assert direction.estimate(clock.now) == pytest.approx(math.radians(120))

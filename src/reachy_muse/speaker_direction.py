@@ -80,6 +80,7 @@ class WakeDirection:
         direction = median(angle for _, angle in samples)
         deviations = [abs(angle - direction) for _, angle in samples]
         if (median(deviations) > math.radians(12)
+                or median(deviations[-3:]) > math.radians(20)
                 or sum(delta <= math.radians(20) for delta in deviations) < .75 * len(samples)):
             return None
         return direction
