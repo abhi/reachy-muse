@@ -1850,7 +1850,17 @@ def watched_controller(robot, **options):
     return controller, watchers
 
 
-def test_watching_turns_the_resting_head_toward_the_door_gently_without_breathing_then_returns(caplog):
+def test_watching_turns_the_resting_head_toward_the_door_gently_without_breathing_then_returns(caplog, monkeypatch):
+    from reachy_muse.motion import layers
+
+    breathing = layers.breathing
+
+    def steady_pitch(now):
+        pose = breathing(now)
+        pose[4] = 1.0
+        return pose
+
+    monkeypatch.setattr(layers, "breathing", steady_pitch)
     caplog.set_level("INFO", logger="reachy_muse.hardware")
     robot = FakeRobot()
     controller, watchers = watched_controller(robot)
@@ -1879,7 +1889,7 @@ def test_watching_turns_the_resting_head_toward_the_door_gently_without_breathin
     assert np.ptp([controller._pose_parameters(frame[1])["z"] for frame in watching]) < .01
     assert antenna_spread(watching) < .01
     assert pose_at(controller, robot, left + 4.9)["yaw"] == pytest.approx(0, abs=.3)
-    assert pose_at(controller, robot, left + 4.9)["pitch"] == pytest.approx(0, abs=1)
+    assert pose_at(controller, robot, left + 4.9)["pitch"] == pytest.approx(1, abs=.3)
     assert watchers[0].model_path == Path("public-test-model") and watchers[0].watching == [True, False, True, False]
     assert watchers[0].closed
     assert caplog.text.count("Watch pose limited to yaw 35, pitch 5 degrees") == 1

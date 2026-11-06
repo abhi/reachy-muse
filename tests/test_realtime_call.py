@@ -2,11 +2,13 @@
 
 import asyncio
 import threading
+from types import SimpleNamespace
 
 import pytest
 
 import reachy_muse.cli
 from musegadget.identity import Identity
+from musegadget.streaming import HTTPStatusError
 from reachy_muse.conversation import ReachyService
 from reachy_muse.motion.reply_motion import ReplyMotion
 from reachy_muse.realtime_call import (MicrophoneFeed, RealtimeCall, RealtimeSpeaker, RealtimeVoice, VoiceLink,
@@ -48,6 +50,43 @@ def test_realtime_on_an_sdk_without_voice_events_runs_the_chat_path(monkeypatch)
     args = reachy_muse.cli.parser().parse_args(
         ["run", "--muse-path", "realtime", "--mode", "on-robot", "--wake-model", "wake.onnx"])
     assert reachy_muse.cli.realtime_path(args) == "chat"
+
+
+@pytest.mark.parametrize("supports_app_id, expected", [
+    (True, ("hatch-web", False)),
+    (False, (None, False)),
+], ids=["current-sdk", "older-sdk"])
+def test_voice_link_passes_the_voice_app_id_when_the_sdk_accepts_it(monkeypatch, supports_app_id, expected):
+    from musegadget import config
+
+    class OldLink:
+        def __init__(self, *, noise_host, vm_id, vm_auth_token, device, register_device, run_command):
+            self.app_id = None
+            self.register_device = register_device
+
+        async def run(self, stop):
+            await stop.wait()
+
+        async def wait_transport_ready(self, timeout):
+            pass
+
+    class Link(OldLink):
+        def __init__(self, *, app_id=None, **options):
+            super().__init__(**options)
+            self.app_id = app_id
+
+    monkeypatch.setattr("reachy_muse.conversation.LinkSession", Link if supports_app_id else OldLink)
+    monkeypatch.setattr(config, "load_json", lambda *args: {"noise_host": "noise.test"})
+
+    async def scenario():
+        service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=object(), backends=lambda _: None)
+        link = await service._voice_link({"vm_id": "vm-1", "vm_name": "test-vm", "vm_auth_token": "test-token"})
+        try:
+            return link.session.app_id, link.session.register_device
+        finally:
+            await link.close()
+
+    assert asyncio.run(scenario()) == expected
 
 
 def test_the_microphone_reaches_muse_as_24_khz_frames_and_a_backlog_sheds_silence_first():
@@ -147,6 +186,57 @@ def test_a_voice_link_that_will_not_connect_leaves_the_next_call_failed_and_the_
         return failed, refused, voice.usable
 
     assert asyncio.run(scenario()) == ((True, False, "ConnectionError"), False, True)
+
+
+@pytest.mark.parametrize("failure, details", [
+    pytest.param(HTTPStatusError(400, b'{"ok":false,"error":{"code":"voice_app_id_required",'
+                                     b'"message":"private user data"},"transcript":"private words"}'),
+                 "HTTPStatusError status=400 code=voice_app_id_required", id="voice-app-id-required"),
+    pytest.param(HTTPStatusError(502, b"private invalid JSON"),
+                 "HTTPStatusError status=502 code=unknown", id="invalid-json"),
+    pytest.param(HTTPStatusError(502, b"\xff"),
+                 "HTTPStatusError status=502 code=unknown", id="invalid-encoding"),
+    pytest.param(HTTPStatusError(400, b'["private user data"]'),
+                 "HTTPStatusError status=400 code=unknown", id="non-object-body"),
+    pytest.param(HTTPStatusError(400, b'{"error":"private user data"}'),
+                 "HTTPStatusError status=400 code=unknown", id="non-object-error"),
+    pytest.param(HTTPStatusError(400, b'{"error":{"message":"private user data"}}'),
+                 "HTTPStatusError status=400 code=unknown", id="missing-code"),
+    pytest.param(HTTPStatusError(400, b'{"error":{"code":{"message":"private user data"}}}'),
+                 "HTTPStatusError status=400 code=unknown", id="non-string-code"),
+    pytest.param(HTTPStatusError(400, b'{"error":{"code":"private user data\\nforged log line"}}'),
+                 "HTTPStatusError status=400 code=unknown", id="unsafe-code"),
+    pytest.param(HTTPStatusError(400, b'{"error":{"code":"' + b"x" * 65 + b'"}}'),
+                 "HTTPStatusError status=400 code=unknown", id="oversized-code"),
+    pytest.param(ConnectionError("private connection details"), "ConnectionError", id="non-http-error"),
+])
+def test_call_failure_warning_reports_only_the_http_status_and_safe_error_code(monkeypatch, caplog, failure, details):
+    monkeypatch.setattr("reachy_muse.realtime_call.time", SimpleNamespace(monotonic=lambda: 10.0))
+
+    class RefusedCall:
+        async def run(self, source, output, *, realtime_input=False):
+            raise failure
+
+    async def scenario():
+        async def nothing():
+            pass
+
+        async def build(call):
+            return RefusedCall()
+
+        motion = ReplyMotion()
+        speaker = RealtimeSpeaker(Speaker(), motion, on_audible=lambda *args: None, on_start=nothing, on_idle=nothing)
+        call = RealtimeCall(MicrophoneFeed(16000), speaker, motion, on_working=lambda working: None,
+                            on_reply_done=lambda reply: None)
+        call.start(build)
+        while not call.done:
+            await asyncio.sleep(0)
+        failed = call.failed, call.audio_sent
+        await call.close()
+        return failed
+
+    assert asyncio.run(scenario()) == (True, False)
+    assert caplog.messages == [f"Muse realtime call failed ({details}) after 0.0 s"]
 
 
 def test_a_muse_called_expression_holds_reachy_s_own_reply_motion_while_it_runs():

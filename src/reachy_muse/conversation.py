@@ -11,6 +11,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import CancelledError as CommandCancelled
 from concurrent.futures import TimeoutError as CommandTimeout
+import inspect
 import itertools
 import logging
 import math
@@ -2885,10 +2886,14 @@ class ReachyService(PairedService):
         from musegadget.service import DEFAULT_NOISE_HOST
         from reachy_muse.realtime_call import LINK_TIMEOUT_S, VoiceLink
         pairing = config.load_json(config.PAIRING_FILE) or {}
+        options = {}
+        if "app_id" in inspect.signature(LinkSession).parameters:
+            options["app_id"] = "hatch-web"
         link = LinkSession(noise_host=pairing.get("noise_host") or DEFAULT_NOISE_HOST,
                            vm_id=vm["vm_id"] or vm["vm_name"], vm_auth_token=vm["vm_auth_token"],
                            device=self.describe(), register_device=False,
-                           run_command=lambda *unused: {"ok": False, "error": "unsupported command"})
+                           run_command=lambda *unused: {"ok": False, "error": "unsupported command"},
+                           **options)
         stop = asyncio.Event()
         running = asyncio.create_task(link.run(stop))
 

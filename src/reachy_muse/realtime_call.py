@@ -16,7 +16,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import json
 import logging
+import re
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -24,6 +26,7 @@ from typing import Awaitable, Callable, Optional
 
 import numpy as np
 
+from musegadget.streaming import HTTPStatusError
 from reachy_muse.motion.reply_alignment import SAMPLE_RATE
 from reachy_muse.motion.reply_motion import Mark, ReplyMotion
 from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlayback
@@ -53,6 +56,24 @@ def realtime_supported() -> bool:
     if not all(hasattr(voice_call, name) for name in names):
         return False
     return "on_event" in inspect.signature(voice_call.VoiceCall).parameters
+
+
+def _failure_details(exc: Exception) -> str:
+    """Limit HTTP diagnostics to the status and a short error code."""
+    kind = type(exc).__name__
+    if not isinstance(exc, HTTPStatusError):
+        return kind
+    code = "unknown"
+    try:
+        body = json.loads(exc.body)
+    except ValueError:
+        body = None
+    error = body.get("error") if isinstance(body, dict) else None
+    if isinstance(error, dict):
+        value = error.get("code")
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", value):
+            code = value
+    return f"{kind} status={exc.status} code={code}"
 
 
 class _Resampler:
@@ -372,7 +393,7 @@ class RealtimeCall:
                 raise
         except Exception as exc:
             self.failure = exc
-            log.warning("Muse realtime call failed (%s) after %.1f s", type(exc).__name__,
+            log.warning("Muse realtime call failed (%s) after %.1f s", _failure_details(exc),
                         time.monotonic() - self.opened_at)
 
     @property
