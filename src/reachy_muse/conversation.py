@@ -977,8 +977,9 @@ class VoiceConversation:
             if self.call is not None:
                 call = self.call
                 playback = call.audible or endpoint_at < self._echo_until or bool(heard_over)
-                if send_to_call and self._wake_deadline is not None and (
-                        endpoint_at < self._wake_deadline or recorder.active or speaking or heard.ended is not None):
+                if (send_to_call and self._wake_window not in (WakeWindow.DISMISSED, WakeWindow.ASLEEP)
+                        and self._wake_deadline is not None and (
+                        endpoint_at < self._wake_deadline or recorder.active or speaking or heard.ended is not None)):
                     call.input.push(sample, speaking=speaking and quiet_s == 0,
                                     text=partial.text if partial else "", playback=playback,
                                     heard_over=tuple(heard_over))
@@ -1155,7 +1156,8 @@ class VoiceConversation:
                     outcome = turn_task.result()
                     turn_task = None
                     if wake is not None and active_wake_epoch == wake_epoch:
-                        if outcome in (TurnOutcome.WAKE_CUE, TurnOutcome.ACCEPTED):
+                        if (outcome in (TurnOutcome.WAKE_CUE, TurnOutcome.ACCEPTED)
+                                and self._wake_window not in (WakeWindow.DISMISSED, WakeWindow.ASLEEP)):
                             self._wake_first_request_pending = False
                             # A confirmed cue also opens time for a question in wake-every-turn mode.
                             window = self.wake_timeout_s or (10.0 if outcome is TurnOutcome.WAKE_CUE else 0.0)
@@ -1236,6 +1238,7 @@ class VoiceConversation:
                         and self._briefing_slots):
                     turn_task = asyncio.create_task(self._collect_briefing(self._briefing_slots.popleft()))
                 if (turn_task is not None and follow_up_task is None and pending_turns
+                        and pending_turns[0].call is None
                         and self.job is not None and self.job.turn.acknowledged):
                     follow_up_task = asyncio.create_task(follow_up(pending_turns.popleft(), held))
                 if not ready and turn_task is None:
@@ -1337,6 +1340,8 @@ class VoiceConversation:
                         self._wake_first_request_pending = True
                         if self._wake_window is WakeWindow.ASLEEP:
                             await self._wake_up(WakeWindow.WOKEN)
+                        elif self._wake_window is WakeWindow.DISMISSED:
+                            self._wake_window = WakeWindow.AWAKE
                         if self._has_output() or self._muted:
                             self._playback.set_user_speaking(True)
                         await self._plan(plan.WakeHeard())
@@ -1998,18 +2003,21 @@ class VoiceConversation:
         command = await self.backends.commands.recognize(text, allowed)
         if command is None:
             return None
-        if self.call is not None:
+        spec = COMMANDS[command]
+        if spec.wake_window in (WakeWindow.DISMISSED, WakeWindow.ASLEEP):
+            # "Stop listening" said before a sleeping Reachy's window closes leaves it asleep.
+            if self._wake_window is not WakeWindow.ASLEEP:
+                self._wake_window = spec.wake_window
+            self._wake_deadline = None
+            await self._close_call()
+        elif self.call is not None:
             # Muse heard the command too; Reachy has handled it, so Muse's answer to it is dropped.
             await self.call.barge_in()
-        spec = COMMANDS[command]
         if spec.silence_speech:
             self._hush()
         elif spec.wake_window in (WakeWindow.DISMISSED, WakeWindow.ASLEEP):
             self._moments.stop()
         if spec.wake_window in (WakeWindow.DISMISSED, WakeWindow.ASLEEP):
-            # "Stop listening" said before a sleeping Reachy's window closes leaves it asleep.
-            if self._wake_window is not WakeWindow.ASLEEP:
-                self._wake_window = spec.wake_window
             job = self.job
             if job is not None and job.request is not None and not job.dropped:
                 await self._drop(job)
@@ -2073,12 +2081,12 @@ class VoiceConversation:
     async def _call_ended(self, *, capturing: bool) -> None:
         call, self.call = self.call, None
         await call.close()
+        if capturing and call.audio_sent:
+            # Muse may have heard the request in progress, so it never goes to chat as well.
+            self._lost_call = call
         if call.failed:
             log.warning("Reachy's realtime call to Muse failed; its next request goes by chat")
             await self.realtime.call_failed()
-            if capturing and call.audio_sent:
-                # Muse may have heard the request in progress, so it never goes to chat as well.
-                self._lost_call = call
             if call.awaiting_answer:
                 await self._call_lost()
         elif call.reason == "remote_stop" and self._wake_deadline is not None:

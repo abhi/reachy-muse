@@ -401,8 +401,80 @@ def test_a_spoken_device_command_runs_on_the_robot_and_muse_is_cut_off(monkeypat
     events = run(rig, conversation, user, rest=("sleeping",))
     assert sent_to_muse(events) == []
     assert played(events) == ["tts:Good night."]
-    assert calls.barge_ins == 1
+    assert calls.barge_ins == 0
     assert rig.states()[-1] == "sleeping"
+
+
+@pytest.mark.parametrize("command, acknowledgement, rest", [
+    ("stop listening", "Okay, I'll stop listening.", "idle"),
+    ("go to sleep", "Good night.", "sleeping"),
+])
+def test_dismissal_closes_the_call_before_acknowledging_and_uploads_no_more_audio(
+        monkeypatch, command, acknowledgement, rest):
+    from test_device_command_turns import LongVoice
+
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    calls = ScriptedCalls(reply=None)
+    conversation = realtime_service(rig, StreamingTranscripts(f"Hey Muse, {command}.", "Book a table."), calls,
+                                    voice=LongVoice(rig.recording, 200))
+    observed = []
+    resumed = []
+
+    async def user():
+        rig.say(wake=True)
+        label = f"tts:{acknowledgement}"
+        await rig.wait_until_or_timeout(lambda: label in played(rig.recording.events), 5)
+        assert label in played(rig.recording.events)
+        call = conversation._voice[1].call
+        before = len(calls.frames)
+        await speak_live(rig)
+        observed.append((call is None, len(calls.frames) - before))
+        await rig.quiet(rest)
+        before = len(calls.frames)
+        await speak_live(rig, wake=True)
+        resumed.append(len(calls.frames) - before)
+
+    events = run(rig, conversation, user)
+    assert observed == [(True, 0)]
+    assert resumed[0] >= 10
+    assert len(calls.opened) == 2
+    assert sent_to_muse(events) == []
+
+
+def test_a_call_opened_during_a_pending_chat_request_never_replays_its_turn_by_chat(monkeypatch):
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(reply=None)
+    release = asyncio.Event()
+
+    async def muse(session, request):
+        await release.wait()
+        await session.answer(request, "Sunny tomorrow.")
+
+    class FirstWakeUntimed(TimedWake):
+        def feed(self, samples):
+            detected = super().feed(samples)
+            if detected and not calls.opened and rig.session.requests == 0:
+                self.last_detection = None
+            return detected
+
+    conversation = service(rig, muse, StreamingTranscripts(
+        "Hey Muse, what's the weather tomorrow?", "Hey Muse, book a table for two."),
+        wake_detector=FirstWakeUntimed(), wake_timeout_s=.3, muse_path="realtime",
+        voice_link=calls.link, voice_call=calls)
+
+    async def user():
+        try:
+            rig.say(wake=True)
+            await rig.quiet("thinking")
+            await speak_live(rig, wake=True)
+            await room(rig, .3)
+        finally:
+            release.set()
+
+    events = run(rig, conversation, user)
+    assert len(calls.frames) >= 10
+    assert sent_to_muse(events) == ["what's the weather tomorrow?"]
 
 
 def test_a_call_that_fails_before_any_audio_reaches_muse_sends_the_request_by_chat(monkeypatch):
@@ -446,7 +518,11 @@ def test_a_call_lost_after_muse_heard_the_request_asks_again_and_the_next_reques
     assert played(events)[-2:] == ["tts:I lost my line to Muse. Please say that again.", "tts:Sunny tomorrow."]
 
 
-def test_an_eof_after_upload_never_resends_the_request_by_chat_and_asks_the_user_to_repeat(monkeypatch):
+@pytest.mark.parametrize("reason, spoken", [
+    ("remote_end", ["tts:I lost my line to Muse. Please say that again."]),
+    ("remote_stop", []), ("idle_timeout", []), ("overall_timeout", []),
+])
+def test_an_ended_call_never_resends_uploaded_speech_by_chat(monkeypatch, reason, spoken):
     rig = rig_for(monkeypatch)
 
     class EOFCalls(ScriptedCalls):
@@ -458,7 +534,7 @@ def test_an_eof_after_upload_never_resends_the_request_by_chat_and_asks_the_user
                     async for frame in source:
                         frames.append(frame)
                         if len(frames) == 5:
-                            return "remote_end"
+                            return reason
 
             return Call()
 
@@ -474,7 +550,7 @@ def test_an_eof_after_upload_never_resends_the_request_by_chat_and_asks_the_user
 
     events = run(rig, conversation, user)
     assert sent_to_muse(events) == []
-    assert played(events) == ["tts:I lost my line to Muse. Please say that again."]
+    assert played(events) == spoken
     assert len(calls.frames) == 5
 
 
