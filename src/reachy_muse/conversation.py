@@ -66,6 +66,8 @@ STOP_REPLY_WINDOW_S = 5.0
 BUSY_CUE = "One at a time, please."
 CALL_LOST_CUE = "I lost my line to Muse. Please say that again."
 THINKING_AFTER_S = 0.3
+# Talk over Muse's realtime reply this long stops it; a cough or an "mm-hm" does not.
+BARGE_IN_SPEECH_S = 0.3
 CLOSING_CLIPS = {Moment.CELEBRATION: ("success1", "happy"), Moment.APOLOGY: ("sad",)}
 CLOSING_QUIET_S = 0.3
 # The daemon plays a sound at a new volume, outside Reachy's own echo gate.
@@ -935,8 +937,9 @@ class VoiceConversation:
         recorder = make_recorder()
         recorder_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reachy-recorder")
         last_slow_feed = 0.0
+        talk_over_samples = 0
         async def record(sample):
-            nonlocal last_slow_feed, gap_quiet_samples, turn_open
+            nonlocal last_slow_feed, gap_quiet_samples, turn_open, talk_over_samples
             # Keep VAD ahead of transcription/TTS work in the shared executor.
             started = time.monotonic()
             feed = asyncio.get_running_loop().run_in_executor(recorder_worker, recorder.feed, sample)
@@ -964,20 +967,24 @@ class VoiceConversation:
             if partial is not None and self.wake_detector is not None:
                 partial = replace(partial, text=self._without_wake(partial.text))
             speaking = recorder.speech_active
+            worded = False
             if (speaking and heard_over and recorder.supports_partials
                     and not self._playback.user_speaking):
                 # Hardware AEC can leave residual speech. Keep capturing it, but
                 # require words distinct from our output before pausing playback.
-                speaking = partial is not None and interrupts_playback(partial.text, tuple(heard_over))
+                speaking = worded = partial is not None and interrupts_playback(partial.text, tuple(heard_over))
             if speaking:
                 gap_quiet_samples = 0
             else:
                 gap_quiet_samples = max(0, gap_quiet_samples - len(sample))
             was_speaking = self._playback.user_speaking
             self._playback.set_user_speaking(speaking or gap_quiet_samples > 0)
-            # Only speech that starts over Muse's voice interrupts it. Half duplex mutes the microphone then.
-            if (speaking and not was_speaking and self.call is not None and self.call.audible
-                    and not self.realtime.half_duplex):
+            # Only speech over Muse's voice interrupts it. Half duplex mutes the microphone then.
+            talking_over = (speaking and self.call is not None and self.call.audible
+                            and not self.realtime.half_duplex)
+            talk_over_samples = talk_over_samples + len(sample) if talking_over else 0
+            if talking_over and (worded or talk_over_samples >= BARGE_IN_SPEECH_S * self.hardware.sample_rate):
+                talk_over_samples = 0
                 self._barge_in_call()
             if was_speaking and not self._playback.user_speaking:
                 self._user_quiet_at = time.monotonic()

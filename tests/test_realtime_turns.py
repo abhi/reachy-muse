@@ -351,3 +351,23 @@ def test_reachy_s_own_recognition_of_a_request_muse_heard_never_speaks_over_muse
 
     events = run(rig, conversation, user)
     assert set(played(events)) == {"muse"}
+
+
+def test_a_short_sound_over_muse_s_reply_does_not_stop_it(monkeypatch):
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    rig.hardware.chunk_s = .05
+    calls = ScriptedCalls(reply_s=3.0)
+    transcripts = Transcripts("Hey Muse, tell me a story.", "Mm-hm.")
+    conversation = realtime_service(rig, transcripts, calls)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+        await asyncio.sleep(.3)
+        rig.say(voiced_s=.1)
+        await rig.wait_until_or_timeout(lambda: calls.barge_ins > 0, 2)
+
+    events = run(rig, conversation, user)
+    assert calls.barge_ins == 0
+    assert events.count({"robot": "clear_audio"}) == 1
