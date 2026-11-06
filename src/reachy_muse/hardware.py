@@ -248,7 +248,9 @@ class ReachyController:
         self._state_lock = threading.Lock()
         self._audio_lock = threading.Lock()
         from reachy_muse.motion.sentence_timeline import SentenceTimeline
+        from reachy_muse.motion.sentence_delivery import SentenceDelivery
         self._sentences = SentenceTimeline()
+        self._sentence_delivery = SentenceDelivery()
         self._audio_end = -math.inf
         self._sentence_terminal = None
         self._sentence_expression = None
@@ -443,13 +445,23 @@ class ReachyController:
                 except Exception as exc:
                     raise ReachyHardwareError(f"Reachy Mini speaker failed: {exc}") from exc
                 at = time.monotonic()
+                from reachy_muse.motion.sentence_delivery import NEUTRAL_LIMITS, neutral_motion
+                if self._sentence_epoch != self._sentences.epoch:
+                    self._sentence_delivery.clear()
+                sentence = self._sentence_delivery.accept(audio, self._output_sample_rate, sentence)
+                planned = sentence.motion if sentence is not None else None
+                if planned is None and sentence is not None and sentence.variant is not None:
+                    planned = neutral_motion(sentence.variant)
                 move = None
-                if self._style.expression_clips and sentence is not None and sentence.motion is not None:
+                if self._style.expression_clips and planned is not None:
                     from reachy_muse.motion.layers import clamp_to_limits
-                    poses = self._np.asarray(sentence.motion.frames, dtype=float)
+                    poses = self._np.asarray(planned.frames, dtype=float)
                     if (poses.ndim == 2 and poses.shape[1] == 9 and len(poses)
-                            and self._np.isfinite(poses).all() and sentence.motion.fps > 0):
-                        move = _Frames(clamp_to_limits(poses), sentence.motion.fps, False, self._head)
+                            and self._np.isfinite(poses).all() and planned.fps > 0):
+                        if sentence.variant is not None:
+                            limits = self._np.asarray(NEUTRAL_LIMITS[sentence.variant])
+                            poses = self._np.clip(poses, -limits, limits)
+                        move = _Frames(clamp_to_limits(poses), planned.fps, False, self._head)
                 from reachy_muse.motion.layers import SWAY_LATENCY_S
                 from reachy_muse.motion.sentence_timeline import SentenceEvent
                 start = max(at, self._audio_end)
@@ -458,7 +470,8 @@ class ReachyController:
                     with self._state_lock:
                         self._sentence_paused = False
                         self._sentence_active = True
-                        self._sentence_serial += 1
+                        if not sentence.revised:
+                            self._sentence_serial += 1
                         self._sentence_epoch = self._sentences.epoch
                         self._sentence_terminal = sentence.terminal
                         self._sentence_expression = sentence.expression.value
@@ -469,6 +482,8 @@ class ReachyController:
                         self._progress_started = None
                         self._sentences.offer(SentenceEvent(self._state_started, self._sentence_epoch,
                                                             "start", (sentence.expression.value, self._sentence_serial), move))
+                        log.info("Reachy sentence motion %s variant=%s revised=%s", sentence.expression.value,
+                                 sentence.variant, sentence.revised)
                 if accents:
                     with self._state_lock:
                         epoch = self._sentences.epoch
@@ -482,6 +497,7 @@ class ReachyController:
         from reachy_muse.motion.layers import SWAY_LATENCY_S
         from reachy_muse.motion.sentence_timeline import SentenceEvent
         with self._audio_lock, self._state_lock:
+            self._sentence_delivery.clear()
             if self._sentence_terminal is not None:
                 self._sentences.offer(SentenceEvent(self._audio_end + SWAY_LATENCY_S, self._sentence_epoch,
                                                     "end", (self._sentence_terminal, self._sentence_serial)))
@@ -502,6 +518,7 @@ class ReachyController:
             now = time.monotonic()
             self._layers.interrupt_speech(now)
             self._audio_end = -math.inf
+            self._sentence_delivery.clear()
             self._sentence_terminal = None
             with self._state_lock:
                 self._sentence_active = False

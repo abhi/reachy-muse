@@ -1,0 +1,84 @@
+{
+  "cases": {
+    "prepared": {
+      "chunk_frames": [
+        80,
+        40,
+        80,
+        40,
+        80,
+        40
+      ],
+      "classified_count": 3,
+      "expressions": {
+        "curious": 1,
+        "happy": 1,
+        "neutral": 1
+      },
+      "finish_notifications": 3,
+      "first_actual_sink_push": {
+        "max_ms": 0.2481667324900627,
+        "p50_ms": 0.2243751659989357,
+        "p95_ms": 0.24615488946437836
+      },
+      "first_push_before_completion": true,
+      "on_start": {
+        "max_ms": 0.36645960062742233,
+        "p50_ms": 0.325249508023262,
+        "p95_ms": 0.3643590956926346
+      },
+      "pcm_frames": 360,
+      "pcm_sha256": "5871a5e7ee1ac893a1fe14a5567edfe412e9e168396ae5ebb860362a57e140af",
+      "sentence_count": 3
+    },
+    "streamed": {
+      "chunk_frames": [
+        80,
+        40,
+        80,
+        40,
+        80,
+        40
+      ],
+      "classified_count": 3,
+      "expressions": {
+        "curious": 1,
+        "happy": 1,
+        "neutral": 1
+      },
+      "finish_notifications": 3,
+      "first_actual_sink_push": {
+        "max_ms": 7.032625377178192,
+        "p50_ms": 6.246041506528854,
+        "p95_ms": 6.792817078530788
+      },
+      "first_push_before_completion": true,
+      "on_start": {
+        "max_ms": 7.130875252187252,
+        "p50_ms": 6.45141676068306,
+        "p95_ms": 6.912300176918507
+      },
+      "pcm_frames": 360,
+      "pcm_sha256": "5871a5e7ee1ac893a1fe14a5567edfe412e9e168396ae5ebb860362a57e140af",
+      "sentence_count": 3
+    }
+  },
+  "classifier": {
+    "available": true,
+    "calls": 12000,
+    "cpu": {
+      "max_ms": 0.168,
+      "p50_ms": 0.002,
+      "p95_ms": 0.112
+    },
+    "expressions": {
+      "curious": 1500,
+      "happy": 1500,
+      "neutral": 4500,
+      "nod": 1500,
+      "sad": 1500,
+      "surprised": 1500
+    }
+  },
+  "runs": 15
+}

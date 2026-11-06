@@ -1,0 +1,96 @@
+{
+  "cases": {
+    "prepared": {
+      "chunk_frames": [
+        80,
+        40,
+        80,
+        40,
+        80,
+        40
+      ],
+      "classified_count": 3,
+      "expressions": {
+        "curious": 1,
+        "happy": 1,
+        "neutral": 1
+      },
+      "finish_notifications": 3,
+      "first_actual_sink_push": {
+        "max_ms": 0.42075011879205704,
+        "p50_ms": 0.23225042968988419,
+        "p95_ms": 0.31904578208923323
+      },
+      "first_push_before_completion": true,
+      "on_start": {
+        "max_ms": 0.7139993831515312,
+        "p50_ms": 0.34729205071926117,
+        "p95_ms": 0.5159580148756501
+      },
+      "pcm_frames": 360,
+      "pcm_sha256": "5871a5e7ee1ac893a1fe14a5567edfe412e9e168396ae5ebb860362a57e140af",
+      "sentence_count": 3
+    },
+    "streamed": {
+      "chunk_frames": [
+        80,
+        40,
+        80,
+        40,
+        80,
+        40
+      ],
+      "classified_count": 3,
+      "expressions": {
+        "curious": 1,
+        "happy": 1,
+        "neutral": 1
+      },
+      "finish_notifications": 3,
+      "first_actual_sink_push": {
+        "max_ms": 10.405374690890312,
+        "p50_ms": 6.0105836018919945,
+        "p95_ms": 7.571483217179771
+      },
+      "first_push_before_completion": true,
+      "on_start": {
+        "max_ms": 10.764040984213352,
+        "p50_ms": 6.160334683954716,
+        "p95_ms": 7.751095481216903
+      },
+      "pcm_frames": 360,
+      "pcm_sha256": "5871a5e7ee1ac893a1fe14a5567edfe412e9e168396ae5ebb860362a57e140af",
+      "sentence_count": 3
+    }
+  },
+  "classifier": {
+    "available": true,
+    "calls": 12000,
+    "cpu": {
+      "max_ms": 0.296,
+      "p50_ms": 0.004,
+      "p95_ms": 0.203
+    },
+    "expressions": {
+      "curious": 1500,
+      "happy": 1500,
+      "neutral": 4500,
+      "nod": 1500,
+      "sad": 1500,
+      "surprised": 1500
+    }
+  },
+  "comparison": {
+    "prepared": {
+      "max_ms": 0.17258338630199432,
+      "p50_ms": 0.007875263690948486,
+      "p95_ms": 0.07289089262485487
+    },
+    "streamed": {
+      "max_ms": 3.37274931371212,
+      "p50_ms": -0.2354579046368599,
+      "p95_ms": 0.7786661386489824
+    }
+  },
+  "runs": 15
+}

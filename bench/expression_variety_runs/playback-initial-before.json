@@ -1,0 +1,29 @@
+{
+  "prepared": {
+    "first_push_ms": {
+      "p50": 0.2057,
+      "p95": 0.4114,
+      "max": 0.6714
+    },
+    "pcm_sha256": "d4765f2b8b3b6383a62a7db9d9a0306b2feefdaa8508678e2e328b21f790b935",
+    "pcm_frames": 6400
+  },
+  "streamed": {
+    "first_push_ms": {
+      "p50": 6.5011,
+      "p95": 6.688,
+      "max": 6.8423
+    },
+    "pcm_sha256": "d4765f2b8b3b6383a62a7db9d9a0306b2feefdaa8508678e2e328b21f790b935",
+    "pcm_frames": 6400
+  },
+  "realtime": {
+    "first_push_ms": {
+      "p50": 0.5848,
+      "p95": 1.0022,
+      "max": 1.4288
+    },
+    "pcm_sha256": "653b84c972d8553d4df58387a75562330bab6b8c2352727dd90020dece967c79",
+    "pcm_frames": 304
+  }
+}

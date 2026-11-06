@@ -37,6 +37,16 @@ class Accent:
     kind: Kind
 
 
+@dataclass(frozen=True)
+class Delivery:
+    """Measured delivery, not emotional valence; rate is envelope peaks per second."""
+
+    pitch_range: float  # semitones, 10th to 90th percentile
+    energy_dbfs: float
+    syllables_per_s: float
+    rise: float  # semitones, last third versus first third
+
+
 class ProsodyTracker:
     """Accents for one reply, in samples from its start, found as its int16 PCM arrives in order."""
 
@@ -76,6 +86,30 @@ class ProsodyTracker:
                 accents.append(accent)
             self._scanned += 1
         return accents
+
+    def delivery(self) -> Optional[Delivery]:
+        """Summarize at most the first 0.8 s already received, never wait for PCM.
+
+        Require 0.4 s and voiced pitch. Silence, DC and unvoiced noise cannot
+        supply an emotional signal. Envelope peaks estimate pace without ASR.
+        """
+        levels = np.asarray(self._levels[:80])
+        pitch = np.asarray([p for p in self._pitch[:40] if p is not None])
+        voiced = levels[levels >= SPEECH_FLOOR]
+        if len(levels) < 40 or len(pitch) < 10 or len(voiced) < 20:
+            return None
+        low, high = np.percentile(pitch, [10, 90])
+        third = len(pitch) // 3
+        rise = 12 * math.log2(float(np.median(pitch[-third:]) / np.median(pitch[:third])))
+        smooth = np.convolve(levels, np.ones(5) / 5, mode="valid")
+        threshold = float(np.median(voiced))
+        peaks, last = 0, -10
+        for i in range(1, len(smooth) - 1):
+            if smooth[i] > threshold and smooth[i - 1] < smooth[i] >= smooth[i + 1] and i - last >= 10:
+                peaks, last = peaks + 1, i
+        return Delivery(12 * math.log2(float(high / low)),
+                        20 * math.log10(float(np.sqrt(np.mean(voiced ** 2))) / 32768),
+                        peaks / (len(levels) / 100), rise)
 
     def _f0(self, window: np.ndarray) -> Optional[float]:
         if float(np.sqrt(np.mean(window * window))) < SPEECH_FLOOR:

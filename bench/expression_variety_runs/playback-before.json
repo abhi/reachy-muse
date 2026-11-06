@@ -1,0 +1,44 @@
+{
+  "prepared": {
+    "first_push_ms": {
+      "p50": 0.3518,
+      "p95": 0.5621,
+      "max": 0.8608
+    },
+    "ready_to_sink_ms": {
+      "p50": 0.08,
+      "p95": 0.1199,
+      "max": 0.1337
+    },
+    "pcm_sha256": "4c163608ba013dc555fc53208b4b9b0bfaab8904f49a40fb551b9cf79f667a48",
+    "pcm_frames": 38400
+  },
+  "streamed": {
+    "first_push_ms": {
+      "p50": 6.0811,
+      "p95": 6.5576,
+      "max": 6.8159
+    },
+    "ready_to_sink_ms": {
+      "p50": 0.1031,
+      "p95": 0.3681,
+      "max": 0.8917
+    },
+    "pcm_sha256": "4c163608ba013dc555fc53208b4b9b0bfaab8904f49a40fb551b9cf79f667a48",
+    "pcm_frames": 38400
+  },
+  "realtime": {
+    "first_push_ms": {
+      "p50": 0.518,
+      "p95": 0.8188,
+      "max": 1.1141
+    },
+    "ready_to_sink_ms": {
+      "p50": 0.518,
+      "p95": 0.8188,
+      "max": 1.1141
+    },
+    "pcm_sha256": "ef2e8eba09879cf2dcfe4975b814e30be5c74212a4b5a1cdcf785cf397673a2f",
+    "pcm_frames": 1888
+  }
+}

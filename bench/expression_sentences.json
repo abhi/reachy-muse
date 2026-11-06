@@ -1,0 +1,1002 @@
+[
+  {
+    "id": "happy-01",
+    "label": "happy",
+    "text": "Stocks gained two percent after the earnings report."
+  },
+  {
+    "id": "happy-02",
+    "label": "happy",
+    "text": "The market rallied into the close."
+  },
+  {
+    "id": "happy-03",
+    "label": "happy",
+    "text": "The index reached a record high today."
+  },
+  {
+    "id": "happy-04",
+    "label": "happy",
+    "text": "Shares rose after the company raised its forecast."
+  },
+  {
+    "id": "happy-05",
+    "label": "happy",
+    "text": "The jobs report showed strong gains in hiring."
+  },
+  {
+    "id": "happy-06",
+    "label": "happy",
+    "text": "Profits climbed for the third consecutive quarter."
+  },
+  {
+    "id": "happy-07",
+    "label": "happy",
+    "text": "Revenue grew faster than expected."
+  },
+  {
+    "id": "happy-08",
+    "label": "happy",
+    "text": "The rescue team brought everyone home safely."
+  },
+  {
+    "id": "happy-09",
+    "label": "happy",
+    "text": "The missing child was found safe."
+  },
+  {
+    "id": "happy-10",
+    "label": "happy",
+    "text": "The treatment helped patients recover."
+  },
+  {
+    "id": "happy-11",
+    "label": "happy",
+    "text": "Good news, your application was approved."
+  },
+  {
+    "id": "happy-12",
+    "label": "happy",
+    "text": "Congratulations on finishing your first marathon!"
+  },
+  {
+    "id": "happy-13",
+    "label": "happy",
+    "text": "You did it, and that took real effort."
+  },
+  {
+    "id": "happy-14",
+    "label": "happy",
+    "text": "You've got this."
+  },
+  {
+    "id": "happy-15",
+    "label": "happy",
+    "text": "Keep going, you're making progress."
+  },
+  {
+    "id": "happy-16",
+    "label": "happy",
+    "text": "Well done on the presentation."
+  },
+  {
+    "id": "happy-17",
+    "label": "happy",
+    "text": "I'm glad you enjoyed the concert."
+  },
+  {
+    "id": "happy-18",
+    "label": "happy",
+    "text": "That sounds wonderful."
+  },
+  {
+    "id": "happy-19",
+    "label": "happy",
+    "text": "Thanks for explaining what happened."
+  },
+  {
+    "id": "happy-20",
+    "label": "happy",
+    "text": "I hope you enjoy your trip."
+  },
+  {
+    "id": "happy-21",
+    "label": "happy",
+    "text": "Your hard work paid off."
+  },
+  {
+    "id": "happy-22",
+    "label": "happy",
+    "text": "The team won the championship."
+  },
+  {
+    "id": "happy-23",
+    "label": "happy",
+    "text": "The library reopened after the repairs."
+  },
+  {
+    "id": "happy-24",
+    "label": "happy",
+    "text": "The city restored power to every neighborhood."
+  },
+  {
+    "id": "happy-25",
+    "label": "happy",
+    "text": "The ceasefire allowed families to return home safely."
+  },
+  {
+    "id": "happy-26",
+    "label": "happy",
+    "text": "Unemployment fell again this month."
+  },
+  {
+    "id": "happy-27",
+    "label": "happy",
+    "text": "Inflation eased in October."
+  },
+  {
+    "id": "happy-28",
+    "label": "happy",
+    "text": "Traffic deaths dropped this year."
+  },
+  {
+    "id": "happy-29",
+    "label": "happy",
+    "text": "The unemployment rate declined."
+  },
+  {
+    "id": "happy-30",
+    "label": "happy",
+    "text": "The market rebounded after yesterday's selloff."
+  },
+  {
+    "id": "happy-31",
+    "label": "happy",
+    "text": "Your booking is confirmed, great news!"
+  },
+  {
+    "id": "happy-32",
+    "label": "happy",
+    "text": "Excellent, the backup is complete."
+  },
+  {
+    "id": "happy-33",
+    "label": "happy",
+    "text": "That is a lovely idea."
+  },
+  {
+    "id": "happy-34",
+    "label": "happy",
+    "text": "I'm happy to help with your project."
+  },
+  {
+    "id": "happy-35",
+    "label": "happy",
+    "text": "The new ramp improves access for wheelchair users."
+  },
+  {
+    "id": "sad-01",
+    "label": "sad",
+    "text": "Stocks fell after the inflation report."
+  },
+  {
+    "id": "sad-02",
+    "label": "sad",
+    "text": "Shares slumped in afternoon trading."
+  },
+  {
+    "id": "sad-03",
+    "label": "sad",
+    "text": "The market suffered steep losses."
+  },
+  {
+    "id": "sad-04",
+    "label": "sad",
+    "text": "The company announced layoffs affecting 800 workers."
+  },
+  {
+    "id": "sad-05",
+    "label": "sad",
+    "text": "The factory will close permanently next month."
+  },
+  {
+    "id": "sad-06",
+    "label": "sad",
+    "text": "The airline cancelled your flight."
+  },
+  {
+    "id": "sad-07",
+    "label": "sad",
+    "text": "I'm sorry, your reservation failed."
+  },
+  {
+    "id": "sad-08",
+    "label": "sad",
+    "text": "Unfortunately, the train is delayed."
+  },
+  {
+    "id": "sad-09",
+    "label": "sad",
+    "text": "Floods destroyed homes along the river."
+  },
+  {
+    "id": "sad-10",
+    "label": "sad",
+    "text": "The earthquake killed twelve people."
+  },
+  {
+    "id": "sad-11",
+    "label": "sad",
+    "text": "Several residents were injured in the fire."
+  },
+  {
+    "id": "sad-12",
+    "label": "sad",
+    "text": "The rescue effort ended in tragedy."
+  },
+  {
+    "id": "sad-13",
+    "label": "sad",
+    "text": "Hospitals reported a surge in infections."
+  },
+  {
+    "id": "sad-14",
+    "label": "sad",
+    "text": "Unemployment rose for a second month."
+  },
+  {
+    "id": "sad-15",
+    "label": "sad",
+    "text": "Inflation hit a record high."
+  },
+  {
+    "id": "sad-16",
+    "label": "sad",
+    "text": "Deaths climbed during the heatwave."
+  },
+  {
+    "id": "sad-17",
+    "label": "sad",
+    "text": "The company reported a sharp decline in revenue."
+  },
+  {
+    "id": "sad-18",
+    "label": "sad",
+    "text": "Profits dropped below last year's level."
+  },
+  {
+    "id": "sad-19",
+    "label": "sad",
+    "text": "The market plunged after the announcement."
+  },
+  {
+    "id": "sad-20",
+    "label": "sad",
+    "text": "I'm sorry for your loss."
+  },
+  {
+    "id": "sad-21",
+    "label": "sad",
+    "text": "That sounds painful."
+  },
+  {
+    "id": "sad-22",
+    "label": "sad",
+    "text": "I know this is disappointing."
+  },
+  {
+    "id": "sad-23",
+    "label": "sad",
+    "text": "Your appointment was cancelled."
+  },
+  {
+    "id": "sad-24",
+    "label": "sad",
+    "text": "The storm left thousands without power."
+  },
+  {
+    "id": "sad-25",
+    "label": "sad",
+    "text": "The talks collapsed overnight."
+  },
+  {
+    "id": "sad-26",
+    "label": "sad",
+    "text": "The team lost the final."
+  },
+  {
+    "id": "sad-27",
+    "label": "sad",
+    "text": "The layoffs were unexpected."
+  },
+  {
+    "id": "sad-28",
+    "label": "sad",
+    "text": "The project suffered another setback."
+  },
+  {
+    "id": "sad-29",
+    "label": "sad",
+    "text": "The system failed during the update."
+  },
+  {
+    "id": "sad-30",
+    "label": "sad",
+    "text": "Sadly, the museum is closing."
+  },
+  {
+    "id": "sad-31",
+    "label": "sad",
+    "text": "The region faces a severe drought."
+  },
+  {
+    "id": "sad-32",
+    "label": "sad",
+    "text": "The company filed for bankruptcy."
+  },
+  {
+    "id": "sad-33",
+    "label": "sad",
+    "text": "The breach exposed customer records."
+  },
+  {
+    "id": "sad-34",
+    "label": "sad",
+    "text": "I'm afraid the tickets are sold out."
+  },
+  {
+    "id": "sad-35",
+    "label": "sad",
+    "text": "That's terrible news."
+  },
+  {
+    "id": "curious-01",
+    "label": "curious",
+    "text": "Would you like the detailed forecast?"
+  },
+  {
+    "id": "curious-02",
+    "label": "curious",
+    "text": "How did your meeting go?"
+  },
+  {
+    "id": "curious-03",
+    "label": "curious",
+    "text": "What would you like to work on today?"
+  },
+  {
+    "id": "curious-04",
+    "label": "curious",
+    "text": "Do you prefer tea or coffee?"
+  },
+  {
+    "id": "curious-05",
+    "label": "curious",
+    "text": "Shall we try the other route?"
+  },
+  {
+    "id": "curious-06",
+    "label": "curious",
+    "text": "Could you tell me which file you mean?"
+  },
+  {
+    "id": "curious-07",
+    "label": "curious",
+    "text": "Would a reminder at six work for you?"
+  },
+  {
+    "id": "curious-08",
+    "label": "curious",
+    "text": "What happened next?"
+  },
+  {
+    "id": "curious-09",
+    "label": "curious",
+    "text": "How much time do you have?"
+  },
+  {
+    "id": "curious-10",
+    "label": "curious",
+    "text": "Which version should I open?"
+  },
+  {
+    "id": "curious-11",
+    "label": "curious",
+    "text": "Are you ready to start?"
+  },
+  {
+    "id": "curious-12",
+    "label": "curious",
+    "text": "Want me to explain that part again?"
+  },
+  {
+    "id": "curious-13",
+    "label": "curious",
+    "text": "Would you rather stay in tonight?"
+  },
+  {
+    "id": "curious-14",
+    "label": "curious",
+    "text": "Where did you leave your keys?"
+  },
+  {
+    "id": "curious-15",
+    "label": "curious",
+    "text": "Can you describe the sound you heard?"
+  },
+  {
+    "id": "curious-16",
+    "label": "curious",
+    "text": "What matters most to you here?"
+  },
+  {
+    "id": "curious-17",
+    "label": "curious",
+    "text": "Would you like a shorter answer?"
+  },
+  {
+    "id": "curious-18",
+    "label": "curious",
+    "text": "Is the screen showing a message?"
+  },
+  {
+    "id": "curious-19",
+    "label": "curious",
+    "text": "How are you feeling about the plan?"
+  },
+  {
+    "id": "curious-20",
+    "label": "curious",
+    "text": "Shall I keep going?"
+  },
+  {
+    "id": "curious-21",
+    "label": "curious",
+    "text": "What do you think of that idea?"
+  },
+  {
+    "id": "curious-22",
+    "label": "curious",
+    "text": "Are there any dietary preferences?"
+  },
+  {
+    "id": "curious-23",
+    "label": "curious",
+    "text": "Would a quiet cafe suit you?"
+  },
+  {
+    "id": "curious-24",
+    "label": "curious",
+    "text": "Tell me more about your project."
+  },
+  {
+    "id": "curious-25",
+    "label": "curious",
+    "text": "I'd like to hear how it went."
+  },
+  {
+    "id": "surprised-01",
+    "label": "surprised",
+    "text": "Wow, that happened quickly!"
+  },
+  {
+    "id": "surprised-02",
+    "label": "surprised",
+    "text": "That result is surprising."
+  },
+  {
+    "id": "surprised-03",
+    "label": "surprised",
+    "text": "Who would have expected that!"
+  },
+  {
+    "id": "surprised-04",
+    "label": "surprised",
+    "text": "The discovery was astonishing."
+  },
+  {
+    "id": "surprised-05",
+    "label": "surprised",
+    "text": "Incredibly, the signal came from another galaxy."
+  },
+  {
+    "id": "surprised-06",
+    "label": "surprised",
+    "text": "That is remarkable."
+  },
+  {
+    "id": "surprised-07",
+    "label": "surprised",
+    "text": "Whoa, the whole sky lit up!"
+  },
+  {
+    "id": "surprised-08",
+    "label": "surprised",
+    "text": "The finding stunned the researchers."
+  },
+  {
+    "id": "surprised-09",
+    "label": "surprised",
+    "text": "The vote produced a stunning upset."
+  },
+  {
+    "id": "surprised-10",
+    "label": "surprised",
+    "text": "Unexpectedly, the two clocks matched exactly."
+  },
+  {
+    "id": "surprised-11",
+    "label": "surprised",
+    "text": "That's unbelievable!"
+  },
+  {
+    "id": "surprised-12",
+    "label": "surprised",
+    "text": "The number was much higher than anyone expected."
+  },
+  {
+    "id": "surprised-13",
+    "label": "surprised",
+    "text": "Surprisingly, the museum is free today."
+  },
+  {
+    "id": "surprised-14",
+    "label": "surprised",
+    "text": "What a surprise!"
+  },
+  {
+    "id": "surprised-15",
+    "label": "surprised",
+    "text": "The team made an unexpected discovery."
+  },
+  {
+    "id": "nod-01",
+    "label": "nod",
+    "text": "Yes, the train leaves at six."
+  },
+  {
+    "id": "nod-02",
+    "label": "nod",
+    "text": "Exactly, those two values are equal."
+  },
+  {
+    "id": "nod-03",
+    "label": "nod",
+    "text": "Sure, I can explain the next step."
+  },
+  {
+    "id": "nod-04",
+    "label": "nod",
+    "text": "Agreed, let's keep the simpler option."
+  },
+  {
+    "id": "nod-05",
+    "label": "nod",
+    "text": "Absolutely, you can use either cable."
+  },
+  {
+    "id": "nod-06",
+    "label": "nod",
+    "text": "Correct, the deadline is Friday."
+  },
+  {
+    "id": "nod-07",
+    "label": "nod",
+    "text": "Try saving a copy before you edit it."
+  },
+  {
+    "id": "nod-08",
+    "label": "nod",
+    "text": "You could start with a short outline."
+  },
+  {
+    "id": "nod-09",
+    "label": "nod",
+    "text": "I'd suggest taking a break first."
+  },
+  {
+    "id": "nod-10",
+    "label": "nod",
+    "text": "Remember to bring your charger."
+  },
+  {
+    "id": "nod-11",
+    "label": "nod",
+    "text": "Make sure you have the address before leaving."
+  },
+  {
+    "id": "nod-12",
+    "label": "nod",
+    "text": "My advice is to take one step at a time."
+  },
+  {
+    "id": "nod-13",
+    "label": "nod",
+    "text": "Consider writing down the three priorities."
+  },
+  {
+    "id": "nod-14",
+    "label": "nod",
+    "text": "It may help to ask for a concrete example."
+  },
+  {
+    "id": "nod-15",
+    "label": "nod",
+    "text": "Take your time with the first step."
+  },
+  {
+    "id": "nod-16",
+    "label": "nod",
+    "text": "Let's break the task into smaller pieces."
+  },
+  {
+    "id": "nod-17",
+    "label": "nod",
+    "text": "You should check the date on the ticket."
+  },
+  {
+    "id": "nod-18",
+    "label": "nod",
+    "text": "I recommend starting with the introduction."
+  },
+  {
+    "id": "nod-19",
+    "label": "nod",
+    "text": "A useful next step is to compare the two drafts."
+  },
+  {
+    "id": "nod-20",
+    "label": "nod",
+    "text": "Please save your work before restarting."
+  },
+  {
+    "id": "nod-21",
+    "label": "nod",
+    "text": "Yep, that is the right folder."
+  },
+  {
+    "id": "nod-22",
+    "label": "nod",
+    "text": "Certainly, I can read the summary aloud."
+  },
+  {
+    "id": "nod-23",
+    "label": "nod",
+    "text": "You can begin with a five minute walk."
+  },
+  {
+    "id": "nod-24",
+    "label": "nod",
+    "text": "Start by plugging the cable into the left socket."
+  },
+  {
+    "id": "nod-25",
+    "label": "nod",
+    "text": "It helps to keep a backup."
+  },
+  {
+    "id": "thinking-01",
+    "label": "thinking",
+    "text": "I'm not sure which route is faster."
+  },
+  {
+    "id": "thinking-02",
+    "label": "thinking",
+    "text": "The cause remains unclear."
+  },
+  {
+    "id": "thinking-03",
+    "label": "thinking",
+    "text": "We don't know the final result yet."
+  },
+  {
+    "id": "thinking-04",
+    "label": "thinking",
+    "text": "That estimate is uncertain."
+  },
+  {
+    "id": "thinking-05",
+    "label": "thinking",
+    "text": "Perhaps the second option would fit better."
+  },
+  {
+    "id": "thinking-06",
+    "label": "thinking",
+    "text": "Maybe it will arrive tomorrow."
+  },
+  {
+    "id": "thinking-07",
+    "label": "thinking",
+    "text": "The reports are still unconfirmed."
+  },
+  {
+    "id": "thinking-08",
+    "label": "thinking",
+    "text": "It's too early to tell."
+  },
+  {
+    "id": "thinking-09",
+    "label": "thinking",
+    "text": "I can't verify that claim."
+  },
+  {
+    "id": "thinking-10",
+    "label": "thinking",
+    "text": "It depends on which version you have."
+  },
+  {
+    "id": "thinking-11",
+    "label": "thinking",
+    "text": "There isn't enough information to be certain."
+  },
+  {
+    "id": "thinking-12",
+    "label": "thinking",
+    "text": "The forecast is tentative."
+  },
+  {
+    "id": "thinking-13",
+    "label": "thinking",
+    "text": "I'm unsure about the exact time."
+  },
+  {
+    "id": "thinking-14",
+    "label": "thinking",
+    "text": "The evidence is inconclusive."
+  },
+  {
+    "id": "thinking-15",
+    "label": "thinking",
+    "text": "I might be missing some context."
+  },
+  {
+    "id": "neutral-01",
+    "label": "neutral",
+    "text": "The train leaves at six."
+  },
+  {
+    "id": "neutral-02",
+    "label": "neutral",
+    "text": "The briefing covers three topics this morning."
+  },
+  {
+    "id": "neutral-03",
+    "label": "neutral",
+    "text": "The committee meets on Tuesday."
+  },
+  {
+    "id": "neutral-04",
+    "label": "neutral",
+    "text": "The report contains four tables."
+  },
+  {
+    "id": "neutral-05",
+    "label": "neutral",
+    "text": "The file is in the documents folder."
+  },
+  {
+    "id": "neutral-06",
+    "label": "neutral",
+    "text": "Water freezes at zero degrees Celsius."
+  },
+  {
+    "id": "neutral-07",
+    "label": "neutral",
+    "text": "The library opens at nine."
+  },
+  {
+    "id": "neutral-08",
+    "label": "neutral",
+    "text": "The meeting will last about an hour."
+  },
+  {
+    "id": "neutral-09",
+    "label": "neutral",
+    "text": "There are two attachments in the message."
+  },
+  {
+    "id": "neutral-10",
+    "label": "neutral",
+    "text": "The next bus arrives in twelve minutes."
+  },
+  {
+    "id": "neutral-11",
+    "label": "neutral",
+    "text": "The index finished unchanged."
+  },
+  {
+    "id": "neutral-12",
+    "label": "neutral",
+    "text": "The company reports earnings tomorrow."
+  },
+  {
+    "id": "neutral-13",
+    "label": "neutral",
+    "text": "The central bank kept rates unchanged."
+  },
+  {
+    "id": "neutral-14",
+    "label": "neutral",
+    "text": "Shares rose, but profits fell."
+  },
+  {
+    "id": "neutral-15",
+    "label": "neutral",
+    "text": "Markets gained while the company announced layoffs."
+  },
+  {
+    "id": "neutral-16",
+    "label": "neutral",
+    "text": "The temperature falls after sunset."
+  },
+  {
+    "id": "neutral-17",
+    "label": "neutral",
+    "text": "The road climbs toward the pass."
+  },
+  {
+    "id": "neutral-18",
+    "label": "neutral",
+    "text": "The book is about the Great Depression."
+  },
+  {
+    "id": "neutral-19",
+    "label": "neutral",
+    "text": "The band played at the political rally."
+  },
+  {
+    "id": "neutral-20",
+    "label": "neutral",
+    "text": "Niagara Falls is on the border."
+  },
+  {
+    "id": "neutral-21",
+    "label": "neutral",
+    "text": "The record high shelf needs a ladder."
+  },
+  {
+    "id": "neutral-22",
+    "label": "neutral",
+    "text": "That result is not surprising."
+  },
+  {
+    "id": "neutral-23",
+    "label": "neutral",
+    "text": "The test never failed."
+  },
+  {
+    "id": "neutral-24",
+    "label": "neutral",
+    "text": "I'm not happy about the delay."
+  },
+  {
+    "id": "neutral-25",
+    "label": "neutral",
+    "text": "The launch wasn't cancelled."
+  },
+  {
+    "id": "neutral-26",
+    "label": "neutral",
+    "text": "It isn't good news."
+  },
+  {
+    "id": "neutral-27",
+    "label": "neutral",
+    "text": "It isn't bad news."
+  },
+  {
+    "id": "neutral-28",
+    "label": "neutral",
+    "text": "The chair is next to the window."
+  },
+  {
+    "id": "neutral-29",
+    "label": "neutral",
+    "text": "The page lists the available sizes."
+  },
+  {
+    "id": "neutral-30",
+    "label": "neutral",
+    "text": "The word happy is an adjective."
+  },
+  {
+    "id": "neutral-31",
+    "label": "neutral",
+    "text": "She asked whether the market would rally."
+  },
+  {
+    "id": "neutral-32",
+    "label": "neutral",
+    "text": "The forecast says temperatures will rise."
+  },
+  {
+    "id": "neutral-33",
+    "label": "neutral",
+    "text": "Good morning, here is your briefing."
+  },
+  {
+    "id": "neutral-34",
+    "label": "neutral",
+    "text": "Hello, it's good to hear from you."
+  },
+  {
+    "id": "neutral-35",
+    "label": "neutral",
+    "text": "Hi there."
+  },
+  {
+    "id": "neutral-36",
+    "label": "neutral",
+    "text": "See you later."
+  },
+  {
+    "id": "neutral-37",
+    "label": "neutral",
+    "text": "Take care, and goodbye."
+  },
+  {
+    "id": "neutral-38",
+    "label": "neutral",
+    "text": "Have a good evening."
+  },
+  {
+    "id": "neutral-39",
+    "label": "neutral",
+    "text": "Welcome back."
+  },
+  {
+    "id": "neutral-40",
+    "label": "neutral",
+    "text": "Talk to you soon."
+  },
+  {
+    "id": "neutral-41",
+    "label": "neutral",
+    "text": "The market opens at nine thirty."
+  },
+  {
+    "id": "neutral-42",
+    "label": "neutral",
+    "text": "There is no evidence of layoffs."
+  },
+  {
+    "id": "neutral-43",
+    "label": "neutral",
+    "text": "We cannot call the outcome a success yet."
+  },
+  {
+    "id": "neutral-44",
+    "label": "neutral",
+    "text": "The company denied that profits fell."
+  },
+  {
+    "id": "neutral-45",
+    "label": "neutral",
+    "text": "The repair is scheduled for Monday."
+  },
+  {
+    "id": "neutral-46",
+    "label": "neutral",
+    "text": "The package weighs two kilograms."
+  },
+  {
+    "id": "neutral-47",
+    "label": "neutral",
+    "text": "The display has a blue background."
+  },
+  {
+    "id": "neutral-48",
+    "label": "neutral",
+    "text": "You asked about the price of copper."
+  },
+  {
+    "id": "neutral-49",
+    "label": "neutral",
+    "text": "The answer is forty two."
+  },
+  {
+    "id": "neutral-50",
+    "label": "neutral",
+    "text": "The council published the agenda this morning."
+  }
+]

@@ -1,0 +1,8 @@
+{
+  "summary": "3033 passed, 3 skipped in 304.61s (0:05:04)",
+  "workers": 6,
+  "timeout_s": 180,
+  "cache_provider": false,
+  "real_models": false,
+  "robot_io": false
+}

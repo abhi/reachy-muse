@@ -1,0 +1,650 @@
+{
+  "host": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "python": "3.13.14"
+  },
+  "corpus_sha256": "2e8a0ba8c423a4af3a4758dbbb0d09a1c00edf97d146ae6bedc0c8ff85dd09f5",
+  "sentences": 200,
+  "labels": {
+    "happy": 35,
+    "sad": 35,
+    "curious": 25,
+    "surprised": 15,
+    "nod": 25,
+    "thinking": 15,
+    "neutral": 50
+  },
+  "expressions": {
+    "neutral": 142,
+    "happy": 13,
+    "sad": 7,
+    "curious": 23,
+    "surprised": 7,
+    "nod": 8
+  },
+  "gestures": {
+    "neutral": 142,
+    "happy": 13,
+    "sad": 7,
+    "curious": 23,
+    "surprised": 7,
+    "nod": 8
+  },
+  "agreement": 0.51,
+  "mismatches": [
+    {
+      "id": "happy-01",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-02",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-03",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-04",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-05",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-06",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-07",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-08",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-09",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-10",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-13",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-14",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-15",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-16",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-21",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-22",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-23",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-24",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-25",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-26",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-27",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-28",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-29",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-30",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "happy-35",
+      "expected": "happy",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-01",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-02",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-03",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-04",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-05",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-09",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-10",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-11",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-12",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-13",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-14",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-15",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-16",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-17",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-18",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-19",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-21",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-22",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-24",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-25",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-26",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-27",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-28",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-31",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-32",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-33",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-34",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "sad-35",
+      "expected": "sad",
+      "actual": "neutral"
+    },
+    {
+      "id": "curious-24",
+      "expected": "curious",
+      "actual": "neutral"
+    },
+    {
+      "id": "curious-25",
+      "expected": "curious",
+      "actual": "neutral"
+    },
+    {
+      "id": "surprised-03",
+      "expected": "surprised",
+      "actual": "neutral"
+    },
+    {
+      "id": "surprised-05",
+      "expected": "surprised",
+      "actual": "neutral"
+    },
+    {
+      "id": "surprised-08",
+      "expected": "surprised",
+      "actual": "neutral"
+    },
+    {
+      "id": "surprised-09",
+      "expected": "surprised",
+      "actual": "neutral"
+    },
+    {
+      "id": "surprised-10",
+      "expected": "surprised",
+      "actual": "neutral"
+    },
+    {
+      "id": "surprised-12",
+      "expected": "surprised",
+      "actual": "neutral"
+    },
+    {
+      "id": "surprised-14",
+      "expected": "surprised",
+      "actual": "neutral"
+    },
+    {
+      "id": "surprised-15",
+      "expected": "surprised",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-07",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-08",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-09",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-10",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-11",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-12",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-13",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-14",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-15",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-16",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-17",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-18",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-19",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-20",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-23",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-24",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "nod-25",
+      "expected": "nod",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-01",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-02",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-03",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-04",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-05",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-06",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-07",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-08",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-09",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-10",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-11",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-12",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-13",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-14",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "thinking-15",
+      "expected": "thinking",
+      "actual": "neutral"
+    },
+    {
+      "id": "neutral-18",
+      "expected": "neutral",
+      "actual": "happy"
+    },
+    {
+      "id": "neutral-30",
+      "expected": "neutral",
+      "actual": "happy"
+    },
+    {
+      "id": "neutral-39",
+      "expected": "neutral",
+      "actual": "happy"
+    }
+  ],
+  "classifier_cpu": {
+    "p50_ms": 0.003,
+    "p95_ms": 0.004,
+    "p99_ms": 0.005,
+    "max_ms": 0.034
+  },
+  "classifier_and_selection_cpu": {
+    "p50_ms": 0.004,
+    "p95_ms": 0.005,
+    "p99_ms": 0.005,
+    "max_ms": 0.038
+  },
+  "bounded_long_input_cpu": {
+    "p50_ms": 0.111,
+    "p95_ms": 0.119,
+    "p99_ms": 0.13301,
+    "max_ms": 0.162
+  },
+  "calls": 20000,
+  "cm4_estimate_multiplier": 10,
+  "cm4_estimated_classifier_cpu": {
+    "p50_ms": 0.03,
+    "p95_ms": 0.04,
+    "p99_ms": 0.05,
+    "max_ms": 0.34
+  },
+  "factual_run": {
+    "gestures": {
+      "neutral": 30
+    },
+    "max_identical_run": 30
+  },
+  "morning_log": {
+    "sha256": "c1d64ff7d824cd92f7984bcb4d5d6e9b04042e5c3f6a5c38c1eeb11a6ca233f6",
+    "transcript_available": false,
+    "lexical_agreement": null,
+    "briefing": {
+      "recorded": [
+        "neutral",
+        "neutral",
+        "neutral",
+        "neutral",
+        "neutral",
+        "sad",
+        "sad",
+        "neutral",
+        "neutral",
+        "neutral"
+      ],
+      "recorded_counts": {
+        "neutral": 8,
+        "sad": 2
+      },
+      "gesture_replay": [
+        "neutral",
+        "neutral",
+        "neutral",
+        "neutral",
+        "neutral",
+        "sad",
+        "sad",
+        "neutral",
+        "neutral",
+        "neutral"
+      ],
+      "replay_counts": {
+        "neutral": 8,
+        "sad": 2
+      }
+    },
+    "realtime": [
+      {
+        "recorded": [
+          "neutral"
+        ],
+        "recorded_counts": {
+          "neutral": 1
+        },
+        "gesture_replay": [
+          "neutral"
+        ],
+        "replay_counts": {
+          "neutral": 1
+        }
+      },
+      {
+        "recorded": [
+          "neutral",
+          "neutral",
+          "neutral"
+        ],
+        "recorded_counts": {
+          "neutral": 3
+        },
+        "gesture_replay": [
+          "neutral",
+          "neutral",
+          "neutral"
+        ],
+        "replay_counts": {
+          "neutral": 3
+        }
+      },
+      {
+        "recorded": [
+          "neutral",
+          "happy"
+        ],
+        "recorded_counts": {
+          "neutral": 1,
+          "happy": 1
+        },
+        "gesture_replay": [
+          "neutral",
+          "happy"
+        ],
+        "replay_counts": {
+          "neutral": 1,
+          "happy": 1
+        }
+      }
+    ]
+  }
+}

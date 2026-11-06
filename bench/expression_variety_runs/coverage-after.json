@@ -1,0 +1,234 @@
+{
+  "host": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "python": "3.13.14"
+  },
+  "corpus_sha256": "2e8a0ba8c423a4af3a4758dbbb0d09a1c00edf97d146ae6bedc0c8ff85dd09f5",
+  "sentences": 200,
+  "labels": {
+    "happy": 35,
+    "sad": 35,
+    "curious": 25,
+    "surprised": 15,
+    "nod": 25,
+    "thinking": 15,
+    "neutral": 50
+  },
+  "expressions": {
+    "happy": 34,
+    "neutral": 51,
+    "sad": 35,
+    "curious": 25,
+    "surprised": 15,
+    "nod": 25,
+    "thinking": 15
+  },
+  "gestures": {
+    "happy": 34,
+    "attentive": 17,
+    "sad": 35,
+    "curious": 25,
+    "surprised": 15,
+    "nod": 25,
+    "thinking": 15,
+    "curious_tilt": 14,
+    "warm": 20
+  },
+  "agreement": 0.995,
+  "mismatches": [
+    {
+      "id": "happy-30",
+      "expected": "happy",
+      "actual": "neutral"
+    }
+  ],
+  "classifier_cpu": {
+    "p50_ms": 0.006,
+    "p95_ms": 0.008,
+    "p99_ms": 0.01,
+    "max_ms": 0.046
+  },
+  "classifier_and_selection_cpu": {
+    "p50_ms": 0.007,
+    "p95_ms": 0.01,
+    "p99_ms": 0.011,
+    "max_ms": 0.054
+  },
+  "bounded_long_input_cpu": {
+    "p50_ms": 0.193,
+    "p95_ms": 0.212,
+    "p99_ms": 0.218,
+    "max_ms": 0.243
+  },
+  "calls": 20000,
+  "prosody_profiles": {
+    "quiet": {
+      "pitch_range_semitones": 0.23238389840317458,
+      "energy_dbfs": -35.802107147817274,
+      "syllables_per_s": 7.5,
+      "rise_semitones": 0.0,
+      "analysis_cpu_ms": 2.028,
+      "semantic_changes": 0,
+      "gestures": {
+        "happy": 34,
+        "attentive": 32,
+        "sad": 35,
+        "curious": 25,
+        "surprised": 15,
+        "nod": 25,
+        "thinking": 15,
+        "curious_tilt": 13,
+        "warm": 6
+      }
+    },
+    "animated": {
+      "pitch_range_semitones": 0.23238389840317458,
+      "energy_dbfs": -16.071683457228904,
+      "syllables_per_s": 7.5,
+      "rise_semitones": 0.0,
+      "analysis_cpu_ms": 0.929,
+      "semantic_changes": 0,
+      "gestures": {
+        "happy": 34,
+        "warm": 35,
+        "sad": 35,
+        "curious": 25,
+        "surprised": 15,
+        "nod": 25,
+        "thinking": 15,
+        "attentive": 16
+      }
+    },
+    "rising": {
+      "pitch_range_semitones": 8.81418556134997,
+      "energy_dbfs": -19.59341394091943,
+      "syllables_per_s": 7.5,
+      "rise_semitones": 7.62282848642856,
+      "analysis_cpu_ms": 0.882,
+      "semantic_changes": 0,
+      "gestures": {
+        "happy": 34,
+        "curious_tilt": 30,
+        "sad": 35,
+        "curious": 25,
+        "surprised": 15,
+        "nod": 25,
+        "thinking": 15,
+        "warm": 19,
+        "attentive": 2
+      }
+    }
+  },
+  "cm4_estimate_multiplier": 10,
+  "cm4_estimated_classifier_cpu": {
+    "p50_ms": 0.06,
+    "p95_ms": 0.08,
+    "p99_ms": 0.1,
+    "max_ms": 0.46
+  },
+  "factual_run": {
+    "gestures": {
+      "attentive": 10,
+      "curious_tilt": 10,
+      "warm": 10
+    },
+    "max_identical_run": 1
+  },
+  "morning_log": {
+    "sha256": "c1d64ff7d824cd92f7984bcb4d5d6e9b04042e5c3f6a5c38c1eeb11a6ca233f6",
+    "transcript_available": false,
+    "initial_history": "empty; retained across briefing and realtime replies",
+    "lexical_agreement": null,
+    "briefing": {
+      "recorded": [
+        "neutral",
+        "neutral",
+        "neutral",
+        "neutral",
+        "neutral",
+        "sad",
+        "sad",
+        "neutral",
+        "neutral",
+        "neutral"
+      ],
+      "recorded_counts": {
+        "neutral": 8,
+        "sad": 2
+      },
+      "gesture_replay": [
+        "attentive",
+        "curious_tilt",
+        "warm",
+        "attentive",
+        "curious_tilt",
+        "sad",
+        "sad",
+        "warm",
+        "attentive",
+        "curious_tilt"
+      ],
+      "replay_counts": {
+        "attentive": 3,
+        "curious_tilt": 3,
+        "warm": 2,
+        "sad": 2
+      }
+    },
+    "realtime": [
+      {
+        "recorded": [
+          "neutral"
+        ],
+        "recorded_counts": {
+          "neutral": 1
+        },
+        "gesture_replay": [
+          "warm"
+        ],
+        "replay_counts": {
+          "warm": 1
+        }
+      },
+      {
+        "recorded": [
+          "neutral",
+          "neutral",
+          "neutral"
+        ],
+        "recorded_counts": {
+          "neutral": 3
+        },
+        "gesture_replay": [
+          "attentive",
+          "curious_tilt",
+          "warm"
+        ],
+        "replay_counts": {
+          "attentive": 1,
+          "curious_tilt": 1,
+          "warm": 1
+        }
+      },
+      {
+        "recorded": [
+          "neutral",
+          "happy"
+        ],
+        "recorded_counts": {
+          "neutral": 1,
+          "happy": 1
+        },
+        "gesture_replay": [
+          "attentive",
+          "happy"
+        ],
+        "replay_counts": {
+          "attentive": 1,
+          "happy": 1
+        }
+      }
+    ]
+  }
+}

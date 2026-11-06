@@ -163,7 +163,7 @@ class ReplyMotion:
             if (latest.index == index and latest.shown and not moving
                     and offset - latest.sample <= LATE_LIMIT_S * SAMPLE_RATE):
                 reply.expressions[-1] = motion.expression
-                marks.append(Mark(0, sentence=motion, revised=True))
+                marks.append(Mark(0, sentence=replace(motion, revised=True), revised=True))
         if reply.unended:
             following = next(self._due(reply), None)
             if following is not None:
@@ -225,8 +225,7 @@ class ReplyMotion:
                     reply.revision = (sentence.index, motion)
                 continue
             reply.motions[sentence.index] = motion
-            if (self._library is not None and getattr(self._library, "library_available", False)
-                    and motion.expression is not Expression.NEUTRAL):
+            if self._library is not None and getattr(self._library, "library_available", False):
                 reply.library[sentence.index] = asyncio.create_task(self._generate(motion.expression))
 
     async def _generate(self, expression: Expression):
