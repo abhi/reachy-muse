@@ -787,17 +787,27 @@ request can still pay the cost of loading its speech model.
 ## Local face following
 
 Add `--face-follow` to the existing `muse-reachy run` command to let Reachy
-follow a face while listening, thinking and speaking. The small bundled
-OpenCV YuNet model runs locally at five frames per second. It uses Reachy's
-camera calibration and current head pose, smooths gaze changes, and limits
-combined gaze and expression targets to 20 degrees of yaw and 12 degrees of
-pitch. The main motion thread combines gaze with expressions; the detector
-never writes motor targets.
+follow a face while listening, thinking and speaking, in chat and realtime
+calls. The small bundled OpenCV YuNet model runs locally at five frames per
+second. It uses Reachy's camera calibration and current head pose, smooths gaze changes, and limits
+gaze targets to 20 degrees of yaw and 12 degrees of pitch. The final combined
+pose stays within the existing motor limits of 35 degrees of yaw and 20 degrees
+of pitch. Generated gestures, library expressions, sentence clips and nods add
+to the tracked gaze. The main motion thread combines these offsets after clip
+crossfades; the detector never writes motor targets.
 
-Tracking pauses during explicit robot commands and while waiting for the wake
-phrase. When a face disappears, normal expressions resume after 0.8 seconds.
-The detector initially selects the largest face and stays with that face while
-it remains nearby. It does not identify people or distinguish which person is
+Tracking pauses during explicit robot commands and resumes when they finish.
+By default, it also pauses while waiting for the wake phrase. Add
+`--face-follow-idle` alongside `--face-follow` to keep watching while idle at
+two frames per second. Idle following stops during sleep or with
+`REACHY_MUSE_BREATHING=0`. Face following requires motion, so `--no-motion`
+cannot be combined with these flags. Disabling breathing does not disable gaze
+during a conversation. "Stop looking at me" disables both conversation and
+idle following until "look at me" enables them again.
+
+When a face disappears, its target expires after 0.8 seconds and gaze eases
+back to normal expressions. The detector initially selects the largest face
+and stays with that face while it remains nearby. It does not identify people or distinguish which person is
 speaking in a group. Camera frames remain in memory on Reachy and are not sent
 to Muse or saved. Muse knows that local tracking is active but cannot describe
 the camera scene through this feature.
@@ -806,6 +816,10 @@ The model's MIT license, pinned source and checksum are packaged alongside it.
 `--face-follow-model PATH` selects another compatible YuNet model and requires
 `--face-follow`. Missing calibration or a model startup error prevents startup;
 a later camera error disables tracking while voice stays available.
+`Local face tracking ready` confirms detector initialization. Separate
+`Local face tracking on/off` messages report gate transitions and their
+reasons, such as conversation, idle follow, command, sleeping or still mode.
+These logs contain no images, identities or conversation text.
 
 The local SDK 1.9 speaker path receives the official SDK 1.10 shell equalization
 and limiter in float32 at 48 kHz, then converts back to the device's native
@@ -1062,14 +1076,16 @@ The intents come from a fixed table in `src/reachy_muse/motion/moments.py`; the
 user's words are never sent for motion.
 
 Generated motion plays through the same crossfade as recorded clips: it fades in
-over 0.4 seconds from the resting pose and back out over 0.4 seconds. Breathing,
-the thinking antenna score and face tracking yield to it and come back after
-it. Every frame is clamped to the `reachy.move` limits on the robot, whatever the
+over 0.4 seconds from the resting pose and back out over 0.4 seconds. Breathing
+and the thinking antenna score yield to it and come back afterwards. Face
+tracking remains active, and generated head angles add to the gaze. Every
+frame is clamped to the `reachy.move` limits on the robot, whatever the
 companion sent, and an antenna that `--antenna-mode` leaves inactive stays where
 it is. Talking over Reachy, "never mind", "stop talking", "stop listening" and
 "go to sleep" fade it out at once, as does any `reachy.move` or
 `reachy.expression` command, which waits for the fade. With
-`REACHY_MUSE_BREATHING=0`, Reachy returns to a still pose when the motion ends.
+`REACHY_MUSE_BREATHING=0`, Reachy returns to a still idle pose when the motion
+ends; conversation gaze remains active.
 
 To measure what these layers cost on the robot's CPU, run
 `~/muse-reachy-venv/bin/python bench/motion_tick.py`. It times one motion-loop

@@ -316,6 +316,8 @@ def parser() -> argparse.ArgumentParser:
                                    "models as fallback; needs `companion add` first")
             item.add_argument("--face-follow", action="store_true",
                               help="Follow a nearby face locally during conversations; camera frames stay on the robot")
+            item.add_argument("--face-follow-idle", action="store_true",
+                              help="Also follow faces while idle at two frames per second; requires --face-follow; respects still mode")
             item.add_argument("--face-follow-model", type=Path,
                               help="YuNet ONNX detector override; requires --face-follow")
             item.add_argument("--stt-model", type=Path,
@@ -460,6 +462,7 @@ def _hardware(args, *, motion=True):
                            enable_motion=motion and not args.no_motion,
                            library_expressions=getattr(args, "library_expressions", False),
                            antenna_mode=args.antenna_mode, face_follow_model=face_model,
+                           face_follow_idle=getattr(args, "face_follow_idle", False),
                            speaker_eq_gains=COMPANION_SPEAKER_EQ_GAINS if companion else SPEAKER_EQ_GAINS,
                            style=MotionStyle.from_env(), **watcher)
 
@@ -548,6 +551,8 @@ async def run(args) -> int:
         raise ValueError("choose either --main-chat or --session-id")
     if args.face_follow_model is not None and not args.face_follow:
         raise ValueError("--face-follow-model requires --face-follow")
+    if args.face_follow_idle and not args.face_follow:
+        raise ValueError("--face-follow-idle requires --face-follow")
     if args.face_follow and args.no_motion:
         raise ValueError("--face-follow requires motion to be enabled")
     silence_s = end_of_turn_silence(Mode(args.mode), args.silence)

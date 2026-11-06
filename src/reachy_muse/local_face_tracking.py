@@ -16,6 +16,7 @@ from typing import Callable, Sequence
 YAW_LIMIT = math.radians(20)
 PITCH_LIMIT = math.radians(12)
 FACE_LOSS_SECONDS = 0.8
+IDLE_SAMPLE_PERIOD = 0.5
 
 
 def default_face_model() -> Path:
@@ -186,6 +187,7 @@ class FaceFollower:
         self._distortion = distortion
         self._detector_factory = detector_factory or _YuNetDetector
         self._period = 1.0 / sample_hz
+        self._sample_period = self._period
         self._clock = clock
         self._condition = threading.Condition()
         self._active = False
@@ -211,13 +213,16 @@ class FaceFollower:
                                             name="muse-face-detector", daemon=True)
             self._thread.start()
 
-    def set_active(self, active: bool) -> None:
+    def set_active(self, active: bool, *, idle: bool = False) -> None:
         with self._condition:
-            if active == self._active or self._closed:
+            period = max(self._period, IDLE_SAMPLE_PERIOD) if idle else self._period
+            if self._closed or (active == self._active and period == self._sample_period):
                 return
-            self._active = active
-            self._generation += 1
-            self._target = None
+            if active != self._active:
+                self._active = active
+                self._generation += 1
+                self._target = None
+            self._sample_period = period
             self._condition.notify_all()
 
     def target(self) -> FaceTarget | None:
@@ -270,7 +275,7 @@ class FaceFollower:
                     if self._closed:
                         return
                     if self._active and self._generation == generation:
-                        self._condition.wait(max(0.0, self._period - (self._clock() - started)))
+                        self._condition.wait(max(0.0, self._sample_period - (self._clock() - started)))
         except Exception as exc:
             # A traceback could otherwise retain its camera frame indefinitely.
             exc.__traceback__ = exc.__context__ = exc.__cause__ = None
