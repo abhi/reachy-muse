@@ -178,12 +178,14 @@ class WakePolicy:
         self._audio = deque()
         self._audio_samples = 0
         self._echo_sample = 0
+        self._blocked_sample = 0
 
     def reset(self, *, new_trial=False):
         """Discard candidate context after a gap; keep exposure and cooldown clocks."""
         self._audio.clear()
         self._audio_samples = 0
         self._echo_sample = 0
+        self._blocked_sample = 0
         self.last_decision = None
         if new_trial:
             self._last_accept = self._samples - self.cooldown_samples
@@ -203,6 +205,9 @@ class WakePolicy:
         echo = contains_phrase(" ".join(context.playback), detector.phrase)
         if echo:
             self._echo_sample = self._samples
+        blocked = context.blocked or context.speaking and not context.playback
+        if blocked:
+            self._blocked_sample = self._samples
         started = time.monotonic()
         replay = getattr(detector, "candidate_replay", False)
         found = await asyncio.to_thread(detector.feed, audio, **({"align": False} if replay else {}))
@@ -224,9 +229,10 @@ class WakePolicy:
         reason, source, floor = "accepted", "none", None
         verification = "not_run"
         verification_ms = alignment_ms = 0.0
-        if echo or self._echo_sample > self._samples - getattr(candidate, "segment_lookback_samples", 0):
+        segment_start = self._samples - getattr(candidate, "segment_lookback_samples", 0)
+        if echo or self._echo_sample > segment_start:
             reason = "echo"
-        elif context.blocked or context.speaking and not context.playback:
+        elif blocked or self._blocked_sample > segment_start:
             reason = "speaking"
         elif not context.armed or self._samples - self._last_accept < self.cooldown_samples:
             reason = "cooldown"

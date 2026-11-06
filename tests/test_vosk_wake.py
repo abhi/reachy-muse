@@ -142,7 +142,8 @@ def test_policy_still_guards_exact_endpoint_matches(models, context, valid, reas
 
 @pytest.mark.parametrize("mode", ["endpoint", "stable_partial"])
 @pytest.mark.parametrize("tail_samples", [0, 16000])
-def test_policy_rejects_delayed_endpoint_after_playback_evidence_expires(models, mode, tail_samples):
+@pytest.mark.parametrize("playback, reason", [("Say hey muse.", "echo"), (None, "speaking")])
+def test_policy_rejects_delayed_endpoint_after_playback_evidence_expires(models, mode, tail_samples, playback, reason):
     from reachy_muse.conversation import VoiceConversation
     from reachy_muse.wake_policy import WakePolicy, WakeVerifier
 
@@ -154,7 +155,7 @@ def test_policy_rejects_delayed_endpoint_after_playback_evidence_expires(models,
         instances[-1].plan = [(False, "")] * 47 + [(False, "hey muse")] * 3
     conversation = VoiceConversation(SimpleNamespace(), SimpleNamespace(echo_cancelled_input=True),
                                      backends=SimpleNamespace(motion=None))
-    conversation._muse_audible("Say hey muse.", 1)
+    conversation._muse_audible(playback, 1)
     conversation._muse_audible("The forecast is sunny.", 5)
     conversation._muted = True
 
@@ -171,15 +172,21 @@ def test_policy_rejects_delayed_endpoint_after_playback_evidence_expires(models,
             accepted.append(await policy.feed(detector, audio, context=context))
         assert context.playback == ("The forecast is sunny.",)
         assert context.speaking is True
+        assert context.blocked is False
         assert accepted == [False] * 50
-        assert policy.last_decision.reason == "echo"
+        assert policy.last_decision.reason == reason
 
     asyncio.run(run())
 
 
 @pytest.mark.parametrize("boundary", ["endpoint", "reset"])
 @pytest.mark.parametrize("batched", [False, True])
-def test_policy_does_not_reuse_echo_evidence_from_an_earlier_segment(models, boundary, batched):
+@pytest.mark.parametrize("context", [
+    {"speaking": True, "playback": ("Say hey muse.",)},
+    {"speaking": True},
+    {"blocked": True},
+])
+def test_policy_does_not_reuse_output_evidence_from_an_earlier_segment(models, boundary, batched, context):
     from reachy_muse.wake_policy import WakeContext, WakePolicy
 
     directory, instances, _ = models
@@ -187,8 +194,7 @@ def test_policy_does_not_reuse_echo_evidence_from_an_earlier_segment(models, bou
 
     async def run():
         policy = WakePolicy()
-        context = WakeContext(speaking=True, playback=("Say hey muse.",))
-        assert await policy.feed(detector, np.full(1600, .25), context=context) is False
+        assert await policy.feed(detector, np.full(1600, .25), context=WakeContext(**context)) is False
         if boundary == "reset":
             detector.reset()
             policy.reset()
