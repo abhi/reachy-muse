@@ -446,7 +446,9 @@ class ReachyController:
                     raise ReachyHardwareError(f"Reachy Mini speaker failed: {exc}") from exc
                 at = time.monotonic()
                 from reachy_muse.motion.sentence_delivery import NEUTRAL_LIMITS, neutral_motion
-                if self._sentence_epoch != self._sentences.epoch:
+                with self._state_lock:
+                    epoch = self._sentences.epoch
+                if self._sentence_epoch != epoch:
                     self._sentence_delivery.clear()
                 sentence = self._sentence_delivery.accept(audio, self._output_sample_rate, sentence)
                 planned = sentence.motion if sentence is not None else None
@@ -466,13 +468,13 @@ class ReachyController:
                 from reachy_muse.motion.sentence_timeline import SentenceEvent
                 start = max(at, self._audio_end)
                 self._audio_end = start + audio.size / self._output_sample_rate
-                if sentence is not None:
-                    with self._state_lock:
+                with self._state_lock:
+                    if sentence is not None and epoch == self._sentences.epoch:
                         self._sentence_paused = False
                         self._sentence_active = True
                         if not sentence.revised:
                             self._sentence_serial += 1
-                        self._sentence_epoch = self._sentences.epoch
+                        self._sentence_epoch = epoch
                         self._sentence_terminal = sentence.terminal
                         self._sentence_expression = sentence.expression.value
                         self._state = "speaking"
@@ -485,8 +487,6 @@ class ReachyController:
                         log.info("Reachy sentence motion %s variant=%s revised=%s", sentence.expression.value,
                                  sentence.variant, sentence.revised)
                 if accents:
-                    with self._state_lock:
-                        epoch = self._sentences.epoch
                     for index, terminal in accents:
                         self._sentences.offer(SentenceEvent(start + index / self._output_sample_rate + SWAY_LATENCY_S,
                                                             epoch, "end", (terminal, -1)))

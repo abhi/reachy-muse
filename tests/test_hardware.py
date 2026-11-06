@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import math
 from pathlib import Path
 import sys
@@ -2123,6 +2124,45 @@ def test_library_sentence_motion_is_audio_ordered_and_cancelled_with_epoch(monke
     controller.play_audio(np.zeros(1600), sentence=SentenceMotion(Expression.HAPPY, motion=motion))
     controller.clear_audio()
     assert controller._sentences.due(1002.0) == []
+
+
+def test_command_during_sentence_analysis_cannot_restart_old_motion(monkeypatch):
+    from reachy_muse.motion.sentence import classify_sentence
+    from test_sentence_delivery import rising_pcm
+
+    controller = start_controller(FakeRobot(), sleep_on_close=False,
+                                  style=MotionStyle(sway="sdk", breathing=False))
+    analysing, resume = threading.Event(), threading.Event()
+    pcm = rising_pcm(rate=16000)
+    try:
+        controller.play_audio(pcm[:640], sentence=classify_sentence("The report is ready."))
+        delivery = controller._sentence_delivery.tracker.delivery
+
+        def blocked_delivery():
+            analysing.set()
+            assert resume.wait(5)
+            return delivery()
+
+        monkeypatch.setattr(controller._sentence_delivery.tracker, "delivery", blocked_delivery)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            playback = pool.submit(controller.play_audio, pcm[640:], accents=[(0, "question")])
+            try:
+                assert analysing.wait(2)
+                result = controller.run_command("reachy.move", {"yaw": -10, "duration": .2, "hold": 0})
+                assert result["ok"] is True
+            finally:
+                resume.set()
+            playback.result(timeout=2)
+        assert controller._sentence_active is False
+        controller.finish_sentence()
+        assert controller._sentences.due(time.monotonic() + 2) == []
+        controller.play_audio(pcm[:640], sentence=classify_sentence("I'm sorry."))
+        assert controller._sentence_expression == "sad"
+        assert controller._sentence_serial == 2
+        assert controller._failure is None
+    finally:
+        resume.set()
+        controller.close()
 
 
 def test_library_sentence_motion_uses_static_pose_when_clips_are_disabled(monkeypatch):
