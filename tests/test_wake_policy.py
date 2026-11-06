@@ -67,6 +67,18 @@ def test_phrase_boundaries(text, expected):
     assert contains_phrase(text) is expected
 
 
+@pytest.mark.parametrize("text, phrase, expected", [
+    ("hey o'brien", "hey o'brien", True),
+    ("Well, HEY O'BRIEN!", "hey o'brien", True),
+    ("hey o'brien please listen", "hey o'brien", True),
+    ("hey d'artagnan", "hey d'artagnan", True),
+    ("hey o'brien", "hey o'brie", False),
+    ("hey o'brien", "hey brian", False),
+])
+def test_custom_phrase_with_apostrophes(text, phrase, expected):
+    assert contains_phrase(text, phrase) is expected
+
+
 def test_companion_negative_is_final_even_when_local_matches():
     async def run():
         local, companion = Local(), Companion("hey music")

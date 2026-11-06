@@ -19,7 +19,7 @@ RATE = 16000
 
 def contains_phrase(text: str, phrase: str = "hey muse") -> bool:
     words = re.findall(r"[a-z]+", text.lower())
-    wanted = phrase.lower().split()
+    wanted = re.findall(r"[a-z]+", phrase.lower())
     if wanted == ["hey", "muse"]:
         # The local streaming model spells the identical /heɪ/ sound HAY.
         # Keep the noun exact: NEWS, MUSIC, MOOSE and MUSEUM remain competitors.
