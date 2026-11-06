@@ -15,23 +15,23 @@
         "non_neutral_expressions": 30,
         "accents_per_s": 0.36,
         "replies_with_closing": "12/24",
-        "motion_cpu_ms_per_audio_s": 1.281
+        "motion_cpu_ms_per_audio_s": 1.372
       },
       "with_audio": {
-        "sentences": 63,
+        "sentences": 62,
         "start_error_ms": {
-          "p50": 1.5,
-          "p95": 5.9,
-          "max": 817.8
+          "p50": 1.4,
+          "p95": 6.3,
+          "max": 907.7
         },
-        "within_150ms": 0.984,
+        "within_150ms": 0.968,
         "pause_confirmed": 1.0,
         "shown": 1.0,
         "late": 0.0,
-        "non_neutral_expressions": 30,
+        "non_neutral_expressions": 29,
         "accents_per_s": 0.3,
         "replies_with_closing": "12/24",
-        "motion_cpu_ms_per_audio_s": 1.291
+        "motion_cpu_ms_per_audio_s": 1.243
       },
       "late": {
         "sentences": 63,
@@ -47,41 +47,41 @@
         "non_neutral_expressions": 27,
         "accents_per_s": 0.36,
         "replies_with_closing": "12/24",
-        "motion_cpu_ms_per_audio_s": 1.074
+        "motion_cpu_ms_per_audio_s": 1.047
       }
     },
     "tight": {
       "ahead": {
-        "sentences": 63,
+        "sentences": 61,
         "start_error_ms": {
-          "p50": 1.1,
-          "p95": 309.3,
-          "max": 640.8
+          "p50": 1.0,
+          "p95": 640.8,
+          "max": 2057.1
         },
-        "within_150ms": 0.921,
+        "within_150ms": 0.852,
         "pause_confirmed": 1.0,
         "shown": 1.0,
         "late": 0.0,
         "non_neutral_expressions": 30,
-        "accents_per_s": 0.33,
-        "replies_with_closing": "12/24",
-        "motion_cpu_ms_per_audio_s": 1.26
-      },
-      "with_audio": {
-        "sentences": 63,
-        "start_error_ms": {
-          "p50": 0.7,
-          "p95": 86.8,
-          "max": 755.2
-        },
-        "within_150ms": 0.952,
-        "pause_confirmed": 1.0,
-        "shown": 1.0,
-        "late": 0.016,
-        "non_neutral_expressions": 30,
         "accents_per_s": 0.34,
         "replies_with_closing": "12/24",
-        "motion_cpu_ms_per_audio_s": 1.273
+        "motion_cpu_ms_per_audio_s": 1.292
+      },
+      "with_audio": {
+        "sentences": 62,
+        "start_error_ms": {
+          "p50": 0.8,
+          "p95": 819.5,
+          "max": 2107.6
+        },
+        "within_150ms": 0.871,
+        "pause_confirmed": 0.984,
+        "shown": 1.0,
+        "late": 0.0,
+        "non_neutral_expressions": 30,
+        "accents_per_s": 0.35,
+        "replies_with_closing": "12/24",
+        "motion_cpu_ms_per_audio_s": 1.322
       },
       "late": {
         "sentences": 62,
@@ -97,16 +97,16 @@
         "non_neutral_expressions": 27,
         "accents_per_s": 0.36,
         "replies_with_closing": "12/24",
-        "motion_cpu_ms_per_audio_s": 1.144
+        "motion_cpu_ms_per_audio_s": 1.079
       }
     }
   },
   "speaker": {
     "first_push_ms": {
       "p50": 0.6,
-      "p95": 1.1,
-      "max": 3.8
+      "p95": 0.7,
+      "max": 1.7
     },
-    "speaker_and_motion_cpu_ms_per_audio_s": 8.79
+    "speaker_and_motion_cpu_ms_per_audio_s": 12.14
   }
 }

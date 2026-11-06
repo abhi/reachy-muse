@@ -20,7 +20,7 @@ session, network, or model was used.
     has arrived; longer pauses win over nearer ones
 
   Each pause-confirmed sentence corrects the speaking rate, and
-  the full transcript anchors it to the whole reply once its audio is complete.
+  the full transcript anchors it to the whole reply once playback drains.
   `TranscriptDone` alone does not confirm audio completion. When the speaker is about to
   play a chunk, it asks `ReplyMotion.marks` for the motion inside it and splits
   the chunk there. The expression therefore rides on the first sample of its
@@ -75,44 +75,50 @@ There are three delivery regimes:
 - **late:** each word arrives only when playback reaches it
 
 `TranscriptDone` follows the last delta in every regime. Audio completion is
-delivered separately, after the last PCM chunk. The replay asserts transcript
-ordering and checks that the deltas reconstruct the final text.
+delivered separately, after the last sample plays, as in production. The replay
+checks that transcript deltas reconstruct the final text and that audio completion
+follows playback.
 
 ### Sentence start alignment
 
 The error is the absolute difference between the sample where a sentence's
 expression was scheduled and the sentence's true first sample.
 
-| Profile | Regime | p50 | p95 | max | ≤150 ms | Pause-confirmed | Committed late |
-|---|---|---|---|---|---|---|---|
-| clear | ahead | 1.0 ms | 5.2 ms | 5.8 ms | 100% | 100% | 0% |
-| clear | with_audio | 1.5 ms | 5.9 ms | 818 ms | 98.4% | 100% | 0% |
-| clear | late | 64.5 ms | 197.2 ms | 1069.8 ms | 77.8% | 96.8% | 57.1% |
-| tight | ahead | 1.1 ms | 309 ms | 641 ms | 92.1% | 100% | 0% |
-| tight | with_audio | 0.7 ms | 87 ms | 755 ms | 95.2% | 100% | 1.6% |
-| tight | late | 56.8 ms | 537.4 ms | 1889.0 ms | 69.4% | 93.5% | 46.8% |
+| Profile | Regime | Scheduled | p50 | p95 | max | ≤150 ms | Pause-confirmed | Committed late |
+|---|---|---|---|---|---|---|---|---|
+| clear | ahead | 63/63 | 1.0 ms | 5.2 ms | 5.8 ms | 100% | 100% | 0% |
+| clear | with_audio | 62/63 | 1.4 ms | 6.3 ms | 907.7 ms | 96.8% | 100% | 0% |
+| clear | late | 63/63 | 64.5 ms | 197.2 ms | 1069.8 ms | 77.8% | 96.8% | 57.1% |
+| tight | ahead | 61/63 | 1.0 ms | 640.8 ms | 2057.1 ms | 85.2% | 100% | 0% |
+| tight | with_audio | 62/63 | 0.8 ms | 819.5 ms | 2107.6 ms | 87.1% | 98.4% | 0% |
+| tight | late | 62/63 | 56.8 ms | 537.4 ms | 1889.0 ms | 69.4% | 93.5% | 46.8% |
 
-Most misses in the tight profile are sentences that open with a short clause,
-such as "First, we pick up groceries." When the comma pause is as long as the
-sentence pause, the snap lands after the comma. The expression then starts
-0.3 to 0.65 s into its own sentence. Late transcripts also expose speaking-rate
-errors before the whole transcript is available. "Committed late" means the
+In the tight profile, sentence and comma pauses overlap, so the aligner can
+choose the wrong pause. Speaking-rate estimates can also place a sentence beyond
+the available audio. Errors reach 2.1 s without the complete-audio rate anchor
+during playback. Late transcripts expose speaking-rate errors before the whole
+transcript is available. "Committed late" means the
 estimated start is already behind playback when the sentence is scheduled.
-These percentages describe scheduled sentences. The tight/late run scheduled
-62 of 63 sentences; the remaining estimate fell beyond the available audio.
+These percentages describe scheduled sentences. The table reports coverage
+separately because estimates beyond the available audio never receive a mark.
 
 The previous replay delivered the full transcript before the remaining late
 deltas. That exposed future words and later appended duplicates. Correcting
 the event order reduced clear/late accuracy within 150 ms from 96.8% to 77.8%.
 Earlier comparisons using that event order are not valid for the late regime.
+The next replay signalled audio completion at final PCM arrival. That exposed
+the complete speaking rate before playback drained. Matching production raises
+tight/with_audio p95 error from 86.8 ms to 819.5 ms and reduces its coverage from
+63 to 62 sentences. The table above uses the corrected playback lifecycle.
 
 ### Expression coverage
 
 - All scheduled sentences got an expression (`shown` = 100%; the late limit
-  is 1.5 s). Five runs scheduled all 63 sentences; tight/late scheduled 62.
-- 30 of 63 sentences (48%) got a non-neutral expression (happy, sad, curious,
-  surprised, or nod) when words arrived ahead or with audio. With late words,
-  27 did, because a few started from words that did not show a feeling.
+  is 1.5 s). Coverage ranges from 61 to 63 of the 63 source sentences.
+- 30 sentences got a non-neutral expression (happy, sad, curious, surprised,
+  or nod) when words arrived ahead or with audio, except clear/with_audio,
+  which produced 29. With late words, 27 did, because a few started from words
+  that did not show a feeling.
   The rest stay neutral, with sway and accents.
 - Prosody gave 0.30 to 0.36 accents per second of speech, about one every 3 s,
   in addition to sentence motion.
@@ -122,9 +128,9 @@ Earlier comparisons using that event order are not valid for the late regime.
 
 | Measurement | Value |
 |---|---|
-| Chunk accepted to first speaker push, through the chunk's motion analysis, the real `RealtimeSpeaker` and its PyAV resampler (30 trials) | p50 0.6 ms, p95 1.1 ms, max 3.8 ms |
-| Motion inference CPU (aligner, prosody, classifier, marks) | 1.07 to 1.29 ms per second of reply audio |
-| Speaker path CPU (resampling, chunk splitting, pushes, and motion inference) | 8.79 ms per second of reply audio |
+| Chunk accepted to first speaker push, through the chunk's motion analysis, the real `RealtimeSpeaker` and its PyAV resampler (30 trials) | p50 0.6 ms, p95 0.7 ms, max 1.7 ms |
+| Motion inference CPU (aligner, prosody, classifier, marks) | 1.05 to 1.37 ms per second of reply audio |
+| Speaker path CPU (resampling, chunk splitting, pushes, and motion inference) | 12.14 ms per second of reply audio |
 
 These figures are from the development host. Measure on the robot's
 Raspberry Pi CM4 before relying on them there.

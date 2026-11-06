@@ -31,4 +31,26 @@ def test_replayed_replies_start_each_sentence_s_expression_where_its_speech_star
     report = alignment(8, 20261105, PROFILES["clear"])
     assert {regime: (item["sentences"], item["within_150ms"], item["shown"], item["non_neutral_expressions"])
             for regime, item in report.items()} == {
-        "ahead": (21, 1.0, 1.0, 10), "with_audio": (21, .952, 1.0, 10), "late": (21, .905, 1.0, 9)}
+        "ahead": (21, 1.0, 1.0, 10), "with_audio": (20, .9, 1.0, 9), "late": (21, .905, 1.0, 9)}
+
+
+@pytest.mark.parametrize("regime", ["ahead", "with_audio", "late"])
+def test_replay_completes_audio_only_after_the_last_sample_plays(monkeypatch, regime):
+    played = 0
+    completed = []
+
+    class Motion(ReplyMotion):
+        def marks(self, response_id, offset, count):
+            nonlocal played
+            played = offset + count
+            return super().marks(response_id, offset, count)
+
+        def audio_done(self, response_id):
+            completed.append(played)
+            super().audio_done(response_id)
+
+    monkeypatch.setattr("bench.realtime_expressive.ReplyMotion", Motion)
+    text = REPLIES[0]
+    pcm, sentences, starts = synthesize(text, np.random.default_rng(7))
+    replay(text, pcm, sentences, starts, regime)
+    assert completed == [len(pcm)]

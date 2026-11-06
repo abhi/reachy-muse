@@ -122,7 +122,7 @@ def replay(text: str, pcm, sentences, starts, regime: str, *, muse_moving=lambda
     transcript_end = max(event[0] for event in events if event[2] == "words")
     audio_end = len(pcm) / RATE / 2.5 + .01
     events.append((max(transcript_end, audio_end), 3, "done", None))
-    events.append((audio_end, 4, "audio_done", None))
+    events.append((playback_start + len(pcm) / RATE, 4, "audio_done", None))
     marks = []
     cpu = 0.0
     transcript_done = False
