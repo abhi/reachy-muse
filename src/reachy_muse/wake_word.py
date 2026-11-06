@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import io
 import math
 import logging
@@ -43,6 +43,19 @@ class WakeDetection:
     post_wake_samples: int
     epoch: int
     feed_id: int
+
+
+@dataclass(frozen=True)
+class WakeCandidate:
+    """One exported native match. Stock sherpa does not expose its posterior."""
+
+    epoch: int
+    feed_id: int
+    threshold: float
+    boost: float
+    audio: object = field(repr=False, compare=False)
+    remaining: int = 0
+    score: float | None = None
 
 
 def _encoder_timing(path: Path) -> tuple[int, int] | None:
@@ -123,10 +136,11 @@ class WakeWordDetector:
     sample_rate = 16000
 
     def __init__(self, model_dir: str | Path, phrase: str = "hey muse", *,
-                 threshold: float = 0.25, score: float = 1.0) -> None:
+                 threshold: float = 0.25, score: float = 1.0,
+                 candidate_replay: bool = False) -> None:
         if not isinstance(phrase, str):
             raise ValueError("Wake phrase must contain English words.")
-        phrase = " ".join(phrase.lower().split())
+        phrase = " ".join(phrase.lower().replace(",", " ").split())
         if len(phrase) > 80 or not re.fullmatch(r"[a-z]+(?:[' ][a-z]+)*", phrase):
             raise ValueError("Wake phrase must contain English words.")
         if not math.isfinite(threshold) or not 0 < threshold <= 1:
@@ -134,6 +148,9 @@ class WakeWordDetector:
         if not math.isfinite(score) or score <= 0:
             raise ValueError("Wake keyword score must be positive.")
         self.phrase = phrase
+        self.threshold, self.boost = threshold, score
+        self.candidate_replay = candidate_replay
+        self.last_candidate: WakeCandidate | None = None
         self._lock = threading.RLock()
         self._label = phrase.upper().replace(" ", "_")
         self._spotter = None
@@ -188,12 +205,17 @@ class WakeWordDetector:
             self._history_limit = ((self._alignment_steps - 1) * shift + chunk + 4) * 160
         else:
             self._alignment_steps = self._history_limit = 0
+        if candidate_replay:
+            self._history_limit = max(self._history_limit, 2 * self.sample_rate)
         keyword = " ".join(pieces) + " @" + self._label + "\n"
+        self._keyword_tokens = " ".join(pieces)
         # Sherpa loads the keyword graph during construction. Keep its one-phrase
         # file temporary so a read-only model directory remains usable.
         with tempfile.TemporaryDirectory(prefix="muse-wake-") as temporary:
             keywords = Path(temporary) / "keywords.txt"
-            keywords.write_text(keyword, encoding="utf-8")
+            # Native defaults override duplicate per-stream entries. Keep the
+            # default graph empty when candidate replay needs another threshold.
+            keywords.write_text("" if candidate_replay else keyword, encoding="utf-8")
             self._spotter = sherpa_onnx.KeywordSpotter(
                 tokens=str(files["tokens"]), encoder=str(files["encoder"]),
                 decoder=str(files["decoder"]), joiner=str(files["joiner"]),
@@ -277,10 +299,18 @@ class WakeWordDetector:
                 raise RuntimeError("Wake-word detector is closed.")
             self._epoch += 1
             self._last_detection = None
+            self.last_candidate = None
             self._reset_stream()
 
+    def _new_stream(self, threshold=None):
+        if not self.candidate_replay:
+            return self._spotter.create_stream()
+        floor = self.threshold if threshold is None else threshold
+        return self._spotter.create_stream(
+            keywords=f"{self._keyword_tokens} :{self.boost} #{floor} @{self._label}")
+
     def _reset_stream(self) -> None:
-        self._stream = self._spotter.create_stream()
+        self._stream = self._new_stream()
         self._history.clear()
         self._history_samples = 0
         self._diagnostic_start = None
@@ -313,12 +343,13 @@ class WakeWordDetector:
             else:
                 self._history_samples -= len(oldest)
 
-    def _align_detection(self, remaining: int) -> WakeDetection | None:
+    def _align_detection(self, remaining: int, *, audio=None, threshold=None) -> WakeDetection | None:
         if self._timing is None or getattr(self._spotter, "keyword_spotter", None) is None:
             return None
         started = time.monotonic()
-        replay = self._spotter.create_stream()
-        audio = self._np.concatenate(tuple(self._history))
+        replay = self._new_stream(threshold)
+        if audio is None:
+            audio = self._np.concatenate(tuple(self._history))
         replay.accept_waveform(self.sample_rate, audio)
         aligned = None
         _, shift = self._timing
@@ -348,13 +379,41 @@ class WakeWordDetector:
             return None
         return aligned
 
-    def feed(self, samples) -> bool:
+    def replay_candidate(self, threshold: float) -> bool:
+        """Check a fresh bounded replay, not the continuous stream's confidence."""
+        if not math.isfinite(threshold) or not 0 < threshold <= 1:
+            raise ValueError("Wake threshold must be between zero and one.")
+        with self._lock:
+            candidate = self.last_candidate
+            if (not self.candidate_replay or candidate is None
+                    or candidate.epoch != self._epoch or candidate.feed_id != self._feed_id):
+                return False
+            replay = self._new_stream(threshold)
+            replay.accept_waveform(self.sample_rate, candidate.audio)
+            found = False
+            while self._spotter.is_ready(replay):
+                self._spotter.decode_stream(replay)
+                result, _, _ = self._result(replay)
+                found = found or result == self._label
+            return found
+
+    def align_candidate(self) -> None:
+        """Resolve the accepted candidate without changing its epoch/feed identity."""
+        with self._lock:
+            candidate = self.last_candidate
+            if (candidate is not None and candidate.epoch == self._epoch
+                    and candidate.feed_id == self._feed_id):
+                self._last_detection = self._align_detection(
+                    candidate.remaining, audio=candidate.audio)
+
+    def feed(self, samples, *, align: bool = True) -> bool:
         """Consume normalized mono 16 kHz audio, returning True for this phrase."""
         with self._lock:
             if self._stream is None:
                 raise RuntimeError("Wake-word detector is closed.")
             self._feed_id += 1
             self._last_detection = None
+            self.last_candidate = None
             np = self._np
             audio = np.asarray(samples, dtype=np.float32)
             if audio.ndim != 1 or not np.isfinite(audio).all() or (np.abs(audio) > 1).any():
@@ -378,9 +437,17 @@ class WakeWordDetector:
                     result, _, _ = self._result(self._stream)
                     if result:
                         detected = result.strip() == self._label
-                        event = self._align_detection(len(audio) - offset - len(part)) if detected else None
+                        remaining = len(audio) - offset - len(part)
+                        candidate = None
+                        if detected:
+                            retained = (np.concatenate(tuple(self._history)) if self._history
+                                        else part.copy())
+                            candidate = WakeCandidate(self._epoch, self._feed_id, self.threshold,
+                                                      self.boost, retained, remaining)
+                        event = self._align_detection(remaining) if detected and align else None
                         self._reset_stream()
                         self._last_detection = event
+                        self.last_candidate = candidate
                         return detected
             if self._diagnostic_start is not None:
                 ended = time.monotonic()
@@ -407,6 +474,7 @@ class WakeWordDetector:
     def close(self) -> None:
         with self._lock:
             self._last_detection = None
+            self.last_candidate = None
             self._history.clear()
             self._history_samples = 0
             self._stream = None

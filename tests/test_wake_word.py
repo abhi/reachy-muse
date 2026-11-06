@@ -58,8 +58,11 @@ class FakeSpotter:
         self.streams = []
         self.force_result = None
 
-    def create_stream(self):
+    def create_stream(self, keywords=None):
         stream = FakeStream()
+        stream.keywords = keywords
+        if keywords is not None:
+            self.label = keywords.split("@")[-1].strip()
         self.streams.append(stream)
         return stream
 
@@ -89,8 +92,8 @@ class TimedSpotter(FakeSpotter):
         self.result_tokens = [' HE', 'Y', ' MU', 'SE']
         self.snapshot_calls = 0
 
-    def create_stream(self):
-        stream = super().create_stream()
+    def create_stream(self, keywords=None):
+        stream = super().create_stream(keywords)
         stream.raw_result = None
         stream.last_marker = -1
         stream.blank_steps = 0
@@ -342,6 +345,29 @@ def test_constructor_registers_only_the_exact_phrase_with_small_cpu_models(model
     assert spotter.config["keywords_threshold"] == 0.25
     assert all(spotter.config[name].endswith(".int8.onnx") for name in ("encoder", "decoder", "joiner"))
     assert not Path(spotter.config["keywords_file"]).exists()
+
+
+def test_permissive_candidate_and_conservative_replay_use_distinct_thresholds(models):
+    directory, instances = models
+    detector = WakeWordDetector(directory, threshold=.1, candidate_replay=True)
+    assert instances[0].keyword == ""
+    assert detector.feed(np.array([.1, .2, .3, .4], np.float32), align=False) is True
+    assert detector.last_candidate.score is None
+    assert detector.last_candidate.threshold == .1
+    assert detector.last_detection is None
+    assert detector.replay_candidate(.25) is True
+    assert instances[0].streams[0].keywords == "▁HE Y ▁MU SE :1.0 #0.1 @HEY_MUSE"
+    assert instances[0].streams[-1].keywords == "▁HE Y ▁MU SE :1.0 #0.25 @HEY_MUSE"
+    detector.reset()
+    assert detector.replay_candidate(.25) is False
+    assert detector.last_candidate is None
+
+
+def test_punctuation_uses_the_same_acoustic_tokens(models):
+    directory, instances = models
+    detector = WakeWordDetector(directory, phrase="hey, muse")
+    assert detector.phrase == "hey muse"
+    assert instances[0].keyword == "▁HE Y ▁MU SE @HEY_MUSE\n"
 
 
 @pytest.fixture
