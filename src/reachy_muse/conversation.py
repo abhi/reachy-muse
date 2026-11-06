@@ -47,6 +47,7 @@ from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlaybac
 from reachy_muse.local_speech import PreparedSpeech, SpeechRestart
 from reachy_muse.turn_timeline import TurnTimeline
 from reachy_muse.startup import StartupTimeline
+from reachy_muse.speaker_direction import WakeDirection
 
 log = logging.getLogger(__name__)
 REPLY_TIMEOUT_S = 180.0
@@ -145,6 +146,7 @@ class _CapturedAudio:
     discard: bool = False
     gap: bool = False
     gap_reason: str | None = None
+    captured_at: float = field(default_factory=time.monotonic)
 
 
 @dataclass(frozen=True)
@@ -209,7 +211,7 @@ class _CaptureBuffer:
         self.gap_reason = None
 
     def push(self, samples, *, discard: bool = False, gap: bool = False,
-             gap_reason: str | None = None) -> None:
+             gap_reason: str | None = None, captured_at: float | None = None) -> None:
         if not len(samples):
             return
         if gap:
@@ -226,7 +228,8 @@ class _CaptureBuffer:
             self.samples = 0
             self.gap = True
             self.gap_reason = "capture buffer overflow"
-        self.chunks.append(_CapturedAudio(samples, discard))
+        self.chunks.append(_CapturedAudio(samples, discard, captured_at=(
+            time.monotonic() if captured_at is None else captured_at)))
         self.samples += len(samples)
         self.available.set()
 
@@ -249,18 +252,20 @@ class _CaptureBuffer:
         # A discard boundary must never become authorized microphone input.
         parts = [chunk.samples]
         size = len(chunk.samples)
+        captured_at = chunk.captured_at
         while (self.chunks and size < self.batch_limit
                and self.chunks[0].discard == chunk.discard):
-            following = self.chunks.popleft().samples
-            parts.append(following)
-            size += len(following)
-            self.samples -= len(following)
+            following = self.chunks.popleft()
+            parts.append(following.samples)
+            size += len(following.samples)
+            self.samples -= len(following.samples)
+            captured_at = following.captured_at
         if len(parts) > 1:
             import numpy as np
             samples = np.concatenate(parts)
         else:
             samples = chunk.samples
-        result = _CapturedAudio(samples, chunk.discard, self.gap, self.gap_reason)
+        result = _CapturedAudio(samples, chunk.discard, self.gap, self.gap_reason, captured_at)
         self.gap = False
         self.gap_reason = None
         return result
@@ -535,6 +540,7 @@ class VoiceConversation:
         self._prepared_speech = {}
         self._closing_speech = set()
         self.wake_detector = wake_detector
+        self._wake_direction: WakeDirection | None = None
         self.speech_gate = speech_gate
         self.audio_diagnostics = audio_diagnostics
         self.wake_timeout_s = wake_timeout_s
@@ -709,6 +715,25 @@ class VoiceConversation:
         if getattr(self.hardware, "echo_cancelled_input", False) is True:
             return False
         return self._muted or time.monotonic() < self._echo_until
+
+    def _direction_eligible(self) -> bool:
+        now = time.monotonic()
+        return (self.wake_detector is not None
+                and (self._wake_deadline is None or now >= self._wake_deadline)
+                and not self._muted and now >= self._echo_until and not self._has_output())
+
+    def _attend_wake(self, phrase_end: float | None = None) -> None:
+        """Freeze attention before a wake greeting; shared with future nonverbal wake cues."""
+        direction = self._wake_direction
+        if direction is None:
+            return
+        angle = (direction.estimate(time.monotonic() if phrase_end is None else phrase_end)
+                 if self._direction_eligible() else None)
+        direction.clear()
+        if angle is None:
+            log.info("Wake direction decision=no_confidence")
+        else:
+            self.hardware.look_at_speaker(angle)
 
     async def run(self) -> None:
         await self.session.registered.wait()
@@ -1176,6 +1201,12 @@ class VoiceConversation:
         capture = _CaptureBuffer(self.hardware.sample_rate, capacity_s=3.0)
         producer = asyncio.create_task(self._capture_microphone(capture), name="reachy-microphone-capture")
         speaker = asyncio.create_task(self._play_output(), name="reachy-speaker")
+        direction_task = None
+        if (wake is not None and callable(getattr(self.hardware, "read_doa", None))
+                and callable(getattr(self.hardware, "look_at_speaker", None))
+                and getattr(self.hardware, "motion_enabled", True)):
+            self._wake_direction = WakeDirection(self.hardware.read_doa)
+            direction_task = asyncio.create_task(self._wake_direction.sample_while(self._direction_eligible))
         ready = False
         blocked_episode = False
         try:
@@ -1321,6 +1352,8 @@ class VoiceConversation:
                     continue
                 sample = captured.samples
                 if captured.gap:
+                    if self._wake_direction is not None:
+                        self._wake_direction.clear()
                     recorder = make_recorder()
                     pre_roll.clear()
                     pre_roll_samples = 0
@@ -1339,6 +1372,8 @@ class VoiceConversation:
                                 captured.gap_reason or "upstream gap",
                                 "microphone remains open" if self._wake_deadline is not None else "waiting for wake")
                 if captured.discard or self._input_blocked():
+                    if self._wake_direction is not None:
+                        self._wake_direction.clear()
                     # Unqualified speaker paths cannot stitch user speech across echo.
                     if not blocked_episode:
                         recorder = make_recorder()
@@ -1367,6 +1402,7 @@ class VoiceConversation:
                         detected, wake_tail = await detects_wake(sample)
                         if not detected:
                             continue
+                        self._attend_wake(captured.captured_at - (wake_tail or 0) / self.hardware.sample_rate)
                         self._say_hushed = False
                         wake_epoch += 1
                         self._wake_at = now
@@ -1440,6 +1476,10 @@ class VoiceConversation:
                     # Retain resampler/VAD state and drain endpoints in this SDK chunk.
                     wav = await record(sample[:0])
         finally:
+            if direction_task is not None:
+                direction_task.cancel()
+                await asyncio.gather(direction_task, return_exceptions=True)
+            self._wake_direction = None
             producer.cancel()
             await asyncio.gather(producer, return_exceptions=True)
             recorder.abort()
@@ -1485,7 +1525,7 @@ class VoiceConversation:
                 previous_duration = duration
                 last_sample = now
                 capture.push(sample, discard=muted_at_start or self._input_blocked(), gap=gap,
-                             gap_reason="SDK read or capture scheduling stall" if gap else None)
+                             gap_reason="SDK read or capture scheduling stall" if gap else None, captured_at=now)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -2347,6 +2387,8 @@ class VoiceConversation:
     @contextlib.asynccontextmanager
     async def _own_speaker(self, cursor: PlaybackCursor):
         async with self._speaker_lock:
+            if self._wake_direction is not None:
+                self._wake_direction.clear()
             if self._speaker_cursor is not None and self._speaker_cursor is not cursor:
                 await self._drain_speech(self._speaker_cursor)
             self._speaker_cursor = cursor

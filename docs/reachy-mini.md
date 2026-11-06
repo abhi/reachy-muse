@@ -433,6 +433,28 @@ Otherwise Reachy asks "Yes?" and waits for a fresh question instead of forwardin
 the buffered words. After a confirmed wake, a capture gap discards the incomplete
 recording and keeps the listening window open for a fresh question.
 
+While waiting for the wake phrase, Reachy also reads the daemon's microphone
+direction at `/api/state/doa`. Silence polls run at 5 Hz and speech polls at
+15 Hz, outside audio capture and the motion thread. A short ring stores only
+speech angles and monotonic times. Reachy's own output and echo tail invalidate
+the ring, including with echo-cancelled input. Capture gaps also clear it.
+At wake, capture timing bounds the estimate to the most recent speech segment
+within 1.5 seconds before the keyword boundary. A confident estimate needs at
+least three recent, consistent speech samples; its direction is their median.
+Missing or uncertain direction keeps the usual wake behavior.
+
+The wake gaze eases over 0.65 seconds alongside the greeting and the existing
+one-second sleep lift. Small angles turn the head; beyond 20 degrees the body
+also turns to reduce neck twist. SDK head yaw is absolute, so head and body yaw
+do not add. Both retain the app's 35-degree limit, even for a speaker farther
+to the side. An existing clip or motion command takes priority. After the turn,
+face tracking can take over; without a face, Reachy holds the gaze. Sleep and
+explicit motion commands release it. Still mode neither samples nor turns.
+Direction logs contain only angles and decisions.
+
+Check the mapping without a daemon or robot with
+`PYTHONPATH=src python bench/speaker_direction.py`.
+
 Capture runs independently of keyword inference and speech gating, including
 processing the buffered wake audio. A three-second audio queue absorbs processing
 bursts without losing parts of the wake phrase. An overflow
