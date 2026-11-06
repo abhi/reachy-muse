@@ -227,6 +227,7 @@ class ReachyController:
         self._arrival_watcher_factory = arrival_watcher_factory
         self._arrival_watcher = None
         self._wave_enabled = wave_wake
+        self._wave_watching = False
         self._wave_watcher_factory = wave_watcher_factory
         self._wave_watcher = None
         self._wave_lock = threading.Lock()
@@ -807,6 +808,7 @@ class ReachyController:
                 self._wave_watcher.start()
             if self._wave_watcher is not None:
                 self._wave_watcher.set_active(active)
+            self._wave_watching = active
 
     def take_wave(self) -> bool:
         return (not self._watching and self._wave_watcher is not None
@@ -1204,7 +1206,8 @@ class ReachyController:
                                   rest_antennas * (1 - antenna_blend) + antennas * antenna_blend,
                                   rest_body_yaw * (1 - _blend_factor(0.08, dt)))
                     resting = self._pose_vector(*self._rest) + self._layers.breathing_offset(
-                        now, active=state in ("idle", "listening") and not gesture_active and not self._watching)
+                        now, active=state in ("idle", "listening") and not gesture_active
+                        and not (self._watching or self._wave_watching))
                     accenting = progress_age is not None and 0 <= progress_age < PROGRESS_ACCENT_S
                     generated = self._show_generated(now, resting, yielding=gesture_active or accenting)
                     composed = self._show_clip(now, generated)
