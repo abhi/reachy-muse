@@ -1,7 +1,7 @@
 """Trusted acoustic wake boundaries hand off only request audio to ASR."""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import io
 import wave
 
@@ -88,7 +88,7 @@ def handoff(monkeypatch):
             return True
 
     async def scenario(run, *, trusted=True, invalid=None, recognized=None, pause_asr=False, delayed=False,
-                       speech=None, verifier=None):
+                       speech=None, verifier=None, hearing=None):
         incoming = asyncio.Queue()
         accepted = asyncio.Event()
         consumer_ready = asyncio.Event()
@@ -124,6 +124,8 @@ def handoff(monkeypatch):
                                                                transcriber=recognition),
                                          wake_detector=wake, silence_s=.14, voice_verifier=verifier)
         conversation.backends.voice.phrases["Yes?"] = (np.full(80, .1, np.float32),)
+        if hearing is not None:
+            conversation.backends = replace(conversation.backends, hearing=hearing)
 
         async def capture(buffer):
             original_get = buffer.get

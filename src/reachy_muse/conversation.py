@@ -899,11 +899,14 @@ class VoiceConversation:
             closing.add_done_callback(self._closing_speech.discard)
 
     async def _voice_rejected(self) -> None:
-        if self.voice_verifier.mode != "strict" or time.monotonic() - self._voice_rejection_at < 5:
+        if (self.voice_verifier.mode != "strict" or time.monotonic() - self._voice_rejection_at < 5
+                or self._output_queue.full()):
             return
         from reachy_muse.voice_verify import rejection_cue
         self._voice_rejection_at = time.monotonic()
-        await asyncio.to_thread(self.hardware.play_audio, rejection_cue(self.hardware.output_sample_rate))
+        async def audio():
+            yield rejection_cue(self.hardware.output_sample_rate)
+        self._output_queue.put_nowait(_SpeechJob(None, "", prepared_stream=audio(), state="listening"))
 
     async def _microphone(self) -> None:
         hearing = self.backends.hearing
@@ -935,13 +938,20 @@ class VoiceConversation:
         turn_open = False
 
         heard_over: set[str] = set()
+        admitted_turns = deque()
+        turns_awaiting_transcript = set()
 
-        def make_recorder(**options):
+        def make_recorder(*, reset_admission=True, **options):
             nonlocal gap_quiet_samples, turn_open, recorder_for_call
             turn_open = False
             heard_over.clear()
-            if voice_gate is not None:
-                voice_gate.reset()
+            if reset_admission:
+                if voice_gate is not None:
+                    voice_gate.reset()
+                while admitted_turns:
+                    ended = admitted_turns.popleft().ended
+                    ended.cancel()
+                    turns_awaiting_transcript.discard(ended)
             recorder_for_call = self.call is not None
             if recorder_for_call:
                 options["commands_only"] = True
@@ -1042,8 +1052,6 @@ class VoiceConversation:
             heard_over.clear()
             return _RecordedTurn(heard.ended, endpoint_at, endpoint_at - quiet_s, over, call_input)
 
-        admitted_turns = deque()
-
         def recording_active():
             return recorder.active or (voice_gate is not None and voice_gate.active)
 
@@ -1061,6 +1069,8 @@ class VoiceConversation:
                 for start in range(0, max(1, len(admitted)), frame):
                     ended = await record_admitted(admitted[start:start + frame], send_to_call=send_to_call)
                     if ended is not None:
+                        if self.wake_detector is not None and self.wake_timeout_s == 0:
+                            return ended
                         admitted_turns.append(ended)
             return admitted_turns.popleft() if admitted_turns else None
 
@@ -1116,7 +1126,6 @@ class VoiceConversation:
             await self._plan(plan.Started())
         turn_task = None
         pending_turns = deque()
-        turns_awaiting_transcript = set()
         call_recognitions = {}
         wake_epoch = 0
         active_wake_epoch = 0
@@ -1225,8 +1234,8 @@ class VoiceConversation:
                     log.warning("Reachy's companion stopped answering; using on-robot speech")
                 if self.call is not None and self.call.done:
                     await self._call_ended(capturing=recorder.active or recorder.speech_active)
-                if recorder_for_call != (self.call is not None) and not recording_active():
-                    recorder = make_recorder()
+                if recorder_for_call != (self.call is not None) and not recorder.active:
+                    recorder = make_recorder(reset_admission=False)
                 if retry_notice_pending and not self._output_queue.full():
                     self._output_queue.put_nowait(_SpeechJob(
                         None, TRANSCRIPTION_RETRY_CUE, expression="curious", state="listening"))
@@ -2683,7 +2692,7 @@ class VoiceConversation:
                            diagnostics=self.audio_diagnostics, cursor=playback_cursor)
         text = text or ""
         line = _line(message_id, text, expression, progress=progress, role=role)
-        if voice.speaks_text and not text:
+        if voice.speaks_text and not text and prepared_stream is None:
             if expression:
                 await self._express(expression)
                 return

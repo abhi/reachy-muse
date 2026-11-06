@@ -149,6 +149,18 @@ def test_gap_discards_pending_speech_and_soft_chat_passes_original_audio():
     assert soft.feed(np.full(9600, .5, np.float32)).tolist() == [.5] * 9600
 
 
+def test_policy_changes_release_held_samples_once_without_replaying_observed_audio():
+    subject = verifier("soft", True)
+    gate = RequestGate(subject, 16000, vad=Vad())
+    assert set(gate.feed(np.full(4817, .25, np.float32))) == {0.}
+    subject.realtime = False
+    assert gate.feed(np.full(320, .5, np.float32)).tolist() == [.25] * 4817 + [.5] * 320
+    subject.realtime = True
+    audio = np.concatenate((np.full(8000, .125), np.zeros(4800))).astype(np.float32)
+    admitted = gate.feed(audio)
+    assert admitted[admitted != 0].tolist() == [.125] * 8000
+
+
 def test_long_speech_rechecks_every_segment_without_losing_first_samples():
     gate = RequestGate(verifier(), 16000, vad=Vad())
     audio = np.full(320, .25, np.float32)

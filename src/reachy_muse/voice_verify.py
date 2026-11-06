@@ -231,6 +231,7 @@ class RequestGate:
         self._speech = []
         self._voiced_run = self._quiet = 0
         self.rejected = False
+        self._enforcing = self.verifier.enforcing
 
     def feed(self, samples):
         import av
@@ -241,6 +242,13 @@ class RequestGate:
         samples = np.asarray(samples, dtype=np.float32)
         if samples.ndim != 1 or not np.isfinite(samples).all():
             raise ValueError("Invalid verification audio")
+        if self._enforcing != self.verifier.enforcing:
+            if self._enforcing:
+                held = self._speech or list(self._history)
+                tail = [chunk.to_ndarray().reshape(-1) for chunk in self._resampler.resample(None)]
+                buffered = resample(np.concatenate([*held, self._pending, *tail]), 16000, self.rate)
+                samples = np.concatenate((buffered, samples))
+            self.reset()
         if len(samples):
             frame = av.AudioFrame.from_ndarray(np.ascontiguousarray(samples[None, :]), format="flt", layout="mono")
             frame.sample_rate = self.rate
