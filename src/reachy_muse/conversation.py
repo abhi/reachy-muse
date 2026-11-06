@@ -1367,14 +1367,15 @@ class VoiceConversation:
                                 "microphone remains open" if self._wake_deadline is not None else "waiting for wake")
                 input_blocked = captured.discard or self._input_blocked()
                 observed_wake = None
+                now = time.monotonic()
+                wake_required = self._wake_deadline is None or (now >= self._wake_deadline and not recorder.active)
                 if wake is not None and self._wake_policy is not None:
                     if blocked_episode and not input_blocked:
                         await asyncio.to_thread(wake.reset)
                         self._wake_policy.reset()
-                    now = time.monotonic()
                     observed_wake = await detects_wake(sample, replace(
                         captured.wake_context or self._wake_capture_context(now),
-                        armed=self._wake_deadline is None or (now >= self._wake_deadline and not recorder.active),
+                        armed=wake_required,
                     ))
                 if input_blocked:
                     # Unqualified speaker paths cannot stitch user speech across echo.
@@ -1398,7 +1399,7 @@ class VoiceConversation:
                 blocked_episode = False
                 if wake is not None:
                     now = time.monotonic()
-                    if self._wake_deadline is None or (now >= self._wake_deadline and not recorder.active):
+                    if wake_required:
                         pre_roll.append(sample.copy())
                         pre_roll_samples += len(sample)
                         trim_pre_roll(pre_roll_limit)
