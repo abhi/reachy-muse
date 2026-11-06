@@ -1185,7 +1185,8 @@ class ReachyController:
                         gaze_target[4:6] = coordinates["pitch"], coordinates["yaw"]
                         coordinates["pitch"] = coordinates["yaw"] = 0.0
                         pose = self._head(**coordinates)
-                    gesture_active = gesture_active and (gesture_epoch is None or gesture_epoch == self._sentences.epoch)
+                    gesture_active = (gesture_active and not commanded
+                                      and (gesture_epoch is None or gesture_epoch == self._sentences.epoch))
                     gesture_target = self._np.zeros(9)
                     if gesture_active:
                         gesture_pose = self._gesture_pose(self._head(), gesture, gesture_age)

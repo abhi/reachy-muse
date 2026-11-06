@@ -192,6 +192,27 @@ def test_muse_commands_own_absolute_pose_then_gaze_returns(monkeypatch, command)
     assert samples[235]['pitch'] == pytest.approx(-4, abs=.1)
 
 
+@pytest.mark.parametrize('gesture', ['nod', 'shake', 'tilt'])
+def test_recorded_command_keeps_its_pose_when_a_listening_gesture_arrives(monkeypatch, gesture):
+    from reachy_muse.hardware import _Command
+
+    move = _Frames(np.asarray(generated(5, pitch=10)), 25, False, pose_factory)
+    request = _Command('reachy.expression', {'name': 'test_move', 'intensity': 1}, 1020)
+
+    def action(controller, follower, tick):
+        if tick == 1:
+            controller.set_state('listening')
+            controller._moves = SimpleNamespace(list_moves=lambda: ['test_move'], get=lambda name: move)
+            controller._commands.put_nowait(request)
+        if tick == 70:
+            controller.gesture(gesture)
+
+    _, _, samples = drive(monkeypatch, action, ticks=240, style=MotionStyle(breathing=False))
+    assert request.result['ok']
+    for tick in range(65, 140):
+        assert samples[tick] == pytest.approx(dict(x=0, y=0, z=0, roll=0, pitch=10, yaw=0))
+
+
 def test_gaze_plus_clip_is_bounded_and_lost_face_returns_to_normal_motion(monkeypatch):
     def action(controller, follower, tick):
         if tick == 1:
