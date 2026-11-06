@@ -1,6 +1,8 @@
 """The pieces of a Muse realtime call on Reachy: SDK detection, flags, microphone, speaker, fallback."""
 
 import asyncio
+import base64
+import json
 import threading
 from types import SimpleNamespace
 
@@ -328,6 +330,87 @@ def test_closing_during_the_idle_callback_releases_playback_ownership():
     assert asyncio.run(asyncio.wait_for(scenario(), 2)) == (False, 1)
 
 
+@pytest.mark.parametrize("ending", ["drain", "interrupt", "timeout", "close"])
+def test_server_hangup_drains_the_real_speaker_waiting_for_local_speech(monkeypatch, ending):
+    from musegadget import voice_call as sdk
+    from test_conversation import FakeSession
+    from test_turn_pacing import Labels, conversation_for
+
+    if ending == "timeout":
+        monkeypatch.setattr("reachy_muse.realtime_call.SPEAKER_DRAIN_S", .05)
+
+    async def scenario():
+        labels = Labels()
+        entered, release = threading.Event(), threading.Event()
+        stopped = asyncio.Event()
+        played = []
+
+        class Hardware(Speaker):
+            sample_rate = output_sample_rate = 24000
+
+            def set_state(self, state, *, expression=None):
+                pass
+
+            def play_audio(self, samples):
+                if samples[0] == labels.codes.get("Notification."):
+                    entered.set()
+                    release.wait(3)
+                else:
+                    played.append(len(samples))
+
+        class Call(sdk.VoiceCall):
+            async def _start(self):
+                async def stream():
+                    yield (json.dumps({"type": "hatch.voice.session", "call_id": self.call_id,
+                                       "session_id": "synthetic"}) + "\n").encode()
+                    yield (json.dumps({"type": "response.output_audio.delta",
+                                       "delta": base64.b64encode(tone(.08)).decode()}) + "\n").encode()
+                    yield (json.dumps({"type": "conversation.item.added", "item": {
+                        "type": "session_control", "name": "stop", "call_id": "control"}}) + "\n").encode()
+                self._stream = stream()
+
+            async def _event(self, event):
+                pass
+
+            async def _cleanup(self):
+                stopped.set()
+
+        async def close():
+            pass
+
+        async def link():
+            return VoiceLink(object(), lambda: True, close)
+
+        hardware = Hardware()
+        voice = conversation_for(labels, hardware, "")(FakeSession())
+        voice.realtime = RealtimeVoice(link, device_id="synthetic", voice_call=Call)
+        local = asyncio.create_task(voice._speak(None, text="Notification."))
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            voice._open_call()
+            call = voice.call
+            await asyncio.wait_for(stopped.wait(), 2)
+            while call.reason is None:
+                await asyncio.sleep(0)
+            if ending == "interrupt":
+                await call.barge_in()
+            elif ending == "timeout":
+                await asyncio.wait_for(call._task, 1)
+            elif ending == "close":
+                await asyncio.wait_for(call.close(), 1)
+            release.set()
+            await local
+            await call._task
+            return sum(played), call.reason, hardware.cleared
+        finally:
+            release.set()
+            await asyncio.gather(local, return_exceptions=True)
+            await voice._close_call()
+            await voice.realtime.close()
+
+    assert asyncio.run(asyncio.wait_for(scenario(), 5)) == (1920 if ending == "drain" else 0, "remote_stop", 0)
+
+
 def test_the_sdk_s_two_flush_callbacks_preserve_fresh_audio_that_arrives_during_cleanup():
     from musegadget import voice_call as sdk
     from reachy_muse.realtime_call import _SilentOutput
@@ -578,6 +661,52 @@ def test_after_a_failed_call_the_chat_turn_that_follows_reconnects_the_voice_lin
         return len(links), voice.usable
 
     assert asyncio.run(scenario()) == (2, True)
+
+
+@pytest.mark.parametrize("warm_again", [False, True])
+@pytest.mark.parametrize("waiter", ["warm", "call"])
+def test_a_connection_completed_after_its_waiter_is_cancelled_is_reused_and_closed(warm_again, waiter):
+    async def scenario():
+        connecting, release = asyncio.Event(), asyncio.Event()
+        links, closed = [], []
+
+        async def connect():
+            connecting.set()
+            await release.wait()
+            session = object()
+            links.append(session)
+
+            async def close():
+                closed.append(session)
+
+            return VoiceLink(session, lambda: True, close)
+
+        voice = RealtimeVoice(connect, device_id="synthetic")
+
+        async def nothing():
+            pass
+
+        if waiter == "warm":
+            warming = asyncio.create_task(voice.warm())
+        else:
+            call = voice.open(Speaker(), ReplyMotion(), on_audible=lambda *args: None,
+                              on_start=nothing, on_idle=nothing, on_working=lambda working: None,
+                              on_reply_done=lambda reply: None)
+        await connecting.wait()
+        if waiter == "warm":
+            warming.cancel()
+            await asyncio.gather(warming, return_exceptions=True)
+        else:
+            await call.close()
+        release.set()
+        await asyncio.sleep(0)
+        if warm_again:
+            await voice.warm()
+        await voice.close()
+        await voice.close()
+        return len(links), len(closed), closed == links
+
+    assert asyncio.run(scenario()) == (1, 1, True)
 
 
 def test_each_sentence_s_closing_gesture_lands_where_its_speech_ends_not_where_the_next_begins():

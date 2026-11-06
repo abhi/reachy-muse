@@ -42,6 +42,7 @@ CATCH_UP_FRAMES = 10
 QUIET_RMS = 300.0
 SPEAKER_LEAD_S = 0.1
 IDLE_AFTER_S = 0.3
+SPEAKER_DRAIN_S = 5.0
 CALL_LIMIT_S = 900.0
 NATURAL_ENDS = frozenset({"remote_stop", "idle_timeout", "overall_timeout"})
 BARGE_IN_SPEECH_S = 0.3
@@ -287,6 +288,12 @@ class RealtimeSpeaker:
         await asyncio.gather(*(item for item in (task, self._flushing) if item is not None),
                              return_exceptions=True)
 
+    async def drain(self) -> None:
+        while self.busy:
+            if self.failed.done():
+                raise self.failed.result()
+            await asyncio.sleep(.01)
+
     def _start(self) -> None:
         if (not self._closed and not self.failed.done()
                 and (self._task is None or self._task.done())
@@ -450,6 +457,8 @@ class RealtimeCall:
     def on_event(self, event) -> None:
         """The SDK's event callback: it runs on the event loop and an exception here would end the call."""
         kind = type(event).__name__
+        if kind == "PlaybackFlushed" and self.draining:
+            return
         if kind in ("TranscriptDelta", "TranscriptDone"):
             previous = self._transcripts.get(event.response_id, "") if kind == "TranscriptDelta" else ""
             self._transcripts[event.response_id] = (previous + event.text)[-8000:]
@@ -496,6 +505,11 @@ class RealtimeCall:
             if self.speaker.failed.done():
                 raise self.speaker.failed.result()
             self.reason = running.result()
+            if self.reason == "remote_stop":
+                try:
+                    await asyncio.wait_for(self.speaker.drain(), SPEAKER_DRAIN_S)
+                except asyncio.TimeoutError:
+                    await self.speaker.flush_now()
             log.info("Muse realtime call ended: %s after %.1f s", self.reason, time.monotonic() - self.opened_at)
         except asyncio.CancelledError:
             if not self._closing:
@@ -512,6 +526,10 @@ class RealtimeCall:
     @property
     def done(self) -> bool:
         return self._task is not None and self._task.done()
+
+    @property
+    def draining(self) -> bool:
+        return not self._closing and getattr(self.voice_call, "reason", None) == "remote_stop"
 
     @property
     def audio_sent(self) -> bool:
@@ -555,7 +573,8 @@ class _SilentOutput:
         pass
 
     def flush(self) -> None:
-        self._call.speaker.flush_now()
+        if not self._call.draining:
+            self._call.speaker.flush_now()
 
 
 @dataclass(frozen=True)
@@ -624,8 +643,12 @@ class RealtimeVoice:
             await self._drop_link()
         if self._link is None:
             if self._connecting is None or self._connecting.done():
-                self._connecting = asyncio.ensure_future(self._connect())
+                self._connecting = asyncio.ensure_future(self._connect_link())
             self._link = await asyncio.shield(self._connecting)
+        return self._link
+
+    async def _connect_link(self) -> VoiceLink:
+        self._link = await self._connect()
         return self._link
 
     async def call_failed(self) -> None:
