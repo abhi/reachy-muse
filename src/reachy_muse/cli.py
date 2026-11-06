@@ -297,6 +297,15 @@ def parser() -> argparse.ArgumentParser:
     pair.set_defaults(introduce=None)
     introduce = sub.add_parser("introduce", help="Preview Reachy's introduction to your main Muse chat")
     introduce.add_argument("--yes", action="store_true", help="Send the introduction once per text version")
+    enrollment = sub.add_parser("enroll-voice", help="Record three operator phrases locally, or forget the voice")
+    enrollment.add_argument("--voice-model", type=Path, help="Local Sherpa-compatible speaker ONNX model")
+    enrollment.add_argument("--voice-threshold", type=float, default=None,
+                            help="Calibrated cosine threshold; default from the voice verification benchmark")
+    enrollment.add_argument("--forget", action="store_true", help="Delete enrollment without opening the microphone")
+    enrollment.add_argument("--host", default="localhost")
+    enrollment.add_argument("--port", type=int, default=8000)
+    enrollment.add_argument("--media-backend", default="local", choices=("local", "webrtc", "default"))
+    enrollment.set_defaults(no_motion=True, antenna_mode="none")
     for command in ("run", "doctor"):
         item = sub.add_parser(command, help="Start conversations" if command == "run"
                               else "Check the robot and audio without a Muse connection")
@@ -350,6 +359,10 @@ def parser() -> argparse.ArgumentParser:
                               help="Phrase that opens conversation when --wake-model is set (default: hey muse)")
             item.add_argument("--wake-timeout", type=float, default=10.0,
                               help="Idle seconds before returning to wake-word detection; excludes thinking and speech")
+            item.add_argument("--voice-verify", choices=("off", "soft", "strict"), default="off",
+                              help="Speaker check: off; soft observes chat and gates realtime; strict gates all speech")
+            item.add_argument("--voice-model", type=Path,
+                              help="Local speaker ONNX model used for enrollment; requires --voice-verify")
             item.add_argument("--session-id", help="Existing Muse chat to use instead of Reachy's dedicated side chat")
             item.add_argument("--main-chat", action="store_true", help="Use the main Muse chat instead of Reachy's dedicated side chat")
             item.add_argument("--introduce-to-muse", action="store_true",
@@ -533,6 +546,78 @@ def end_of_turn_silence(mode: Mode, given: float | None) -> float:
     return COMPANION_SILENCE_S if mode is Mode.COMPANION else ON_ROBOT_SILENCE_S
 
 
+def enroll_voice(args) -> int:
+    from reachy_muse.voice_verify import (
+        CALIBRATED_MODEL_SHA256, DEFAULT_THRESHOLD, PROFILE_FILE, SpeakerEncoder, enroll,
+    )
+
+    path = config.state_dir() / PROFILE_FILE
+    if args.forget:
+        path.unlink(missing_ok=True)
+        print("Voice enrollment deleted.")
+        return 0
+    if args.voice_model is None:
+        raise ValueError("enroll-voice requires --voice-model")
+    threshold = DEFAULT_THRESHOLD if args.voice_threshold is None else args.voice_threshold
+    if not math.isfinite(threshold) or not -1 < threshold < 1:
+        raise ValueError("--voice-threshold must be between -1 and 1")
+    encoder = SpeakerEncoder(args.voice_model)
+    if args.voice_threshold is None and encoder.model_id != CALIBRATED_MODEL_SHA256:
+        raise ValueError("This model needs a calibrated --voice-threshold; see bench/voice_verify.md")
+    robot = _hardware(args, motion=False)
+    recordings = []
+    try:
+        robot.start()
+        for phrase in ("Hey Muse, please listen to my voice.",
+                       "Hey Muse, what is on my calendar?",
+                       "Hey Muse, tell me about the weather."):
+            input(f'Press Enter, then say "{phrase}" within four seconds. ')
+            recordings.append((_record_voice_phrase(robot), robot.sample_rate))
+        profile = enroll(encoder, recordings, threshold)
+        profile.save(path)
+    finally:
+        recordings.clear()
+        robot.close()
+    print("Voice enrolled locally. Recordings were not saved. Enable --voice-verify soft or strict.")
+    return 0
+
+
+def _record_voice_phrase(robot):
+    import numpy as np
+
+    deadline = time.monotonic() + 0.25
+    for _ in range(1000):
+        if time.monotonic() >= deadline or robot.read_audio() is None:
+            break
+    chunks = []
+    samples = 0
+    deadline = time.monotonic() + 6
+    target = 4 * robot.sample_rate
+    while samples < target and time.monotonic() < deadline:
+        chunk = robot.read_audio()
+        if chunk is None:
+            time.sleep(0.01)
+            continue
+        chunks.append(chunk[:target - samples].copy())
+        samples += len(chunks[-1])
+    if samples < target:
+        raise RuntimeError("Microphone did not supply an enrollment phrase; try again")
+    return np.concatenate(chunks)
+
+
+def voice_verifier(args):
+    if args.voice_verify == "off":
+        if args.voice_model is not None:
+            raise ValueError("--voice-model requires --voice-verify soft or strict")
+        return None
+    if args.wake_model is None or args.voice_model is None:
+        raise ValueError("--voice-verify requires --wake-model and --voice-model")
+    from reachy_muse.voice_verify import PROFILE_FILE, Profile, SpeakerEncoder, VoiceVerifier
+    profile = Profile.load(config.state_dir() / PROFILE_FILE)
+    return VoiceVerifier(SpeakerEncoder(args.voice_model), profile, args.voice_verify,
+                         realtime=args.muse_path == "realtime")
+
+
 async def run(args) -> int:
     from reachy_muse.startup import StartupTimeline
 
@@ -557,6 +642,7 @@ async def run(args) -> int:
         raise ValueError("--wake-backend vosk requires --wake-model")
     if not math.isfinite(args.wake_timeout) or not 1 <= args.wake_timeout <= 300:
         raise ValueError("--wake-timeout must be between 1 and 300 seconds")
+    verifier = await asyncio.to_thread(voice_verifier, args)
     muse_path = realtime_path(args)
     if args.realtime_stt_model is not None and args.muse_path != "realtime":
         raise ValueError("--realtime-stt-model needs --muse-path realtime")
@@ -635,6 +721,7 @@ async def run(args) -> int:
                                local_chat=args.local_chat == "on",
                                arbitration_shadow=args.arbitration_shadow,
                                audio_diagnostics=args.audio_diagnostics, wake_detector=wake_detector,
+                               voice_verifier=verifier,
                                wake_timeout_s=args.wake_timeout, speech_gate=speech_gate,
                                startup=startup, muse_path=muse_path,
                                morning=morning(robot) if morning is not None else None)
@@ -789,6 +876,8 @@ def main(argv=None) -> int:
         logging.getLogger(name).setLevel(logging.WARNING)
     os.environ[config.STATE_DIR_ENV] = str(args.state_dir.expanduser())
     try:
+        if args.command == "enroll-voice":
+            return enroll_voice(args)
         if args.sdk_token_file:
             os.environ[config.SDK_TOKEN_ENV] = args.sdk_token_file.expanduser().read_text().strip()
             config.sdk_token()

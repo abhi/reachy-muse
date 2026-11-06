@@ -37,7 +37,8 @@ def handoff(monkeypatch):
 
     class Recorder(real_recorder):
         def __init__(self, rate, **kwargs):
-            super().__init__(rate, vad=Vad(), **kwargs)
+            kwargs["vad"] = Vad()
+            super().__init__(rate, **kwargs)
 
     class Wake:
         phrase = "hey muse"
@@ -87,7 +88,7 @@ def handoff(monkeypatch):
             return True
 
     async def scenario(run, *, trusted=True, invalid=None, recognized=None, pause_asr=False, delayed=False,
-                       speech=None):
+                       speech=None, verifier=None):
         incoming = asyncio.Queue()
         accepted = asyncio.Event()
         consumer_ready = asyncio.Event()
@@ -121,7 +122,7 @@ def handoff(monkeypatch):
         conversation = VoiceConversation(session, hardware,
                                          backends=backends_for(Mode.ON_ROBOT, session, speech=speech or object(),
                                                                transcriber=recognition),
-                                         wake_detector=wake, silence_s=.14)
+                                         wake_detector=wake, silence_s=.14, voice_verifier=verifier)
         conversation.backends.voice.phrases["Yes?"] = (np.full(80, .1, np.float32),)
 
         async def capture(buffer):
