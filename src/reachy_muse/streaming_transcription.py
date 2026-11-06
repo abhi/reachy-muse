@@ -83,6 +83,8 @@ class StreamingTurn:
     def feed(self, pcm16_16khz: bytes) -> None:
         """Queue PCM immediately. Overflow invalidates this entire utterance."""
         self._owner._check_loop()
+        if self._discarded and not self._future.cancelled():
+            self._future.result()
         if self._sealed or self._discarded:
             raise StreamingTranscriptionError("Streaming turn is no longer accepting audio")
         if not isinstance(pcm16_16khz, bytes) or not pcm16_16khz or len(pcm16_16khz) % 2:

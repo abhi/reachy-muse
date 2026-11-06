@@ -433,7 +433,7 @@ def test_restart_joins_failed_worker_cleanup_before_accepting_new_audio(model, w
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("failure_at", ["capture", "endpoint"])
+@pytest.mark.parametrize("failure_at", ["capture", "active", "endpoint"])
 def test_command_recognition_recovers_after_a_worker_failure(model, worker, failure_at):
     import numpy as np
 
@@ -454,6 +454,10 @@ def test_command_recognition_recovers_after_a_worker_failure(model, worker, fail
             transcriber._exchange = fail_once
             failed = transcriber.open_turn()
             failed.feed(pcm(2))
+            if failure_at == "active":
+                turn = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=True)
+                turn.feed(np.full(8000, 11 / 32767, np.float32))
+                assert turn.take().failures == 0
             if failure_at == "endpoint":
                 turn = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=True)
                 turn.feed(np.full(8000, 11 / 32767, np.float32))
@@ -465,10 +469,12 @@ def test_command_recognition_recovers_after_a_worker_failure(model, worker, fail
             else:
                 with pytest.raises(StreamingWorkerError):
                     await failed.finish()
-                turn = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=True)
+                if failure_at != "active":
+                    turn = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=True)
                 turn.feed(np.full(8000, 11 / 32767, np.float32))
                 assert turn.take().failures == 1
-                turn.abort()
+                turn.feed(np.zeros(4000, np.float32))
+                assert turn.take().transcript_lost
 
             async def recovered():
                 while len(worker[0]) < 2 or not transcriber._accepting:
