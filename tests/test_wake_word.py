@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
+import io
 from pathlib import Path
 import sys
 import threading
 from types import SimpleNamespace
+import wave
 
 import pytest
 
@@ -58,8 +61,11 @@ class FakeSpotter:
         self.streams = []
         self.force_result = None
 
-    def create_stream(self):
+    def create_stream(self, keywords=None):
         stream = FakeStream()
+        stream.keywords = keywords
+        if keywords is not None:
+            self.label = keywords.split("@")[-1].strip()
         self.streams.append(stream)
         return stream
 
@@ -89,8 +95,8 @@ class TimedSpotter(FakeSpotter):
         self.result_tokens = [' HE', 'Y', ' MU', 'SE']
         self.snapshot_calls = 0
 
-    def create_stream(self):
-        stream = super().create_stream()
+    def create_stream(self, keywords=None):
+        stream = super().create_stream(keywords)
         stream.raw_result = None
         stream.last_marker = -1
         stream.blank_steps = 0
@@ -179,6 +185,35 @@ def test_keyword_tail_includes_unaccepted_large_caller_remainder(timed_models):
     # The primary spotter confirmed after8000samples;4000caller samples were
     # never accepted by it, yet all of those request samples remain in the tail.
     assert sum(map(len, instances[0].streams[0].accepted)) == 8000
+
+
+@pytest.mark.parametrize("chunk_samples", [256, 1600, 16000])
+def test_policy_verifies_the_same_recording_across_capture_chunk_sizes(timed_models, chunk_samples):
+    from reachy_muse.wake_policy import WakePolicy, WakeVerifier
+
+    directory, _ = timed_models
+    detector = WakeWordDetector(directory, candidate_replay=True)
+    audio = np.zeros(48000, np.float32)
+    audio[6400:8000] = .25
+    audio[20000:20004] = [.1, .2, .3, .4]
+    received = []
+
+    class Local:
+        async def transcribe(self, wav):
+            with wave.open(io.BytesIO(wav), "rb") as recording:
+                pcm = np.frombuffer(recording.readframes(recording.getnframes()), dtype="<i2")
+            received.append(pcm)
+            return "hey muse" if 8192 in pcm and 13107 in pcm else "muse"
+
+    async def run():
+        policy = WakePolicy(WakeVerifier(local=Local()))
+        accepted = [await policy.feed(detector, audio[start:start + chunk_samples])
+                    for start in range(0, len(audio), chunk_samples)]
+        assert sum(accepted) == 1
+        assert len(received) == 1
+        assert len(received[0]) <= 24000
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize('tokens', [
@@ -342,6 +377,52 @@ def test_constructor_registers_only_the_exact_phrase_with_small_cpu_models(model
     assert spotter.config["keywords_threshold"] == 0.25
     assert all(spotter.config[name].endswith(".int8.onnx") for name in ("encoder", "decoder", "joiner"))
     assert not Path(spotter.config["keywords_file"]).exists()
+
+
+def test_permissive_candidate_and_conservative_replay_use_distinct_thresholds(models):
+    directory, instances = models
+    detector = WakeWordDetector(directory, threshold=.1, candidate_replay=True)
+    assert instances[0].keyword == ""
+    assert detector.feed(np.array([.1, .2, .3, .4], np.float32), align=False) is True
+    assert detector.last_candidate.score is None
+    assert detector.last_candidate.threshold == .1
+    assert detector.last_detection is None
+    assert detector.replay_candidate(.25) is True
+    assert instances[0].streams[0].keywords == "▁HE Y ▁MU SE :1.0 #0.1 @HEY_MUSE"
+    assert instances[0].streams[-1].keywords == "▁HE Y ▁MU SE :1.0 #0.25 @HEY_MUSE"
+    detector.reset()
+    assert detector.replay_candidate(.25) is False
+    assert detector.last_candidate is None
+
+
+def test_punctuation_uses_the_same_acoustic_tokens(models):
+    directory, instances = models
+    detector = WakeWordDetector(directory, phrase="hey, muse")
+    assert detector.phrase == "hey muse"
+    assert instances[0].keyword == "▁HE Y ▁MU SE @HEY_MUSE\n"
+
+
+def test_replay_preserves_encoder_phase_after_history_rollover(timed_models):
+    directory, instances = timed_models
+    detector = WakeWordDetector(directory, candidate_replay=True)
+    spotter = instances[0]
+    decode = spotter.decode_stream
+
+    def phase_sensitive(stream):
+        decode(stream)
+        if stream.raw_result is not None:
+            phase = round(stream.raw_result.timestamps[0] * 16000) % 5120
+            if phase != 2400:
+                stream.raw_result = None
+
+    spotter.decode_stream = phase_sensitive
+    assert detector.feed(np.zeros(51200, np.float32), align=False) is False
+    audio = np.concatenate((np.zeros(2400, np.float32), np.array([.1, .2, .3, .4], np.float32),
+                            np.zeros(8000, np.float32)))
+    assert detector.feed(audio, align=False) is True
+    assert detector.replay_candidate(.25) is True
+    detector.align_candidate()
+    assert detector.last_detection.post_wake_samples == 8001
 
 
 @pytest.fixture

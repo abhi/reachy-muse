@@ -763,9 +763,11 @@ def test_wake_model_phrase_and_idle_timeout_reach_the_service(tmp_path, monkeypa
             self.closed = True
 
     detector = Detector()
-    def wake(model, *, phrase):
+    def wake(model, *, phrase, **settings):
         captured['model'] = model
         captured['phrase'] = phrase
+        assert settings == ({} if backend == 'vosk' else
+                            {'threshold': .1, 'score': 1.0, 'candidate_replay': True})
         return detector
 
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
@@ -900,7 +902,7 @@ def test_startup_and_cleanup_failures_attempt_all_resource_cleanup(
     }[stt_backend]
     monkeypatch.setattr(factory, lambda model: transcriber)
     monkeypatch.setitem(sys.modules, 'reachy_muse.wake_word', SimpleNamespace(
-        WakeWordDetector=lambda model, phrase: detector))
+        WakeWordDetector=lambda model, phrase, **settings: detector))
     monkeypatch.setattr('reachy_muse.conversation.ReachyService', Service)
     assert reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'on-robot',
                            '--tts-model', str(tmp_path / 'voice.onnx'),

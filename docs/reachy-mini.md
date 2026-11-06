@@ -420,15 +420,33 @@ its request, Reachy introduces it with a few of your own words, for example
 ## Wake-word invocation
 
 Enable the [Sherpa offline keyword model](https://k2-fsa.github.io/sherpa/onnx/kws/pretrained_models/index.html#sherpa-onnx-kws-zipformer-gigaspeech-3-3m-2024-01-01-english)
-to open the conversation with "Hey Muse". While
-waiting for that phrase, the microphone supplies audio only to the local keyword
-detector. Reachy does not run Whisper or send that audio to Muse. A bounded
-three-second audio buffer preserves a question spoken immediately after the
-wake phrase; it stays in memory. For supported Sherpa models at 16 kHz, a bounded
-fresh keyword replay verifies acoustic timing and discards the buffered audio
-before the final wake token. Question capture then opens directly, without
-running speech recognition on the wake phrase. If timing cannot be verified,
-the first recording must contain the exact wake phrase in its transcription.
+to open the conversation with "Hey Muse". While waiting for that phrase, the
+microphone feeds the local keyword detector. A candidate can also trigger speech
+recognition of the last 1.5 seconds before wake authorization, including nearby
+speech and candidates that are later rejected. Verification uses the configured
+local streaming recognizer and an already connected paired companion's hearing,
+when available. It does not open a new companion connection. The companion has
+a 60 ms allowance within a 180 ms total verification budget. Its explicit
+non-match rejects the candidate; if it is unavailable or too slow, the local
+result can decide. With no speaker output, Sherpa uses a stricter keyword replay
+when neither verifier is available in time.
+
+Verification clips and transcripts stay in memory and are not saved or logged.
+The candidate audio buffer clears after each decision or capture reset. Pending
+recognition tasks are canceled when verification ends, including on timeout.
+Each companion verification stream closes with an abort and clears its client
+audio buffer. Native inference already in progress may finish, but a canceled
+result cannot authorize a wake. Candidate audio and verification transcripts
+never go to Muse.
+
+A separate three-second audio buffer preserves a question spoken immediately
+after the wake phrase; it also stays in memory. After wake acceptance, supported
+Sherpa models at 16 kHz replay the keyword to verify acoustic timing and discard
+the buffered audio before the final wake token. Only the question audio enters
+request recognition or a Muse call. This avoids recognizing the invocation again
+as part of the request. If timing cannot be verified, the first recording must
+contain the exact wake phrase in its transcription. Only the words after that
+phrase can be forwarded to Muse.
 Otherwise Reachy asks "Yes?" and waits for a fresh question instead of forwarding
 the buffered words. After a confirmed wake, a capture gap discards the incomplete
 recording and keeps the listening window open for a fresh question.
@@ -518,9 +536,9 @@ tar -xjf /tmp/muse-reachy-keywords.tar.bz2 -C ~/.local/share/musegadget-reachy
 
 The detector uses the int8 encoder, decoder, and joiner, plus `tokens.txt` and
 `bpe.model`. These files total about 5.2 MiB. It runs on one CPU thread and
-tokenizes the configured phrase locally. The keyword threshold is 0.25, with
-keyword score 1.0 and four decoder paths. Installed wheels must support the
-device's Python version and architecture.
+tokenizes the configured phrase locally. The candidate threshold is 0.10, with
+a fallback replay threshold of 0.25, keyword score 1.0, and four decoder paths.
+Installed wheels must support the device's Python version and architecture.
 Wake-word invocation needs `--mode on-robot`. Startup remains quiet.
 The dedicated chat receives expression instructions during initialization;
 later user messages contain only the recognized request. Explicit main-chat or
@@ -559,6 +577,9 @@ question. This model has not demonstrated better live reliability than Sherpa.
 Experimental comparisons also evaluate a partial result stable for 0.5 seconds.
 A partial result can change after more speech arrives and can cause an early
 false wake. The CLI uses endpoint results only.
+An exact Vosk endpoint match supplies its own phrase verification, so a long
+question cannot cause a trailing verification clip to reject that match.
+Echo, playback, cooldown, and capture-gap checks still apply.
 `--wake-backend vosk` requires `--wake-model`. Vosk loads only when selected, so
 Sherpa and ordinary conversations do not require its optional runtime.
 
@@ -758,9 +779,10 @@ muse-reachy run --mode on-robot --stt-backend sherpa-streaming \
   --tts-model /path/to/voice.onnx --stream-replies
 ```
 
-The model stays in a child process. Only audio admitted after wake authorization
-and speech detection enters recognition. Partial text stays in RAM; native
-endpoint detection is disabled. Reachy's end-of-turn silence
+The model stays in a child process. It can recognize bounded wake-candidate clips
+before authorization, as described in [Wake-word invocation](#wake-word-invocation).
+Request recognition begins after wake authorization and speech detection.
+Partial text stays in RAM; native endpoint detection is disabled. Reachy's end-of-turn silence
 boundary finalizes the transcript, then the request can be submitted. An earlier
 active Muse request still holds later requests in order. Playback does not hold
 the request queue. Missing audio or a recognition overflow invalidates the

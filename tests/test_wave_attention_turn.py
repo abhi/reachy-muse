@@ -8,6 +8,7 @@ import pytest
 
 from reachy_muse.motion import MotionStyle
 from reachy_muse.speaker_direction import DoAReading
+from reachy_muse.wake_policy import Verification, WakePolicy
 from test_device_command_turns import played, rig_with, run, sent_to_muse, service
 from test_face_tracking_motion import Follower
 from test_hardware import FakeRobot, generated, np, start_controller
@@ -88,7 +89,15 @@ def test_wave_turn_hands_over_to_face_tracking_through_a_whole_reply(monkeypatch
         tracking.append((follower.active, controller._pose_parameters(robot.pose)["yaw"]))
         await session.answer(request, "Tomorrow will be sunny.")
 
-    options = {"wake_detector": Wake()} if acoustic else {}
+    class RejectAcousticWake:
+        calls = 0
+
+        async def verify(self, pcm, phrase):
+            self.calls += 1
+            return Verification("no_match", "local")
+
+    verifier = RejectAcousticWake()
+    options = {"wake_detector": Wake(), "wake_policy": WakePolicy(verifier)} if acoustic else {}
     conversation = service(rig, muse, Transcripts("What is the weather tomorrow?"),
                            wave_wake=True, wake_timeout_s=30, **options)
 
@@ -114,5 +123,6 @@ def test_wave_turn_hands_over_to_face_tracking_through_a_whole_reply(monkeypatch
         assert sent_to_muse(events) == ["What is the weather tomorrow?"]
         assert played(events) == ["tts:Yes?", "tts:Tomorrow will be sunny."]
         assert tracking == [(True, pytest.approx(expected_yaw - 2, abs=.2))]
+        assert verifier.calls == 0
     finally:
         controller.close()

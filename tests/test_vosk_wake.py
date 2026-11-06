@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
+import io
 import json
 from pathlib import Path
 import sys
 import threading
 from types import SimpleNamespace
+import wave
 
 import pytest
 
@@ -88,6 +91,147 @@ def test_endpoint_recognizes_exact_wake_tokens_with_a_same_breath_question(model
     assert not detector.feed(np.zeros(1600, dtype=np.float32))
 
 
+@pytest.mark.parametrize("available", [False, True])
+def test_policy_keeps_exact_endpoint_match_after_a_same_breath_question(models, available):
+    from reachy_muse.wake_policy import WakePolicy, WakeVerifier
+
+    directory, instances, _ = models
+    detector = VoskWakeWordDetector(directory)
+    instances[-1].plan = [(False, "")] * 24 + [(True, "hey muse what time is it")]
+
+    class Local:
+        async def transcribe(self, wav):
+            with wave.open(io.BytesIO(wav), "rb") as recording:
+                pcm = np.frombuffer(recording.readframes(recording.getnframes()), dtype="<i2")
+            return "hey muse what time is it" if 8192 in pcm else "what time is it"
+
+    async def run():
+        policy = WakePolicy(WakeVerifier(local=Local() if available else None))
+        audio = np.concatenate((np.full(8000, .25), np.full(24000, .5), np.zeros(8000)))
+        accepted = [await policy.feed(detector, audio[start:start + 1600])
+                    for start in range(0, len(audio), 1600)]
+        assert accepted == [False] * 24 + [True]
+        assert policy.last_decision.reason == "accepted"
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("context, valid, reason", [
+    ({"blocked": True}, True, "speaking"),
+    ({"speaking": True}, True, "speaking"),
+    ({"speaking": True, "playback": ("Say hey muse.",)}, True, "echo"),
+    ({"speaking": True, "playback": ("Hey,", "Muse is here.")}, True, "echo"),
+    ({"armed": False}, True, "cooldown"),
+    ({}, False, "capture_gap"),
+])
+def test_policy_still_guards_exact_endpoint_matches(models, context, valid, reason):
+    from reachy_muse.wake_policy import WakeContext, WakePolicy
+
+    directory, instances, _ = models
+    detector = VoskWakeWordDetector(directory)
+    instances[-1].plan = [(True, "hey muse")]
+
+    async def run():
+        policy = WakePolicy()
+        assert await policy.feed(detector, np.full(1600, .25), context=WakeContext(**context),
+                                 valid=lambda: valid) is False
+        assert policy.last_decision.reason == reason
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("mode", ["endpoint", "stable_partial"])
+@pytest.mark.parametrize("tail_samples", [0, 16000])
+@pytest.mark.parametrize("playback, reason", [("Say hey muse.", "echo"), (None, "speaking")])
+def test_policy_rejects_delayed_endpoint_after_playback_evidence_expires(models, mode, tail_samples, playback, reason):
+    from reachy_muse.conversation import VoiceConversation
+    from reachy_muse.wake_policy import WakePolicy, WakeVerifier
+
+    directory, instances, _ = models
+    detector = VoskWakeWordDetector(directory, mode=mode, stable_partial_s=.15)
+    if mode == "endpoint":
+        instances[-1].plan = [(False, "")] * 49 + [(True, "hey muse")]
+    else:
+        instances[-1].plan = [(False, "")] * 47 + [(False, "hey muse")] * 3
+    conversation = VoiceConversation(SimpleNamespace(), SimpleNamespace(echo_cancelled_input=True),
+                                     backends=SimpleNamespace(motion=None))
+    conversation._muse_audible(playback, 1)
+    conversation._muse_audible("The forecast is sunny.", 5)
+    conversation._muted = True
+
+    class Local:
+        async def transcribe(self, wav):
+            return "hey muse"
+
+    async def run():
+        policy = WakePolicy(WakeVerifier(local=Local()))
+        accepted = []
+        for step in range(1, 51):
+            context = conversation._wake_capture_context(step / 10)
+            audio = np.full(1600 + (tail_samples if step == 50 else 0), .25)
+            accepted.append(await policy.feed(detector, audio, context=context))
+        assert context.playback == ("The forecast is sunny.",)
+        assert context.speaking is True
+        assert context.blocked is False
+        assert accepted == [False] * 50
+        assert policy.last_decision.reason == reason
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("boundary", ["endpoint", "reset"])
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("context", [
+    {"speaking": True, "playback": ("Say hey muse.",)},
+    {"speaking": True},
+    {"blocked": True},
+])
+def test_policy_does_not_reuse_output_evidence_from_an_earlier_segment(models, boundary, batched, context):
+    from reachy_muse.wake_policy import WakeContext, WakePolicy
+
+    directory, instances, _ = models
+    detector = VoskWakeWordDetector(directory)
+
+    async def run():
+        policy = WakePolicy()
+        assert await policy.feed(detector, np.full(1600, .25), context=WakeContext(**context)) is False
+        if boundary == "reset":
+            detector.reset()
+            policy.reset()
+        else:
+            instances[-1].plan = [(True, "hey music")]
+            if not batched:
+                assert await policy.feed(detector, np.full(1600, .25)) is False
+        instances[-1].plan += [(False, "")] * 4 + [(True, "hey muse")]
+        if batched:
+            assert await policy.feed(detector, np.full(16000, .25)) is True
+        else:
+            accepted = [await policy.feed(detector, np.full(1600, .25)) for _ in range(5)]
+            assert accepted == [False] * 4 + [True]
+        assert policy.last_decision.reason == "accepted"
+
+    asyncio.run(run())
+
+
+def test_policy_still_verifies_stable_partial_matches(models):
+    from reachy_muse.wake_policy import WakePolicy, WakeVerifier
+
+    directory, instances, _ = models
+    detector = VoskWakeWordDetector(directory, mode="stable_partial")
+    instances[-1].plan = [(False, "hey muse")] * 7
+
+    class Local:
+        async def transcribe(self, wav):
+            return "hey music"
+
+    async def run():
+        policy = WakePolicy(WakeVerifier(local=Local()))
+        assert await policy.feed(detector, np.full(11200, .25)) is False
+        assert policy.last_decision.reason == "verification_rejected"
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("text", [
     "hey news", "hey music", "hey moose", "hey mouse", "hey museum", "hey musician",
     "hello muse", "hey [unk] muse", "muse", "[unk]", "I need to check the news",
@@ -98,6 +242,18 @@ def test_confusables_and_nonadjacent_words_do_not_activate(models, text):
     instances[-1].plan = [(True, text)]
     assert not detector.feed(np.zeros(1600, dtype=np.float32))
     assert len(instances) == 1
+
+
+def test_rejected_vosk_candidate_logs_confidence_without_recognized_content(models, monkeypatch, caplog):
+    directory, instances, _ = models
+    detector = VoskWakeWordDetector(directory)
+    instances[-1].plan = [(True, "hey music")]
+    monkeypatch.setattr(instances[-1], "Result", lambda: json.dumps({
+        "text": "hey music", "result": [{"word": "hey", "conf": .8}, {"word": "music", "conf": .6}]}))
+    caplog.set_level("INFO", logger="reachy_muse.vosk_wake")
+    assert detector.feed(np.zeros(1600, dtype=np.float32)) is False
+    assert caplog.messages == ['Wake candidate {"accepted": false, "backend": "vosk", "reason": "not_keyword", '
+                               '"score": 0.7, "score_kind": "word_confidence_mean"}']
 
 
 def test_default_mode_waits_for_endpoint_even_when_partial_predictions_persist(models):

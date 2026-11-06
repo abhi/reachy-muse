@@ -3,6 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 import io
+from types import SimpleNamespace
 import wave
 
 import pytest
@@ -23,8 +24,9 @@ class Detection:
     feed_id: int
 
 
-@pytest.fixture
-def handoff(monkeypatch):
+@pytest.fixture(params=(False, True), ids=("native", "verified"))
+def handoff(monkeypatch, request):
+    verified = request.param
     np = pytest.importorskip("numpy")
     pytest.importorskip("av")
     monkeypatch.setattr(reachy_muse.conversation, "ECHO_TAIL_S", 0)
@@ -118,10 +120,18 @@ def handoff(monkeypatch):
         hardware = hardware or FakeHardware()
         wake = Wake(trusted=trusted, invalid=invalid, delayed=delayed)
         recognition = Recognition()
+        from reachy_muse.wake_policy import WakePolicy, WakeVerifier
+
+        class ConfirmWake:
+            async def transcribe(self, wav):
+                await asyncio.sleep(.01)
+                return "hey muse"
+
+        policy = WakePolicy(WakeVerifier(local=ConfirmWake())) if verified else None
         conversation = VoiceConversation(session, hardware,
                                          backends=backends_for(Mode.ON_ROBOT, session, speech=speech or object(),
                                                                transcriber=recognition),
-                                         wake_detector=wake, silence_s=.14)
+                                         wake_detector=wake, wake_policy=policy, silence_s=.14)
         conversation.backends.voice.phrases["Yes?"] = (np.full(80, .1, np.float32),)
 
         async def capture(buffer):
@@ -241,6 +251,28 @@ def test_wake_only_never_blocks_the_first_question_on_delayed_asr(handoff):
         assert session.setup_messages[0][0] == "Find flights from Boston to Paris."
 
     asyncio.run(bounded(handoff(run, pause_asr=True)))
+
+
+def test_authorized_question_survives_wake_inference_crossing_deadline(handoff, monkeypatch):
+    async def run(conversation, session, hardware, wake, recognition, recordings, accepted, feed):
+        await feed((.25, 14), (0, 7))
+        now = conversation._wake_deadline - .1
+        monkeypatch.setattr(reachy_muse.conversation, "time", SimpleNamespace(monotonic=lambda: now))
+        detect = wake.feed
+
+        def slow_detect(samples):
+            nonlocal now
+            now += .2
+            return detect(samples)
+
+        monkeypatch.setattr(wake, "feed", slow_detect)
+        await feed((.625, 3), (.5, 17), (0, 7))
+        assert len(recordings) == 1
+        assert recordings[0][recordings[0] != 0][:960].tolist() == [20480] * 960
+        await accepted.wait()
+        assert session.setup_messages[0][0] == "Find flights from Boston to Paris."
+
+    asyncio.run(bounded(handoff(run)))
 
 
 def test_delayed_keyword_hit_keeps_question_start_from_an_earlier_capture_chunk(handoff):

@@ -476,6 +476,24 @@ class CompanionLink:
         connection.hearing[stream.id] = stream
         return stream
 
+    async def transcribe_wake(self, pcm: bytes) -> str:
+        """One bounded wake clip; cancellation releases its private hearing stream."""
+        if not isinstance(pcm, bytes) or not 0 < len(pcm) <= 64000 or len(pcm) % 2:
+            raise ValueError("Wake verification requires at most two seconds of PCM16")
+        stream = self.open_hear()
+        try:
+            stream.send(pcm)
+            stream.finish()
+            await stream.settled.wait()
+            if stream.failure is not None:
+                raise stream.failure
+            if stream.endpoint is None:
+                raise CapabilityUnavailable("Companion wake hearing returned no endpoint")
+            return stream.endpoint.text
+        finally:
+            stream.close(CloseHow.ABORT)
+            stream.audio.clear()
+
     async def speak(self, text: str, voice: VoiceRole) -> AsyncIterator[bytes]:
         """The companion's speech for one line, as s16le PCM at ``out_rate``."""
         connection = self._live(Op.SPEAK)
