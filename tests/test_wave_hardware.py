@@ -100,7 +100,11 @@ def test_wave_can_authorize_realtime_without_an_acoustic_model(monkeypatch):
 
 
 @pytest.mark.parametrize("x, yaw, expected", [(160, 0, 45), (480, 0, 135), (320, 20, 70)])
-def test_wave_bearing_uses_current_head_pose_and_survives_camera_drain(x, yaw, expected):
+@pytest.mark.parametrize("delay, claimed", [(0, True), (.2, False)])
+def test_wave_bearing_uses_current_head_pose_and_survives_camera_drain(monkeypatch, x, yaw, expected,
+                                                                    delay, claimed):
+    now = [1.0]
+    monkeypatch.setattr("reachy_muse.hardware.time", SimpleNamespace(monotonic=lambda: now[0]))
     controller = ReachyController(wave_wake=True)
     controller._np, controller._robot = np, FakeRobot()
     controller._robot.pose = pose_factory(yaw=yaw)
@@ -117,10 +121,14 @@ def test_wave_bearing_uses_current_head_pose_and_survives_camera_drain(x, yaw, e
             self.wave_position = None
 
     controller._wave_watcher = Watcher()
+    for tick in range(21):
+        controller._update_wave_gaze(.5 + tick * .025, np.zeros(9), eligible=True)
+    assert controller._wave_still() is True
     assert controller.take_wave() is True
     controller.set_wave_watching(False)
-    assert controller.claim_wave() is True
-    assert controller.wave_direction == pytest.approx(math.radians(expected))
+    now[0] += delay
+    assert controller.claim_wave() is claimed
+    assert controller.wave_direction == (pytest.approx(math.radians(expected)) if claimed else None)
     assert controller.claim_wave() is False
     assert controller.wave_direction is None
 

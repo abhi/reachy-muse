@@ -1006,7 +1006,7 @@ class ReachyController:
         with self._state_lock:
             pending, self._wave_pending = self._wave_pending, None
             claimed = (pending is not None and pending == self._wave_gaze.gaze.generation
-                       and not self._watching and not self._stop.is_set())
+                       and self._wave_still())
             if not claimed:
                 self.wave_direction = None
             return claimed
