@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 import math
 from typing import TYPE_CHECKING
@@ -26,16 +27,19 @@ class GazeSettler:
 
     Translation must also stay below 0.8 mm/s. A generation changes on every
     moving tick, including motion entirely between two camera observations.
+    Observed travel uses a 100 ms window to absorb cached feedback cadence.
     """
 
     def __init__(self):
         self.gaze = CameraGaze()
         self._previous = None
+        self._observed = deque()
         self._since = None
 
     def invalidate(self):
         self.gaze = CameraGaze(self.gaze.generation + 1)
         self._previous = self._since = None
+        self._observed.clear()
 
     def update(self, now, commanded, observed, rotation, *, eligible):
         import numpy as np
@@ -43,12 +47,20 @@ class GazeSettler:
         previous = self._previous
         dt = now - self.gaze.observed_at
         quiet = eligible and previous is not None and 0 < dt <= .1
+        if not quiet:
+            self._observed.clear()
+        self._observed.append((now, np.array(observed, copy=True)))
+        while now - self._observed[0][0] > .1:
+            self._observed.popleft()
         if quiet:
-            for current, old in zip((commanded, observed), previous):
-                velocity = np.abs(np.asarray(current) - old) / dt
-                quiet &= (np.isfinite(velocity).all() and np.linalg.norm(velocity[:3]) < .8
-                          and np.linalg.norm(velocity[3:6]) < 1 and velocity[6] < 1)
-        self._previous = (np.array(commanded, copy=True), np.array(observed, copy=True))
+            motion = ((np.asarray([commanded]) - previous, dt),
+                      (np.diff([pose for _, pose in self._observed], axis=0),
+                       now - self._observed[0][0]))
+            for delta, elapsed in motion:
+                velocity = np.abs(delta) / elapsed
+                quiet &= (np.isfinite(velocity).all() and np.linalg.norm(velocity[:, :3], axis=1).sum() < .8
+                          and np.linalg.norm(velocity[:, 3:6], axis=1).sum() < 1 and velocity[:, 6].sum() < 1)
+        self._previous = np.array(commanded, copy=True)
         if not quiet:
             self._since = None
         elif self._since is None:

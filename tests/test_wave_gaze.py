@@ -30,14 +30,33 @@ def test_settling_measures_velocity_and_time_instead_of_tick_count(step):
     assert flags == [False, True]
 
 
+@pytest.mark.parametrize("source", ["command", "feedback"])
 @pytest.mark.parametrize("speed, settled", [(.99, True), (1.0, False), (1.01, False)])
-def test_settling_uses_a_strict_one_degree_per_second_bound(speed, settled):
+def test_settling_uses_a_strict_one_degree_per_second_bound(source, speed, settled):
     gaze = GazeSettler()
     for tick in range(21):
         now = tick * .025
-        pose = [0, 0, 0, 0, 0, speed * now, 0]
-        gaze.update(now, pose, pose, np.eye(3), eligible=True)
+        commanded, observed = np.zeros(7), np.zeros(7)
+        (commanded if source == "command" else observed)[5] = speed * now
+        gaze.update(now, commanded, observed, np.eye(3), eligible=True)
     assert gaze.gaze.settled is settled
+
+
+@pytest.mark.parametrize("phase", [0, .007])
+@pytest.mark.parametrize("axis, bound", [(0, .8), (5, 1), (6, 1)])
+@pytest.mark.parametrize("speed, settled", [(.8, True), (1.2, False)])
+def test_settling_with_50_hz_feedback_consumed_at_40_hz(phase, axis, bound, speed, settled):
+    gaze = GazeSettler()
+    flags = []
+    for tick in range(401):
+        now = tick / 40
+        sampled_at = math.floor((now + phase) * 50) / 50 - phase
+        observed = np.zeros(7)
+        observed[axis] = bound * speed * sampled_at
+        gaze.update(now, np.zeros(7), observed, np.eye(3), eligible=True)
+        if tick > 40:
+            flags.append(gaze.gaze.settled)
+    assert sum(flags) == (360 if settled else 0)
 
 
 @pytest.mark.parametrize("source", ["command", "feedback"])
@@ -53,6 +72,20 @@ def test_either_commanded_or_observed_motion_invalidates_evidence(source, axis):
     gaze.update(.5, commanded, observed, np.eye(3), eligible=True)
     assert gaze.gaze.settled is False
     assert gaze.gaze.generation == previous + 1
+
+
+@pytest.mark.parametrize("path", [
+    [(0, 0), (.1, 0)],
+    [(0, 0), (.03, 0), (.03, .03), (0, .03)],
+])
+def test_observed_direction_changes_do_not_cancel_out_when_settling(path):
+    gaze = GazeSettler()
+    flags = []
+    for tick in range(41):
+        observed = [0, 0, 0, *path[tick % len(path)], 0, 0]
+        gaze.update(tick / 40, np.zeros(7), observed, np.eye(3), eligible=True)
+        flags.append(gaze.gaze.settled)
+    assert set(flags) == {False}
 
 
 def gaze_sequence(monkeypatch, *, during_motion=False, after_settle=True, arrival=False):
