@@ -27,19 +27,23 @@ class GazeSettler:
 
     Translation must also stay below 0.8 mm/s. A generation changes on every
     moving tick, including motion entirely between two camera observations.
-    Observed travel uses a 100 ms window to absorb cached feedback cadence.
+    Median travel rates over three 100 ms windows reject isolated cache-phase
+    errors. A per-tick bound allows one 20 ms feedback period of uncertainty
+    but still invalidates abrupt motion immediately.
     """
 
     def __init__(self):
         self.gaze = CameraGaze()
         self._previous = None
         self._observed = deque()
+        self._observed_speeds = deque(maxlen=3)
         self._since = None
 
     def invalidate(self):
         self.gaze = CameraGaze(self.gaze.generation + 1)
         self._previous = self._since = None
         self._observed.clear()
+        self._observed_speeds.clear()
 
     def update(self, now, commanded, observed, rotation, *, eligible):
         import numpy as np
@@ -49,17 +53,26 @@ class GazeSettler:
         quiet = eligible and previous is not None and 0 < dt <= .1
         if not quiet:
             self._observed.clear()
-        self._observed.append((now, np.array(observed, copy=True)))
-        while now - self._observed[0][0] > .1:
+            self._observed_speeds.clear()
+        self._observed.append((now, np.array(observed, dtype=float, copy=True)))
+        while len(self._observed) > 2 and now - self._observed[1][0] >= .1:
             self._observed.popleft()
         if quiet:
+            elapsed = min(.1, now - self._observed[0][0])
+            travel = np.diff([pose for _, pose in self._observed], axis=0)
+            start, end = self._observed[0][0], self._observed[1][0]
+            travel[0] *= (end - (now - elapsed)) / (end - start)
             motion = ((np.asarray([commanded]) - previous, dt),
-                      (np.diff([pose for _, pose in self._observed], axis=0),
-                       now - self._observed[0][0]))
+                      (travel[-1:], dt + .02),
+                      (travel, elapsed))
+            speeds = []
             for delta, elapsed in motion:
                 velocity = np.abs(delta) / elapsed
-                quiet &= (np.isfinite(velocity).all() and np.linalg.norm(velocity[:, :3], axis=1).sum() < .8
-                          and np.linalg.norm(velocity[:, 3:6], axis=1).sum() < 1 and velocity[:, 6].sum() < 1)
+                speeds.append([np.linalg.norm(velocity[:, :3], axis=1).sum(),
+                               np.linalg.norm(velocity[:, 3:6], axis=1).sum(), velocity[:, 6].sum()])
+            self._observed_speeds.append(speeds[-1])
+            speeds[-1] = np.median(self._observed_speeds, axis=0)
+            quiet &= np.isfinite(speeds).all() and (np.round(speeds, 9) < [.8, 1, 1]).all()
         self._previous = np.array(commanded, copy=True)
         if not quiet:
             self._since = None

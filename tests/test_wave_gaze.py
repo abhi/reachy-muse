@@ -44,7 +44,8 @@ def test_settling_uses_a_strict_one_degree_per_second_bound(source, speed, settl
 
 @pytest.mark.parametrize("phase", [0, .007])
 @pytest.mark.parametrize("axis, bound", [(0, .8), (5, 1), (6, 1)])
-@pytest.mark.parametrize("speed, settled", [(.8, True), (1.2, False)])
+@pytest.mark.parametrize("speed, settled", [(.8, True), (.95, True), (.99, True),
+                                           (1.0, False), (1.01, False), (1.2, False)])
 def test_settling_with_50_hz_feedback_consumed_at_40_hz(phase, axis, bound, speed, settled):
     gaze = GazeSettler()
     flags = []
