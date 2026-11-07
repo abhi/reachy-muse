@@ -117,6 +117,71 @@ def test_wave_wakes_sleep_once_without_a_speech_request(monkeypatch):
     assert camera.transitions == [True, False, True, False]
 
 
+def test_settled_pixel_wave_wakes_sleep_without_a_speech_request(monkeypatch):
+    import time
+    from bench.wave import clip
+    from reachy_muse.wave_wake import WaveWatcher
+    from test_face_tracking_motion import Follower
+    from test_hardware import FakeRobot, start_controller
+
+    rig = rig_with(monkeypatch)
+    robot = FakeRobot()
+    still = next(clip("still", 1001))
+    gesture = list(clip("wave", 1001, seconds=3))
+    started, seen = [], []
+
+    def read():
+        frame = still
+        if started and time.monotonic() - started[0] >= 1.5:
+            index = int((time.monotonic() - started[0] - 1.5) * 8)
+            frame = gesture[min(index, len(gesture) - 1)]
+        seen[:] = frame[2]
+        return frame[1]
+
+    class People:
+        def detect(self, frame):
+            return list(seen)
+
+    robot.media.get_frame = read
+    controller = start_controller(robot, wave_wake=True, face_follow_idle=True, sleep_on_close=False,
+                                  wave_watcher_factory=lambda *args, **kwargs:
+                                  WaveWatcher(*args, **kwargs, detector_factory=lambda _: People()))
+    controller._face_follower = follower = Follower()
+    follower.close = lambda: None
+    original_state = rig.hardware.set_state
+
+    def set_state(state, **kwargs):
+        original_state(state, **kwargs)
+        controller.set_state(state, **kwargs)
+
+    rig.hardware.set_state = set_state
+    rig.hardware.set_wave_watching = controller.set_wave_watching
+    rig.hardware.take_wave = controller.take_wave
+    rig.hardware.claim_wave = controller.claim_wave
+
+    async def muse(session, request):
+        raise AssertionError("A wave is not a request to Muse")
+
+    conversation = service(rig, muse, Transcripts("Hey Muse, go to sleep."),
+                           wave_wake=True, wake_detector=Wake())
+
+    async def user():
+        rig.say(wake=True)
+        await rig.quiet("sleeping")
+        await rig.wait_until_or_timeout(controller._wave_still, 6)
+        assert follower.active is False
+        started.append(time.monotonic())
+        await rig.wait_until_or_timeout(lambda: "tts:I'm awake." in played(rig.recording.events), 10)
+
+    try:
+        events = run(rig, conversation, user, rest=("listening", "idle"))
+        assert played(events) == ["tts:Good night.", "tts:I'm awake."]
+        assert sent_to_muse(events) == []
+        assert controller._failure is None
+    finally:
+        controller.close()
+
+
 def test_wave_only_window_expires_and_requires_another_wave(monkeypatch):
     rig = rig_with(monkeypatch)
     camera = WaveCamera(rig.hardware)

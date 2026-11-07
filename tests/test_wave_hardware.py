@@ -21,7 +21,7 @@ def test_morning_watch_drains_wave_and_uses_the_same_camera_reader():
     class Watcher:
         failure = None
 
-        def __init__(self, read, still, model):
+        def __init__(self, read, still, model, **kwargs):
             readers.append(read)
             self.name = "wave" if len(readers) == 1 else "arrival"
 
@@ -121,5 +121,14 @@ def test_wave_bearing_uses_current_head_pose_and_survives_camera_drain(x, yaw, e
     controller.set_wave_watching(False)
     assert controller.claim_wave() is True
     assert controller.wave_direction == pytest.approx(math.radians(expected))
+    assert controller.claim_wave() is False
+    assert controller.wave_direction is None
+
+
+def test_head_motion_during_camera_drain_invalidates_the_claimed_wave():
+    controller = ReachyController(wave_wake=True)
+    controller._wave_watcher = SimpleNamespace(take_wave=lambda: True, wave_position=None)
+    assert controller.take_wave() is True
+    controller._wave_gaze.invalidate()
     assert controller.claim_wave() is False
     assert controller.wave_direction is None

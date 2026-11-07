@@ -154,6 +154,15 @@ def test_tracking_logs_only_transitions_with_content_free_reasons(caplog, idle, 
     ]
 
 
+def test_wave_watching_keeps_idle_face_following_active():
+    controller = ReachyController(face_follow_idle=True, wave_wake=True)
+    controller._face_follower = follower = Follower()
+    controller._wave_watching = True
+    controller._update_face_tracking('idle')
+    assert follower.activity == [True]
+    assert follower.rates == [True]
+
+
 def test_full_strength_speech_clip_keeps_the_nod_on_top_of_gaze(monkeypatch):
     frames = generated(8, roll=5)
 

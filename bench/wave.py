@@ -13,9 +13,29 @@ import numpy as np
 
 from reachy_muse.arrival import MotionGate, PersonBox, YoloxPersonDetector, default_person_model
 from reachy_muse.wave_wake import WaveDetector, WaveWatcher
+from reachy_muse.camera_gaze import CameraGaze, GazeProjection
 
 FPS = 8
 BOX = PersonBox(55 / 160, 18 / 120, 58 / 160, 94 / 120, .95)
+CAMERA_MATRIX = np.array([[160., 0, 80], [0, 160, 60], [0, 0, 1]])
+
+
+def head_rotation(now):
+    """Sub-threshold yaw/pitch drift: at most 0.61 deg/s, starting at zero."""
+    yaw = math.radians(.8 * math.sin(.7 * now))
+    pitch = math.radians(.4 * math.sin(.5 * now))
+    cy, sy, cp, sp = math.cos(yaw), math.sin(yaw), math.cos(pitch), math.sin(pitch)
+    return np.array([[cy * cp, -sy, cy * sp], [sy * cp, cy, sy * sp], [-sp, 0, cp]])
+
+
+def moving_camera(frame, now):
+    import cv2
+
+    rotation = head_rotation(now)
+    # Project a fixed world scene into a camera whose head has turned.
+    axes = np.array([[0., 0, 1], [-1, 0, 0], [0, -1, 0]])
+    transform = CAMERA_MATRIX @ axes.T @ rotation.T @ axes @ np.linalg.inv(CAMERA_MATRIX)
+    return cv2.warpPerspective(frame, transform, (160, 120), borderMode=cv2.BORDER_REPLICATE)
 
 
 def clip(kind, seed=0, *, seconds=4, fps=FPS):
@@ -111,7 +131,7 @@ NEGATIVES = ("vertical", "low_hand", "single_sweep", "one_reversal", "still", "w
              "pet", "curtain", "tv", "pan", "light", "flashes", "no_person")
 
 
-def evaluate(factory, seeds):
+def evaluate(factory, seeds, *, head_motion=False):
     counts = Counter(TP=0, FP=0, TN=0, FN=0)
     failures = Counter()
     costs = []
@@ -119,9 +139,16 @@ def evaluate(factory, seeds):
     for kind in ("wave", *NEGATIVES):
         for seed in seeds:
             detector = factory()
+            projection = GazeProjection(CAMERA_MATRIX) if head_motion else None
             detected = False
             for now, frame, boxes in clip(kind, seed):
+                if head_motion:
+                    frame = moving_camera(frame, now)
                 started = time.process_time()
+                if projection is not None:
+                    # Oracle boxes describe the fixed world/reference image, as does
+                    # person inference on the projected image in the actual worker.
+                    frame, _ = projection.project(frame, head_rotation(now))
                 detected |= detector.observe(frame, boxes, now)
                 cost = (time.process_time() - started) * 1000
                 costs.append(cost)
@@ -139,7 +166,7 @@ def evaluate(factory, seeds):
             "failures": dict(failures)}
 
 
-def scheduled(kind, inference_s, seed=0, *, seconds=3):
+def scheduled(kind, inference_s, seed=0, *, seconds=3, head_motion=False):
     """Drive the actual worker iteration with a virtual camera and CPU delay."""
     gesture = list(clip(kind, seed, seconds=seconds))
     frames = [next(clip("still", seed))] * (2 * FPS) + gesture + [gesture[-1]] * (6 * FPS - len(gesture))
@@ -151,7 +178,7 @@ def scheduled(kind, inference_s, seed=0, *, seconds=3):
         reads.append(round(now[0], 3))
         _, frame, boxes = frames[min(len(frames) - 1, int(now[0] * FPS))]
         seen_boxes[:] = boxes
-        return frame
+        return moving_camera(frame, now[0]) if head_motion else frame
 
     class People:
         def detect(self, frame):
@@ -159,7 +186,9 @@ def scheduled(kind, inference_s, seed=0, *, seconds=3):
             now[0] += inference_s
             return list(seen_boxes)
 
-    watcher = WaveWatcher(read, lambda: True, clock=lambda: now[0])
+    options = ({"read_gaze": lambda: CameraGaze(0, True, now[0], head_rotation(now[0])),
+                "camera_matrix": CAMERA_MATRIX} if head_motion else {})
+    watcher = WaveWatcher(read, lambda: True, clock=lambda: now[0], **options)
     watcher.set_active(True)
     detector = People()
     while now[0] < 8:
@@ -183,6 +212,8 @@ def main():
     for label, factory in (("difference", WaveDetector), ("flow", FlowWave)):
         report[label] = {"development": evaluate(factory, range(6)),
                          "held_out": evaluate(factory, range(1000, 1040))}
+    report["settled_head_motion"] = {"development": evaluate(WaveDetector, range(6), head_motion=True),
+                                    "held_out": evaluate(WaveDetector, range(1000, 1040), head_motion=True)}
     detector = WaveDetector()
     report["wave_on_screen_counterexample"] = any(
         detector.observe(frame, boxes, now) for now, frame, boxes in clip("replay", 21))
@@ -191,11 +222,16 @@ def main():
     report["scheduled_wave_recall"] = {
         str(delay): sum(bool(scheduled("wave", delay, seed)["cues_at"]) for seed in range(1000, 1040)) / 40
         for delay in (0, .32)}
+    report["scheduled_head_motion_recall"] = {
+        str(delay): sum(bool(scheduled("wave", delay, seed, head_motion=True)["cues_at"])
+                       for seed in range(1000, 1040)) / 40 for delay in (0, .32)}
     full_frame = cv2.resize(next(clip("wave"))[1], (1920, 1080))
     gate, decision = MotionGate(), WaveDetector()
+    projection = GazeProjection(np.diag([12., 9., 1.]) @ CAMERA_MATRIX)
     report["1080p_cpu_ms"] = {}
     for name, observe in (("gate", lambda i: gate.update(full_frame, i / FPS)),
-                          ("gesture", lambda i: decision.observe(full_frame, [BOX], i / FPS))):
+                          ("gesture", lambda i: decision.observe(full_frame, [BOX], i / FPS)),
+                          ("projection", lambda i: projection.project(full_frame, head_rotation(i / FPS)))):
         costs = []
         for index in range(50):
             started = time.process_time()

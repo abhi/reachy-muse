@@ -605,8 +605,8 @@ def test_camera_priority_transition_keeps_the_asyncio_loop_responsive(cancel_sta
             loaded.set()
             return object()
 
-        camera = ReachyController(wave_wake=True, wave_watcher_factory=lambda *args:
-                                 WaveWatcher(*args, detector_factory=load))
+        camera = ReachyController(wave_wake=True, wave_watcher_factory=lambda *args, **kwargs:
+                                 WaveWatcher(*args, **kwargs, detector_factory=load))
         camera._robot = FakeRobot()
         arrival = FakeWatcher(None, None, None)
         arrival.seen_at = 1.0

@@ -13,6 +13,7 @@ import threading
 import time
 
 from reachy_muse.arrival import MotionGate, PersonBox, YoloxPersonDetector, _gate_image, default_person_model
+from reachy_muse.camera_gaze import GazeProjection
 
 log = logging.getLogger(__name__)
 
@@ -147,8 +148,10 @@ class WaveWatcher:
     """
 
     def __init__(self, read_frame, is_still, model_path=None, *, clock=time.monotonic,
-                 detector_factory=YoloxPersonDetector):
+                 detector_factory=YoloxPersonDetector, read_gaze=None, camera_matrix=None):
         self._read_frame, self._is_still = read_frame, is_still
+        self._read_gaze = read_gaze
+        self._projection = GazeProjection(camera_matrix) if camera_matrix is not None else None
         self._model = model_path or default_person_model()
         self._factory, self._clock = detector_factory, clock
         self._condition = threading.Condition()
@@ -160,6 +163,7 @@ class WaveWatcher:
         self._cooldown_until = -math.inf
         self._failed = False
         self._idle_tick = False
+        self._generation = None
         self._reset()
         self._stats = WaveStats()
 
@@ -169,6 +173,19 @@ class WaveWatcher:
         self._boxes = []
         self._burst_until = self._rest_until = self._detected_at = -math.inf
         self._confirmations = 0
+        if self._projection is not None:
+            self._projection.reset()
+
+    def _gaze_valid(self, generation):
+        gaze = self._read_gaze() if self._read_gaze is not None else None
+        return (self._is_still() and (gaze is None or
+                gaze.settled and gaze.generation == generation))
+
+    def _discard_motion(self):
+        self._reset()
+        with self._condition:
+            self._pending = None
+            self.wave_position = None
 
     def start(self):
         with self._condition:
@@ -199,7 +216,7 @@ class WaveWatcher:
             pending, self._pending = self._pending, None
             self.wave_position = None
             if (self._active and not self._closed and pending is not None
-                    and 0 <= self._clock() - pending[0] <= .75 and self._is_still()):
+                    and 0 <= self._clock() - pending[0] <= .75 and self._gaze_valid(pending[2])):
                 self.wave_position = pending[1]
                 return True
             return False
@@ -216,11 +233,16 @@ class WaveWatcher:
 
     def _sample(self, detector):
         now = self._clock()
+        gaze = self._read_gaze() if self._read_gaze is not None else None
+        generation = gaze.generation if gaze is not None else None
         self._idle_tick = not self._idle_tick
         idle_period = .4 if self._idle_tick else .6
-        if not self._is_still():
-            self._reset()
+        if not self._gaze_valid(generation):
+            self._discard_motion()
             return .5
+        if generation != self._generation:
+            self._discard_motion()
+            self._generation = generation
         if now < max(self._cooldown_until, self._rest_until):
             return .5
         if self._burst_until != -math.inf and now >= self._burst_until:
@@ -233,6 +255,12 @@ class WaveWatcher:
                 self._reset()
                 self._stats.frame_errors += 1
                 return .5
+            if not self._gaze_valid(generation):
+                self._discard_motion()
+                return .5
+            to_camera = None
+            if self._projection is not None and gaze is not None:
+                frame, to_camera = self._projection.project(frame, gaze.rotation)
             now = self._clock()
             reading = self._gate.update(frame, now)
             self._stats.frames += 1
@@ -252,16 +280,22 @@ class WaveWatcher:
                 else:
                     self._confirmations = 0
                 self._stats.detector_runs += 1
+            if not self._gaze_valid(generation):
+                self._discard_motion()
+                return .5
             detected = self._decision.observe(frame, self._boxes, now, confirmed=self._confirmations >= 2)
             self._stats.max_score = max(self._stats.max_score, self._decision.score)
             if detected and self._confirmations >= 2:
                 with self._condition:
-                    if self._active and self._is_still():
+                    if self._active and self._gaze_valid(generation):
                         box = self._boxes[0]
                         height, width = frame.shape[:2]
                         position = ((box.x + box.width / 2) * width,
                                     (box.y + box.height / 2) * height)
-                        self._pending = (self._clock(), position)
+                        if to_camera is not None:
+                            pixel = to_camera @ [*position, 1.0]
+                            position = (float(pixel[0] / pixel[2]), float(pixel[1] / pixel[2]))
+                        self._pending = (self._clock(), position, generation)
                         self._cooldown_until = self._clock() + 15
                         self._stats.cues += 1
                 self._reset()

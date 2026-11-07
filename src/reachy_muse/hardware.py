@@ -255,10 +255,13 @@ class ReachyController:
         self._arrival_watcher = None
         self._wave_enabled = wave_wake
         self._wave_watching = False
-        self._wave_pending = False
+        self._wave_pending: int | None = None
         self.wave_direction: float | None = None
         self._wave_watcher_factory = wave_watcher_factory
         self._wave_watcher = None
+        from reachy_muse.camera_gaze import GazeSettler
+        self._wave_gaze = GazeSettler()
+        self._wave_gaze_status = None
         self._wave_lock = threading.Lock()
         self._camera_lock = threading.Lock()
         self._arrival_warned = False
@@ -767,7 +770,7 @@ class ReachyController:
             log.info("Watch pose limited to yaw %.0f, pitch %.0f degrees", angles["yaw"], angles["pitch"])
         with self._state_lock:
             self._watching = True
-            self._wave_pending = False
+            self._wave_pending = None
             self.wave_direction = None
         self.set_wave_watching(False)
         self._turn_watch(angles, 1.0)
@@ -926,7 +929,35 @@ class ReachyController:
 
     def _wave_still(self) -> bool:
         return (not self._watching and not self._stop.is_set()
-                and self._state in ("idle", "sleeping") and self._camera_still())
+                and self._state in ("idle", "sleeping") and self._failure is None
+                and self._wave_gaze.gaze.settled
+                and 0 <= time.monotonic() - self._wave_gaze.gaze.observed_at <= .1)
+
+    def _read_wave_gaze(self):
+        return self._wave_gaze.gaze
+
+    def _update_wave_gaze(self, now, written, *, eligible):
+        if not self._wave_enabled:
+            return
+        try:
+            pose = self._robot.get_current_head_pose()
+            joints, _ = self._robot.get_current_joint_positions()
+            observed = [*self._pose_parameters(pose).values(), math.degrees(joints[0])]
+            self._wave_gaze.update(now, written[CAMERA_AXES], observed, pose[:3, :3],
+                                   eligible=eligible and not self._watching)
+        except AssertionError:
+            self._wave_gaze.invalidate()
+        if not self._wave_watching:
+            self._wave_gaze_status = None
+            return
+        status = "follow" if self._face_tracking_status == (True, "idle follow") else "moving"
+        if self._wave_still():
+            status = "wave watching"
+        if status != self._wave_gaze_status:
+            if status == "wave watching":
+                log.info("Wave gaze: settled")
+            log.info("Wave gaze: %s", status)
+            self._wave_gaze_status = status
 
     def set_wave_watching(self, active: bool) -> None:
         """Called off the audio loop: disabling waits for in-flight inference."""
@@ -936,8 +967,10 @@ class ReachyController:
             if active and self._wave_watcher is None:
                 from reachy_muse.wave_wake import WaveWatcher
                 factory = self._wave_watcher_factory or WaveWatcher
+                camera = getattr(self._robot.media, "camera", None)
                 self._wave_watcher = factory(self._read_camera_frame, self._wave_still,
-                                             self._arrival_model)
+                                             self._arrival_model, read_gaze=self._read_wave_gaze,
+                                             camera_matrix=getattr(camera, "K", None))
                 self._wave_watcher.start()
             if self._wave_watcher is not None:
                 self._wave_watcher.set_active(active)
@@ -945,10 +978,12 @@ class ReachyController:
 
     def take_wave(self) -> bool:
         with self._state_lock:
-            self._wave_pending = (not self._watching and self._wave_watcher is not None
-                                  and self._wave_watcher.take_wave())
-            self.wave_direction = self._waver_direction() if self._wave_pending else None
-            return self._wave_pending
+            generation = self._wave_gaze.gaze.generation
+            detected = (not self._watching and self._wave_watcher is not None
+                        and self._wave_watcher.take_wave())
+            self._wave_pending = generation if detected else None
+            self.wave_direction = self._waver_direction() if detected else None
+            return detected
 
     def _waver_direction(self) -> float | None:
         """Convert the detected person's pixel center into an absolute bearing."""
@@ -969,8 +1004,9 @@ class ReachyController:
 
     def claim_wave(self) -> bool:
         with self._state_lock:
-            pending, self._wave_pending = self._wave_pending, False
-            claimed = pending and not self._watching and not self._stop.is_set()
+            pending, self._wave_pending = self._wave_pending, None
+            claimed = (pending is not None and pending == self._wave_gaze.gaze.generation
+                       and not self._watching and not self._stop.is_set())
             if not claimed:
                 self.wave_direction = None
             return claimed
@@ -1063,8 +1099,6 @@ class ReachyController:
             reason = "conversation"
         elif self._watching:
             reason = "arrival watching"
-        elif self._wave_watching:
-            reason = "wave watching"
         elif state == "idle" and self._face_follow_idle:
             reason = "idle follow"
         else:
@@ -1339,6 +1373,7 @@ class ReachyController:
                     request, self._deferred = None, request
                 if request is not None:
                     self._still_since = None
+                    self._wave_gaze.invalidate()
                     if self._face_follower is not None:
                         self._update_face_tracking(state, commanded=True)
                     # Commands own absolute poses, including the gaze we were showing.
@@ -1481,7 +1516,7 @@ class ReachyController:
                             self._speaker_turn = None
                     resting = self._pose_vector(*self._rest) + self._layers.breathing_offset(
                         now, active=state in ("idle", "listening") and not gesture_active
-                        and not (self._watching or self._wave_watching))
+                        and not (self._watching or self._wave_watching or self._wave_pending is not None))
                     accenting = progress_age is not None and 0 <= progress_age < PROGRESS_ACCENT_S
                     generated = self._show_generated(now, resting, yielding=gesture_active or accenting)
                     composed = self._show_clip(now, generated)
@@ -1491,10 +1526,13 @@ class ReachyController:
                     written = (composed + gaze + gesture_offset
                                + self._layers.sway_offset(now, active=state == "speaking")
                                + self._np.asarray(self._sentences.offset(now)))
+                    resting_camera = ((state in ("idle", "sleeping") or (state == "error" and self._watching))
+                                      and not gesture_active and not commanded
+                                      and self._clip is None and self._generated is None and self._deferred is None)
+                    # Invalidate before writing a moving target, even between camera samples.
+                    self._update_wave_gaze(now, written, eligible=resting_camera)
                     self._write_vector(written)
-                    settled = ((state in ("idle", "sleeping") or (state == "error" and self._watching))
-                               and not gesture_active
-                               and self._clip is None and self._generated is None and self._deferred is None
+                    settled = (resting_camera
                                and previous_written is not None
                                and self._np.abs(written - previous_written)[CAMERA_AXES].max()
                                < CAMERA_STILL_STEP)
@@ -1510,6 +1548,7 @@ class ReachyController:
         finally:
             self._started.set()
             self._still_since = None
+            self._wave_gaze.invalidate()
             unfinished = [self._deferred, self._clip and self._clip.request]
             self._clip = self._deferred = self._generated = self._pending_motion = None
             while True:

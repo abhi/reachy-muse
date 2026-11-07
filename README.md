@@ -26,7 +26,9 @@ Add `--wave-wake` in `on-robot` or `companion` mode to also wake Reachy with a
 raised hand moving side to side for about 1-3 seconds. It works with or without
 `--wake-model`, opens the same microphone window, and has a 15-second cooldown.
 Frames stay on the robot. Detection pauses during conversations and morning
-arrival watching. Keep screens showing people outside its view: a video of a
+arrival watching. With `--face-follow-idle`, Reachy follows the face and watches
+for a wave once its head settles. Head movement discards any partial wave.
+Keep screens showing people outside its view: a video of a
 waving person can also trigger it. See [wave measurements and limitations](bench/wave.md).
 
 ## Install on the robot

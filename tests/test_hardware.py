@@ -1950,12 +1950,8 @@ def test_wave_watching_detects_with_default_idle_breathing_and_restores_it_after
     from reachy_muse.wave_wake import WaveWatcher
     from test_face_tracking_motion import Follower
 
-    class MovingFace(Follower):
+    class SettledFace(Follower):
         pitch = 0
-
-        def target(self):
-            self.yaw = .2 if int(time.monotonic() * 2) % 2 else -.2
-            return super().target()
 
         def close(self):
             pass
@@ -1980,9 +1976,9 @@ def test_wave_watching_detects_with_default_idle_breathing_and_restores_it_after
 
     robot.media.get_frame = read
     controller = start_controller(robot, wave_wake=True, face_follow_idle=idle_follow,
-                                  wave_watcher_factory=lambda *args:
-                                  WaveWatcher(*args, detector_factory=lambda _: People()))
-    controller._face_follower = follower = MovingFace()
+                                  wave_watcher_factory=lambda *args, **kwargs:
+                                  WaveWatcher(*args, **kwargs, detector_factory=lambda _: People()))
+    controller._face_follower = follower = SettledFace()
     try:
         controller.set_wave_watching(True)
         wait_until(controller.take_wave, timeout=12)
