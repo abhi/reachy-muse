@@ -288,7 +288,7 @@ class FaceFollower:
                     if self._active and self._generation == generation:
                         cost = self._clock() - started
                         period = max(self._sample_period * scale, cost * 5)
-                        tracker.loss_seconds = self._loss_seconds = max(FACE_LOSS_SECONDS, period + self._period)
+                        tracker.loss_seconds = self._loss_seconds = max(FACE_LOSS_SECONDS, period + cost + self._period)
                         self._condition.wait_for(
                             lambda: self._closed or not self._active or self._generation != generation,
                             timeout=max(.001, period - cost))

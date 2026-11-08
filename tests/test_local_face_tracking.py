@@ -305,3 +305,38 @@ def test_throttled_idle_gaze_keeps_the_same_face_between_samples():
         assert item.target() is None
     finally:
         item.close()
+
+
+def test_slow_detection_keeps_target_while_next_inference_runs():
+    now = [0.0]
+    entered, release = threading.Event(), threading.Event()
+
+    class SlowDetector(Detector):
+        def detect(self, frame):
+            observed_at = now[0]
+            if self.calls:
+                entered.set()
+                assert release.wait(2)
+            now[0] = observed_at + .32
+            return super().detect(frame)
+
+    item = FaceFollower(lambda: object(), read_head_angles=lambda: (0, 0),
+                        camera_matrix=None, detector_factory=SlowDetector,
+                        clock=lambda: now[0])
+    try:
+        item.start()
+        item.set_active(True)
+        wait_for(lambda: item.target() is not None)
+        original = item.target()
+        assert original.observed_at == 0
+        now[0] = 1.6
+        assert entered.wait(2)
+        now[0] = 1.84
+        assert item.target() == original
+        release.set()
+        wait_for(lambda: item.target() is not None and item.target().observed_at == 1.6)
+        now[0] = 4
+        assert item.target() is None
+    finally:
+        release.set()
+        item.close()
