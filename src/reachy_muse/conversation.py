@@ -1523,6 +1523,8 @@ class VoiceConversation:
                     await watch_wave(False)
                     if not self.hardware.claim_wave():
                         continue
+                    if self._morning is not None:
+                        self._morning.observe_presence()
                     already_awake = self._wake_deadline is not None or self.call is not None
                     if already_awake:
                         await asyncio.to_thread(self.hardware.gesture, "wave")
@@ -2618,6 +2620,8 @@ class VoiceConversation:
     async def _admit_wake(self, now: float, *, strip_required: bool) -> None:
         """Shared acoustic/visual wake state and greeting motion."""
         self._say_hushed = False
+        if self._morning is not None:
+            self._morning.observe_presence()
         self._wake_at = now
         self._wake_deadline = now + (self.wake_timeout_s or 10.0)
         self._wake_strip_required = strip_required

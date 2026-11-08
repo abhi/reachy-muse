@@ -657,3 +657,28 @@ def test_camera_priority_transition_keeps_the_asyncio_loop_responsive(cancel_sta
             camera.close()
 
     asyncio.run(check())
+
+
+@pytest.mark.parametrize("source", ["voice", "wave", "face"])
+def test_other_presence_triggers_the_briefing_once_without_camera_arrival(source):
+    routine = routine_with((0, BRIEFING))
+    if source == "face":
+        routine.camera.face_seen_at = 0
+    else:
+        routine.observe_presence()
+        routine.observe_presence()
+    drive(routine, 70 * 60)
+    assert [entry[0] for entry in routine.voice.said] == ["greet", "fetch", "fetched", "brief"]
+    assert routine.voice.said[-1][2] == BRIEFING
+    assert routine.ledger.done(date(2026, 10, 10)) is True
+    routine.observe_presence()
+    drive(routine, 71 * 60)
+    assert kinds(routine).count("brief") == 1
+
+
+def test_presence_before_the_window_does_not_trigger_a_later_briefing():
+    routine = routine_with((0, BRIEFING), (0, REFRESHED), start=SATURDAY - timedelta(seconds=1))
+    routine.observe_presence()
+    drive(routine, 71 * 60)
+    assert kinds(routine) == ["fetch", "fetched", "fetch", "fetched"]
+    assert routine.ledger.done(date(2026, 10, 10)) is False

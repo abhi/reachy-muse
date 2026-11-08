@@ -208,6 +208,12 @@ class MorningRoutine:
         self._ready_at = 0.0
         self._refreshed = False
         self._camera_day: date | None = None
+        self._presence_day: date | None = None
+
+    def observe_presence(self) -> None:
+        day = self.schedule.window_date(self.clock.now_local())
+        if day is not None and not self.ledger.done(day):
+            self._presence_day = day
 
     async def watch_camera(self) -> None:
         diagnostics_at = self.clock.monotonic() + 60
@@ -296,7 +302,11 @@ class MorningRoutine:
                     self._ready = None
                     log.info("Reachy morning briefing: window closed without an arrival")
                     return
-                if self._camera_day == day and self.camera.arrival() is not None:
+                face_at = getattr(self.camera, "face_seen_at", None)
+                if face_at is not None and 0 <= now - face_at <= 2:
+                    self.observe_presence()
+                if (self._presence_day == day
+                        or self._camera_day == day and self.camera.arrival() is not None):
                     self._arrived = True
                     self._arrived_on = day
                     if self._ready is not None and pending is not None:

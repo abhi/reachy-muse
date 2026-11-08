@@ -353,6 +353,10 @@ class ReachyController:
         return (self._face_follower is not None
                 and getattr(self._face_follower, "failure", None) is None)
 
+    @property
+    def face_seen_at(self) -> float | None:
+        return getattr(self._face_follower, "last_seen_at", None)
+
     def allow_face_tracking(self, enabled: bool) -> None:
         with self._state_lock:
             self._face_tracking_on = enabled

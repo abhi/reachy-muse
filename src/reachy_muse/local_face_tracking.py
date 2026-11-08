@@ -197,6 +197,7 @@ class FaceFollower:
         self._closed = False
         self._generation = 0
         self._target: FaceTarget | None = None
+        self.last_seen_at: float | None = None
         self._failure: Exception | None = None
         self._thread: threading.Thread | None = None
 
@@ -282,6 +283,8 @@ class FaceFollower:
                     with self._condition:
                         if self._active and self._generation == generation and not self._closed:
                             self._target = target
+                            if target is not None:
+                                self.last_seen_at = target.observed_at
                 with self._condition:
                     if self._closed:
                         return

@@ -277,7 +277,9 @@ def test_an_arrival_wakes_a_sleeping_reachy_before_it_greets(monkeypatch):
 
     async def user():
         await rig.wait_until_or_timeout(lambda: sent_to_muse(rig.recording.events), 5)
-        rig.say(wake=True)
+        from reachy_muse.device_command import WakeWindow
+        conversation._voice[1]._wake_window = WakeWindow.ASLEEP
+        rig.hardware.set_state("sleeping")
         await rig.quiet("sleeping")
         camera.arrive()
         await rig.wait_until_or_timeout(lambda: camera.calls == ["start", "stop"], 10)
@@ -285,7 +287,7 @@ def test_an_arrival_wakes_a_sleeping_reachy_before_it_greets(monkeypatch):
     conversation = service(rig, briefing, Transcripts("Hey Muse, go to sleep."), morning=morning(camera),
                            wake_detector=Wake(), wake_timeout_s=30)
     events = run(rig, conversation, user, rest=("listening", "idle"))
-    assert played(events) == ["tts:Good night.", *SPOKEN]
+    assert played(events) == SPOKEN
     after_sleep = states(events)[states(events).index("sleeping"):]
     awake = after_sleep[after_sleep.index("listening"):]
     assert awake[:2] == ["listening", "listening"]
@@ -446,3 +448,32 @@ def test_a_link_reconnect_reuses_briefing_state_only_in_the_same_vm_and_chat(mon
     assert played(rig.recording.events) == (SPOKEN if same_chat else [
         "tts:Good morning!", "tts:Markets fell overnight."])
     assert sent_to_muse(rig.recording.events) == ["Brief me."] * (1 if same_chat else 2)
+
+
+@pytest.mark.parametrize("source", ["voice", "wave", "face"])
+def test_briefing_accepts_other_cues_without_an_arrival_watcher_detection(monkeypatch, source):
+    from test_wave_conversation import WaveCamera, continuous_microphone
+    rig = rig_with(monkeypatch)
+    continuous_microphone(rig.hardware)
+    camera = Camera()
+    wave = WaveCamera(rig.hardware)
+    routine = morning(camera)
+    conversation = service(rig, briefing, Transcripts("Hey Muse."), morning=routine,
+                           wake_detector=Wake(), wave_wake=True)
+
+    async def user():
+        await rig.wait_until_or_timeout(lambda: routine._ready is not None, 5)
+        await rig.quiet()
+        if source == "voice":
+            rig.say(wake=True)
+        elif source == "wave":
+            await rig.wait_until_or_timeout(lambda: wave.active)
+            wave.pending = True
+        else:
+            camera.face_seen_at = time.monotonic()
+        await rig.wait_until_or_timeout(lambda: routine.ledger.done(datetime(2026, 10, 10).date()), 10)
+        assert camera.arrived is None
+
+    events = run(rig, conversation, user, rest=("listening", "idle"))
+    assert played(events).count("tts:Good morning!") == 1
+    assert [line for line in played(events) if line in SPOKEN] == SPOKEN
