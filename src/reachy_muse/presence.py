@@ -37,6 +37,9 @@ class PresenceFusion:
             previous = self._observations.get(source, Presence())
             last_seen = max((at for at in (previous.last_seen_at, observation.last_seen_at)
                              if at is not None), default=None)
+            if (previous.observed_at is not None
+                    and (observation.observed_at is None or observation.observed_at < previous.observed_at)):
+                observation = previous
             self._observations[source] = Presence(observation.present, observation.observed_at, last_seen)
 
     def mark(self, source: str, now: float) -> None:

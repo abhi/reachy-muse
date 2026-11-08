@@ -28,6 +28,33 @@ def test_observations_expire_but_keep_rough_last_seen_age():
     assert state.result(56) == {"ok": True, "present": None, "last_seen_seconds": 6}
 
 
+def test_concurrent_presence_reads_cannot_replace_a_newer_camera_absence(monkeypatch):
+    monkeypatch.setattr("reachy_muse.conversation.time.monotonic", lambda: 102)
+    entered, release = threading.Event(), threading.Event()
+
+    def observations():
+        if not entered.is_set():
+            entered.set()
+            assert release.wait(2)
+            return {"camera": Presence(True, 101, 101)}
+        return {"camera": Presence(False, 102, 100)}
+
+    service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"),
+                           executor=SimpleNamespace(presence_observations=observations),
+                           backends=lambda _: None)
+    with ThreadPoolExecutor(max_workers=2) as commands:
+        older = commands.submit(service.presence_result)
+        try:
+            assert entered.wait(2)
+            assert commands.submit(service.presence_result).result(2)["present"] is False
+        finally:
+            release.set()
+        assert older.result(2) == {
+            "present": False, "last_seen_seconds": 1, "source": "camera", "available": False}
+    assert service.presence_result() == {
+        "present": False, "last_seen_seconds": 1, "source": "camera", "available": False}
+
+
 def test_camera_check_reads_one_frame_and_retains_no_images(monkeypatch):
     import gc
     import weakref
