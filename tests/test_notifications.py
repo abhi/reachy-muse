@@ -128,6 +128,44 @@ def test_turn_starting_during_the_attention_gesture_keeps_the_item_queued():
     asyncio.run(check())
 
 
+def test_turn_starting_during_synthesis_defers_notification_until_available(tmp_path):
+    from test_registered_commands import np
+
+    async def check():
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        class DelayedSpeech:
+            async def stream(self, text, rate):
+                entered.set()
+                await release.wait()
+                yield np.full(320, .1, dtype=np.float32)
+
+        service, voice, _ = command_device(speech=DelayedSpeech())
+        service.inbox = Inbox(tmp_path / "inbox.json")
+        voice.notifications = Notifications(service.inbox, service.presence_result, voice)
+        service._presence.mark("voice", time.monotonic())
+        delivery = asyncio.create_task(notify(service, **{**notice(), "mode": "now"}))
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            voice._turn_active = True
+        finally:
+            release.set()
+        assert await delivery == {"ok": True, "payload": {"status": "queued", "reason": "busy"}}
+        assert voice.hardware.played == []
+        assert Inbox(tmp_path / "inbox.json").pending()["text"] == "Call Mom."
+        await voice.notifications.deliver(30)
+        assert voice.hardware.played == []
+        voice._turn_active = False
+        await voice.notifications.deliver(30)
+        assert [samples.tolist() for samples in voice.hardware.played] == [
+            np.full(320, .1, dtype=np.float32).tolist()]
+        assert service.inbox.pending() is None
+        assert service.inbox.result("n1") == {"ok": True, "status": "delivered", "reason": "spoken"}
+        await voice.notifications.deliver(30)
+        assert len(voice.hardware.played) == 1
+    asyncio.run(check())
+
+
 def test_expiry_during_gesture_drops_the_item_without_speech():
     async def check():
         service, voice, speech = device()

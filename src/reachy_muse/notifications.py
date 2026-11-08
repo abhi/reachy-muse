@@ -57,10 +57,16 @@ class Notifications:
             if (not self.available() or self.presence()["present"] is False
                     or time.monotonic() >= deadline):
                 return
-            if not self.inbox.claim(item):
-                return
+            claimed = False
+            def claim():
+                nonlocal claimed
+                claimed = self.inbox.claim(item)
+                return claimed
             result = await self.voice.say(
                 item["text"], max(0, deadline - time.monotonic()),
+                before_audio=claim,
                 allowed=lambda: (self.presence()["present"] is not False
                                  and self.inbox.current(item)))
+            if not claimed and result.get("reason") in ("busy", "asleep", "hushed", "not_ready", "unavailable", "interrupted"):
+                return
             self.inbox.finish(item, spoken=result["spoken"], reason=result.get("reason", "spoken"))

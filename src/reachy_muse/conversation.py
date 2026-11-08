@@ -2832,9 +2832,20 @@ class VoiceConversation:
             return "speech_unavailable"
         return None
 
-    async def say(self, text: str, timeout_s: float, *, speech_serial: int | None = None, allowed=None) -> dict:
+    async def say(self, text: str, timeout_s: float, *, speech_serial: int | None = None,
+                  allowed=None, before_audio=None) -> dict:
         """Queue one bounded line with the same speaker ownership as replies."""
         speech_serial = next(_SPEECH_SERIALS) if speech_serial is None else speech_serial
+        started = False
+        def allow_audio():
+            nonlocal started
+            if allowed is not None and not allowed():
+                return False
+            if not started:
+                if self._say_blocked() is not None or (before_audio is not None and not before_audio()):
+                    return False
+                started = True
+            return True
         task = asyncio.current_task()
         self._command_tasks.add(task)
         try:
@@ -2843,7 +2854,7 @@ class VoiceConversation:
                 try:
                     await asyncio.wait_for(self._speak(
                         None, text=text, stream_segment=True, voice=self.backends.command_voice,
-                        speech_serial=speech_serial, allowed=allowed,
+                        speech_serial=speech_serial, allowed=allow_audio,
                         is_current=lambda: self._say_blocked() is None and (allowed is None or allowed())), timeout_s)
                 except _SpeechSuperseded:
                     reason = self._say_blocked() or "interrupted"

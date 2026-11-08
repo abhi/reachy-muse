@@ -194,7 +194,7 @@ class Inbox:
             item = self._items.get(pending["id"])
             if item is not None and item["generation"] == pending["generation"]:
                 item.update(status="delivered" if spoken else "refused", reason=reason,
-                            delivered_at=self.clock() if spoken else None)
+                            delivered_at=self.clock() if spoken else None, text=None)
                 self._save()
 
     def result(self, id: str) -> dict:
