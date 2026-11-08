@@ -2825,7 +2825,7 @@ class VoiceConversation:
         if self._say_hushed:
             return "hushed"
         if (self._turn_active or self.job is not None or self._hearing_open() or self._playback.user_speaking
-                or (self.call is not None and self.call.audible)):
+                or (self.call is not None and (self.call.audible or getattr(self.call, "working", False)))):
             return "busy"
         if not (self.backends.command_voice or self.backends.voice).speaks_text:
             return "speech_unavailable"

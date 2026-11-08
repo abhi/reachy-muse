@@ -54,7 +54,7 @@ def test_now_gestures_then_speaks_once_and_never_logs_text(tmp_path, caplog):
     assert "A private reminder" not in caplog.text
 
 
-@pytest.mark.parametrize("blocked", ["absent", "asleep", "hushed", "turn", "hearing", "output", "wake"])
+@pytest.mark.parametrize("blocked", ["absent", "asleep", "hushed", "turn", "hearing", "output", "wake", "realtime"])
 def test_now_queues_until_presence_and_availability_allow_fifo_delivery(blocked):
     async def check():
         service, voice, speech = device()
@@ -72,6 +72,9 @@ def test_now_queues_until_presence_and_availability_allow_fifo_delivery(blocked)
             voice._output_busy = True
         elif blocked == "wake":
             voice._wake_first_request_pending = True
+        elif blocked == "realtime":
+            from types import SimpleNamespace
+            voice.call = SimpleNamespace(audible=False, working=True)
         assert (await notify(service, **{**notice("a", "First."), "mode": "now"}))["payload"]["status"] == "queued"
         assert (await notify(service, **notice("b", "Second.", kind="suggestion")))["payload"]["status"] == "queued"
         await voice.notifications.deliver(30)
@@ -80,6 +83,7 @@ def test_now_queues_until_presence_and_availability_allow_fifo_delivery(blocked)
         voice._wake_window = WakeWindow.AWAKE
         voice._say_hushed = voice._turn_active = voice._output_busy = voice._wake_first_request_pending = False
         voice._hearing_open = lambda: False
+        voice.call = None
         await voice.notifications.deliver(30)
         assert speech.words == ["First."]
         assert service.inbox.result("b")["status"] == "queued"
