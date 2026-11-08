@@ -499,6 +499,63 @@ def test_the_sdk_s_two_flush_callbacks_preserve_fresh_audio_that_arrives_during_
     assert asyncio.run(asyncio.wait_for(scenario(), 5)) == (1, 1920)
 
 
+@pytest.mark.parametrize("interruption", ["call", "sdk"])
+def test_interrupting_a_completed_reply_retires_motion_after_the_sdk_queue_drains(interruption):
+    from musegadget import voice_call as sdk
+    from reachy_muse.realtime_call import _SilentOutput
+    from test_conversation import FakeHardware, FakeSession
+    from test_turn_pacing import Labels, conversation_for
+
+    async def scenario():
+        entered, release = threading.Event(), threading.Event()
+
+        class Hardware(FakeHardware):
+            output_sample_rate = 24000
+
+            def play_audio(self, samples):
+                entered.set()
+                assert release.wait(3)
+                super().play_audio(samples)
+
+        hardware = Hardware()
+        voice = conversation_for(Labels(), hardware, "")(FakeSession())
+
+        async def nothing():
+            pass
+
+        motion = ReplyMotion()
+        speaker = RealtimeSpeaker(hardware, motion, on_audible=lambda *args: None,
+                                  on_start=nothing, on_idle=nothing)
+        call = voice.call = RealtimeCall(MicrophoneFeed(16000), speaker, motion,
+                                         on_working=lambda working: None, on_reply_done=voice._muse_replied)
+        remote = call.voice_call = sdk.VoiceCall(object(), device_id="homelink-synthetic", on_event=call.on_event)
+        remote._output = _SilentOutput(call)
+        playing = asyncio.create_task(remote._play())
+        try:
+            remote._emit(sdk.ResponseStarted("r1"))
+            remote._emit(sdk.TranscriptDone("r1", "Great news, your flight is booked!"))
+            remote._queue_pcm(tone(.08), "r1")
+            remote._emit(sdk.ResponseDone("r1", "completed"))
+            assert await asyncio.to_thread(entered.wait, 2)
+            while remote._playback:
+                await asyncio.sleep(.01)
+            assert call.audible
+            assert motion.closing("r1").value == "happy"
+            interrupted = asyncio.create_task(call.barge_in() if interruption == "call" else remote.barge_in())
+            await asyncio.sleep(0)
+            release.set()
+            await interrupted
+            await asyncio.gather(*voice._call_tasks)
+            return hardware.commands
+        finally:
+            release.set()
+            playing.cancel()
+            await asyncio.gather(playing, return_exceptions=True)
+            await call.close()
+
+    assert asyncio.run(asyncio.wait_for(scenario(), 5)) == []
+
+
 def test_a_voice_link_that_will_not_connect_leaves_the_next_call_failed_and_the_chat_path_open():
     async def scenario():
         async def refuse():

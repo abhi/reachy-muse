@@ -268,6 +268,7 @@ class RealtimeSpeaker:
         self._response_id: Optional[str] = None
         self._audible_responses: dict[Optional[str], float] = {}
         self._replies: list = []
+        self._pending_replies: set[Optional[str]] = set()
         self.reply_started: Optional[float] = None
 
     @property
@@ -283,6 +284,7 @@ class RealtimeSpeaker:
     def chunk(self, response_id: Optional[str], offset: int, pcm: bytes) -> None:
         if self._closed or self.failed.done():
             return
+        self._pending_replies.add(response_id)
         self._queue.put_nowait(_Chunk(response_id, offset, pcm))
         self._start()
 
@@ -293,6 +295,8 @@ class RealtimeSpeaker:
             done = asyncio.get_running_loop().create_future()
             done.set_result(None)
             return done
+        self._motion.flushed(self._pending_replies)
+        self._pending_replies.clear()
         while not self._queue.empty():
             self._queue.get_nowait()
         if flushing:
@@ -445,6 +449,7 @@ class RealtimeSpeaker:
         self._audible_text = None
         replies, self._replies = self._replies, []
         for response_id in replies:
+            self._pending_replies.discard(response_id)
             self._motion.audio_done(response_id)
             report = self._motion.report(response_id)
             if report is not None:
