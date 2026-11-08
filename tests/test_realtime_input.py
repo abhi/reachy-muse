@@ -11,7 +11,7 @@ class Feed:
     def __init__(self):
         self.samples = []
 
-    def push(self, samples):
+    def push(self, samples, *, silent=False):
         self.samples.extend(samples.tolist())
 
 

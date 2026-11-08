@@ -119,13 +119,20 @@ def test_the_microphone_keeps_a_whole_request_while_the_call_is_still_being_admi
     assert asyncio.run(scenario()) == 300
 
 
-def test_the_live_microphone_catches_up_through_silence_with_the_paced_sdk():
+@pytest.mark.parametrize("background", [0, -32])
+def test_the_live_microphone_catches_up_through_silence_with_the_paced_sdk(background):
     from musegadget import voice_call as sdk
+    from reachy_muse.realtime_call import CallInput
 
     async def scenario():
         feed = MicrophoneFeed(24000)
-        feed.push(np.zeros(48000, np.float32))
+        gate = CallInput(feed, 24000)
+        noise = np.random.default_rng(8).uniform(background, 0, 960).astype(np.float32) / 32767
+        for index in range(50):
+            gate.push(noise, speaking=False,
+                      quiet_s=(index + 1) * .04, text="", playback=False, heard_over=())
         received = []
+        uploaded = []
         produced = {}
         loop = asyncio.get_running_loop()
 
@@ -133,7 +140,8 @@ def test_the_live_microphone_catches_up_through_silence_with_the_paced_sdk():
             async def _event(self, event):
                 pcm = base64.b64decode(event["audio"])
                 value = np.frombuffer(pcm, "<i2")[0]
-                if value:
+                uploaded.append(int(value))
+                if value > 0:
                     received.append((int(value), loop.time() - produced[value]))
 
         call = Call(object(), device_id="synthetic", half_duplex=False)
@@ -143,13 +151,17 @@ def test_the_live_microphone_catches_up_through_silence_with_the_paced_sdk():
         try:
             for index in range(75):
                 await asyncio.sleep(max(0, started + index * .04 - loop.time()))
-                value = index + 1 if index < 5 or index >= 65 else 0
-                if value:
+                value = index + 1 if index < 5 or index >= 65 else background
+                if value > 0:
                     produced[value] = loop.time()
-                feed.push(np.full(960, value / 32767, np.float32))
+                sample = np.full(960, value / 32767, np.float32) if value > 0 else noise
+                gate.push(sample, speaking=value > 0,
+                          quiet_s=0 if value > 0 else (index - 4) * .04,
+                          text="", playback=False, heard_over=())
             await asyncio.sleep(.6)
-            assert [value for value, _ in received] == [1, 2, 3, 4, 5, *range(66, 76)]
             assert max(delay for _, delay in received) < .6
+            assert [value for value, _ in received] == [1, 2, 3, 4, 5, *range(66, 76)]
+            assert uploaded.index(66) - uploaded.index(5) - 1 >= 10
         finally:
             feed.close()
             uploader.cancel()
@@ -158,8 +170,32 @@ def test_the_live_microphone_catches_up_through_silence_with_the_paced_sdk():
     asyncio.run(scenario())
 
 
+def test_silence_catch_up_preserves_a_frame_that_contains_partial_speech():
+    async def scenario():
+        feed = MicrophoneFeed(24000)
+        feed.push(np.full(48000, -32 / 32767, np.float32), silent=True)
+        feed.push(np.full(240, 64 / 32767, np.float32))
+        feed.push(np.full(48000 - 240, -32 / 32767, np.float32), silent=True)
+        frames = []
+
+        async def drain():
+            frames.extend([frame async for frame in feed])
+
+        reader = asyncio.create_task(drain())
+        await asyncio.sleep(0)
+        feed.close()
+        await reader
+        return np.frombuffer(b"".join(frames), "<i2").tolist()
+
+    assert asyncio.run(scenario()) == [-32] * 9600 + [64] * 240 + [-32] * (720 + 9600)
+
+
 @pytest.mark.parametrize("live", [False, True])
-def test_the_microphone_keeps_quiet_recorded_speech_after_a_connection_delay(live):
+@pytest.mark.parametrize("silence_metadata", [False, True])
+def test_the_microphone_keeps_quiet_recorded_speech_after_a_connection_delay(live, silence_metadata):
+    from reachy_muse.realtime_call import CallInput
+    from reachy_muse.voice_audio import TurnRecorder
+
     vad = pytest.importorskip("webrtcvad").Vad(2)
     path = Path(__file__).parent / "companion_server" / "data" / "negation.wav"
     with wave.open(str(path)) as wav:
@@ -173,8 +209,14 @@ def test_the_microphone_keeps_quiet_recorded_speech_after_a_connection_delay(liv
 
     async def scenario():
         feed = MicrophoneFeed(24000)
+        gate = CallInput(feed, 24000)
+        recorder = TurnRecorder(24000)
         for start in range(0, len(request), 960):
-            feed.push(request[start:start + 960].astype(np.float32) / 32767)
+            sample = request[start:start + 960].astype(np.float32) / 32767
+            recorder.feed(sample)
+            gate.push(sample, speaking=recorder.speech_active and recorder.quiet_s == 0,
+                      quiet_s=recorder.quiet_s if silence_metadata else 0,
+                      text="", playback=False, heard_over=())
         frames = []
 
         async def drain():

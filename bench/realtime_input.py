@@ -65,7 +65,8 @@ def pipeline(audio, repeats, vad):
                 heard = turn.take()
                 gate.push(chunk, speaking=turn.speech_active and turn.quiet_s == 0,
                           text="sunny tomorrow", playback=True,
-                          heard_over=("It will be sunny tomorrow. Would you like a reminder?",))
+                          heard_over=("It will be sunny tomorrow. Would you like a reminder?",),
+                          quiet_s=turn.quiet_s)
                 if heard.ended is not None:
                     heard.ended.cancel()
                     gate.reset()

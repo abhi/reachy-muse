@@ -1081,7 +1081,7 @@ class VoiceConversation:
                     confirmed_before = call.input.confirmed
                     call.input.push(sample, speaking=speaking and quiet_s == 0,
                                     text=partial.text if partial else "", playback=playback,
-                                    heard_over=tuple(heard_over))
+                                    heard_over=tuple(heard_over), quiet_s=quiet_s)
                     speaking = speaking and (not playback or call.input.confirmed)
                     if call.audible and call.input.confirmed and not confirmed_before:
                         self._barge_in_call()

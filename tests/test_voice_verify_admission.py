@@ -51,7 +51,7 @@ def test_verified_paused_command_fits_cli_streaming_queue(handoff, model, worker
             async def run(conversation, session, hardware, wake, recognition, recordings, accepted, feed):
                 commands = []
                 call = SimpleNamespace(done=False, failed=False, audio_sent=True, awaiting_answer=False,
-                                       audible=False, feed=SimpleNamespace(push=lambda samples: None),
+                                       audible=False, feed=SimpleNamespace(push=lambda samples, silent=False: None),
                                        audible_transcripts=lambda seconds: ())
                 call.input = CallInput(call.feed, hardware.sample_rate)
                 conversation._open_call = lambda: setattr(conversation, "call", call)
@@ -230,7 +230,8 @@ def test_call_failure_before_verified_release_preserves_chat_request(handoff, mo
                 conversation.realtime.usable = False
 
             call = SimpleNamespace(done=False, failed=True, audio_sent=False, awaiting_answer=False,
-                                   audible=False, close=close, feed=SimpleNamespace(push=lambda samples: None))
+                                   audible=False, close=close,
+                                   feed=SimpleNamespace(push=lambda samples, silent=False: None))
             call.input = CallInput(call.feed, hardware.sample_rate)
             conversation.realtime = SimpleNamespace(usable=True, call_failed=failed, chat_turn=lambda: None)
             conversation._open_call = lambda: setattr(conversation, "call", call)

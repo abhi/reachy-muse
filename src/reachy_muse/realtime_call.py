@@ -74,9 +74,9 @@ class CallInput:
         self.sent_speech = False
 
     def push(self, samples, *, speaking: bool, text: str, playback: bool,
-             heard_over: tuple[str, ...]) -> bool:
+             heard_over: tuple[str, ...], quiet_s: float = 0.0) -> bool:
         if not playback or self.confirmed:
-            self.feed.push(samples)
+            self.feed.push(samples, silent=quiet_s >= len(samples) / self.rate + FRAME_SAMPLES / SAMPLE_RATE)
             self.sent_speech = self.sent_speech or speaking
             return speaking
         if repeats_playback(text, heard_over):
@@ -185,8 +185,8 @@ class MicrophoneFeed:
     """Reachy's microphone as a call's input: 24 kHz PCM16 frames.
 
     Frames wait here until the call is ready, for as long as connecting and admission can take,
-    so Muse hears a request from its first word. Live catch-up skips only digital silence,
-    keeping 400 ms of each pause and every nonzero frame. Closing drains the remaining audio.
+    so Muse hears a request from its first word. Live catch-up skips confirmed silence,
+    keeping the last 400 ms of each pause. Closing drains the remaining audio.
     ``sent`` counts frames the call has taken.
     """
 
@@ -194,20 +194,23 @@ class MicrophoneFeed:
         self.input_rate = input_rate
         self._resample = _Resampler(input_rate, SAMPLE_RATE, output="s16")
         self._pending = np.zeros(0, dtype=np.int16)
-        self._frames: deque[bytes] = deque(maxlen=int(BACKLOG_S * SAMPLE_RATE / FRAME_SAMPLES))
+        self._pending_silent = True
+        self._frames: deque[tuple[bytes, bool]] = deque(maxlen=int(BACKLOG_S * SAMPLE_RATE / FRAME_SAMPLES))
         self._arrived = asyncio.Event()
         self._closed = False
-        self._silent_frames = 0
         self.sent = 0
 
-    def push(self, samples: np.ndarray) -> None:
+    def push(self, samples: np.ndarray, *, silent: bool = False) -> None:
         if self._closed or not len(samples):
             return
         data = np.concatenate([self._pending, self._resample(samples)])
         whole = len(data) // FRAME_SAMPLES * FRAME_SAMPLES
         for start in range(0, whole, FRAME_SAMPLES):
-            self._frames.append(data[start:start + FRAME_SAMPLES].astype("<i2").tobytes())
+            pcm = data[start:start + FRAME_SAMPLES].astype("<i2").tobytes()
+            quiet = pcm == SILENT_FRAME or silent and (start > 0 or self._pending_silent)
+            self._frames.append((pcm, quiet))
         self._pending = data[whole:]
+        self._pending_silent = not len(self._pending) or silent and (whole > 0 or self._pending_silent)
         if whole:
             self._arrived.set()
 
@@ -220,13 +223,17 @@ class MicrophoneFeed:
 
     async def __anext__(self) -> bytes:
         while True:
-            while (not self._closed and self._silent_frames >= CATCH_UP_FRAMES
-                   and len(self._frames) > CATCH_UP_FRAMES and self._frames[0] == SILENT_FRAME):
-                self._frames.popleft()
+            if not self._closed:
+                quiet = 0
+                for _, silent in self._frames:
+                    if not silent:
+                        break
+                    quiet += 1
+                for _ in range(quiet - CATCH_UP_FRAMES):
+                    self._frames.popleft()
             if self._frames:
                 self.sent += 1
-                frame = self._frames.popleft()
-                self._silent_frames = self._silent_frames + 1 if frame == SILENT_FRAME else 0
+                frame, _ = self._frames.popleft()
                 return frame
             if self._closed:
                 raise StopAsyncIteration
