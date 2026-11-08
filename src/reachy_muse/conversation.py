@@ -214,13 +214,19 @@ class _CaptureBuffer:
         self.gap = False
         self.gap_reason = None
         self.generation = 0
+        self.discarded = asyncio.Event()
 
-    def discard_pending(self) -> None:
+    async def discard_pending(self) -> None:
+        self.discarded = asyncio.Event()
         self.generation += 1
         self.chunks.clear()
         self.samples = 0
         self.gap = False
         self.gap_reason = None
+        if self.error is None:
+            await self.discarded.wait()
+        if self.error is not None:
+            raise self.error
 
     def push(self, samples, *, discard: bool = False, gap: bool = False,
              gap_reason: str | None = None, captured_at: float | None = None,
@@ -249,6 +255,7 @@ class _CaptureBuffer:
     def fail(self, error: Exception) -> None:
         self.error = error
         self.available.set()
+        self.discarded.set()
 
     async def get(self) -> _CapturedAudio | None:
         if not self.chunks and self.error is None:
@@ -1479,6 +1486,7 @@ class VoiceConversation:
                         await asyncio.to_thread(self.hardware.gesture, "wave")
                         log.info("Wave back cues=1")
                         continue
+                    await capture.discard_pending()
                     self._attend_wake(time.monotonic(), angle=getattr(self.hardware, "wave_direction", None))
                     asleep = self._wake_window is WakeWindow.ASLEEP
                     wake_epoch += 1
@@ -1495,7 +1503,6 @@ class VoiceConversation:
                     pre_roll_samples = 0
                     if wake is not None:
                         await asyncio.to_thread(wake.reset)
-                    capture.discard_pending()
                     await asyncio.to_thread(self.hardware.gesture, "wave")
 
                     async def greet_after_wave(was_asleep=asleep, turn_started=self._turn_started):
@@ -1734,13 +1741,15 @@ class VoiceConversation:
             nonlocal pending_samples, scheduled, overflow
             last_sample = time.monotonic()
             previous_duration = None
-            generation = capture.generation
+            generation = 0
             try:
                 while not stop.is_set():
                     muted_at_start = self._input_blocked()
                     reader = self.hardware.read_audio
+                    discarded = None
                     if generation != capture.generation:
                         generation = capture.generation
+                        discarded = capture.discarded
                         previous_duration = None
                         reader = self.hardware.discard_microphone
                     sample = reader()
@@ -1750,6 +1759,8 @@ class VoiceConversation:
                         budget.observe("capture", duration, now=now)
                     if generation != capture.generation:
                         continue
+                    if discarded is not None:
+                        loop.call_soon_threadsafe(discarded.set)
                     if not duration:
                         if now - last_sample > 15:
                             raise ReachyHardwareError("Reachy microphone supplied no audio for 15 seconds")

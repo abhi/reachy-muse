@@ -237,8 +237,10 @@ def test_pre_wave_in_flight_microphone_read_is_discarded():
         task = asyncio.create_task(conversation._capture_microphone(capture))
         try:
             assert await asyncio.to_thread(entered.wait, 2)
-            capture.discard_pending()
+            discarding = asyncio.create_task(capture.discard_pending())
+            await asyncio.sleep(0)
             release.set()
+            await discarding
             while len(reads) < 2:
                 await asyncio.sleep(.001)
             assert await capture.get() is None
@@ -299,9 +301,10 @@ def test_wave_discards_sdk_backlog_before_recognition(monkeypatch, post_wave_spe
         rig.say()
         assert await asyncio.to_thread(entered.wait, 2)
         camera.pending = True
+        await rig.wait_until_or_timeout(lambda: not camera.active)
+        release.set()
         await rig.wait_until_or_timeout(lambda: "tts:Yes?" in played(rig.recording.events))
         await rig.quiet("listening", "idle")
-        release.set()
         assert await asyncio.to_thread(drained.wait, 2)
         await rig.quiet("listening", "idle")
         if post_wave_speech:
@@ -563,14 +566,21 @@ def test_speech_during_wave_reaches_realtime_from_its_first_sample(monkeypatch):
     rig.hardware.sample_rate = 24000
     camera = WaveCamera(rig.hardware)
     calls = ScriptedCalls(reply=None)
-    drained = threading.Event()
+    flushing, release = threading.Event(), threading.Event()
     discard = rig.hardware.discard_microphone
+    gesture = rig.hardware.gesture
 
     def discard_microphone():
+        flushing.set()
+        assert release.wait(3)
         discard()
-        drained.set()
+
+    def speak_at_gesture(name):
+        rig.hardware.samples.put(np.full(480, .75, np.float32))
+        gesture(name)
 
     rig.hardware.discard_microphone = discard_microphone
+    rig.hardware.gesture = speak_at_gesture
 
     async def muse(session, request):
         raise AssertionError("A realtime request must not also go to chat")
@@ -581,16 +591,21 @@ def test_speech_during_wave_reaches_realtime_from_its_first_sample(monkeypatch):
 
     async def user():
         camera.pending = True
+        assert await asyncio.to_thread(flushing.wait, 2)
+        await asyncio.sleep(.1)
+        release.set()
         await rig.wait_until_or_timeout(lambda: bool(rig.hardware.gestures))
-        assert await asyncio.to_thread(drained.wait, 2)
         for value in [.25] * 50 + [.5] * 50 + [0] * 25:
             rig.hardware.samples.put(np.full(480, value, np.float32))
             await asyncio.sleep(.02)
 
-    events = run(rig, conversation, user, rest=("idle", "listening"))
+    try:
+        events = run(rig, conversation, user, rest=("idle", "listening"))
+    finally:
+        release.set()
     pcm = np.frombuffer(b"".join(calls.frames), "<i2")
-    assert [int(np.count_nonzero(pcm == value)) for value in (8192, 16384)] == [24000, 24000]
-    np.testing.assert_array_equal(pcm[pcm != 0], [8192] * 24000 + [16384] * 24000)
+    assert [int(np.count_nonzero(pcm == value)) for value in (24575, 8192, 16384)] == [480, 24000, 24000]
+    np.testing.assert_array_equal(pcm[pcm != 0], [24575] * 480 + [8192] * 24000 + [16384] * 24000)
     assert sent_to_muse(events) == []
     assert played(events) == []
 
@@ -601,7 +616,6 @@ def test_speech_during_wave_reaches_realtime_from_its_first_sample(monkeypatch):
 ])
 def test_short_request_during_wave_omits_the_delayed_greeting(
         monkeypatch, muse_path, expected_requests, expected_playback):
-    import threading
     import numpy as np
     from reachy_muse.realtime_call import realtime_supported
     from test_realtime_turns import ScriptedCalls, StreamingTranscripts, reply_events, rig_for, room, voiced
@@ -611,14 +625,6 @@ def test_short_request_during_wave_omits_the_delayed_greeting(
     rig = rig_for(monkeypatch)
     camera = WaveCamera(rig.hardware)
     reply = asyncio.Event()
-    drained = threading.Event()
-    discard = rig.hardware.discard_microphone
-
-    def discard_microphone():
-        discard()
-        drained.set()
-
-    rig.hardware.discard_microphone = discard_microphone
 
     async def answer(sdk, emit, script):
         emit(sdk.Working(True))
@@ -639,7 +645,6 @@ def test_short_request_during_wave_omits_the_delayed_greeting(
     async def user():
         camera.pending = True
         await rig.wait_until_or_timeout(lambda: bool(rig.hardware.gestures))
-        assert await asyncio.to_thread(drained.wait, 2)
         for value in [.3] * 33 + [0] * 45:
             rig.hardware.samples.put(np.full(320, value, np.float32))
         try:
