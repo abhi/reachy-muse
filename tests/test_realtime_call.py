@@ -119,7 +119,47 @@ def test_the_microphone_keeps_a_whole_request_while_the_call_is_still_being_admi
     assert asyncio.run(scenario()) == 300
 
 
-def test_the_microphone_keeps_quiet_recorded_speech_after_a_connection_delay():
+def test_the_live_microphone_catches_up_through_silence_with_the_paced_sdk():
+    from musegadget import voice_call as sdk
+
+    async def scenario():
+        feed = MicrophoneFeed(24000)
+        feed.push(np.zeros(48000, np.float32))
+        received = []
+        produced = {}
+        loop = asyncio.get_running_loop()
+
+        class Call(sdk.VoiceCall):
+            async def _event(self, event):
+                pcm = base64.b64decode(event["audio"])
+                value = np.frombuffer(pcm, "<i2")[0]
+                if value:
+                    received.append((int(value), loop.time() - produced[value]))
+
+        call = Call(object(), device_id="synthetic", half_duplex=False)
+        call.ready.set()
+        uploader = asyncio.create_task(call._input(feed, True))
+        started = loop.time()
+        try:
+            for index in range(75):
+                await asyncio.sleep(max(0, started + index * .04 - loop.time()))
+                value = index + 1 if index < 5 or index >= 65 else 0
+                if value:
+                    produced[value] = loop.time()
+                feed.push(np.full(960, value / 32767, np.float32))
+            await asyncio.sleep(.6)
+            assert [value for value, _ in received] == [1, 2, 3, 4, 5, *range(66, 76)]
+            assert max(delay for _, delay in received) < .6
+        finally:
+            feed.close()
+            uploader.cancel()
+            await asyncio.gather(uploader, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("live", [False, True])
+def test_the_microphone_keeps_quiet_recorded_speech_after_a_connection_delay(live):
     vad = pytest.importorskip("webrtcvad").Vad(2)
     path = Path(__file__).parent / "companion_server" / "data" / "negation.wav"
     with wave.open(str(path)) as wav:
@@ -135,12 +175,25 @@ def test_the_microphone_keeps_quiet_recorded_speech_after_a_connection_delay():
         feed = MicrophoneFeed(24000)
         for start in range(0, len(request), 960):
             feed.push(request[start:start + 960].astype(np.float32) / 32767)
+        frames = []
+
+        async def drain():
+            frames.extend([frame async for frame in feed])
+
+        reader = asyncio.create_task(drain())
+        if live:
+            await asyncio.sleep(0)
         feed.close()
-        return [frame async for frame in feed]
+        await reader
+        return frames
 
     frames = asyncio.run(scenario())
-    assert len(frames) == 230
-    assert b"".join(frames) == request.tobytes()
+    if live:
+        expected = [request[start:start + 960].tobytes() for start in range(0, len(request), 960)]
+        assert [frame for frame in frames if any(frame)] == [frame for frame in expected if any(frame)]
+    else:
+        assert len(frames) == 230
+        assert b"".join(frames) == request.tobytes()
 
 
 class Speaker:

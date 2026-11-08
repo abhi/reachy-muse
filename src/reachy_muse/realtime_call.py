@@ -35,6 +35,8 @@ from reachy_muse.follow_up import FollowUp, classify_follow_up, repeats_playback
 log = logging.getLogger(__name__)
 
 FRAME_SAMPLES = 960
+CATCH_UP_FRAMES = 10
+SILENT_FRAME = bytes(FRAME_SAMPLES * 2)
 LINK_TIMEOUT_S = 10.0
 READY_TIMEOUT_S = 8.0
 BACKLOG_S = LINK_TIMEOUT_S + READY_TIMEOUT_S + 2.0
@@ -183,7 +185,8 @@ class MicrophoneFeed:
     """Reachy's microphone as a call's input: 24 kHz PCM16 frames.
 
     Frames wait here until the call is ready, for as long as connecting and admission can take,
-    so Muse hears a request from its first word. Then they go out at the call's real-time pace.
+    so Muse hears a request from its first word. Live catch-up skips only digital silence,
+    keeping 400 ms of each pause and every nonzero frame. Closing drains the remaining audio.
     ``sent`` counts frames the call has taken.
     """
 
@@ -194,6 +197,7 @@ class MicrophoneFeed:
         self._frames: deque[bytes] = deque(maxlen=int(BACKLOG_S * SAMPLE_RATE / FRAME_SAMPLES))
         self._arrived = asyncio.Event()
         self._closed = False
+        self._silent_frames = 0
         self.sent = 0
 
     def push(self, samples: np.ndarray) -> None:
@@ -216,9 +220,14 @@ class MicrophoneFeed:
 
     async def __anext__(self) -> bytes:
         while True:
+            while (not self._closed and self._silent_frames >= CATCH_UP_FRAMES
+                   and len(self._frames) > CATCH_UP_FRAMES and self._frames[0] == SILENT_FRAME):
+                self._frames.popleft()
             if self._frames:
                 self.sent += 1
-                return self._frames.popleft()
+                frame = self._frames.popleft()
+                self._silent_frames = self._silent_frames + 1 if frame == SILENT_FRAME else 0
+                return frame
             if self._closed:
                 raise StopAsyncIteration
             self._arrived.clear()
