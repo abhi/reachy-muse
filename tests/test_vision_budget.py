@@ -26,7 +26,7 @@ def test_coverage_throttles_then_suspends_and_restores_in_steps(caplog):
     assert [r.message for r in caplog.records] == [
         "Vision budget: throttled; capture audio coverage 0.260",
         "Vision budget: suspended; capture audio coverage 0.260",
-        "Vision budget: throttled; capture audio coverage 1.000",
+        "Vision budget: resumed at reduced rate; capture audio coverage 1.000",
         "Vision budget: normal; capture audio coverage 1.000",
     ]
 
@@ -98,3 +98,50 @@ def test_stopped_capture_clears_busy_and_coverage_until_a_fresh_start():
     assert budget.delay() == 1
     now[0] += .51
     assert budget.delay() == math.inf
+
+
+def test_persistent_loss_resumes_throttled_vision_after_one_minute(caplog):
+    now = [0.0]
+    budget = VisionBudget(clock=lambda: now[0])
+    budget.capture_active(True)
+    budget.observe("capture", 0)
+    budget.observe("wake", 0)
+    delays = []
+    for at in range(2, 182, 2):
+        now[0] = at
+        budget.observe("capture", 2)
+        budget.observe("wake", 1)
+        if at in (4, 62, 64, 180):
+            delays.append(budget.delay())
+    assert delays == [math.inf, math.inf, 3.0, 3.0]
+    assert [r.message for r in caplog.records] == [
+        "Vision budget: throttled; wake audio coverage 0.500",
+        "Vision budget: suspended; wake audio coverage 0.500",
+        "Vision budget: resumed at reduced rate; audio loss persists after 60s suspended",
+    ]
+    for at in range(182, 206, 2):
+        now[0] = at
+        budget.observe("capture", 2)
+        budget.observe("wake", 2)
+    assert budget.delay() == 1.0
+    now[0] = 206
+    budget.observe("wake", 1)
+    now[0] = 208
+    budget.observe("wake", 1)
+    assert budget.delay() == math.inf
+
+
+def test_suspension_expires_even_without_new_coverage_windows(caplog):
+    now = [0.0]
+    budget = VisionBudget(clock=lambda: now[0])
+    budget.capture_active(True)
+    budget.observe("wake", 0)
+    for at in (2, 4):
+        now[0] = at
+        budget.observe("wake", 1)
+    assert budget.level == 2
+    now[0] = 64
+    budget.observe("capture", .02)
+    assert budget.delay() == 3.0
+    assert budget.level == 1
+    assert caplog.text.count("resumed at reduced rate") == 1

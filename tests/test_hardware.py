@@ -2252,3 +2252,39 @@ def test_library_sentence_motion_uses_static_pose_when_clips_are_disabled(monkey
     assert controller._failure is None
     rolls = rolls_between(controller, robot, clock.spoken, clock.now)
     assert max(rolls) < .5 and min(rolls) < -4
+
+
+@pytest.mark.parametrize("busy", [False, True])
+def test_morning_arrival_sees_frames_and_detects_a_person_while_vision_is_suspended(busy):
+    from reachy_muse.arrival import ArrivalWatcher
+    from reachy_muse.vision_budget import VisionBudget
+    from test_arrival import camera_with_frame_clock, empty_room, MarkedPeople, room, with_person
+
+    frames = empty_room(2) + [with_person(room(), -12 + 8 * step) for step in range(20)]
+    read, clock, camera = camera_with_frame_clock(frames)
+    robot = FakeRobot()
+    robot.media.get_frame = read
+
+    def factory(reader, still, model):
+        return ArrivalWatcher(reader, lambda: True, model, sample_hz=10, clock=clock,
+                              detector_factory=lambda _: MarkedPeople())
+
+    controller = start_controller(robot, arrival_model=Path("public-test-model"),
+                                  arrival_watcher_factory=factory)
+    controller.vision_budget = VisionBudget(clock=lambda: 4)
+    budget = controller.vision_budget
+    budget.capture_active(True)
+    budget.observe("capture", 0, now=0)
+    budget.observe("capture", 1, now=2)
+    budget.observe("capture", 1, now=4)
+    budget.audio_busy(busy)
+    try:
+        assert budget.delay() == math.inf
+        assert controller._read_camera_frame() is None
+        controller.start_watching(None)
+        wait_until(lambda: controller.arrival() is not None)
+        assert controller.arrival() == pytest.approx(8 / 3)
+        stats = controller._arrival_watcher.take_stats()
+        assert (stats.frames, stats.frame_errors, camera["reads"]) == (9, 0, 9)
+    finally:
+        controller.close()

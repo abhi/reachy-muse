@@ -19,6 +19,8 @@ class VisionBudget:
         self._lock = threading.Lock()
         self._windows = {}
         self._healthy_since = None
+        self._suspended_at = None
+        self._probing = False
         self._capture_at = None
         self._capturing = False
         self._busy = False
@@ -26,11 +28,15 @@ class VisionBudget:
 
     def capture_active(self, active: bool) -> None:
         with self._lock:
+            if self.level == 2:
+                log.warning("Vision budget: resumed; capture %s", "restarted" if active else "stopped")
             self._capturing = active
             self._capture_at = self._clock() if active else None
             self._busy = False
             self._windows.clear()
             self._healthy_since = None
+            self._suspended_at = None
+            self._probing = False
             self.level = 0
 
     def audio_busy(self, busy: bool) -> None:
@@ -57,9 +63,10 @@ class VisionBudget:
             self._coverage(coverage, now, source)
 
     def _coverage(self, coverage, now, source):
+        self._resume_if_due(now)
         previous = self.level
         if coverage < .95:
-            self.level = min(2, self.level + 1)
+            self.level = min(1 if self._probing else 2, self.level + 1)
             self._healthy_since = None
         elif coverage >= .98:
             if self._healthy_since is None:
@@ -70,11 +77,24 @@ class VisionBudget:
         else:
             self._healthy_since = None
         if self.level != previous:
+            self._suspended_at = now if self.level == 2 else None
+            if self.level == 0:
+                self._probing = False
+            state = "resumed at reduced rate" if previous == 2 else ("normal", "throttled", "suspended")[self.level]
             log.warning("Vision budget: %s; %s audio coverage %.3f",
-                        ("normal", "throttled", "suspended")[self.level], source, coverage)
+                        state, source, coverage)
+
+    def _resume_if_due(self, now):
+        if self._suspended_at is not None and now - self._suspended_at >= 60:
+            self.level = 1
+            self._probing = True
+            self._suspended_at = None
+            self._healthy_since = None
+            log.warning("Vision budget: resumed at reduced rate; audio loss persists after 60s suspended")
 
     def delay(self) -> float:
         with self._lock:
+            self._resume_if_due(self._clock())
             if (self._busy or self.level == 2 or self._capture_at is not None
                     and self._clock() - self._capture_at > .5):
                 return math.inf

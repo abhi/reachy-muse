@@ -15,7 +15,7 @@ from reachy_muse.hardware import ReachyController
 from reachy_muse import cli
 
 
-def test_morning_watch_drains_wave_and_uses_the_same_camera_reader():
+def test_morning_watch_drains_wave_and_shares_the_camera_with_priority():
     events, readers = [], []
 
     class Watcher:
@@ -42,14 +42,19 @@ def test_morning_watch_drains_wave_and_uses_the_same_camera_reader():
         def close(self):
             events.append((self.name, "close"))
 
-    controller = start_controller(FakeRobot(), wave_wake=True, wave_watcher_factory=Watcher,
+    robot = FakeRobot()
+    robot.media.get_frame = lambda: "frame"
+    controller = start_controller(robot, wave_wake=True, wave_watcher_factory=Watcher,
                                    arrival_model=Path("person.onnx"), arrival_watcher_factory=Watcher)
     try:
         controller.set_wave_watching(True)
         controller.start_watching(WatchPose())
         controller.set_wave_watching(True)
         assert controller.take_wave() is False
-        assert readers[0] == readers[1]
+        assert [read() for read in readers] == ["frame", "frame"]
+        controller.vision_budget.capture_active(True)
+        controller.vision_budget.audio_busy(True)
+        assert [read() for read in readers] == [None, "frame"]
         assert events == [("wave", "start"), ("wave", True), ("wave", False),
                           ("arrival", "start"), ("arrival", True), ("wave", False)]
         controller.stop_watching()

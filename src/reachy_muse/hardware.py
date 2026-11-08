@@ -916,7 +916,8 @@ class ReachyController:
             from reachy_muse.arrival import ArrivalWatcher
             factory = ArrivalWatcher
         try:
-            watcher = factory(self._read_camera_frame, self._camera_still, self._arrival_model)
+            watcher = factory(lambda: self._read_camera_frame(background=False),
+                              self._camera_still, self._arrival_model)
             watcher.start()
         except Exception as exc:
             self._warn_arrival_unavailable(type(exc).__name__)
