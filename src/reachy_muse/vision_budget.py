@@ -20,18 +20,30 @@ class VisionBudget:
         self._windows = {}
         self._healthy_since = None
         self._capture_at = None
+        self._capturing = False
         self._busy = False
         self.level = 0
 
+    def capture_active(self, active: bool) -> None:
+        with self._lock:
+            self._capturing = active
+            self._capture_at = self._clock() if active else None
+            self._busy = False
+            self._windows.clear()
+            self._healthy_since = None
+            self.level = 0
+
     def audio_busy(self, busy: bool) -> None:
         with self._lock:
-            self._busy = busy
+            self._busy = busy and self._capturing
             if busy:
                 self._windows.pop("wake", None)
 
     def observe(self, source: str, audio_s: float, *, now=None) -> None:
         now = self._clock() if now is None else now
         with self._lock:
+            if not self._capturing:
+                return
             if source == "capture":
                 if audio_s:
                     self._capture_at = now

@@ -107,6 +107,64 @@ def test_arrival_during_a_muse_reconnect_is_kept_until_the_new_conversation(monk
     assert sent_to_muse(rig.recording.events) == ["Brief me."]
 
 
+@pytest.mark.parametrize("busy", [False, True])
+def test_arrival_camera_budget_recovers_when_muse_disconnects(monkeypatch, busy):
+    import math
+    from types import SimpleNamespace
+    from musegadget.link_client import Outcome
+    from reachy_muse.arrival import ArrivalWatcher
+    from reachy_muse.hardware import ReachyController
+    from test_arrival import MarkedPeople, camera_with_frame_clock, empty_room, room, with_person
+    from test_wave_conversation import continuous_microphone
+
+    rig = rig_with(monkeypatch)
+    continuous_microphone(rig.hardware)
+    controller = ReachyController()
+    rig.hardware.vision_budget = controller.vision_budget
+    read, clock, camera = camera_with_frame_clock(
+        empty_room(2) + [with_person(room(), -12 + 8 * step) for step in range(20)])
+    controller._robot = SimpleNamespace(media=SimpleNamespace(get_frame=read))
+    outage = [False]
+    watcher = ArrivalWatcher(controller._read_camera_frame, lambda: outage[0], sample_hz=10,
+                             clock=clock, detector_factory=lambda _: MarkedPeople())
+    robot = service(rig, briefing, Transcripts())
+
+    async def scenario():
+        disconnected, stop = asyncio.Event(), asyncio.Event()
+
+        async def link(stop_link):
+            await disconnected.wait()
+            return Outcome.CLOSED
+
+        rig.session.run = link
+        connection = asyncio.create_task(robot.serve(rig.session, {"vm_id": "vm-1"}, stop))
+        try:
+            await rig.wait_until_or_timeout(lambda: robot._voice is not None)
+            voice = robot._voice[1]
+            await asyncio.wait_for(voice._ready.wait(), 2)
+            voice._turn_active = busy
+            await asyncio.sleep(.1)
+            assert controller.vision_budget.delay() == (math.inf if busy else 1)
+            disconnected.set()
+            assert await asyncio.wait_for(connection, 5) is Outcome.CLOSED
+            await asyncio.sleep(.6)
+            outage[0] = True
+            await rig.wait_until_or_timeout(lambda: watcher.arrival() is not None, 2)
+            assert watcher.arrival() == pytest.approx(8 / 3)
+            assert camera["reads"] == 9
+        finally:
+            disconnected.set()
+            stop.set()
+            await asyncio.wait_for(connection, 5)
+
+    watcher.start()
+    watcher.set_watching(True)
+    try:
+        asyncio.run(scenario())
+    finally:
+        watcher.close()
+
+
 def lines_played_without_repeats(events):
     audio = played(events)
     return [line for index, line in enumerate(audio) if index == 0 or audio[index - 1] != line]

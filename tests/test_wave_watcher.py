@@ -217,6 +217,7 @@ def test_failure_logs_only_counts_and_releases_camera_frame(immediate_motion, ca
 def test_audio_priority_prevents_camera_and_model_work():
     from reachy_muse.vision_budget import VisionBudget
     budget = VisionBudget()
+    budget.capture_active(True)
     budget.audio_busy(True)
     events = []
     watcher = wave.WaveWatcher(lambda: events.append("camera"), lambda: True, budget=budget,

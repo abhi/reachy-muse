@@ -1773,13 +1773,19 @@ class VoiceConversation:
                 loop.call_soon_threadsafe(capture.fail, exc)
 
         worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reachy-microphone")
+        if budget is not None:
+            budget.capture_active(True)
         running = loop.run_in_executor(worker, read_continuously)
         try:
             await asyncio.shield(running)
         finally:
             stop.set()
-            await running
-            worker.shutdown(wait=True)
+            try:
+                await running
+            finally:
+                worker.shutdown(wait=True)
+                if budget is not None:
+                    budget.capture_active(False)
 
     async def turn(self, wav: bytes | None, *, wake_strip_required: bool | None = None,
                    recognized_text: str | None = None, defer_playback: bool = False,
