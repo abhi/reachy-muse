@@ -876,16 +876,18 @@ def pair_reachy(args) -> int:
         print(f"Setup open for {window.timeout_s // 60} minutes. In the Muse app, add a device "
               f"and choose {window.ble_name}.")
 
-    generation = clear_inbox(config.state_dir() / INBOX_FILE) if args.force else None
-    result = pair(on_open=setup_open, force=args.force, timeout_s=args.timeout)
-    if result.outcome is PairOutcome.PAIRED:
-        with (config.state_dir() / "pairing.lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+    config.state_dir().mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (config.state_dir() / "pairing.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        generation = clear_inbox(config.state_dir() / INBOX_FILE) if args.force else None
+        result = pair(on_open=setup_open, force=args.force, timeout_s=args.timeout)
+        if result.outcome is PairOutcome.PAIRED:
             pairing = config.load_json(config.PAIRING_FILE)
             if pairing is not None:
                 if generation is None:
                     generation = clear_inbox(config.state_dir() / INBOX_FILE)
                 config.save_json(config.PAIRING_FILE, {**pairing, INBOX_GENERATION: generation})
+    if result.outcome is PairOutcome.PAIRED:
         print(f"Reachy is paired with Muse. The pairing is saved in {config.state_dir()}.")
         if args.introduce is True or (args.introduce is None and sys.stdin.isatty()):
             from reachy_muse.introduction import introduce_paired

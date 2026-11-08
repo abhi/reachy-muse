@@ -151,3 +151,36 @@ def test_head_motion_during_camera_drain_invalidates_the_claimed_wave():
     controller._wave_gaze.invalidate()
     assert controller.claim_wave() is False
     assert controller.wave_direction is None
+
+
+def test_start_watching_during_gaze_update_keeps_motion_worker_alive(monkeypatch):
+    controller = ReachyController(wave_wake=True)
+    controller._np, controller._robot = np, FakeRobot()
+    controller._arrival_watcher = SimpleNamespace(failure=None, set_watching=lambda _: None)
+    for tick in range(21):
+        controller._update_wave_gaze(tick * .025, np.zeros(9), eligible=True)
+    assert controller._wave_gaze.gaze.settled
+    started = threading.Event()
+    completed = threading.Event()
+    diff = np.diff
+
+    def start_watching():
+        started.set()
+        controller.start_watching(WatchPose())
+        completed.set()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        def interleaved_diff(*args, **kwargs):
+            result = diff(*args, **kwargs)
+            executor.submit(start_watching)
+            assert started.wait(2)
+            completed.wait(.1)
+            return result
+
+        monkeypatch.setattr(np, "diff", interleaved_diff)
+        controller._update_wave_gaze(.525, np.zeros(9), eligible=True)
+    assert completed.is_set()
+    assert controller._wave_gaze.gaze.settled is False
+    monkeypatch.setattr(np, "diff", diff)
+    controller._update_wave_gaze(.55, np.zeros(9), eligible=True)
+    assert controller._wave_gaze.gaze.observed_at == .55

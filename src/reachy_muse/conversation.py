@@ -2782,7 +2782,7 @@ class VoiceConversation:
                      voice=None, progress: bool = False, prepared_stream=None,
                      is_current=None, on_start=None, turn_started: float | None = None,
                      role: str | None = None, speech_serial: int | None = None,
-                     on_accepting=None, playback_cursor=None, drain: bool = True) -> None:
+                     on_accepting=None, playback_cursor=None, drain: bool = True, allowed=None) -> None:
         # Direct acknowledgements/progress and deferred replies share this owner.
         # Interrupted audio is flushed before a waiting speaker acquires it.
         speech_serial = next(_SPEECH_SERIALS) if speech_serial is None else speech_serial
@@ -2803,7 +2803,7 @@ class VoiceConversation:
                         progress=progress, prepared_stream=prepared_stream,
                         is_current=is_current, on_start=on_start, turn_started=turn_started,
                         role=role, on_accepting=on_accepting,
-                        playback_cursor=playback_cursor, drain=drain, on_audio=accepted)
+                        playback_cursor=playback_cursor, drain=drain, on_audio=accepted, allowed=allowed)
                 except BaseException as exc:
                     if isinstance(exc, _SpeechSuperseded) and not accepted_audio:
                         raise
@@ -2843,7 +2843,7 @@ class VoiceConversation:
                 try:
                     await asyncio.wait_for(self._speak(
                         None, text=text, stream_segment=True, voice=self.backends.command_voice,
-                        speech_serial=speech_serial,
+                        speech_serial=speech_serial, allowed=allowed,
                         is_current=lambda: self._say_blocked() is None and (allowed is None or allowed())), timeout_s)
                 except _SpeechSuperseded:
                     reason = self._say_blocked() or "interrupted"
@@ -2899,7 +2899,7 @@ class VoiceConversation:
                            voice=None, progress: bool = False, prepared_stream=None,
                            is_current=None, on_start=None, turn_started: float | None = None,
                            role: str | None = None, on_accepting=None,
-                           playback_cursor=None, drain: bool = True, on_audio=None) -> None:
+                           playback_cursor=None, drain: bool = True, on_audio=None, allowed=None) -> None:
         voice = voice if voice is not None else self.backends.voice
         sentence = classify_sentence(text, Expression.parse(expression)) if text and state == "speaking" else None
         if sentence is not None:
@@ -2963,7 +2963,7 @@ class VoiceConversation:
             log.info("Reachy speech resumed after microphone silence")
         async def push(samples) -> None:
             nonlocal samples_played
-            if self._hush_floor != hush_floor:
+            if self._hush_floor != hush_floor or (allowed is not None and not allowed()):
                 raise _SpeechSuperseded
             self._audio_clear_attempted = False
             self._muted = True
@@ -3288,8 +3288,9 @@ class ReachyService(PairedService):
 
     async def _session(self, vm: dict, pairing: dict) -> tuple[Outcome, float]:
         if self.inbox.path is not None:
-            self.inbox = Inbox(self.inbox.path, clock=self.inbox.clock,
-                               generation=pairing.get(INBOX_GENERATION, ""))
+            generation = pairing.get(INBOX_GENERATION, "")
+            if not self.inbox.current(generation=generation):
+                self.inbox = Inbox(self.inbox.path, clock=self.inbox.clock, generation=generation)
         elif not self.inbox.current():
             self.inbox = Inbox(clock=self.inbox.clock)
         return await super()._session(vm, pairing)

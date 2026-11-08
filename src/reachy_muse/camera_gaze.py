@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 import math
+import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -33,6 +34,7 @@ class GazeSettler:
     """
 
     def __init__(self):
+        self._lock = threading.Lock()
         self.gaze = CameraGaze()
         self._previous = None
         self._observed = deque()
@@ -40,48 +42,50 @@ class GazeSettler:
         self._since = None
 
     def invalidate(self):
-        self.gaze = CameraGaze(self.gaze.generation + 1)
-        self._previous = self._since = None
-        self._observed.clear()
-        self._observed_speeds.clear()
+        with self._lock:
+            self.gaze = CameraGaze(self.gaze.generation + 1)
+            self._previous = self._since = None
+            self._observed.clear()
+            self._observed_speeds.clear()
 
     def update(self, now, commanded, observed, rotation, *, eligible):
         import numpy as np
 
-        previous = self._previous
-        dt = now - self.gaze.observed_at
-        quiet = eligible and previous is not None and 0 < dt <= .1
-        if not quiet:
-            self._observed.clear()
-            self._observed_speeds.clear()
-        self._observed.append((now, np.array(observed, dtype=float, copy=True)))
-        while len(self._observed) > 2 and now - self._observed[1][0] >= .1:
-            self._observed.popleft()
-        if quiet:
-            elapsed = min(.1, now - self._observed[0][0])
-            travel = np.diff([pose for _, pose in self._observed], axis=0)
-            start, end = self._observed[0][0], self._observed[1][0]
-            travel[0] *= (end - (now - elapsed)) / (end - start)
-            motion = ((np.asarray([commanded]) - previous, dt),
-                      (travel[-1:], dt + .02),
-                      (travel, elapsed))
-            speeds = []
-            for delta, elapsed in motion:
-                velocity = np.abs(delta) / elapsed
-                speeds.append([np.linalg.norm(velocity[:, :3], axis=1).sum(),
-                               np.linalg.norm(velocity[:, 3:6], axis=1).sum(), velocity[:, 6].sum()])
-            self._observed_speeds.append(speeds[-1])
-            speeds[-1] = np.median(self._observed_speeds, axis=0)
-            quiet &= np.isfinite(speeds).all() and (np.round(speeds, 9) < [.8, 1, 1]).all()
-        self._previous = np.array(commanded, copy=True)
-        if not quiet:
-            self._since = None
-        elif self._since is None:
-            self._since = now
-        self.gaze = CameraGaze(
-            self.gaze.generation + int(not quiet),
-            self._since is not None and now - self._since >= .3,
-            now, rotation.copy())
+        with self._lock:
+            previous = self._previous
+            dt = now - self.gaze.observed_at
+            quiet = eligible and previous is not None and 0 < dt <= .1
+            if not quiet:
+                self._observed.clear()
+                self._observed_speeds.clear()
+            self._observed.append((now, np.array(observed, dtype=float, copy=True)))
+            while len(self._observed) > 2 and now - self._observed[1][0] >= .1:
+                self._observed.popleft()
+            if quiet:
+                elapsed = min(.1, now - self._observed[0][0])
+                travel = np.diff([pose for _, pose in self._observed], axis=0)
+                start, end = self._observed[0][0], self._observed[1][0]
+                travel[0] *= (end - (now - elapsed)) / (end - start)
+                motion = ((np.asarray([commanded]) - previous, dt),
+                          (travel[-1:], dt + .02),
+                          (travel, elapsed))
+                speeds = []
+                for delta, elapsed in motion:
+                    velocity = np.abs(delta) / elapsed
+                    speeds.append([np.linalg.norm(velocity[:, :3], axis=1).sum(),
+                                   np.linalg.norm(velocity[:, 3:6], axis=1).sum(), velocity[:, 6].sum()])
+                self._observed_speeds.append(speeds[-1])
+                speeds[-1] = np.median(self._observed_speeds, axis=0)
+                quiet &= np.isfinite(speeds).all() and (np.round(speeds, 9) < [.8, 1, 1]).all()
+            self._previous = np.array(commanded, copy=True)
+            if not quiet:
+                self._since = None
+            elif self._since is None:
+                self._since = now
+            self.gaze = CameraGaze(
+                self.gaze.generation + int(not quiet),
+                self._since is not None and now - self._since >= .3,
+                now, rotation.copy())
 
 
 class GazeProjection:

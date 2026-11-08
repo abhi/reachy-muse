@@ -865,8 +865,11 @@ class ReachyController:
         camera = self._presence
         if self._arrival_watcher is not None:
             observed = self._arrival_watcher.presence()
-            if (observed.observed_at or -math.inf) > (camera.observed_at or -math.inf):
+            last_seen = max((at for at in (camera.last_seen_at, observed.last_seen_at)
+                             if at is not None), default=None)
+            if self._watching and (observed.observed_at or -math.inf) > (camera.observed_at or -math.inf):
                 camera = observed
+            camera = Presence(camera.present, camera.observed_at, last_seen)
         seen = self.face_seen_at
         return {"camera": camera, "face": Presence(True if seen is not None else None, seen, seen)}
 

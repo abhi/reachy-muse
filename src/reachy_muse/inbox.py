@@ -106,9 +106,9 @@ class Inbox:
                 self._items.clear()
             yield storage
 
-    def current(self, pending: dict | None = None) -> bool:
+    def current(self, pending: dict | None = None, *, generation: str | None = None) -> bool:
         with self._locked():
-            if self._invalidated:
+            if self._invalidated or (generation is not None and generation != self._generation):
                 return False
             if pending is None:
                 return True

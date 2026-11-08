@@ -169,6 +169,30 @@ def test_last_seen_survives_the_end_of_arrival_watching(monkeypatch):
     assert controller.presence() == {"ok": True, "present": None, "last_seen_seconds": 20}
 
 
+def test_inactive_watcher_preserves_explicit_camera_detection_and_history(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(reachy_muse.hardware.time, "monotonic", lambda: now[0])
+    controller = ReachyController(enable_motion=False)
+    watcher = reachy_muse.arrival.ArrivalWatcher(lambda: None, lambda: True, clock=lambda: now[0])
+    watcher.set_watching(True)
+    watcher._presence = Presence(True, 90, 90)
+    controller._arrival_watcher = watcher
+    controller.stop_watching()
+    controller._robot = SimpleNamespace(media=SimpleNamespace(get_frame=object))
+    controller._presence_detector = SimpleNamespace(detect=lambda _: [PersonBox(0, 0, .2, .3, .9)])
+    service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=controller,
+                           backends=lambda _: None)
+    assert service.presence_result() == {
+        "present": None, "last_seen_seconds": 10, "source": "camera", "available": False}
+    assert controller.presence()["present"] is True
+    now[0] = 101
+    assert service.presence_result() == {
+        "present": True, "last_seen_seconds": 1, "source": "camera", "available": False}
+    now[0] = 103
+    assert service.presence_result() == {
+        "present": None, "last_seen_seconds": 3, "source": "camera", "available": False}
+
+
 @pytest.mark.parametrize("blocked", ["camera", "detector", "lock"])
 def test_presence_deadline_bounds_camera_detector_and_lock_waits(monkeypatch, blocked):
     stalled, resume = threading.Event(), threading.Event()

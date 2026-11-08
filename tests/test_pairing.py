@@ -3,6 +3,7 @@
 
 import asyncio
 import threading
+import time
 
 import pytest
 
@@ -151,3 +152,71 @@ def test_revoked_pairing_clears_the_notification_ledger(tmp_path, monkeypatch, s
     assert asyncio.run(service._maybe_refresh(PAIRING, force=True)) is None
     assert service.inbox.pending() is None
     assert (tmp_path / "inbox.json").exists() is False
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_connection_during_pair_completion_uses_published_inbox_generation(tmp_path, monkeypatch, force):
+    from musegadget.pair import PairOutcome, PairResult
+    from reachy_muse import cli
+    from reachy_muse.inbox import INBOX_FILE, INBOX_GENERATION, Inbox
+    from reachy_muse.pairing import PairedService
+    from test_inbox import notice
+    from test_registered_commands import command_device, registered_device
+
+    monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
+
+    async def check():
+        service, _, _ = command_device()
+        service.inbox = Inbox(tmp_path / INBOX_FILE)
+        if force:
+            config.save_json(config.PAIRING_FILE, PAIRING)
+        saved, refreshing = asyncio.Event(), asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+        results = []
+
+        def pair(**kwargs):
+            config.save_json(config.PAIRING_FILE, {
+                "username": "new", "access_token": "new-token", "access_token_saved_at": time.time()})
+            loop.call_soon_threadsafe(saved.set)
+            assert release.wait(2)
+            return PairResult(PairOutcome.PAIRED)
+
+        refresh = service._refresh_pairing
+
+        def refreshing_pairing(*args):
+            loop.call_soon_threadsafe(refreshing.set)
+            return refresh(*args)
+
+        async def connected(self, vm, pairing):
+            async with registered_device(self, monkeypatch) as (session, _, voice):
+                await asyncio.to_thread(release.wait, 2)
+                await pairing_task
+                results.append(await asyncio.to_thread(session._run_command, "reachy.notify", notice()))
+
+        async def connect():
+            pairing = await service._maybe_refresh(config.load_json(config.PAIRING_FILE))
+            await service._session({}, pairing)
+
+        monkeypatch.setattr("musegadget.pair.pair", pair)
+        monkeypatch.setattr(service, "_refresh_pairing", refreshing_pairing)
+        monkeypatch.setattr(PairedService, "_session", connected)
+        flags = ["--force"] if force else []
+        pairing_task = asyncio.create_task(asyncio.to_thread(
+            cli.pair_reachy, cli.parser().parse_args(["pair", "--no-introduce", *flags])))
+        connection = None
+        try:
+            await asyncio.wait_for(saved.wait(), 2)
+            connection = asyncio.create_task(connect())
+            await asyncio.wait_for(refreshing.wait(), 2)
+            await asyncio.wait({connection}, timeout=.05)
+            release.set()
+            await asyncio.wait_for(connection, 2)
+            assert await pairing_task == 0
+            assert INBOX_GENERATION in config.load_json(config.PAIRING_FILE)
+            assert results == [{"ok": True, "payload": {"status": "queued", "reason": "awaiting_presence"}}]
+        finally:
+            release.set()
+            await asyncio.gather(pairing_task, *([connection] if connection else []), return_exceptions=True)
+
+    asyncio.run(check())

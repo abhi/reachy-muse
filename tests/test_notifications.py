@@ -277,6 +277,95 @@ def test_forced_pairing_invalidates_the_running_inbox(tmp_path, monkeypatch, dur
     asyncio.run(check())
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+def test_forced_pairing_stops_notification_pcm_already_playing(tmp_path, monkeypatch, streaming):
+    from musegadget import config
+    from musegadget.pair import PairOutcome, PairResult
+    from reachy_muse import cli
+    from reachy_muse.inbox import INBOX_FILE
+    from test_registered_commands import np
+
+    monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr("musegadget.pair.pair", lambda **kwargs: PairResult(PairOutcome.PAIRED))
+    closed = []
+
+    class Speech:
+        async def stream(self, text, rate):
+            try:
+                for _ in range(20 if streaming else 1):
+                    yield np.full(320 if streaming else 6400, .1, dtype=np.float32)
+            finally:
+                closed.append(True)
+
+    async def check():
+        service, voice, _ = command_device(speech=Speech())
+        service.inbox = Inbox(tmp_path / INBOX_FILE)
+        voice.notifications = Notifications(service.inbox, service.presence_result, voice)
+        service._presence.mark("voice", time.monotonic())
+        play = voice.hardware.play_audio
+
+        def repair_after_write(samples):
+            play(samples)
+            if len(voice.hardware.played) == 1:
+                assert cli.pair_reachy(cli.parser().parse_args(["pair", "--force", "--no-introduce"])) == 0
+
+        voice.hardware.play_audio = repair_after_write
+        await notify(service, **{**notice(), "mode": "now"})
+        assert sum(len(samples) for samples in voice.hardware.played) == 320
+        assert voice.hardware.cleared == 1
+        assert closed == [True]
+        assert not (tmp_path / INBOX_FILE).exists()
+    asyncio.run(check())
+
+
+def test_reconnect_preserves_new_items_when_an_old_notification_expires(tmp_path, monkeypatch):
+    import threading
+    from reachy_muse.pairing import PairedService
+
+    async def check():
+        service, _, speech = device(tmp_path)
+        now = [100]
+        service.inbox.clock = lambda: now[0]
+        service._presence.mark("voice", time.monotonic())
+        entered = asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+        old_notifications = []
+
+        def gesture(_):
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(2)
+
+        service.executor.gesture = gesture
+
+        async def connected(self, vm, pairing):
+            async with registered_device(self, monkeypatch) as (_, wire, voice):
+                if not old_notifications:
+                    old_notifications.append(voice.notifications)
+                    await wire.send_message({"method": "link.invoke", "id": "old", "command": "reachy.notify",
+                                             "params": {**notice("a", ttl=1), "mode": "now"}})
+                    await asyncio.wait_for(entered.wait(), 2)
+                else:
+                    await wire.send_message({"method": "link.invoke", "id": "new", "command": "reachy.notify",
+                                             "params": notice("b", "New note.")})
+                    result = await asyncio.wait_for(wire.next_message(), 2)
+                    assert result["payload"]["status"] == "queued"
+                    now[0] = 102
+                    release.set()
+                    await wait_until(lambda: not old_notifications[0]._lock.locked())
+                    assert Inbox(tmp_path / "inbox.json", clock=lambda: now[0]).result("b") == {
+                        "ok": True, "status": "queued", "reason": "awaiting_presence"}
+                    assert speech.words == []
+
+        monkeypatch.setattr(PairedService, "_session", connected)
+        try:
+            await service._session({}, {})
+            await service._session({}, {})
+        finally:
+            release.set()
+    asyncio.run(check())
+
+
 def test_obsolete_sdk_invocation_cannot_repopulate_an_unpaired_inbox(tmp_path, monkeypatch):
     async def check():
         service, _, speech = device(tmp_path)
