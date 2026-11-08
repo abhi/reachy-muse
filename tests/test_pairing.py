@@ -2,8 +2,10 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -220,3 +222,99 @@ def test_connection_during_pair_completion_uses_published_inbox_generation(tmp_p
             await asyncio.gather(pairing_task, *([connection] if connection else []), return_exceptions=True)
 
     asyncio.run(check())
+
+
+@pytest.mark.parametrize("outcome", ["WINDOW_CLOSED", "INVALID_SDK_TOKEN", "cancelled"])
+def test_failed_forced_pairing_preserves_notifications_after_restart_and_reconnect(
+        tmp_path, monkeypatch, outcome):
+    from musegadget.pair import PairOutcome, PairResult
+    from reachy_muse import cli
+    from reachy_muse.inbox import INBOX_FILE, INBOX_GENERATION, Inbox, clear_inbox
+    from reachy_muse.pairing import PairedService
+    from test_inbox import notice
+    from test_registered_commands import command_device, registered_device
+
+    monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
+    path = tmp_path / INBOX_FILE
+    generation = clear_inbox(path)
+    config.save_json(config.PAIRING_FILE, {**PAIRING, INBOX_GENERATION: generation})
+
+    def pair(**kwargs):
+        if outcome == "cancelled":
+            raise KeyboardInterrupt()
+        return PairResult(PairOutcome[outcome], sdk_token_problem="invalid SDK token")
+
+    monkeypatch.setattr("musegadget.pair.pair", pair)
+
+    async def connected(self, vm, pairing):
+        async with registered_device(self, monkeypatch) as (session, _, _):
+            assert await asyncio.to_thread(session._run_command, "reachy.notify", notice("reconnected")) == {
+                "ok": True, "payload": {"status": "queued", "reason": "awaiting_presence"}}
+
+    monkeypatch.setattr(PairedService, "_session", connected)
+
+    async def check():
+        service, _, _ = command_device()
+        service.inbox = Inbox(path, generation=generation)
+        service.inbox.add(notice("old"))
+        args = cli.parser().parse_args(["pair", "--force", "--no-introduce"])
+        if outcome == "cancelled":
+            with pytest.raises(KeyboardInterrupt):
+                cli.pair_reachy(args)
+        else:
+            assert cli.pair_reachy(args) == 1
+        saved = config.load_json(config.PAIRING_FILE)
+        assert {key: saved[key] for key in PAIRING} == PAIRING
+        assert service.inbox.pending() is None
+        restarted = Inbox(path, generation=saved[INBOX_GENERATION])
+        assert restarted.add(notice("restarted")) == {
+            "ok": True, "status": "queued", "reason": "awaiting_presence"}
+        await service._session({}, saved)
+        assert service.inbox.result("restarted")["status"] == "queued"
+
+    asyncio.run(check())
+
+
+def test_startup_preserves_pairing_completed_after_missing_credentials_read(tmp_path, monkeypatch):
+    from musegadget.pair import PairOutcome, PairResult
+    from reachy_muse import cli
+    from reachy_muse.inbox import INBOX_FILE, INBOX_GENERATION, Inbox
+    from test_inbox import notice
+
+    monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(config, "sdk_token", lambda: None)
+    monkeypatch.setattr(cli.identity, "load_or_create", lambda: Identity("02:00:00:ab:cd:ef"))
+    monkeypatch.setattr(cli, "_hardware", lambda args: SimpleNamespace(start=lambda: None, close=lambda: None))
+    results = []
+
+    def service(**kwargs):
+        async def run():
+            results.append(kwargs["inbox"].add(notice("startup")))
+        return SimpleNamespace(run=run, stop=lambda: None)
+
+    monkeypatch.setattr("reachy_muse.conversation.ReachyService", service)
+
+    def pair(**kwargs):
+        config.save_json(config.PAIRING_FILE, PAIRING)
+        return PairResult(PairOutcome.PAIRED)
+
+    monkeypatch.setattr("musegadget.pair.pair", pair)
+    load_json = config.load_json
+
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        def read_before_pairing(name, *args):
+            saved = load_json(name, *args)
+            if name == config.PAIRING_FILE and saved is None:
+                paired = worker.submit(cli.pair_reachy, cli.parser().parse_args(["pair", "--no-introduce"]))
+                assert paired.result(timeout=2) == 0
+            return saved
+
+        monkeypatch.setattr(config, "load_json", read_before_pairing)
+        result = asyncio.run(cli.run(cli.parser().parse_args(["run", "--main-chat"])))
+
+    saved = config.load_json(config.PAIRING_FILE)
+    restarted = Inbox(tmp_path / INBOX_FILE, generation=saved[INBOX_GENERATION])
+    assert restarted.add(notice("restart")) == {
+        "ok": True, "status": "queued", "reason": "awaiting_presence"}
+    assert result == 0
+    assert results == [{"ok": True, "status": "queued", "reason": "awaiting_presence"}]
