@@ -501,3 +501,22 @@ def test_voice_arrival_waits_for_the_wake_request_before_speaking_the_briefing(m
     events = run(rig, conversation, user, rest=("listening", "idle"))
     assert sent_to_muse(events) == ["Brief me.", "what time is it?"]
     assert played(events) == ["tts:It is noon.", *SPOKEN]
+
+
+def test_voice_arrival_respects_go_to_sleep_in_the_wake_turn(monkeypatch):
+    from test_wave_conversation import continuous_microphone
+    rig = rig_with(monkeypatch)
+    continuous_microphone(rig.hardware)
+    routine = morning(Camera())
+    conversation = service(rig, briefing, Transcripts("Hey Muse, go to sleep."), morning=routine,
+                           wake_detector=Wake(), wake_timeout_s=30)
+
+    async def user():
+        await rig.wait_until_or_timeout(lambda: routine._ready is not None, 5)
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: routine.ledger.done(datetime(2026, 10, 10).date()), 10)
+        assert routine.ledger.done(datetime(2026, 10, 10).date()) is True
+
+    events = run(rig, conversation, user, rest=("sleeping",))
+    assert sent_to_muse(events) == ["Brief me."]
+    assert played(events) == ["tts:Good night."]

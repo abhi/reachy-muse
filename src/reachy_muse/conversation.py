@@ -3101,7 +3101,7 @@ class VoiceConversation:
                                  or self._turn_active or self._has_output()
                                  or (self.call is not None and getattr(self.call, "working", False))):
             await asyncio.sleep(.05)
-        if self._say_hushed:
+        if self._say_hushed and (wait_for_turn or self._wake_window is not WakeWindow.ASLEEP):
             return
         if self._wake_window is WakeWindow.ASLEEP:
             await self._wake_up(WakeWindow.AWAKE)
