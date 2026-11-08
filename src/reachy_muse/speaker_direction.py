@@ -108,7 +108,6 @@ class WakeDirection:
                     self._samples.append((started, reading.angle))
                     while self._samples and self._samples[0][0] < started - 3:
                         self._samples.popleft()
-                    delay = 1 / 15
                 await self._sleep(delay)
         finally:
             self.clear()

@@ -83,6 +83,8 @@ def test_attention_waits_for_verified_wake_and_uses_candidate_direction(monkeypa
                            voice_verifier=SpeakerVerifier() if voice_matches is not None else None)
 
     async def user():
+        await rig.wait_until_or_timeout(lambda: conversation._voice is not None)
+        conversation._voice[1]._direction_audio_until = math.inf
         await rig.wait_until_or_timeout(lambda: len(reads) >= 5)
         assert len(reads) >= 5
         rig.say(wake=True)
@@ -92,7 +94,7 @@ def test_attention_waits_for_verified_wake_and_uses_candidate_direction(monkeypa
         assert sent_to_muse(rig.recording.events) == []
         assert transcripts.texts == ["What is the weather tomorrow?"]
         assert voice_checks == []
-        await rig.wait_until_or_timeout(lambda: 2 * math.pi / 3 in reads, timeout=.15)
+        await rig.wait_until_or_timeout(lambda: 2 * math.pi / 3 in reads, timeout=.25)
         assert 2 * math.pi / 3 in reads
         release.set()
         if matches and voice_matches is not None:
@@ -151,6 +153,8 @@ def test_voice_rejection_chime_allows_the_next_verified_wake_and_reply(monkeypat
                            voice_verifier=SpeakerVerifier(), wake_timeout_s=30)
 
     async def user():
+        await rig.wait_until_or_timeout(lambda: conversation._voice is not None)
+        conversation._voice[1]._direction_audio_until = math.inf
         rig.say(wake=True)
         await rig.wait_until_or_timeout(lambda: "voice-rejected" in played(rig.recording.events))
         await rig.quiet("idle", "listening", span=.3)

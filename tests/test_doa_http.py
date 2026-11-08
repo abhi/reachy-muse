@@ -20,16 +20,18 @@ def doa_server():
     servers = []
 
     def serve(*payloads, slow=None):
-        state = SimpleNamespace(paths=[], started=threading.Event(), stopped=threading.Event())
+        state = SimpleNamespace(paths=[], connections=[], started=threading.Event(), stopped=threading.Event())
 
         class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
             def log_message(self, *args):
                 pass
 
             def do_GET(self):
                 payload = payloads[min(len(state.paths), len(payloads) - 1)].encode()
                 state.paths.append(self.path)
-                headers = f"HTTP/1.0 200 OK\r\nContent-Length: {len(payload)}\r\n\r\n".encode()
+                state.connections.append(self.client_address)
+                headers = f"HTTP/1.1 200 OK\r\nContent-Length: {len(payload)}\r\n\r\n".encode()
                 state.started.set()
                 try:
                     for name, data in (("headers", headers), ("body", payload)):
@@ -48,13 +50,14 @@ def doa_server():
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=.01), daemon=True)
         thread.start()
-        servers.append((server, thread, state))
         controller = ReachyController(host="127.0.0.1", port=server.server_port)
         controller._robot = FakeRobot()
+        servers.append((server, thread, state, controller))
         return controller, state
 
     yield serve
-    for server, thread, state in servers:
+    for server, thread, state, controller in servers:
+        controller._close_doa()
         state.stopped.set()
         server.shutdown()
         server.server_close()
@@ -81,6 +84,7 @@ def stalled_doa_setup(monkeypatch, request):
     yield controller, state
     state.release.set()
     assert state.stopped.wait(2)
+    controller._close_doa()
 
 
 def test_doa_deadline_covers_connection_setup_without_starting_more_lookups(stalled_doa_setup):
@@ -164,7 +168,8 @@ def test_microphone_cleanup_finishes_during_a_trickled_response(doa_server, hand
         def look_at_speaker(self, angle):
             controller.look_at_speaker(angle)
 
-    async def listening(*args):
+    async def listening(conversation, *args):
+        conversation._direction_audio_until = float("inf")
         await asyncio.Event().wait()
 
     async def run():
@@ -180,3 +185,16 @@ def test_microphone_cleanup_finishes_during_a_trickled_response(doa_server, hand
             await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(bounded(run()))
+
+
+def test_repeated_reads_reuse_one_connection_and_worker(doa_server):
+    controller, state = doa_server('{"angle": 1, "speech_detected": true}')
+    assert controller.read_doa().speech_detected is True
+    worker = controller._doa_thread
+    for _ in range(4):
+        assert controller.read_doa().angle == pytest.approx(1)
+    assert controller._doa_thread is worker
+    assert len(set(state.connections)) == 1
+    assert state.paths == ["/api/state/doa"] * 5
+    controller._close_doa()
+    assert worker.is_alive() is False

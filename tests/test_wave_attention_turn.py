@@ -119,6 +119,8 @@ def test_wave_turn_hands_over_to_face_tracking_through_a_whole_reply(monkeypatch
                            voice_verifier=SpeakerVerifier() if verify_voice else None, **options)
 
     async def user():
+        await rig.wait_until_or_timeout(lambda: conversation._voice is not None)
+        conversation._voice[1]._direction_audio_until = math.inf
         await rig.wait_until_or_timeout(lambda: len(reads) >= 5)
         camera.pending = True
         await rig.wait_until_or_timeout(lambda: controller._speaker_turn is not None)

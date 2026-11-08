@@ -50,6 +50,7 @@ def test_keyword_freezes_direction_before_wake_state_and_stops_sampling(handoff,
         if asleep:
             conversation._wake_window = WakeWindow.ASLEEP
             hw.set_state("sleeping")
+        conversation._direction_audio_until = math.inf
         await wait_for_reads(hw, 7)
         await feed((.25, 14), (0, 7))
         assert hw.directions == ([(pytest.approx(1.0471975512), "sleeping" if asleep else "idle")]
@@ -68,6 +69,7 @@ def test_direction_gate_excludes_all_robot_audio_even_with_aec(handoff, blocked)
     hardware = DirectionalHardware()
 
     async def run(conversation, session, hw, wake, recognition, recordings, accepted, feed):
+        conversation._direction_audio_until = math.inf
         await wait_for_reads(hw, 4)
         assert conversation._wake_direction.estimate(time.monotonic()) == pytest.approx(1.0471975512)
         if blocked == "muted":
@@ -87,6 +89,7 @@ def test_direction_gate_excludes_all_robot_audio_even_with_aec(handoff, blocked)
         conversation._muted = False
         conversation._echo_until = 0
         conversation._output_busy = False
+        conversation._direction_audio_until = math.inf
         await wait_for_reads(hw, hw.reads + 5)
         conversation._attend_wake(time.monotonic())
         assert hw.directions == [(pytest.approx(1.0471975512), "idle")]
@@ -98,6 +101,7 @@ def test_capture_gap_discards_geometry_before_a_new_wake(handoff):
     hardware = DirectionalHardware()
 
     async def run(conversation, session, hw, wake, recognition, recordings, accepted, feed):
+        conversation._direction_audio_until = math.inf
         await wait_for_reads(hw, 5)
         await feed((.25, 14), (0, 7), gap=True)
         assert hw.directions == []
@@ -134,8 +138,8 @@ def test_changing_speakers_require_a_verified_keyword_boundary(handoff, trusted,
 
 def test_silence_and_still_mode_preserve_the_current_wake_behavior(handoff):
     async def run(conversation, session, hw, wake, recognition, recordings, accepted, feed):
-        if hw.motion_enabled:
-            await wait_for_reads(hw, 3)
+        await asyncio.sleep(.25)
+        assert hw.reads == 0
         await feed((.25, 14), (0, 7))
         assert hw.directions == []
         assert conversation._wake_deadline > time.monotonic()

@@ -128,7 +128,7 @@ def sampled(readings, check):
 def test_median_uses_speech_only_and_ignores_one_outlier():
     def check(direction, clock, delays):
         assert direction.estimate(clock.now) == pytest.approx(1.0384709049)
-        assert delays == pytest.approx([.2, 1 / 15, 1 / 15, 1 / 15, 1 / 15])
+        assert delays == pytest.approx([.2, .2, .2, .2, .2])
 
     sampled([DoAReading(0, False), DoAReading(math.radians(59), True),
              DoAReading(math.radians(60), True), DoAReading(0, True),
@@ -149,24 +149,21 @@ def test_sparse_or_disagreeing_samples_have_no_direction_then_good_speech_does(a
 
 
 def test_phrase_boundary_excludes_later_speech_and_stale_or_cleared_history():
+    clock = SimpleNamespace(now=100.8)
+    direction = WakeDirection(lambda: None, clock=lambda: clock.now)
+    direction._samples.extend([(100, 1), (100.2, 1), (100.4, 1), (100.6, 2), (100.8, 2)])
+    assert direction.estimate(100.4) == 1
+    clock.now = 101.5
+    assert direction.estimate(100.4) is None
+    direction.clear()
+    assert direction.estimate(clock.now) is None
+
+
+def test_a_pause_and_changed_speaker_selects_only_the_later_segment():
     def check(direction, clock, delays):
-        # The keyword ended before a different speaker's later request audio.
-        assert direction.estimate(100.2) == pytest.approx(math.radians(60))
-        assert direction.estimate(clock.now) == pytest.approx(math.radians(120))
-        clock.now += 1.1
-        assert direction.estimate(100.2) is None
-        direction.clear()
-        assert direction.estimate(clock.now) is None
+        assert direction.estimate(clock.now) == pytest.approx(2.0943951024)
 
-    sampled([DoAReading(math.radians(60), True)] * 4 + [DoAReading(0, False)] * 2
-            + [DoAReading(math.radians(120), True)] * 4, check)
-
-
-def test_a_short_pause_and_changed_speaker_cannot_select_the_earlier_speaker():
-    def check(direction, clock, delays):
-        assert direction.estimate(clock.now) is None
-
-    sampled([DoAReading(math.radians(60), True)] * 18 + [DoAReading(0, False)]
+    sampled([DoAReading(math.radians(60), True)] * 6 + [DoAReading(0, False)]
             + [DoAReading(math.radians(120), True)] * 4, check)
 
 
@@ -204,7 +201,7 @@ def test_inflight_read_is_rejected_across_a_listening_epoch():
             direction.clear()
             gate.eligible = True
             proceed.set()
-            await asyncio.sleep(.45)
+            await asyncio.sleep(.65)
             assert direction.estimate(time.monotonic()) == pytest.approx(math.pi / 2)
         finally:
             proceed.set()

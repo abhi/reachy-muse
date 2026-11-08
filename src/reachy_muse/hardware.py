@@ -279,6 +279,10 @@ class ReachyController:
         self._connect_options = dict(host=host, port=port, connection_mode=connection_mode,
                                      media_backend=media_backend)
         self._doa_lock = threading.Lock()
+        self._doa_requests = queue.Queue()
+        self._doa_thread = None
+        self._doa_connection = None
+        self._doa_socket = None
         self._sleep_on_close = sleep_on_close
         self._enable_motion = enable_motion
         self.library_expressions = library_expressions and enable_motion and style.expression_clips
@@ -371,58 +375,72 @@ class ReachyController:
     def read_doa(self) -> DoAReading | None:
         """Read world geometry only; missing arrays and older daemons are optional."""
         started = time.monotonic()
-        if self._robot is None or not self._doa_lock.acquire(blocking=False):
+        if self._robot is None or self._stop.is_set() or not self._doa_lock.acquire(blocking=False):
             return None
         result = Future()
-
-        def read():
-            try:
-                result.set_result(self._read_doa(started))
-            except Exception as exc:
-                result.set_exception(exc)
-            finally:
-                self._doa_lock.release()
-
-        try:
-            threading.Thread(target=read, name="muse-reachy-doa", daemon=True).start()
-        except Exception:
-            self._doa_lock.release()
-            raise
+        if self._doa_thread is None:
+            self._doa_thread = threading.Thread(target=self._doa_worker, name="muse-reachy-doa", daemon=True)
+            self._doa_thread.start()
+        self._doa_requests.put((started, result))
         try:
             return result.result(max(0.0, _DOA_TIMEOUT_S - (time.monotonic() - started)))
         except FutureTimeout:
+            self._interrupt_doa()
             return None
 
+    def _interrupt_doa(self) -> None:
+        sock = self._doa_socket
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    def _close_doa(self) -> None:
+        if self._doa_thread is not None:
+            self._doa_requests.put(None)
+            self._interrupt_doa()
+            self._doa_thread.join(timeout=.2)
+
+    def _doa_worker(self) -> None:
+        try:
+            while (request := self._doa_requests.get()) is not None:
+                started, result = request
+                try:
+                    reading = self._read_doa(started)
+                except Exception as exc:
+                    result.set_exception(exc)
+                else:
+                    result.set_result(reading)
+                finally:
+                    self._doa_socket = None
+                    self._doa_lock.release()
+        finally:
+            if self._doa_connection is not None:
+                self._doa_connection.close()
+                self._doa_connection = None
+
     def _read_doa(self, started: float) -> DoAReading | None:
-        connection = http.client.HTTPConnection(self._connect_options["host"], self._connect_options["port"],
-                                                timeout=_DOA_TIMEOUT_S)
+        if time.monotonic() - started >= _DOA_TIMEOUT_S:
+            return None
+        if self._doa_connection is None:
+            self._doa_connection = http.client.HTTPConnection(
+                self._connect_options["host"], self._connect_options["port"], timeout=_DOA_TIMEOUT_S)
+        connection = self._doa_connection
         try:
             pose = self._robot.get_current_head_pose().copy()
-            connection.connect()
-            remaining = _DOA_TIMEOUT_S - (time.monotonic() - started)
-            if remaining <= 0:
-                return None
-            sock = connection.sock
-
-            def expire():
-                try:
-                    sock.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
-
-            deadline = threading.Timer(remaining, expire)
-            deadline.daemon = True
-            deadline.start()
-            try:
-                connection.request("GET", "/api/state/doa")
-                with connection.getresponse() as response:
-                    payload = response.read(_DOA_RESPONSE_BYTES + 1)
-                    if (response.status != 200 or len(payload) > _DOA_RESPONSE_BYTES
-                            or time.monotonic() - started >= _DOA_TIMEOUT_S):
-                        return None
-                info = json.loads(payload)
-            finally:
-                deadline.cancel()
+            if connection.sock is None:
+                connection.connect()
+            if time.monotonic() - started >= _DOA_TIMEOUT_S:
+                raise TimeoutError()
+            self._doa_socket = connection.sock
+            connection.request("GET", "/api/state/doa")
+            with connection.getresponse() as response:
+                payload = response.read(_DOA_RESPONSE_BYTES + 1)
+                if (response.status != 200 or len(payload) > _DOA_RESPONSE_BYTES
+                        or time.monotonic() - started >= _DOA_TIMEOUT_S):
+                    raise ValueError("Invalid direction response")
+            info = json.loads(payload)
             if not isinstance(info, dict):
                 return None
             angle, speech = info.get("angle"), info.get("speech_detected")
@@ -432,9 +450,9 @@ class ReachyController:
             direction = pose[:3, :3] @ [math.sin(angle), math.cos(angle), 0.0]
             return DoAReading(math.pi / 2 - math.atan2(direction[1], direction[0]), speech)
         except (OSError, ValueError, TypeError, AssertionError, http.client.HTTPException):
-            return None
-        finally:
             connection.close()
+            self._doa_connection = None
+            return None
 
     def look_at_speaker(self, angle: float) -> None:
         """Queue wake attention for the motion owner. An occupied motion is never interrupted."""
@@ -1050,6 +1068,7 @@ class ReachyController:
 
     def close(self) -> None:
         self._stop.set()
+        self._close_doa()
         with self._wave_lock:
             if self._wave_watcher is not None:
                 self._wave_watcher.close()

@@ -606,6 +606,7 @@ class VoiceConversation:
         self.wave_wake = wave_wake
         self.wake_enabled = wake_detector is not None or wave_wake
         self._wake_direction: WakeDirection | None = None
+        self._direction_audio_until = 0.0
         self._wake_policy = wake_policy
         self._wake_unknown_output_until = 0.0
         self.voice_verifier = voice_verifier
@@ -790,6 +791,13 @@ class VoiceConversation:
         return (self.wake_enabled
                 and (self._wake_deadline is None or now >= self._wake_deadline)
                 and not self._muted and now >= self._echo_until and not self._has_output())
+
+    def _direction_poll_eligible(self) -> bool:
+        now = time.monotonic()
+        return (self.wake_enabled and not self._muted and now >= self._echo_until
+                and not self._has_output()
+                and (now < self._direction_audio_until
+                     or self._wake_deadline is not None and now < self._wake_deadline))
 
     def _attend_wake(self, phrase_end: float | None, *, angle: float | None = None) -> None:
         """Prefer the waver's position, or freeze DoA at the invocation boundary."""
@@ -1348,7 +1356,7 @@ class VoiceConversation:
                 and callable(getattr(self.hardware, "look_at_speaker", None))
                 and getattr(self.hardware, "motion_enabled", True)):
             self._wake_direction = WakeDirection(self.hardware.read_doa)
-            direction_task = asyncio.create_task(self._wake_direction.sample_while(self._direction_eligible))
+            direction_task = asyncio.create_task(self._wake_direction.sample_while(self._direction_poll_eligible))
         ready = False
         blocked_episode = False
         wave_active = False
@@ -1611,6 +1619,10 @@ class VoiceConversation:
                         blocked_episode = True
                     continue
                 blocked_episode = False
+                if self._wake_direction is not None and len(sample):
+                    import numpy as np
+                    if float(np.mean(np.square(sample))) >= .0001:
+                        self._direction_audio_until = time.monotonic() + .5
                 if self.wake_enabled:
                     now = time.monotonic()
                     if wake_required:
