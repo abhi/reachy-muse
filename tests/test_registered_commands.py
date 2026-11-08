@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from functools import partial
 import logging
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -91,12 +92,13 @@ async def registered_device(service, monkeypatch):
     ("reachy.say", True, {"method": "link.result", "id": "command-1", "ok": True,
                           "payload": {"spoken": False, "reason": "hushed"}}),
     ("reachy.presence", False, {"method": "link.result", "id": "command-1", "ok": True,
-                                "payload": {"present": True, "last_seen_seconds": 0}}),
+                                "payload": {"present": True, "last_seen_seconds": 0, "source": "camera", "available": True}}),
 ])
 def test_command_results_reach_the_sdk_wire_payload(command, hushed, expected):
     async def check():
         service, voice, _ = command_device()
         voice.hardware.presence = lambda timeout_s: {"ok": True, "present": True, "last_seen_seconds": 0}
+        voice.hardware.presence_observations = lambda: {"camera": Presence(True, time.monotonic(), time.monotonic())}
         if hushed:
             voice._hush()
         session, vm = make_session(service.run_command, [])
@@ -299,6 +301,7 @@ def test_say_deadline_includes_sdk_dispatch_queue(monkeypatch, queue):
         controller._robot = SimpleNamespace(media=SimpleNamespace(get_frame=frame))
         service, _, speech = command_device()
         service.executor.presence = controller.presence
+        service.executor.presence_observations = controller.presence_observations
         count = 4 if queue == "slots" else 2
         asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=count))
         try:
@@ -346,6 +349,7 @@ def test_presence_deadline_includes_sdk_dispatch_queue(monkeypatch, queue, param
         controller._presence = Presence(True, 90, 90)
         service, _, _ = command_device()
         service.executor.presence = controller.presence
+        service.executor.presence_observations = controller.presence_observations
         executor = ThreadPoolExecutor(max_workers=1)
         loop = asyncio.get_running_loop()
         loop.set_default_executor(executor)
@@ -371,7 +375,7 @@ def test_presence_deadline_includes_sdk_dispatch_queue(monkeypatch, queue, param
                     await blocker
             assert await asyncio.wait_for(vm.next_message(), 2) == {
                 "method": "link.result", "id": "expired", "ok": True,
-                "payload": {"present": None, "last_seen_seconds": 10}}
+                "payload": {"present": None, "last_seen_seconds": 10, "source": "camera", "available": True}}
             assert reads == []
 
     asyncio.run(check())
@@ -788,11 +792,14 @@ def test_invalid_command_text_is_not_logged_or_synthesized(caplog):
 def test_registered_presence_returns_only_the_coarse_result_and_logs_the_outcome(caplog):
     caplog.set_level(logging.INFO)
     class Camera:
+        def presence_observations(self):
+            return {"camera": Presence(True, time.monotonic(), time.monotonic())}
+
         def presence(self, timeout_s):
             return {"ok": True, "present": True, "last_seen_seconds": 0}
     service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=Camera(), backends=lambda _: None)
     assert service.run_command("reachy.presence", {}) == {
-        "ok": True, "payload": {"present": True, "last_seen_seconds": 0}}
+        "ok": True, "payload": {"present": True, "last_seen_seconds": 0, "source": "camera", "available": False}}
     assert [record.message for record in caplog.records] == [
         "Reachy command name=reachy.presence outcome=present"]
 

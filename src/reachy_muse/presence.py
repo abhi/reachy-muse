@@ -4,6 +4,7 @@
 """Coarse local observations, without images or identity."""
 
 from dataclasses import dataclass
+import threading
 
 PRESENCE_FRESH_S = 2.0
 
@@ -28,7 +29,6 @@ class PresenceFusion:
     """Positive cues outlive brief camera gaps; absence requires a fresh camera observation."""
 
     def __init__(self):
-        import threading
         self._lock = threading.Lock()
         self._observations: dict[str, Presence] = {}
 
