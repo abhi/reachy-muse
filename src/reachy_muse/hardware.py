@@ -1308,7 +1308,6 @@ class ReachyController:
         previous_written = None
         gaze = self._np.zeros(9)
         gesture_offset = self._np.zeros(9)
-        wave_gesture = False
         try:
             if hasattr(self._robot, "client"):
                 status = self._robot.client.get_status()
@@ -1523,11 +1522,10 @@ class ReachyController:
                     head_blend = _blend_factor(head_blend, dt)
                     antenna_blend = _blend_factor(antenna_blend, dt)
                     gaze += (gaze_target - gaze) * head_blend
-                    if gesture == "wave" or wave_gesture:
+                    if gesture == "wave":
                         gesture_offset[:] = gesture_target
                     else:
                         gesture_offset += (gesture_target - gesture_offset) * head_blend
-                    wave_gesture = gesture == "wave"
                     rest_pose, rest_antennas, rest_body_yaw = self._rest
                     body_yaw = math.radians(self._speaker_look.body) if self._speaker_look is not None else 0.0
                     self._rest = (self._interpolate_pose(rest_pose, pose, head_blend),

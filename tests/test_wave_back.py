@@ -43,6 +43,33 @@ def test_wave_during_speech_is_dropped_and_never_queued(monkeypatch):
     assert controller._gesture_name is None
 
 
+@pytest.mark.parametrize("interrupt", ["state", "audio"])
+def test_interrupting_a_wave_fades_motor_targets_back_to_rest(monkeypatch, interrupt):
+    targets = []
+
+    def action(controller, follower, tick):
+        if tick == 70:
+            controller.gesture("wave")
+        if tick >= 96:
+            robot = controller._robot
+            targets.append([*controller._pose_parameters(robot.pose).values(),
+                            *np.degrees(robot.antennas), math.degrees(robot.body_yaw)])
+        if tick == 96:
+            if interrupt == "state":
+                controller.set_state("speaking")
+            else:
+                controller.play_audio(np.zeros(1600, np.float32))
+            assert controller._gesture_name is None
+
+    drive(monkeypatch, action, ticks=180, wave_wake=True,
+          face_follow_idle=True, style=MotionStyle(breathing=False))
+    targets = np.array(targets)
+    assert targets[0, 6:] == pytest.approx([8.76, 28.76, 0], abs=.01)
+    assert np.abs(np.diff(targets[:, 6:8], axis=0)).max() < 4
+    assert np.abs(np.diff(targets[:, :6], axis=0)).max() < 1
+    assert targets[-1, 6:] == pytest.approx([-10, 10, 0], abs=.03)
+
+
 def test_procedural_wave_has_literal_rest_endpoints_and_both_antennas_move():
     assert wave_back_offset(0) == (0.0,) * 9
     assert wave_back_offset(1.6) == (0.0,) * 9
