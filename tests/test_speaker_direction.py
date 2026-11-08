@@ -135,7 +135,7 @@ def test_median_uses_speech_only_and_ignores_one_outlier():
              DoAReading(math.radians(61), True)], check)
 
 
-@pytest.mark.parametrize("angles", [[60, 60], [0, 60, 120, 180], [0, 0, 180, 180]])
+@pytest.mark.parametrize("angles", [[60], [0, 60], [0, 60, 120, 180], [0, 0, 180, 180]])
 def test_sparse_or_disagreeing_samples_have_no_direction_then_good_speech_does(angles):
     def check(direction, clock, delays):
         assert direction.estimate(clock.now) is None

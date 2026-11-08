@@ -74,7 +74,7 @@ class WakeDirection:
             if samples[index][0] - samples[index - 1][0] > .35:
                 samples = samples[index:]
                 break
-        if (len(samples) < 3 or samples[-1][0] - samples[0][0] < .1
+        if (len(samples) < 2 or samples[-1][0] - samples[0][0] < .1
                 or phrase_end - samples[-1][0] > .45):
             return None
         direction = median(angle for _, angle in samples)

@@ -3,6 +3,7 @@
 import asyncio
 import math
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -38,6 +39,38 @@ async def wait_for_reads(hardware, count):
 
     await asyncio.wait_for(wait(), 2)
     await asyncio.sleep(.005)
+
+
+def test_short_keyword_collects_direction_through_microphone_activity(handoff, monkeypatch):
+    now = [100.0]
+    sleeping, resume = asyncio.Queue(), asyncio.Queue()
+
+    async def sleep(delay):
+        await sleeping.put(now[0] + delay)
+        await resume.get()
+
+    monkeypatch.setattr("reachy_muse.conversation.time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr("reachy_muse.conversation.WakeDirection",
+                        lambda read: WakeDirection(read, clock=lambda: now[0], sleep=sleep))
+    hardware = DirectionalHardware()
+
+    async def run(conversation, session, hw, wake, recognition, recordings, accepted, feed):
+        next_poll = await sleeping.get()
+        assert hw.reads == 0
+        for frame in range(14):
+            now[0] = 100 + (frame + 1) * .02
+            await feed((.25, 1))
+            if now[0] >= next_poll:
+                await resume.put(None)
+                next_poll = await sleeping.get()
+        hw.speech = False
+        now[0] = 100.30
+        await feed((0, 1))
+        assert hw.directions == [(pytest.approx(1.0471975512), "idle")]
+        assert conversation._wake_direction.estimate(100.28) is None
+        assert session.setup_messages == []
+
+    asyncio.run(bounded(handoff(run, delayed=True, hardware=hardware)))
 
 
 @pytest.mark.parametrize("asleep, trusted", [(False, True), (True, True), (True, False)])
