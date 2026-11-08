@@ -108,7 +108,7 @@ def test_strict_rejects_wake_before_hearing_or_call_and_then_accepts_operator(ha
         await feed((.5, 20), (.25, 14))
         assert (conversation._wake_deadline, len(recordings), openings) == (None, 0, [])
         await conversation._output_queue.join()
-        while conversation._has_output():
+        while conversation._has_output() or conversation._input_blocked():
             await asyncio.sleep(.01)
         assert sum(len(audio) for audio in hardware.played) == 1280
         await feed((.25, 14), (.125, 25), (0, 16))
@@ -127,7 +127,7 @@ def test_impostor_followup_stays_local_after_verified_wake(handoff):
         await feed((.5, 25), (0, 16))
         assert recordings == []
         await conversation._output_queue.join()
-        while conversation._has_output():
+        while conversation._has_output() or conversation._input_blocked():
             await asyncio.sleep(.01)
         await feed((.125, 25), (0, 16))
         await accepted.wait()
@@ -174,7 +174,7 @@ def test_capture_gap_discards_operator_segment_before_impostor(handoff):
         await feed((.5, 25), (0, 16), gap=True)
         assert recordings == []
         await conversation._output_queue.join()
-        while conversation._has_output():
+        while conversation._has_output() or conversation._input_blocked():
             await asyncio.sleep(.01)
         await feed((.125, 25), (0, 16))
         await accepted.wait()
@@ -303,7 +303,7 @@ def test_rejection_waits_for_speaker_without_blocking_capture_and_accounts_for_e
         assert np.concatenate(hardware.played).tolist() == rejection_cue(8000).tolist()
         assert blocked and all(blocked)
         assert conversation._speaker_cursor.end >= started + .16
-        while conversation._has_output():
+        while conversation._has_output() or conversation._input_blocked():
             await asyncio.sleep(.01)
         assert not conversation._input_blocked()
 
