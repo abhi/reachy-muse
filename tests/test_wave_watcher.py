@@ -50,7 +50,7 @@ def test_inactive_or_moving_robot_never_reads_camera():
         watcher.close()
 
 
-def test_disabling_waits_for_in_flight_work_before_returning():
+def test_draining_waits_for_in_flight_work_before_returning():
     entered, release = threading.Event(), threading.Event()
 
     def load(_):
@@ -63,8 +63,9 @@ def test_disabling_waits_for_in_flight_work_before_returning():
     watcher.set_active(True)
     try:
         assert entered.wait(2)
+        watcher.set_active(False)
         with ThreadPoolExecutor() as executor:
-            disabled = executor.submit(watcher.set_active, False)
+            disabled = executor.submit(watcher.drain)
             time.sleep(.03)
             assert disabled.done() is False
             release.set()
@@ -160,6 +161,51 @@ def test_cooldown_survives_pauses_and_long_waves_until_three_quiet_seconds(immed
             assert watcher.take_wave() is False
     assert cues == [1.25, 9.75]
     assert inferences == [0, 1.25, 8.5, 9.75]
+
+
+@pytest.mark.parametrize("blocked", ["camera", "inference"])
+def test_reactivation_discards_detection_work_from_before_deactivation(immediate_motion, blocked):
+    entered, release, resumed = threading.Event(), threading.Event(), threading.Event()
+    reads = []
+    now = [0.0]
+
+    def block():
+        entered.set()
+        assert release.wait(3)
+
+    def read():
+        reads.append(1)
+        if len(reads) > 2:
+            resumed.set()
+            return None
+        if len(reads) == 2 and blocked == "camera":
+            block()
+        return np.zeros((120, 160, 3), np.uint8)
+
+    class People:
+        def detect(self, frame):
+            if len(reads) == 2 and blocked == "inference":
+                block()
+            return [BOX]
+
+    watcher = wave.WaveWatcher(read, lambda: True, clock=lambda: now[0],
+                               detector_factory=lambda _: People())
+    watcher.set_active(True)
+    watcher._sample(People())
+    now[0] = 1.25
+    watcher.start()
+    try:
+        assert entered.wait(2)
+        watcher.set_active(False)
+        assert watcher.take_wave() is False
+        watcher.set_active(True)
+        release.set()
+        assert resumed.wait(2)
+        assert watcher.take_wave() is False
+        assert watcher.wave_position is None
+    finally:
+        release.set()
+        watcher.close()
 
 
 def test_old_cue_expires_instead_of_waking_a_later_conversation(immediate_motion):

@@ -140,7 +140,7 @@ class WaveDetector:
 
 
 class WaveWatcher:
-    """One bounded CPU worker. Disabling drains it and destroys image history.
+    """One bounded CPU worker. Disabling invalidates cues; draining destroys image history.
 
     Idle sampling is 2 Hz. Motion permits a 3 s burst at 8 Hz followed by a
     2 s rest, even under continuous motion. Person inference is at most 0.8 Hz
@@ -159,6 +159,8 @@ class WaveWatcher:
         self._condition = threading.Condition()
         self._work = threading.Lock()
         self._active = self._closed = False
+        self._epoch = 0
+        self._sample_epoch = None
         self._thread = None
         self._pending = None
         self.wave_position: tuple[float, float] | None = None
@@ -204,16 +206,28 @@ class WaveWatcher:
             if active == self._active or self._closed or self._failed:
                 return
             self._active = active
+            self._epoch += 1
             self._pending = None
             self.wave_position = None
             self._condition.notify_all()
-        if not active:
-            # The caller uses to_thread: wait off the audio loop before opening a call.
-            with self._work:
+
+    def drain(self, timeout=2.0):
+        if not self._work.acquire(timeout=timeout):
+            return
+        try:
+            with self._condition:
+                if self._active:
+                    return
                 self._reset()
                 stats, self._stats = self._stats, WaveStats()
-            log.info("Wave stats frames=%d detector_runs=%d cues=%d max_score=%.3f frame_errors=%d",
-                     stats.frames, stats.detector_runs, stats.cues, stats.max_score, stats.frame_errors)
+        finally:
+            self._work.release()
+        log.info("Wave stats frames=%d detector_runs=%d cues=%d max_score=%.3f frame_errors=%d",
+                 stats.frames, stats.detector_runs, stats.cues, stats.max_score, stats.frame_errors)
+
+    def _current(self, epoch):
+        with self._condition:
+            return self._active and not self._closed and self._epoch == epoch
 
     def take_wave(self) -> bool:
         with self._condition:
@@ -241,6 +255,14 @@ class WaveWatcher:
             self._reset()
 
     def _sample(self, detector):
+        with self._condition:
+            epoch = self._epoch
+        if not self._current(epoch):
+            self._discard_motion()
+            return .5
+        if epoch != self._sample_epoch:
+            self._reset()
+            self._sample_epoch = epoch
         now = self._clock()
         scale = self._budget.delay() if self._budget is not None else 1.0
         if not math.isfinite(scale):
@@ -268,7 +290,7 @@ class WaveWatcher:
                 self._reset()
                 self._stats.frame_errors += 1
                 return .5
-            if (not self._gaze_valid(generation) or self._budget is not None
+            if (not self._current(epoch) or not self._gaze_valid(generation) or self._budget is not None
                     and not math.isfinite(self._budget.delay())):
                 self._discard_motion()
                 return .5
@@ -306,14 +328,14 @@ class WaveWatcher:
                 else:
                     self._confirmations = 0
                 self._stats.detector_runs += 1
-            if not self._gaze_valid(generation):
+            if not self._current(epoch) or not self._gaze_valid(generation):
                 self._discard_motion()
                 return .5
             detected = self._decision.observe(frame, self._boxes, now, confirmed=self._confirmations >= 2)
             self._stats.max_score = max(self._stats.max_score, self._decision.score)
             if detected and self._confirmations >= 2:
                 with self._condition:
-                    if self._active and self._gaze_valid(generation):
+                    if self._current(epoch) and self._gaze_valid(generation):
                         box = self._boxes[0]
                         height, width = frame.shape[:2]
                         position = ((box.x + box.width / 2) * width,
@@ -354,9 +376,15 @@ class WaveWatcher:
                     with self._condition:
                         if not self._active or self._closed:
                             continue
+                        epoch = self._epoch
                     if detector is None:
                         detector = self._factory(self._model)
+                    if not self._current(epoch):
+                        self._discard_motion()
+                        continue
                     period = self._sample(detector)
+                    if not self._current(epoch):
+                        self._discard_motion()
                     scale = self._budget.delay() if self._budget is not None else 1.0
                     if math.isfinite(scale):
                         period *= scale

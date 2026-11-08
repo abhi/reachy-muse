@@ -977,7 +977,7 @@ class ReachyController:
             self._wave_gaze_status = status
 
     def set_wave_watching(self, active: bool) -> None:
-        """Called off the audio loop: disabling waits for in-flight inference."""
+        """Called off the audio loop: disabling bounds the wait for in-flight inference."""
         with self._wave_lock:
             active = (active and self._wave_enabled and not self._watching
                       and not self._stop.is_set() and self._robot is not None)
@@ -993,6 +993,9 @@ class ReachyController:
             if self._wave_watcher is not None:
                 self._wave_watcher.set_active(active)
             self._wave_watching = active
+            watcher = self._wave_watcher
+        if watcher is not None and not active:
+            watcher.drain()
 
     def take_wave(self) -> bool:
         with self._state_lock:

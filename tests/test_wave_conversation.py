@@ -360,6 +360,74 @@ def test_cancelling_during_wave_activation_drains_and_disables_the_camera():
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("blocked", ["camera", "model"])
+def test_service_cancellation_and_hardware_close_are_bounded_during_wave_work(monkeypatch, blocked):
+    import threading
+    import numpy as np
+    from reachy_muse.hardware import ReachyController
+    from reachy_muse.wave_wake import WaveWatcher
+    from test_hardware import FakeRobot
+
+    rig = rig_with(monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+
+    def block():
+        entered.set()
+        assert release.wait(10)
+
+    def read():
+        if blocked == "camera":
+            block()
+        return np.zeros((120, 160, 3), np.uint8)
+
+    def load(_):
+        if blocked == "model":
+            block()
+        return object()
+
+    controller = ReachyController(wave_wake=True, wave_watcher_factory=lambda *args, **kwargs:
+                                 WaveWatcher(*args, **kwargs, detector_factory=load))
+    controller._robot = FakeRobot()
+    controller._robot.media.get_frame = read
+    controller._wave_still = lambda: True
+    controller._read_wave_gaze = lambda: None
+    rig.hardware.set_wave_watching = controller.set_wave_watching
+    rig.hardware.take_wave = controller.take_wave
+    rig.hardware.claim_wave = controller.claim_wave
+
+    async def muse(session, request):
+        raise AssertionError("No speech was submitted")
+
+    conversation = service(rig, muse, Transcripts(), wave_wake=True)
+
+    async def scenario():
+        task = asyncio.create_task(conversation.serve(rig.session, {"vm_id": "vm-1"}, asyncio.Event()))
+        closing = None
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            task.cancel()
+            await rig.wait_until_or_timeout(lambda: not controller._wave_watcher._active)
+            closing = asyncio.create_task(asyncio.to_thread(controller.close))
+            await asyncio.wait({task, closing}, timeout=3)
+            assert [task.done(), closing.done()] == [True, True]
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            with pytest.raises(RuntimeError, match="Wave watcher did not stop"):
+                await closing
+            assert not any(t.get_name() == "reachy-microphone-capture" for t in asyncio.all_tasks())
+            assert controller.take_wave() is False
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, *([closing] if closing is not None else []), return_exceptions=True)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        release.set()
+        controller.close()
+
+
 @pytest.mark.parametrize("muse_path", ["chat", "realtime"])
 def test_arrival_watching_invalidates_a_wave_during_camera_drain(monkeypatch, muse_path):
     import threading
@@ -381,7 +449,9 @@ def test_arrival_watching_invalidates_a_wave_during_camera_drain(monkeypatch, mu
     class Watcher:
         def set_active(self, active):
             camera.set_active(active)
-            if not active and consumed.is_set() and not draining.is_set():
+
+        def drain(self):
+            if consumed.is_set() and not draining.is_set():
                 draining.set()
                 assert release.wait(5)
 

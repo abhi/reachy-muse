@@ -33,6 +33,9 @@ def test_morning_watch_drains_wave_and_uses_the_same_camera_reader():
 
         set_watching = set_active
 
+        def drain(self):
+            pass
+
         def take_wave(self):
             return True
 
@@ -119,6 +122,9 @@ def test_wave_bearing_uses_current_head_pose_and_survives_camera_drain(monkeypat
 
         def set_active(self, active):
             self.wave_position = None
+
+        def drain(self):
+            pass
 
     controller._wave_watcher = Watcher()
     for tick in range(21):

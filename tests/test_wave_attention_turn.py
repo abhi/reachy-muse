@@ -51,6 +51,9 @@ def test_wave_turn_hands_over_to_face_tracking_through_a_whole_reply(monkeypatch
         def close(self):
             self.set_active(False)
 
+        def drain(self):
+            pass
+
     camera = controller._wave_watcher = Camera()
     directions, reads, tracking = [], [], []
     original_state = rig.hardware.set_state
