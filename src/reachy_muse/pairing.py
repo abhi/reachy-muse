@@ -18,6 +18,9 @@ log = logging.getLogger(__name__)
 
 
 class PairedService(Service):
+    def unpaired(self) -> None:
+        pass
+
     async def _maybe_refresh(self, pairing: dict, force: bool = False) -> dict | None:
         return await asyncio.to_thread(self._refresh_pairing, pairing, force)
 
@@ -50,6 +53,7 @@ class PairedService(Service):
                 return pairing
             if status == 401:
                 config.delete_json(config.PAIRING_FILE, directory)
+                self.unpaired()
                 log.error("pairing revoked; run `muse-reachy pair` to set up again")
                 return None
             return None if force else pairing

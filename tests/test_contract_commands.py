@@ -72,3 +72,13 @@ def test_say_has_no_urgent_override_and_presence_accepts_no_parameters():
         parse_command("reachy.say", {"text": "Wake up.", "urgent": True})
     with pytest.raises(ValueError, match="^unknown parameter: image$"):
         parse_command("reachy.presence", {"image": True})
+
+
+def test_notification_defaults_and_maximum_lifetime():
+    assert parse_command("reachy.notify", {"id": "calendar-1", "text": "Your call starts soon.",
+                                          "mode": "when_present", "kind": "notification"}) == Command(
+        "reachy.notify", {"id": "calendar-1", "text": "Your call starts soon.", "mode": "when_present",
+                          "kind": "notification", "expires_in_s": 14400.0}, 30.0)
+    assert parse_command("reachy.notify", {"id": "tip-1", "text": "Take a break.", "mode": "now",
+                                          "kind": "suggestion", "expires_in_s": 86400}).params == {
+        "id": "tip-1", "text": "Take a break.", "mode": "now", "kind": "suggestion", "expires_in_s": 86400.0}

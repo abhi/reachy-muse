@@ -140,3 +140,14 @@ def test_refresh_preserves_pairing_replaced_during_request(tmp_path, monkeypatch
         assert result == (replacement if entrypoint == "service" else None)
 
     asyncio.run(asyncio.wait_for(check(), 3))
+
+
+def test_revoked_pairing_clears_the_notification_ledger(tmp_path, monkeypatch, service):
+    from reachy_muse.inbox import Inbox
+    from test_inbox import notice
+    service.inbox = Inbox(tmp_path / "inbox.json")
+    service.inbox.add(notice())
+    monkeypatch.setattr(muse_api, "refresh_device_token", lambda *args: (None, 401))
+    assert asyncio.run(service._maybe_refresh(PAIRING, force=True)) is None
+    assert service.inbox.pending() is None
+    assert (tmp_path / "inbox.json").exists() is False

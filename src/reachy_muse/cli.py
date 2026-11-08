@@ -27,6 +27,7 @@ from reachy_muse.contract.prompts import (
     CHAT_BOOTSTRAP, REACHY_INTRODUCTION, setup_challenge_reply, with_setup_challenge,
 )
 from reachy_muse.capabilities import Mode
+from reachy_muse.inbox import INBOX_FILE, Inbox
 
 
 CHAT_STATE_FILE = "reachy-chat.json"
@@ -650,6 +651,7 @@ async def run(args) -> int:
     from reachy_muse.conversation import ReachyService
 
     if not config.load_json(config.PAIRING_FILE):
+        (config.state_dir() / INBOX_FILE).unlink(missing_ok=True)
         print("Reachy is not paired with Muse. Run `muse-reachy pair` on the robot first.",
               file=sys.stderr)
         return 1
@@ -755,7 +757,7 @@ async def run(args) -> int:
                                owns_chat=dedicated_chat is not None,
                                introduce_to_muse=args.introduce_to_muse,
                                silence_s=silence_s, short_utterance_silence_s=SHORT_UTTERANCE_SILENCE_S,
-                               backends=backends,
+                               backends=backends, inbox=Inbox(config.state_dir() / INBOX_FILE),
                                local_chat=args.local_chat == "on",
                                arbitration_shadow=args.arbitration_shadow,
                                audio_diagnostics=args.audio_diagnostics, wake_detector=wake_detector,
@@ -871,6 +873,8 @@ def pair_reachy(args) -> int:
         print(f"Setup open for {window.timeout_s // 60} minutes. In the Muse app, add a device "
               f"and choose {window.ble_name}.")
 
+    if args.force:
+        (config.state_dir() / INBOX_FILE).unlink(missing_ok=True)
     result = pair(on_open=setup_open, force=args.force, timeout_s=args.timeout)
     if result.outcome is PairOutcome.PAIRED:
         print(f"Reachy is paired with Muse. The pairing is saved in {config.state_dir()}.")

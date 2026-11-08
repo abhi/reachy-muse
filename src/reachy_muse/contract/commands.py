@@ -64,6 +64,25 @@ COMMAND_SPECS = {
         "optional": {},
         "timeout_ms": 5000,
     },
+    "reachy.notify": {
+        "description": (
+            "Deliver a short notification or suggestion to whoever is present. Check reachy.presence first; "
+            "use now when present, when_present otherwise. Returns status delivered, queued, expired or refused "
+            "with reason. Queues while absent, asleep, hushed or busy. IDs are idempotent until expiry; reuse "
+            "the same id on retries. At most 20 IDs, including delivery receipts, remain until expiry. "
+            "No identity verification. Replies to voice turns are already spoken; do not notify them again."
+        ),
+        "required": {
+            "id": {"type": "string", "description": "Stable retry ID, 1 to 128 UTF-8 bytes."},
+            "text": {"type": "string", "description": "Plain speech, 1 to 240 UTF-8 bytes."},
+            "mode": {"type": "string", "description": "now or when_present."},
+            "kind": {"type": "string", "description": "notification or suggestion."},
+        },
+        "optional": {
+            "expires_in_s": {"type": "number", "description": "Lifetime in seconds, 0 to 86400. Default 14400."},
+        },
+        "timeout_ms": 30000,
+    },
     "reachy.expression": {
         "description": (
             "Show a deliberate gesture or feeling on Reachy Mini now, also during a voice call while "
@@ -152,10 +171,19 @@ def parse_command(name: str, params: object, *, antenna_mode: str = "both",
                 checked[key] = _number(params, key, 0, low, high)
         checked["duration"] = _number(params, "duration", 0.8, 0.2, 5)
         checked["hold"] = _number(params, "hold", 0.5, 0, 5)
-    elif name == "reachy.say":
+    elif name in ("reachy.say", "reachy.notify"):
         text = params.get("text")
         if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > 240:
             raise ValueError("text must contain 1 to 240 UTF-8 bytes of speech")
+    if name == "reachy.notify":
+        id = params.get("id")
+        if not isinstance(id, str) or not id.strip() or len(id.encode("utf-8")) > 128:
+            raise ValueError("id must contain 1 to 128 UTF-8 bytes")
+        if params.get("mode") not in ("now", "when_present"):
+            raise ValueError("mode must be now or when_present")
+        if params.get("kind") not in ("notification", "suggestion"):
+            raise ValueError("kind must be notification or suggestion")
+        checked["expires_in_s"] = _number(params, "expires_in_s", 14400, 0, 86400)
     timeout_s = _number({"timeout_ms": timeout_ms if timeout_ms is not None else spec["timeout_ms"]},
                         "timeout_ms", spec["timeout_ms"], 1, 30000) / 1000
     return Command(name, checked, timeout_s)

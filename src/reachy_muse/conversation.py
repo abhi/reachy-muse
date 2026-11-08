@@ -50,6 +50,8 @@ from reachy_muse.turn_timeline import TurnTimeline
 from reachy_muse.startup import StartupTimeline
 from reachy_muse.speaker_direction import WakeDirection
 from reachy_muse.presence import PresenceFusion
+from reachy_muse.inbox import Inbox, outcome
+from reachy_muse.notifications import Notifications
 from reachy_muse.wake_policy import WakeContext
 
 log = logging.getLogger(__name__)
@@ -665,6 +667,7 @@ class VoiceConversation:
         self._barging: asyncio.Task | None = None
         self._user_quiet_at: float | None = None
         self.muse_moving = 0
+        self.notifications: Notifications | None = None
 
     async def _plan(self, event: plan.Event) -> None:
         for cue in self._planner.on(event, time.monotonic()):
@@ -831,7 +834,8 @@ class VoiceConversation:
             warming = asyncio.create_task(self._warm_after_ready())
             moments = asyncio.create_task(self._moments.keep_ready())
             morning = asyncio.create_task(self._morning.run(self)) if self._morning is not None else None
-            watched = {subscriber, microphone} | ({morning} if morning is not None else set())
+            notifications = asyncio.create_task(self.notifications.run()) if self.notifications is not None else None
+            watched = {task for task in (subscriber, microphone, notifications, morning) if task is not None}
             tasks.update(watched, {moments, warming})
             if self.realtime is not None:
                 tasks.add(asyncio.create_task(self._warm_realtime()))
@@ -2827,18 +2831,19 @@ class VoiceConversation:
             return "speech_unavailable"
         return None
 
-    async def say(self, text: str, timeout_s: float, *, speech_serial: int) -> dict:
+    async def say(self, text: str, timeout_s: float, *, speech_serial: int | None = None, allowed=None) -> dict:
         """Queue one bounded line with the same speaker ownership as replies."""
+        speech_serial = next(_SPEECH_SERIALS) if speech_serial is None else speech_serial
         task = asyncio.current_task()
         self._command_tasks.add(task)
         try:
-            reason = self._say_blocked()
+            reason = self._say_blocked() or ("unavailable" if allowed is not None and not allowed() else None)
             if reason is None:
                 try:
                     await asyncio.wait_for(self._speak(
                         None, text=text, stream_segment=True, voice=self.backends.command_voice,
                         speech_serial=speech_serial,
-                        is_current=lambda: self._say_blocked() is None), timeout_s)
+                        is_current=lambda: self._say_blocked() is None and (allowed is None or allowed())), timeout_s)
                 except _SpeechSuperseded:
                     reason = self._say_blocked() or "interrupted"
                 except asyncio.TimeoutError:
@@ -3240,6 +3245,7 @@ class ReachyService(PairedService):
     short_utterance_silence_s: float | None = None
     morning: MorningRoutine | None = None
     place: str | None = None
+    inbox: Inbox = field(default_factory=Inbox)
     _presence: PresenceFusion = field(default_factory=PresenceFusion, init=False, repr=False)
     startup: StartupTimeline | None = None
     muse_path: str = "chat"
@@ -3266,13 +3272,17 @@ class ReachyService(PairedService):
         if self._hardware_error is not None:
             raise self._hardware_error
 
+    def unpaired(self) -> None:
+        self.inbox.clear()
+
     def presence_result(self) -> dict:
         observe = getattr(self.executor, "presence_observations", None)
         if observe is not None:
             for source, observation in observe().items():
                 self._presence.observe(source, observation)
         voice = self._voice[1] if self._voice is not None else None
-        available = voice is not None and voice._say_blocked() is None and not voice._has_output()
+        available = (voice is not None and voice._say_blocked() is None
+                     and not voice._has_output() and not voice._wake_first_request_pending)
         return {**self._presence.result(time.monotonic()), "available": available,
                 **({"place": self.place} if self.place is not None else {})}
 
@@ -3281,6 +3291,8 @@ class ReachyService(PairedService):
 
     def run_command(self, name: str, params: dict, timeout_ms: int | None = None, *,
                     session: LinkSession | None = None) -> dict:
+        if name == "reachy.notify":
+            return self._notify(params, timeout_ms, session=session)
         if name in ("reachy.expression", "reachy.move"):
             return self._muse_motion(name, params, timeout_ms)
         if name not in ("reachy.say", "reachy.presence"):
@@ -3330,6 +3342,36 @@ class ReachyService(PairedService):
         if result["ok"]:
             return {"ok": True, "payload": {key: value for key, value in result.items() if key != "ok"}}
         return result
+
+    def _notify(self, params: dict, timeout_ms: int | None, *, session: LinkSession | None) -> dict:
+        try:
+            if not isinstance(params, _CommandParams):
+                params = _CommandParams("reachy.notify", params, timeout_ms)
+            active = self._voice
+            if active is None or (session is not None and active[1].session is not session):
+                result = self.inbox.add(params)
+            else:
+                loop, voice = active
+                async def notify():
+                    return await voice.notifications.notify(params, max(0, params.deadline - time.monotonic()))
+                pending = notify()
+                try:
+                    future = asyncio.run_coroutine_threadsafe(pending, loop)
+                except RuntimeError:
+                    pending.close()
+                    result = self.inbox.add(params)
+                else:
+                    try:
+                        result = future.result(max(0, params.deadline - time.monotonic()) + 1)
+                    except (CommandTimeout, CommandCancelled):
+                        future.cancel()
+                        result = self.inbox.result(params["id"])
+        except ValueError:
+            result = outcome("refused", "invalid_parameters")
+        except OSError:
+            result = outcome("refused", "storage_unavailable")
+        log.info("Reachy command name=reachy.notify outcome=%s reason=%s", result["status"], result["reason"])
+        return {"ok": True, "payload": {key: value for key, value in result.items() if key != "ok"}}
 
     def _muse_motion(self, name: str, params: dict, timeout_ms: int | None) -> dict:
         """Run Muse's expression or move; while it runs, Reachy's own reply motion holds back."""
@@ -3392,7 +3434,7 @@ class ReachyService(PairedService):
 
         def invoke(message):
             name = message.get("command")
-            if name in ("reachy.say", "reachy.presence"):
+            if name in ("reachy.say", "reachy.presence", "reachy.notify"):
                 params = message.get("params")
                 try:
                     params = _CommandParams(name, params if isinstance(params, dict) else {},
@@ -3438,6 +3480,7 @@ class ReachyService(PairedService):
                                       short_utterance_silence_s=self.short_utterance_silence_s,
                                       morning=self.morning, startup=startup,
                                       realtime=self._realtime(vm, session_id), presence=self._presence)
+            voice.notifications = Notifications(self.inbox, self.presence_result, voice)
             voice._wake_window = WakeWindow.ASLEEP if self._asleep else WakeWindow.AWAKE
             voice._say_hushed = self._say_hushed
             self._voice = (asyncio.get_running_loop(), voice)
@@ -3475,6 +3518,8 @@ class ReachyService(PairedService):
             await asyncio.gather(voice_task, stop_task, return_exceptions=True)
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(link_task, 5)
+        if outcome is Outcome.UNPAIRED:
+            self.unpaired()
         if outcome is not Outcome.STOPPED:
             await asyncio.to_thread(hardware.set_state, "sleeping" if self._asleep else "error")
         return outcome
