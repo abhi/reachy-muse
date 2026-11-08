@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 
 import asyncio
+import time
 import io
 import json
 from types import SimpleNamespace
@@ -88,6 +89,9 @@ def test_pair_introduction_preserves_registered_voice_service(
 
     async def introduce(**kwargs):
         service, _, speech = command_device()
+        from reachy_muse.presence import Presence
+        service.executor.presence_observations = lambda: {
+            "camera": Presence(True, time.monotonic(), time.monotonic())}
         service.executor.presence = lambda timeout_s: {
             "ok": True, "present": True, "last_seen_seconds": 0}
         async with registered_device(service, monkeypatch) as (running, running_vm, _):
@@ -100,7 +104,7 @@ def test_pair_introduction_preserves_registered_voice_service(
                 assert running.registered.is_set()
                 for command, params, payload in [
                     ("reachy.say", {"text": "Lunch is ready."}, {"spoken": True}),
-                    ("reachy.presence", {}, {"present": True, "last_seen_seconds": 0}),
+                    ("reachy.presence", {}, {"present": True, "last_seen_seconds": 0, "source": "camera", "available": True}),
                 ]:
                     await running_vm.send_message({"method": "link.invoke", "id": command,
                                                    "command": command, "params": params})
