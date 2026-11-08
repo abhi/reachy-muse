@@ -71,7 +71,9 @@ def test_unpair_removes_the_entire_ledger(tmp_path):
     path = tmp_path / "inbox.json"
     inbox = Inbox(path)
     inbox.add(notice())
+    path.with_suffix(".tmp").write_text("Call Mom.")
     inbox.clear()
+    assert path.with_suffix(".tmp").exists() is False
     assert path.exists() is False
     assert inbox.pending() is None
     assert Inbox(path).pending() is None

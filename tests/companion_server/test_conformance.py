@@ -769,3 +769,19 @@ def test_cli_serve_answers_a_robot_and_stops_on_sigint(tmp_path):
             server.send_signal(2)
         assert server.wait(5) == 0
         assert server.stderr.read().strip().endswith("stopped")
+
+
+def test_speech_engine_errors_do_not_log_the_notification_text(caplog):
+    class FailingVoice(ToneVoice):
+        async def speak(self, text, role, out_rate, expression=None):
+            yield b"\x00\x00"
+            raise RuntimeError(text)
+
+    async def script(companion):
+        ws = await connected(companion)
+        await send(ws, SpeakStart(stream=2, text="A private reminder.", voice=VoiceRole.MAIN))
+        assert await recv(ws) == Error(ErrorCode.MODEL, "RuntimeError: A private reminder.", stream=2)
+
+    scenario(script, engines=Engines(voice=FailingVoice()))
+    assert "op failed (stream=2 id=None): RuntimeError" in caplog.text
+    assert "A private reminder." not in caplog.text

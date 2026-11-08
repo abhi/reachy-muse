@@ -17,6 +17,11 @@ INBOX_FILE = "reachy-inbox.json"
 MAX_ITEMS = 20
 
 
+def clear_inbox(path: Path) -> None:
+    path.unlink(missing_ok=True)
+    path.with_suffix(".tmp").unlink(missing_ok=True)
+
+
 def outcome(status: str, reason: str) -> dict:
     return {"ok": True, "status": status, "reason": reason}
 
@@ -131,4 +136,4 @@ class Inbox:
         with self._lock:
             self._items.clear()
             if self.path is not None:
-                self.path.unlink(missing_ok=True)
+                clear_inbox(self.path)

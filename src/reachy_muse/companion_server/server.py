@@ -506,7 +506,7 @@ class _Session:
         except ConnectionClosed:
             pass
         except Exception as error:
-            log.exception("op failed (stream=%s id=%s)", stream, id)
+            log.warning("op failed (stream=%s id=%s): %s", stream, id, type(error).__name__)
             await self._fatal(ErrorCode.MODEL, error, stream=stream, id=id)
 
     async def _fatal(self, code: ErrorCode, error: Exception, *, stream: Optional[int] = None, id: Optional[int] = None) -> None:

@@ -27,7 +27,7 @@ from reachy_muse.contract.prompts import (
     CHAT_BOOTSTRAP, REACHY_INTRODUCTION, setup_challenge_reply, with_setup_challenge,
 )
 from reachy_muse.capabilities import Mode
-from reachy_muse.inbox import INBOX_FILE, Inbox
+from reachy_muse.inbox import INBOX_FILE, Inbox, clear_inbox
 
 
 CHAT_STATE_FILE = "reachy-chat.json"
@@ -651,7 +651,7 @@ async def run(args) -> int:
     from reachy_muse.conversation import ReachyService
 
     if not config.load_json(config.PAIRING_FILE):
-        (config.state_dir() / INBOX_FILE).unlink(missing_ok=True)
+        clear_inbox(config.state_dir() / INBOX_FILE)
         print("Reachy is not paired with Muse. Run `muse-reachy pair` on the robot first.",
               file=sys.stderr)
         return 1
@@ -874,7 +874,7 @@ def pair_reachy(args) -> int:
               f"and choose {window.ble_name}.")
 
     if args.force:
-        (config.state_dir() / INBOX_FILE).unlink(missing_ok=True)
+        clear_inbox(config.state_dir() / INBOX_FILE)
     result = pair(on_open=setup_open, force=args.force, timeout_s=args.timeout)
     if result.outcome is PairOutcome.PAIRED:
         print(f"Reachy is paired with Muse. The pairing is saved in {config.state_dir()}.")

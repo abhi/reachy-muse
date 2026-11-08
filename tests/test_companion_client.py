@@ -594,3 +594,10 @@ def test_ping_send_and_pong_wait_share_one_inactivity_budget():
         return str(stream.failure), stream.failure.link_down, aborted
 
     assert asyncio.run(scenario()) == ("the companion sent no frames or pong", True, [True])
+
+
+def test_speech_failure_details_cannot_enter_reconnect_logs():
+    from reachy_muse.protocol import Error, ErrorCode
+    link = CompanionLink("ws://127.0.0.1:9000", token=TOKEN, insecure=True, out_rate=16000)
+    with pytest.raises(ConnectionError, match="^the companion failed: model$"):
+        link._error(None, Error(ErrorCode.MODEL, "A private reminder.", stream=2))

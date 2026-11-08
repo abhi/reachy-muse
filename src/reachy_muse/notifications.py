@@ -21,7 +21,7 @@ class Notifications:
         self._lock = asyncio.Lock()
 
     def available(self) -> bool:
-        return (self.presence()["present"] is True and self.voice._say_blocked() is None
+        return (self.voice._say_blocked() is None
                 and not self.voice._has_output() and not self.voice._wake_first_request_pending)
 
     async def notify(self, params: dict, timeout_s: float) -> dict:
@@ -44,7 +44,8 @@ class Notifications:
 
     async def deliver(self, timeout_s: float) -> None:
         item = self.inbox.pending()
-        if item is None or self._lock.locked() or not self.available() or timeout_s <= ATTENTION_S:
+        if (item is None or self._lock.locked() or self.presence()["present"] is not True
+                or not self.available() or timeout_s <= ATTENTION_S):
             return
         async with self._lock:
             item = self.inbox.pending()
@@ -53,12 +54,13 @@ class Notifications:
             deadline = time.monotonic() + timeout_s
             await asyncio.to_thread(self.voice.hardware.gesture, "wave")
             await asyncio.sleep(ATTENTION_S)
-            if not self.available() or time.monotonic() >= deadline:
+            if (not self.available() or self.presence()["present"] is False
+                    or time.monotonic() >= deadline):
                 return
             if not self.inbox.claim(item["id"]):
                 return
             result = await self.voice.say(
                 item["text"], max(0, deadline - time.monotonic()),
-                allowed=lambda: (self.presence()["present"] is True
+                allowed=lambda: (self.presence()["present"] is not False
                                  and self.inbox.clock() < item["expires_at"]))
             self.inbox.finish(item["id"], spoken=result["spoken"], reason=result.get("reason", "spoken"))

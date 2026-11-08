@@ -450,8 +450,8 @@ class CompanionLink:
 
     def _error(self, connection: _Connection, error: Error) -> None:
         if error.code in _FATAL:
-            raise ConnectionError(f"the companion failed: {error.code.value}: {error.message}")
-        failure = CapabilityUnavailable(f"companion {error.code.value}: {error.message}", link_down=False)
+            raise ConnectionError(f"the companion failed: {error.code.value}")
+        failure = CapabilityUnavailable(f"companion {error.code.value}", link_down=False)
         if error.stream is not None and error.stream in connection.hearing:
             connection.hearing.pop(error.stream).fail(failure)
         elif error.stream is not None and error.stream in connection.speaking:
@@ -462,7 +462,7 @@ class CompanionLink:
             if not future.done():
                 future.set_exception(failure)
         else:
-            log.warning("Reachy's companion reported %s: %s", error.code.value, error.message)
+            log.warning("Reachy's companion reported %s", error.code.value)
 
     def _live(self, op: Op) -> _Connection:
         if not self.can(op):

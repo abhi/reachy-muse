@@ -207,3 +207,60 @@ def test_service_delivers_a_queued_note_after_a_voice_turn_finishes(monkeypatch)
     events = run(rig, robot, user, rest=("idle", "listening"))
     assert played(events) == ["tts:It is noon.", "tts:Call Mom."]
     assert rig.hardware.gestures == ["wave"]
+
+
+@pytest.mark.parametrize("after_gesture, status", [(None, "delivered"), (False, "queued")])
+def test_gesture_may_age_a_camera_observation_but_a_fresh_absence_defers(after_gesture, status):
+    async def check():
+        service, voice, speech = device()
+        observed = [True]
+        voice.notifications.presence = lambda: {"present": observed[0]}
+        voice.hardware.gesture = lambda _: observed.__setitem__(0, after_gesture)
+        result = await notify(service, **{**notice(), "mode": "now"})
+        assert result["payload"]["status"] == status
+        assert speech.words == (["Call Mom."] if status == "delivered" else [])
+    asyncio.run(check())
+
+
+def test_failed_speech_is_not_replayed_and_does_not_log_its_text(caplog):
+    class FailingSpeech:
+        async def stream(self, text, rate):
+            raise RuntimeError(text)
+            yield
+
+    async def check():
+        service, voice, speech = command_device(speech=FailingSpeech())
+        voice.notifications = Notifications(service.inbox, service.presence_result, voice)
+        service._presence.mark("voice", time.monotonic())
+        params = {**notice(text="A private failed reminder."), "mode": "now"}
+        expected = {"ok": True, "payload": {"status": "refused", "reason": "speech_failed"}}
+        assert await notify(service, **params) == expected
+        assert await notify(service, **params) == expected
+        assert voice.hardware.gestures == ["wave"]
+        assert voice.hardware.played == []
+    asyncio.run(check())
+    assert "A private failed reminder." not in caplog.text
+
+
+def test_shutdown_during_synthesis_stops_the_background_delivery_worker():
+    async def check():
+        entered = asyncio.Event()
+
+        class HangingSpeech:
+            async def stream(self, text, rate):
+                entered.set()
+                await asyncio.Event().wait()
+                yield
+
+        service, voice, _ = command_device(speech=HangingSpeech())
+        voice.notifications = Notifications(service.inbox, service.presence_result, voice)
+        service._presence.mark("voice", time.monotonic())
+        service.inbox.add(notice())
+        worker = asyncio.create_task(voice.notifications.run())
+        await asyncio.wait_for(entered.wait(), 2)
+        voice._closed = True
+        worker.cancel()
+        await asyncio.wait_for(worker, .5)
+        assert voice.hardware.played == []
+        assert service.inbox.result("n1") == {"ok": True, "status": "refused", "reason": "disconnected"}
+    asyncio.run(check())
