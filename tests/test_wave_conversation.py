@@ -595,6 +595,64 @@ def test_speech_during_wave_reaches_realtime_from_its_first_sample(monkeypatch):
     assert played(events) == []
 
 
+@pytest.mark.parametrize("muse_path, expected_requests, expected_playback", [
+    ("chat", ["What is the weather tomorrow?"], ["tts:Sunny tomorrow."]),
+    ("realtime", [], ["muse"]),
+])
+def test_short_request_during_wave_omits_the_delayed_greeting(
+        monkeypatch, muse_path, expected_requests, expected_playback):
+    import threading
+    import numpy as np
+    from reachy_muse.realtime_call import realtime_supported
+    from test_realtime_turns import ScriptedCalls, StreamingTranscripts, reply_events, rig_for, room, voiced
+
+    if muse_path == "realtime" and not realtime_supported():
+        pytest.skip("the Muse SDK has no voice call events")
+    rig = rig_for(monkeypatch)
+    camera = WaveCamera(rig.hardware)
+    reply = asyncio.Event()
+    drained = threading.Event()
+    discard = rig.hardware.discard_microphone
+
+    def discard_microphone():
+        discard()
+        drained.set()
+
+    rig.hardware.discard_microphone = discard_microphone
+
+    async def answer(sdk, emit, script):
+        emit(sdk.Working(True))
+        await reply.wait()
+        reply_events(sdk, emit, "r1", "Sunny tomorrow.", voiced(.2))
+        emit(sdk.Working(False))
+
+    calls = ScriptedCalls(answer=answer)
+
+    async def muse(session, request):
+        await session.answer(request, "Sunny tomorrow.")
+
+    conversation = service(rig, muse, StreamingTranscripts("What is the weather tomorrow?"),
+                           wave_wake=True, wake_timeout_s=30, muse_path=muse_path,
+                           voice_link=calls.link, voice_call=calls)
+    conversation.silence_s = .8
+
+    async def user():
+        camera.pending = True
+        await rig.wait_until_or_timeout(lambda: bool(rig.hardware.gestures))
+        assert await asyncio.to_thread(drained.wait, 2)
+        for value in [.3] * 33 + [0] * 45:
+            rig.hardware.samples.put(np.full(320, value, np.float32))
+        try:
+            await room(rig, 2)
+        finally:
+            reply.set()
+        await rig.wait_until_or_timeout(lambda: expected_playback[-1] in played(rig.recording.events), 5)
+
+    events = run(rig, conversation, user, rest=("idle", "listening"))
+    assert sent_to_muse(events) == expected_requests
+    assert played(events) == expected_playback
+
+
 def test_another_wave_while_awake_gets_a_gesture_without_reopening_or_speaking(monkeypatch):
     rig = rig_with(monkeypatch)
     camera = WaveCamera(rig.hardware)

@@ -1087,6 +1087,8 @@ class VoiceConversation:
                 # Hardware AEC can leave residual speech. Keep capturing it, but
                 # require words distinct from our output before pausing playback.
                 speaking = partial is not None and interrupts_playback(partial.text, tuple(heard_over))
+            if wave_greeting is not None and (speaking or heard.ended is not None):
+                wave_greeting.cancel()
             if speaking:
                 gap_quiet_samples = 0
             else:
