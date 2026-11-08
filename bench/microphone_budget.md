@@ -62,22 +62,25 @@ through a simulated one-chunk device queue. The executor-load case adds repeated
 60 ms jobs to a one-worker default executor. This is a controlled starvation test,
 not a claim about the robot's executor size or its exact workload.
 
-Measured on the development Mac:
+Measured on the development Mac after correcting the benchmark budget lifecycle:
 
 | Reader, constrained executor | Coverage | p99 read interval | Maximum interval | Continuity gaps |
 | --- | ---: | ---: | ---: | ---: |
-| `3c198c1` capture loop | 0.3099 | 80.01 ms | 109.01 ms | 0 |
-| Dedicated reader | 0.9988 | 28.13 ms | 43.33 ms | 0 |
+| `3c198c1` capture loop | 0.2979 | 74.91 ms | 120.04 ms | 0 |
+| Dedicated reader | 0.9978 | 31.64 ms | 44.26 ms | 0 |
 
-The old-reader run uses the new worker budgets for a controlled reader comparison.
-It throttled then suspended vision and still could not drain the microphone. The
-new-reader run kept vision active: 40 face inferences, three person inferences and
-60 camera reads in 20 seconds.
+Both readers now use the same benchmark-owned budget lifecycle and capture
+observations. Previously the old reader never activated its budget, so the
+earlier comparison did not exercise vision throttling for that reader.
+The corrected old-reader run logged throttling at 0.297 capture coverage and
+suspension at 0.292 wake coverage. It made five face inferences, one person
+inference, and 12 camera reads. The dedicated reader kept vision active with
+40 face inferences, two person inferences, and 88 camera reads in 20 seconds.
 
 With `--native-models` and OpenCV installed, the stand-ins repeat the bundled
-YuNet and YOLOX calls for the same cost targets. That run measured 1.0000 coverage,
-24.67 ms p99, 31.05 ms maximum, and no continuity gaps, with 40 face and three
-person work batches in 20 seconds.
+YuNet and YOLOX calls for the same cost targets. That run measured 0.9987 coverage,
+29.09 ms p99, 29.96 ms maximum, and no continuity gaps, with 40 face and two
+person work batches and 89 camera reads in 20 seconds.
 
 A separate local GStreamer 1080p buffer test measured `extract_dup` at 0.234 ms
 median and 1.216 ms maximum; mapping measured 0.144 ms median and 0.528 ms maximum.
@@ -87,14 +90,16 @@ The precise native cause of the reported Pi stalls remains unmeasured. This patc
 removes the demonstrated scheduling dependency and adds protection against both
 capture and inference throughput loss; it cannot certify Pi coverage offline.
 
-After adding wave-back and quiet rearming, the same 20-second runs measured
-0.9979 coverage under constrained-executor load and 0.9999 with native models.
-Both had zero continuity gaps. The p99/maximum reader intervals were
-29.88/39.40 ms and 29.10/29.97 ms respectively. Each run made 88 camera reads,
-40 face batches and two person batches. Quiet rearming adds only motion-gate
-reads, without repeated person inference. These final checks overlapped the
-remaining local test workers; they are not isolated host benchmarks.
+These runs include wave-back and quiet rearming and ran sequentially without
+pytest workers. Quiet rearming adds only motion-gate reads, without repeated
+person inference.
 
-The requested full pytest command passed with 3,542 tests and seven skips in
-404.33 seconds. A separate OpenCV-enabled run passed all 129 vision, motion and
-attention tests, including the still-mode wave-back and self-motion checks.
+The requested full pytest command passed with 3,568 tests and seven skips in
+295.75 seconds. A separate OpenCV-enabled run passed all 113 wave and vision
+budget tests in 7.85 seconds, including the camera-projection checks.
+
+```
+PYTHONPATH=src python -m pytest -q -p no:cacheprovider --timeout 180 -n 6
+PYTHONPATH=src python -m pytest -q -p no:cacheprovider --timeout 180 -n 6 \
+	tests/test_wave_wake.py tests/test_wave_watcher.py tests/test_wave_gaze.py tests/test_vision_budget.py
+```

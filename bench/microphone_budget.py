@@ -84,9 +84,10 @@ async def measure(args):
         # A one-chunk device queue drops input when the reader cannot keep up.
         due = max(due + .02, now)
         read_at.append(now)
+        budget.observe("capture", len(samples) / 16000, now=now)
         return samples
 
-    hardware = SimpleNamespace(read_audio=microphone, sample_rate=16000, vision_budget=budget)
+    hardware = SimpleNamespace(read_audio=microphone, sample_rate=16000)
     conversation = SimpleNamespace(hardware=hardware, _input_blocked=lambda: False, _wake_policy=None,
                                    _turn_active=False, _has_output=lambda: False, _hearing_open=lambda: False)
     reader = VoiceConversation._capture_microphone
@@ -100,6 +101,7 @@ async def measure(args):
     loop = asyncio.get_running_loop()
     loop.set_default_executor(ThreadPoolExecutor(max_workers=1 if args.executor_load else 4))
     capture = _CaptureBuffer(16000)
+    budget.capture_active(True)
     producer = asyncio.create_task(reader(conversation, capture))
 
     async def load():
@@ -124,6 +126,7 @@ async def measure(args):
         await asyncio.gather(producer, *([loader] if loader else []), return_exceptions=True)
         face.close()
         wave.close()
+        budget.capture_active(False)
     intervals = [b - a for a, b in zip(read_at, read_at[1:])]
     result = dict(reader=args.reader_revision or "working tree", seconds=round(elapsed, 3),
                   coverage=round(received / 16000 / elapsed, 4), gaps=gaps,
