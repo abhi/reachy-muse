@@ -144,7 +144,8 @@ class WaveWatcher:
 
     Idle sampling is 2 Hz. Motion permits a 3 s burst at 8 Hz followed by a
     2 s rest, even under continuous motion. Person inference is at most 0.8 Hz
-    in bursts. Rearming requires 3 s without motion, including after pauses and reconnects.
+    in bursts. Throttling stretches the burst and sampling intervals by the same factor.
+    Rearming requires 3 s without motion, including after pauses and reconnects.
     """
 
     def __init__(self, read_frame, is_still, model_path=None, *, clock=time.monotonic,
@@ -316,7 +317,7 @@ class WaveWatcher:
                 if not reading.moving:
                     # Avoid sampling a periodic wave at exactly the same phase.
                     return idle_period
-                self._burst_until = now + 3
+                self._burst_until = now + 3 * scale
             if now >= self._inference_after and now - self._detected_at >= 1.25:
                 started = self._clock()
                 self._boxes = detector.detect(frame)

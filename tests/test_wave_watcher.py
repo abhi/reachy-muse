@@ -34,6 +34,49 @@ def test_short_wave_waits_for_the_second_person_observation():
     assert scheduled("wave", 0, 1001, seconds=1.5)["cues_at"] == [3.25]
 
 
+@pytest.mark.parametrize("inference_s", [0, .32])
+def test_throttled_wave_gets_two_person_observations_before_evidence_expires(inference_s):
+    from bench.wave import clip
+    from reachy_muse.vision_budget import VisionBudget
+
+    now = [0.0]
+    budget = VisionBudget(clock=lambda: now[0])
+    budget.capture_active(True)
+    budget.observe("wake", 0, now=0)
+    budget.observe("wake", .5, now=2)
+    assert budget.level == 1
+    frames = list(clip("wave", 8, seconds=3))
+    runs, cues = [], []
+
+    def read():
+        return frames[int(now[0] * 8) % len(frames)][1]
+
+    class People:
+        def detect(self, frame):
+            runs.append(now[0])
+            now[0] += inference_s
+            return [BOX]
+
+    watcher = wave.WaveWatcher(read, lambda: True, clock=lambda: now[0], budget=budget)
+    watcher.set_active(True)
+    detector = People()
+    captured_at = -.02
+    try:
+        while now[0] < 12:
+            budget.observe("capture", now[0] - captured_at)
+            captured_at = now[0]
+            started = now[0]
+            period = watcher._sample(detector) * budget.delay()
+            if watcher.take_wave():
+                cues.append(now[0])
+            now[0] = max(now[0], started + period)
+        assert len(cues) == 1
+        assert len(runs) == 2
+        assert runs[1] - runs[0] >= 3.75
+    finally:
+        watcher.close()
+
+
 def test_inactive_or_moving_robot_never_reads_camera():
     reads = []
     watcher = wave.WaveWatcher(lambda: reads.append(1), lambda: False,
