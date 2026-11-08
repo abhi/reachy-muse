@@ -874,7 +874,7 @@ class ReachyController:
             present = None
             try:
                 if self._robot is not None and not self._stop.is_set():
-                    frame = self._read_camera_frame()
+                    frame = self._read_camera_frame(background=False)
                     try:
                         if frame is not None:
                             if self._presence_detector is None:
@@ -935,11 +935,11 @@ class ReachyController:
         return (self._failure is None and still_since is not None
                 and time.monotonic() - still_since >= CAMERA_STILL_S)
 
-    def _read_camera_frame(self):
+    def _read_camera_frame(self, *, background=True):
         """All local vision consumers share this reader; no frame cache survives it."""
         with self._camera_lock:
             if (self._robot is None or self._stop.is_set()
-                    or not math.isfinite(self.vision_budget.delay())):
+                    or background and not math.isfinite(self.vision_budget.delay())):
                 return None
             return self._robot.media.get_frame()
 

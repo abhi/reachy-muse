@@ -63,6 +63,39 @@ def test_camera_check_reads_one_frame_and_retains_no_images(monkeypatch):
     assert controller._state == "idle" and controller._commands.empty()
 
 
+def test_presence_command_reads_camera_while_a_conversation_turn_is_running(monkeypatch):
+    import asyncio
+    import math
+    from test_device_command_turns import rig_with, run, service
+    from test_pins import Transcripts
+    from test_wave_conversation import continuous_microphone
+
+    rig = rig_with(monkeypatch)
+    continuous_microphone(rig.hardware)
+    reads, results = [], []
+    controller = ReachyController(enable_motion=False)
+    controller._robot = SimpleNamespace(media=SimpleNamespace(get_frame=lambda: reads.append(1) or object()))
+    controller._presence_detector = SimpleNamespace(detect=lambda _: [PersonBox(0, 0, .2, .3, .9)])
+    rig.hardware.vision_budget = controller.vision_budget
+    rig.hardware.presence = controller.presence
+
+    async def muse(session, request):
+        assert conversation._voice[1]._turn_active
+        await rig.wait_until_or_timeout(lambda: controller.vision_budget.delay() == math.inf)
+        assert controller._read_camera_frame() is None
+        results.append(await asyncio.to_thread(conversation.run_command, "reachy.presence", {}, 500))
+        await session.answer(request, "Hello there.")
+
+    conversation = service(rig, muse, Transcripts("Is anyone here?"))
+
+    async def user():
+        rig.say()
+
+    run(rig, conversation, user)
+    assert results == [{"ok": True, "payload": {"present": True, "last_seen_seconds": 0}}]
+    assert reads == [1]
+
+
 @pytest.mark.parametrize("found, last_seen_seconds", [(True, 4), (False, 14)])
 def test_delayed_detection_expires_the_frame_and_keeps_its_last_seen_age(monkeypatch, found, last_seen_seconds):
     now = [100.0]
