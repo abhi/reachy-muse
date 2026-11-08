@@ -925,6 +925,7 @@ asks Muse for the briefing, so the briefing is usually ready before you arrive.
 Reachy says nothing and shows no thinking pose while it waits. During the window,
 an admitted voice wake, a claimed wave cue, or a recent face detection by idle
 follow also triggers the briefing. These cues share the same once-per-day ledger.
+They wait for any active voice turn to finish before the greeting.
 
 When a person walks in, Reachy wakes up if it is asleep and says "Good morning!"
 with a greeting motion. It then speaks the whole briefing: a good-morning wish,

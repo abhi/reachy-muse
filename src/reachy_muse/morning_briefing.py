@@ -179,7 +179,7 @@ Lines = Tuple[SpokenLine, ...]
 
 
 class MorningVoice(Protocol):
-    async def greet(self, *, waiting: bool) -> None: ...
+    async def greet(self, *, waiting: bool, wait_for_turn: bool = False) -> None: ...
 
     async def fetch(self, request: str, *, attended: Callable[[], bool]) -> Lines | None: ...
 
@@ -330,10 +330,10 @@ class MorningRoutine:
     async def _brief(self, day: date, voice: MorningVoice, ready: Lines | None,
                      pending: asyncio.Task | None, *, fallback: Lines | None = None) -> None:
         if ready is not None:
-            await voice.greet(waiting=False)
+            await voice.greet(waiting=False, wait_for_turn=self._presence_day == day)
             lines = ready
         else:
-            await voice.greet(waiting=True)
+            await voice.greet(waiting=True, wait_for_turn=self._presence_day == day)
             holds = itertools.cycle(HOLD_LINES)
             next_hold = self.clock.monotonic() + HOLD_EVERY_S
 

@@ -60,6 +60,7 @@ expiry, crash behavior and unpair cleanup.
 
 During the morning briefing window, a voice wake, wave or face seen by idle
 follow also counts as arrival. The briefing still runs at most once per day.
+These cues wait for any active voice turn to finish before the greeting.
 Speaker-direction polling uses one worker and keep-alive connection at no more
 than 5 Hz, only around microphone activity or an open wake window.
 

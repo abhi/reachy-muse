@@ -166,7 +166,7 @@ class FakeVoice:
         self.said.append(("fetched", self.clock.elapsed, attended()))
         return result
 
-    async def greet(self, *, waiting):
+    async def greet(self, *, waiting, wait_for_turn=False):
         self.said.append(("greet", self.clock.elapsed, waiting))
 
     async def hold(self, line):

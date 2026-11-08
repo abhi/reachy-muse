@@ -399,11 +399,11 @@ def test_a_link_reconnect_reuses_briefing_state_only_in_the_same_vm_and_chat(mon
         first_session = rig.session
         greet = VoiceConversation.greet
 
-        async def interrupted_greeting(voice, *, waiting):
+        async def interrupted_greeting(voice, *, waiting, wait_for_turn=False):
             if voice.session is first_session and arrived:
                 greeting.set()
                 await asyncio.Event().wait()
-            await greet(voice, waiting=waiting)
+            await greet(voice, waiting=waiting, wait_for_turn=wait_for_turn)
 
         monkeypatch.setattr(VoiceConversation, "greet", interrupted_greeting)
 
@@ -477,3 +477,27 @@ def test_briefing_accepts_other_cues_without_an_arrival_watcher_detection(monkey
     events = run(rig, conversation, user, rest=("listening", "idle"))
     assert played(events).count("tts:Good morning!") == 1
     assert [line for line in played(events) if line in SPOKEN] == SPOKEN
+
+
+def test_voice_arrival_waits_for_the_wake_request_before_speaking_the_briefing(monkeypatch):
+    from test_wave_conversation import continuous_microphone
+    rig = rig_with(monkeypatch)
+    continuous_microphone(rig.hardware)
+    camera = Camera()
+    routine = morning(camera)
+
+    async def muse(session, request):
+        await session.answer(request, BRIEFING if request == 1 else "It is noon.")
+
+    conversation = service(rig, muse, Transcripts("Hey Muse, what time is it?"), morning=routine,
+                           wake_detector=Wake(), wake_timeout_s=30)
+
+    async def user():
+        await rig.wait_until_or_timeout(lambda: routine._ready is not None, 5)
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: routine.ledger.done(datetime(2026, 10, 10).date()), 10)
+        assert routine.ledger.done(datetime(2026, 10, 10).date()) is True
+
+    events = run(rig, conversation, user, rest=("listening", "idle"))
+    assert sent_to_muse(events) == ["Brief me.", "what time is it?"]
+    assert played(events) == ["tts:It is noon.", *SPOKEN]

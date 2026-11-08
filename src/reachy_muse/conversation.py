@@ -3096,7 +3096,13 @@ class VoiceConversation:
         else:
             log.warning("Reachy rejected Muse expression %s: %s", expression, result.get("error"))
 
-    async def greet(self, *, waiting: bool) -> None:
+    async def greet(self, *, waiting: bool, wait_for_turn: bool = False) -> None:
+        while wait_for_turn and (self._wake_first_request_pending or self._hearing_open()
+                                 or self._turn_active or self._has_output()
+                                 or (self.call is not None and getattr(self.call, "working", False))):
+            await asyncio.sleep(.05)
+        if self._say_hushed:
+            return
         if self._wake_window is WakeWindow.ASLEEP:
             await self._wake_up(WakeWindow.AWAKE)
         else:
@@ -3119,9 +3125,13 @@ class VoiceConversation:
                 slot.abandoned = True
 
     async def hold(self, line: str) -> None:
+        if self._say_hushed:
+            return
         await self._output_queue.put(_SpeechJob(None, line, state="thinking"))
 
     async def brief(self, lines: tuple[SpokenLine, ...]) -> float:
+        if self._say_hushed:
+            return 0.0
         self._open_follow_up_window()
         started: list[float] = []
         hush_floor = self._hush_floor
