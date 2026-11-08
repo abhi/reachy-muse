@@ -1486,6 +1486,7 @@ class VoiceConversation:
                         self._wake_deadline += DURATION_S
                     self._wake_window = WakeWindow.AWAKE
                     self._wake_first_request_pending = False
+                    self._open_call()
                     recorder.abort()
                     recorder = make_recorder()
                     pre_roll.clear()
@@ -1504,9 +1505,6 @@ class VoiceConversation:
                                 and not (self._has_output() or self._hearing_open() or self._turn_active)):
                             await self._announce(WAKE_GREETING if was_asleep else WAKE_CUE,
                                                  started=None, defer_playback=True)
-                        if self._wake_deadline is not None:
-                            self._open_call()
-
                     wave_greeting = self._background(greet_after_wave())
                     log.info("Wave cues=1")
                     continue

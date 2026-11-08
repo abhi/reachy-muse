@@ -463,6 +463,7 @@ def test_wave_opens_realtime_after_suspension_and_watches_again_while_idle(monke
         assert calls.frames == []
         camera.pending = True
         await rig.wait_until_or_timeout(lambda: bool(calls.opened), 5)
+        await rig.wait_until_or_timeout(lambda: "tts:Yes?" in played(rig.recording.events), 5)
         await rig.quiet("listening", "idle")
         assert not any(any(frame) for frame in calls.frames)
         assert camera.active is True
@@ -478,6 +479,50 @@ def test_wave_opens_realtime_after_suspension_and_watches_again_while_idle(monke
     assert camera.transitions[-2:] == [True, False]
     assert sent_to_muse(events) == []
     assert played(events) == ["tts:Yes?", "muse", "muse"]
+
+
+def test_speech_during_wave_reaches_realtime_from_its_first_sample(monkeypatch):
+    import threading
+    import numpy as np
+    from test_realtime_turns import ScriptedCalls, StreamingTranscripts, rig_for
+    from reachy_muse.realtime_call import realtime_supported
+
+    if not realtime_supported():
+        pytest.skip("the Muse SDK has no voice call events")
+    rig = rig_for(monkeypatch)
+    rig.hardware.sample_rate = 24000
+    camera = WaveCamera(rig.hardware)
+    calls = ScriptedCalls(reply=None)
+    drained = threading.Event()
+    discard = rig.hardware.discard_microphone
+
+    def discard_microphone():
+        discard()
+        drained.set()
+
+    rig.hardware.discard_microphone = discard_microphone
+
+    async def muse(session, request):
+        raise AssertionError("A realtime request must not also go to chat")
+
+    conversation = service(rig, muse, StreamingTranscripts("What is the weather tomorrow?"),
+                           wave_wake=True, wake_timeout_s=30, muse_path="realtime",
+                           voice_link=calls.link, voice_call=calls)
+
+    async def user():
+        camera.pending = True
+        await rig.wait_until_or_timeout(lambda: bool(rig.hardware.gestures))
+        assert await asyncio.to_thread(drained.wait, 2)
+        for value in [.25] * 50 + [.5] * 50 + [0] * 25:
+            rig.hardware.samples.put(np.full(480, value, np.float32))
+            await asyncio.sleep(.02)
+
+    events = run(rig, conversation, user, rest=("idle", "listening"))
+    pcm = np.frombuffer(b"".join(calls.frames), "<i2")
+    assert [int(np.count_nonzero(pcm == value)) for value in (8192, 16384)] == [24000, 24000]
+    np.testing.assert_array_equal(pcm[pcm != 0], [8192] * 24000 + [16384] * 24000)
+    assert sent_to_muse(events) == []
+    assert played(events) == []
 
 
 def test_another_wave_while_awake_gets_a_gesture_without_reopening_or_speaking(monkeypatch):
