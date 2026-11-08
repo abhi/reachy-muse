@@ -2288,3 +2288,65 @@ def test_morning_arrival_sees_frames_and_detects_a_person_while_vision_is_suspen
         assert (stats.frames, stats.frame_errors, camera["reads"]) == (9, 0, 9)
     finally:
         controller.close()
+
+
+def test_arrival_blindness_warns_once_per_window_after_a_full_minute(monkeypatch, caplog):
+    now = [100.0]
+    monkeypatch.setattr(reachy_muse.hardware.time, "monotonic", lambda: now[0])
+    controller = ReachyController(pose_factory=pose_factory)
+    controller._read_head_angles = lambda: (0, 0)
+    controller._camera_still = lambda: True
+    watcher = controller._arrival_watcher = FakeWatcher(None, None, None)
+    stats = [ArrivalStats()]
+    watcher.take_stats = lambda: stats[0]
+    warning = ("Arrival watching blind: no camera frames for at least 60s during morning window; "
+               "briefing cannot detect an arrival")
+
+    controller.start_watching(None)
+    now[0] = 159
+    controller.log_arrival_diagnostics()
+    assert [r.message for r in caplog.records] == []
+    now[0] = 160
+    controller.log_arrival_diagnostics()
+    assert [r.message for r in caplog.records] == [warning]
+    now[0] = 220
+    controller.start_watching(None)
+    controller.log_arrival_diagnostics()
+    controller.stop_watching()
+    now[0] = 300
+    controller.log_arrival_diagnostics()
+    assert [r.message for r in caplog.records] == [warning]
+    assert controller.arrival() is None
+
+    now[0] = 400
+    controller.start_watching(None)
+    now[0] = 460
+    stats[0] = ArrivalStats(frames=1)
+    controller.log_arrival_diagnostics()
+    stats[0] = ArrivalStats()
+    now[0] = 519
+    controller.log_arrival_diagnostics()
+    assert [r.message for r in caplog.records] == [warning]
+    now[0] = 520
+    controller.log_arrival_diagnostics()
+    now[0] = 580
+    controller.log_arrival_diagnostics()
+    assert [r.message for r in caplog.records] == [warning, warning]
+    controller.stop_watching()
+
+
+def test_arrival_diagnostics_do_not_report_blindness_after_an_arrival(monkeypatch, caplog):
+    now = [0.0]
+    monkeypatch.setattr(reachy_muse.hardware.time, "monotonic", lambda: now[0])
+    controller = ReachyController(pose_factory=pose_factory)
+    controller._read_head_angles = lambda: (0, 0)
+    controller._camera_still = lambda: True
+    watcher = controller._arrival_watcher = FakeWatcher(None, None, None)
+    watcher.take_stats = lambda: ArrivalStats()
+    controller.start_watching(None)
+    watcher.seen_at = 12.5
+    now[0] = 120
+    controller.log_arrival_diagnostics()
+    assert controller.arrival() == 12.5
+    assert [r.message for r in caplog.records] == []
+    controller.stop_watching()

@@ -268,6 +268,8 @@ class ReachyController:
         from reachy_muse.vision_budget import VisionBudget
         self.vision_budget = VisionBudget()
         self._arrival_warned = False
+        self._arrival_blind_warned = False
+        self._arrival_frames_at = 0.0
         self._presence = Presence()
         self._presence_detector = None
         self._presence_lock = threading.Lock()
@@ -784,6 +786,9 @@ class ReachyController:
         if angles != requested:
             log.info("Watch pose limited to yaw %.0f, pitch %.0f degrees", angles["yaw"], angles["pitch"])
         with self._state_lock:
+            if not self._watching:
+                self._arrival_frames_at = time.monotonic()
+                self._arrival_blind_warned = False
             self._watching = True
             self._wave_pending = None
             self.wave_direction = None
@@ -893,6 +898,15 @@ class ReachyController:
 
         watcher = self._arrival_watcher
         stats = watcher.take_stats() if watcher is not None else ArrivalStats()
+        if self._watching:
+            now = time.monotonic()
+            if stats.frames:
+                self._arrival_frames_at = now
+            elif (not self._arrival_blind_warned and now - self._arrival_frames_at >= 60
+                  and (watcher is None or watcher.arrival() is None)):
+                self._arrival_blind_warned = True
+                log.warning("Arrival watching blind: no camera frames for at least 60s during morning window; "
+                            "briefing cannot detect an arrival")
         yaw, pitch = self._read_head_angles()
         with self._state_lock:
             asleep = self._state == "sleeping"
