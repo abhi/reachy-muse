@@ -200,6 +200,70 @@ def routine_with(*answers, arrive_at=None, start=SATURDAY, ledger=None, poll_s=1
     return routine
 
 
+@pytest.mark.parametrize("cue", ["face", "wave"])
+def test_visual_arrival_passes_the_controller_gates_when_the_person_detector_misses(monkeypatch, cue):
+    from pathlib import Path
+    from types import SimpleNamespace
+    import numpy as np
+    from reachy_muse.hardware import ReachyController
+    from test_hardware import FakeRobot, FakeWatcher, pose_factory
+
+    clock = FakeClock()
+    controller = ReachyController(face_follow_idle=True, wave_wake=True)
+    controller._np, controller._robot = np, FakeRobot()
+    controller._robot.pose = pose_factory()
+    controller._arrival_watcher = FakeWatcher(None, controller._camera_still, Path("person.onnx"))
+    controller._arrival_watcher.arrival = lambda: None
+
+    class Face:
+        last_seen_at = None
+
+        def set_active(self, active, **kwargs):
+            if active:
+                self.last_seen_at = clock.monotonic()
+
+    class Wave:
+        active = False
+        wave_position = None
+
+        def set_active(self, active):
+            self.active = active
+
+        def take_wave(self):
+            return self.active and controller._wave_still()
+
+        def drain(self):
+            pass
+
+    if cue == "face":
+        controller._face_follower = Face()
+    else:
+        controller._wave_watcher = Wave()
+    monkeypatch.setattr("reachy_muse.hardware.time", SimpleNamespace(monotonic=clock.monotonic))
+    routine = MorningRoutine(WINDOW, "Brief me.", controller, DayLedger(None), clock=clock, poll_s=.025)
+    voice = FakeVoice(clock, (0, BRIEFING))
+
+    async def check():
+        camera = asyncio.create_task(routine.watch_camera(), name="camera")
+        watching = asyncio.create_task(routine.run(voice))
+        try:
+            while clock.elapsed < 3 and not routine.ledger.done(SATURDAY.date()):
+                if controller._watching:
+                    controller._update_face_tracking("idle")
+                    controller.set_wave_watching(True)
+                    controller._update_wave_gaze(clock.monotonic(), np.zeros(9), eligible=True)
+                    if controller.take_wave() and controller.claim_wave():
+                        routine.observe_presence()
+                await asyncio.sleep(0)
+            assert [entry[0] for entry in voice.said] == ["fetch", "fetched", "greet", "brief"]
+            assert routine.ledger.done(SATURDAY.date())
+        finally:
+            watching.cancel()
+            camera.cancel()
+            await asyncio.gather(watching, camera, return_exceptions=True)
+    asyncio.run(check())
+
+
 def kinds(routine):
     return [entry[0] for entry in routine.voice.said]
 
@@ -590,8 +654,10 @@ def test_camera_opens_offline_logs_each_minute_and_closes_at_the_window_boundary
 
 
 @pytest.mark.parametrize("cancel_start", [False, True])
-def test_camera_priority_transition_keeps_the_asyncio_loop_responsive(cancel_start):
+def test_morning_camera_does_not_wait_for_wave_model_loading(cancel_start):
     import threading
+    import time
+    from types import SimpleNamespace
     from reachy_muse.hardware import ReachyController
     from reachy_muse.wave_wake import WaveWatcher
     from test_hardware import FakeRobot, FakeWatcher
@@ -615,12 +681,16 @@ def test_camera_priority_transition_keeps_the_asyncio_loop_responsive(cancel_sta
         task = briefing = None
         try:
             assert await asyncio.to_thread(entered.wait, 2)
-            routine = MorningRoutine(WINDOW, "Brief me.", camera, DayLedger(None),
-                                     clock=FakeClock(SATURDAY), poll_s=.01)
+            clock = SimpleNamespace(now_local=lambda: SATURDAY, monotonic=time.monotonic, sleep=asyncio.sleep,
+                                    elapsed=0)
+            routine = MorningRoutine(WINDOW, "Brief me.", camera, DayLedger(None), clock=clock, poll_s=.01)
             voice = FakeVoice(routine.clock, (600, BRIEFING))
             task = asyncio.create_task(routine.watch_camera(), name="camera")
             briefing = asyncio.create_task(routine.run(voice))
-            await asyncio.sleep(.01)
+            async def greeted():
+                while not any(entry[0] == "greet" for entry in voice.said):
+                    await asyncio.sleep(.001)
+            await asyncio.wait_for(greeted(), 2)
             heartbeat_during_load = not loaded.is_set()
             arrival_before_release = list(arrival.watching)
             greetings_before_release = [entry[0] for entry in voice.said if entry[0] == "greet"]
@@ -634,12 +704,12 @@ def test_camera_priority_transition_keeps_the_asyncio_loop_responsive(cancel_sta
                     await asyncio.sleep(.001)
 
             assert heartbeat_during_load is True
-            assert arrival_before_release == []
-            assert greetings_before_release == []
+            assert arrival_before_release == [True]
+            assert greetings_before_release == ["greet"]
             if cancel_start:
                 with pytest.raises(asyncio.CancelledError):
                     await task
-                assert cleanup_finished_early is False
+                assert cleanup_finished_early is True
                 assert arrival.watching == [True, False]
                 assert camera._watching is False
             else:

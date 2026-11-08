@@ -814,7 +814,7 @@ class ReachyController:
             self._watching = True
             self._wave_pending = None
             self.wave_direction = None
-        self.set_wave_watching(False)
+        self._wave_gaze.invalidate()
         self._turn_watch(angles, 1.0)
         failed = self._arrival_watcher
         if failed is not None and failed.failure is not None:
@@ -990,7 +990,7 @@ class ReachyController:
             return self._robot.media.get_frame()
 
     def _wave_still(self) -> bool:
-        return (not self._watching and not self._stop.is_set()
+        return (not self._stop.is_set()
                 and self._state in ("idle", "listening", "sleeping") and self._failure is None
                 and time.monotonic() >= max(self._wave_ignore_until, self._audio_end)
                 and self._wave_gaze.gaze.settled
@@ -1007,7 +1007,7 @@ class ReachyController:
             joints, _ = self._robot.get_current_joint_positions()
             observed = [*self._pose_parameters(pose).values(), math.degrees(joints[0])]
             self._wave_gaze.update(now, written[CAMERA_AXES], observed, pose[:3, :3],
-                                   eligible=eligible and not self._watching)
+                                   eligible=eligible)
         except AssertionError:
             self._wave_gaze.invalidate()
         if not self._wave_watching:
@@ -1026,7 +1026,7 @@ class ReachyController:
         """Called off the audio loop: disabling bounds the wait for in-flight inference."""
         with self._wave_lock:
             was_active = self._wave_watching
-            active = (active and self._wave_enabled and not self._watching
+            active = (active and self._wave_enabled
                       and not self._stop.is_set() and self._robot is not None)
             if active and self._wave_watcher is None:
                 from reachy_muse.wave_wake import WaveWatcher
@@ -1047,7 +1047,7 @@ class ReachyController:
     def take_wave(self) -> bool:
         with self._state_lock:
             generation = self._wave_gaze.gaze.generation
-            detected = (not self._watching and self._wave_watcher is not None
+            detected = (self._wave_watcher is not None
                         and self._wave_watcher.take_wave())
             self._wave_pending = generation if detected else None
             self.wave_direction = self._waver_direction() if detected else None
@@ -1173,10 +1173,12 @@ class ReachyController:
             reason = "idle follow"
         else:
             reason = state
-        self._set_face_tracking(reason in ("conversation", "idle follow"), reason)
+        self._set_face_tracking(reason in ("conversation", "idle follow")
+                                or reason == "arrival watching" and state == "idle" and self._face_follow_idle,
+                                reason)
 
     def _set_face_tracking(self, active: bool, reason: str) -> None:
-        if reason == "idle follow":
+        if reason in ("idle follow", "arrival watching"):
             self._face_follower.set_active(active, idle=True)
         else:
             self._face_follower.set_active(active)
@@ -1186,6 +1188,8 @@ class ReachyController:
             log.info("Local face tracking %s: %s", "on" if active else "off", reason)
 
     def _face_pose(self, pose):
+        if self._watching and self._state in ("idle", "sleeping", "error"):
+            return pose
         follower = self._face_follower
         look = self._speaker_look
         target = follower.target() if follower is not None and self._speaker_turn is None else None

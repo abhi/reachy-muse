@@ -161,11 +161,13 @@ def test_new_wave_after_face_motion_and_settle_is_admitted(monkeypatch):
     assert cues == [(6.85, True, True)]
 
 
-def test_arrival_watching_takes_priority_over_follow_and_wave(monkeypatch):
-    cues, reads, following, _ = gaze_sequence(monkeypatch, arrival=True)
+def test_arrival_watching_holds_the_watch_pose_and_keeps_visual_observation_active(monkeypatch):
+    cues, reads, following, samples = gaze_sequence(monkeypatch, arrival=True)
     assert cues == []
-    assert max(reads) < 4.5
-    assert following == [True, True, False]
+    assert max(reads) > 8
+    assert following == [True, True, True]
+    assert samples[350]["yaw"] == pytest.approx(0, abs=.01)
+    assert samples[350]["pitch"] == pytest.approx(0, abs=.01)
 
 
 @pytest.mark.parametrize("when", ["none", "read", "inference", "between_samples", "pending"])

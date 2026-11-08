@@ -292,7 +292,7 @@ def test_still_idle_follow_smoothly_tracks_a_moving_face_then_returns_to_rest(mo
 
 @pytest.mark.parametrize('breathing', [True, False])
 @pytest.mark.parametrize('resume', ['idle', 'listening', 'thinking', 'speaking'])
-def test_arrival_watching_pauses_idle_follow_then_allows_idle_or_conversation_gaze(monkeypatch, resume, breathing):
+def test_arrival_watching_observes_faces_at_the_watch_pose_then_resumes_gaze(monkeypatch, resume, breathing):
     stillness, tracking = [], []
 
     def action(controller, follower, tick):
@@ -317,6 +317,6 @@ def test_arrival_watching_pauses_idle_follow_then_allows_idle_or_conversation_ga
     assert samples[340]['yaw'] == pytest.approx(-20, abs=.1)
     assert samples[340]['pitch'] == pytest.approx(5, abs=.1)
     assert stillness == [True] * 20
-    assert tracking == [False] * 20
+    assert tracking == [True] * 20
     assert follower.active
     assert samples[515]['yaw'] == pytest.approx(8, abs=.1)
