@@ -157,7 +157,7 @@ class Pipeline:
             idea, recipe = HfPlanner.parse(raw)
             if recipe:
                 return idea, recipe, raw, attempt + 1
-        raise ValueError(f"the planner wrote no valid recipe for {intent!r}")
+        raise ValueError("the planner wrote no valid recipe")
 
     def run(self, intent: str, duration_hint_s: Optional[float] = None, seed: int = 0) -> Result:
         from generator.sample import generate_batch
@@ -295,7 +295,7 @@ class MotionEngine:
     def _generate(self, intent: str, duration_hint_s: Optional[float], seed: Optional[int] = None) -> Trajectory:
         pipeline = self._load()
         result = pipeline.run(intent, duration_hint_s, **({"seed": seed} if seed is not None else {}))
-        log.info("motion %r: %.1f s of frames in %.0f ms (planner %.0f ms)", intent, len(result.frames) / FPS,
+        log.info("motion: %.1f s of frames in %.0f ms (planner %.0f ms)", len(result.frames) / FPS,
                  result.timing_ms["total"], result.timing_ms["planner"])
         return Trajectory(intent, result.recipe, result.frames)
 

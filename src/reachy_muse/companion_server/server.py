@@ -484,8 +484,8 @@ class _Session:
                 with self.activity.busy() if self.activity and not isinstance(self.engines.motion, LibraryAnimator) else nullcontext():
                     animation = await self.engines.motion.animate(message.intent, message.duration_ms / 1000)
                 frame = encode(AnimateResult(message.id, animation.fps, animation.frames))
-            except Exception:
-                log.exception("motion for request %s failed; answering with no frames", message.id)
+            except Exception as error:
+                log.warning("motion for request %s failed (%s); answering with no frames", message.id, type(error).__name__)
                 frame = encode(AnimateResult(message.id, 25))
         finally:
             self.animating.pop(message.id, None)

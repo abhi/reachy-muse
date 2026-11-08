@@ -519,7 +519,7 @@ class FailingAnimator:
 
     async def animate(self, intent, duration_s):
         if self.failure == "engine":
-            raise ValueError("the planner wrote no valid recipe")
+            raise ValueError(f"the planner wrote no valid recipe for {intent!r}")
         return Animation(25, ((5000.0,) * 9,))
 
 
@@ -538,14 +538,16 @@ def test_animate_is_offered_with_its_engine_name_and_answers_with_frames():
 
 
 @pytest.mark.parametrize("failure", ["engine", "out_of_range"])
-def test_a_motion_the_companion_cannot_make_is_a_result_with_no_frames_and_the_link_stays_up(failure):
+def test_a_motion_the_companion_cannot_make_is_a_result_with_no_frames_and_the_link_stays_up(failure, caplog):
     async def script(companion):
         ws = await connected(companion, ANIMATE_HELLO)
-        await send(ws, Animate(9, "gibberish", 2000))
+        await send(ws, Animate(9, "My private message is about a surprise party.", 2000))
         assert await recv(ws) == AnimateResult(9, 25, ())
         await nothing_else_arrived(ws)
 
     scenario(script, engines=dataclasses.replace(STUBS, motion=FailingAnimator(failure)))
+    assert "request 9 failed" in caplog.text
+    assert "My private message" not in caplog.text
 
 
 def test_a_third_outstanding_animation_is_overloaded_while_narration_still_answers():

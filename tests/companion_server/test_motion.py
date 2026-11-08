@@ -49,6 +49,18 @@ def test_load_warms_once_and_later_requests_reuse_the_models(tmp_path):
     engine.close()
 
 
+def test_generated_motion_logs_timing_without_private_intent(tmp_path, caplog):
+    engine = MotionEngine(tmp_path, build=StubPipeline)
+    try:
+        with caplog.at_level("INFO", logger="reachy_muse.companion_server"):
+            engine.generate("My private message is about a surprise party.")
+    finally:
+        engine.close()
+
+    assert "frames in" in caplog.text
+    assert "My private message" not in caplog.text
+
+
 def test_a_request_with_no_valid_recipe_raises_to_the_caller(tmp_path):
     class Refusing(StubPipeline):
         def run(self, intent, duration_hint_s=None):
