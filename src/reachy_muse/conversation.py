@@ -49,6 +49,7 @@ from reachy_muse.local_speech import PreparedSpeech, SpeechRestart
 from reachy_muse.turn_timeline import TurnTimeline
 from reachy_muse.startup import StartupTimeline
 from reachy_muse.speaker_direction import WakeDirection
+from reachy_muse.presence import PresenceFusion
 from reachy_muse.wake_policy import WakeContext
 
 log = logging.getLogger(__name__)
@@ -583,7 +584,7 @@ class VoiceConversation:
                  arbitration_shadow: bool = False,
                  audio_diagnostics: bool = False, short_utterance_silence_s: float | None = None,
                  morning: MorningRoutine | None = None, startup: StartupTimeline | None = None,
-                 realtime=None) -> None:
+                 realtime=None, presence: PresenceFusion | None = None) -> None:
         if not math.isfinite(wake_timeout_s) or wake_timeout_s < 0:
             raise ValueError("wake timeout must be a finite, nonnegative number")
         self.session = session
@@ -655,6 +656,7 @@ class VoiceConversation:
         self._muse_status: BackendStatus | None = None
         self._moments = MomentDirector(backends.motion, hardware)
         self._morning = morning
+        self._presence = presence or PresenceFusion()
         self._briefing_slots: deque[_BriefingSlot] = deque()
         self.realtime = realtime
         self.call = None
@@ -1523,8 +1525,7 @@ class VoiceConversation:
                     await watch_wave(False)
                     if not self.hardware.claim_wave():
                         continue
-                    if self._morning is not None:
-                        self._morning.observe_presence()
+                    self._observe_presence("wave")
                     already_awake = self._wake_deadline is not None or self.call is not None
                     if already_awake:
                         await asyncio.to_thread(self.hardware.gesture, "wave")
@@ -1534,7 +1535,7 @@ class VoiceConversation:
                     self._attend_wake(time.monotonic(), angle=getattr(self.hardware, "wave_direction", None))
                     asleep = self._wake_window is WakeWindow.ASLEEP
                     wake_epoch += 1
-                    await self._admit_wake(time.monotonic(), strip_required=False)
+                    await self._admit_wake(time.monotonic(), strip_required=False, source="wave")
                     from reachy_muse.motion.wave_back import DURATION_S
                     if self._wake_deadline is not None:
                         self._wake_deadline += DURATION_S
@@ -1876,6 +1877,7 @@ class VoiceConversation:
                     completed = True
                     return text
                 if text is not None:
+                    self._presence.mark("voice", time.monotonic())
                     timeline.mark("transcript")
                 self._say_hushed = False
                 if text is not None and await self._obey(text, started, timeline) is not None:
@@ -2617,11 +2619,15 @@ class VoiceConversation:
         for task in self._command_tasks:
             task.cancel()
 
-    async def _admit_wake(self, now: float, *, strip_required: bool) -> None:
-        """Shared acoustic/visual wake state and greeting motion."""
-        self._say_hushed = False
+    def _observe_presence(self, source: str) -> None:
+        self._presence.mark(source, time.monotonic())
         if self._morning is not None:
             self._morning.observe_presence()
+
+    async def _admit_wake(self, now: float, *, strip_required: bool, source: str = "voice") -> None:
+        """Shared acoustic/visual wake state and greeting motion."""
+        self._say_hushed = False
+        self._observe_presence(source)
         self._wake_at = now
         self._wake_deadline = now + (self.wake_timeout_s or 10.0)
         self._wake_strip_required = strip_required
@@ -3233,6 +3239,8 @@ class ReachyService(PairedService):
     speech_gate: object | None = None
     short_utterance_silence_s: float | None = None
     morning: MorningRoutine | None = None
+    place: str | None = None
+    _presence: PresenceFusion = field(default_factory=PresenceFusion, init=False, repr=False)
     startup: StartupTimeline | None = None
     muse_path: str = "chat"
     # Tests replace the voice-only connection and the SDK call; both default to the real ones.
@@ -3258,6 +3266,16 @@ class ReachyService(PairedService):
         if self._hardware_error is not None:
             raise self._hardware_error
 
+    def presence_result(self) -> dict:
+        observe = getattr(self.executor, "presence_observations", None)
+        if observe is not None:
+            for source, observation in observe().items():
+                self._presence.observe(source, observation)
+        voice = self._voice[1] if self._voice is not None else None
+        available = voice is not None and voice._say_blocked() is None and not voice._has_output()
+        return {**self._presence.result(time.monotonic()), "available": available,
+                **({"place": self.place} if self.place is not None else {})}
+
     def describe(self) -> DeviceDescription:
         return reachy_description(self.identity.node_id)
 
@@ -3276,7 +3294,8 @@ class ReachyService(PairedService):
         else:
             active_voice = self._voice
             if name == "reachy.presence":
-                result = self.executor.presence(max(0, params.deadline - time.monotonic()))
+                self.executor.presence(max(0, params.deadline - time.monotonic()))
+                result = {"ok": True, **self.presence_result()}
             elif active_voice is None or (session is not None and active_voice[1].session is not session):
                 result = {"ok": True, "spoken": False, "reason": "disconnected"}
             else:
@@ -3418,7 +3437,7 @@ class ReachyService(PairedService):
                                       arbitration_shadow=self.arbitration_shadow,
                                       short_utterance_silence_s=self.short_utterance_silence_s,
                                       morning=self.morning, startup=startup,
-                                      realtime=self._realtime(vm, session_id))
+                                      realtime=self._realtime(vm, session_id), presence=self._presence)
             voice._wake_window = WakeWindow.ASLEEP if self._asleep else WakeWindow.AWAKE
             voice._say_hushed = self._say_hushed
             self._voice = (asyncio.get_running_loop(), voice)

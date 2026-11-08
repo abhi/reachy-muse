@@ -861,6 +861,15 @@ class ReachyController:
             return None
         return watcher.arrival()
 
+    def presence_observations(self) -> dict[str, Presence]:
+        camera = self._presence
+        if self._arrival_watcher is not None:
+            observed = self._arrival_watcher.presence()
+            if (observed.observed_at or -math.inf) > (camera.observed_at or -math.inf):
+                camera = observed
+        seen = self.face_seen_at
+        return {"camera": camera, "face": Presence(True if seen is not None else None, seen, seen)}
+
     def presence(self, timeout_s: float = 5.0) -> dict:
         """Reuse the watcher or inspect one frame; never move the robot."""
         deadline = time.monotonic() + timeout_s

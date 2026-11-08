@@ -278,6 +278,13 @@ def mode_problems(args) -> list[str]:
     return problems
 
 
+def place_label(value: str) -> str:
+    value = value.strip()
+    if not value or len(value.encode("utf-8")) > 64 or any(not char.isprintable() for char in value):
+        raise argparse.ArgumentTypeError("place must be a printable label of 1 to 64 UTF-8 bytes")
+    return value
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Talk to Muse through Reachy Mini")
     p.add_argument("--state-dir", type=Path,
@@ -325,6 +332,7 @@ def parser() -> argparse.ArgumentParser:
                                    "on-robot: Reachy's own speech models; needs --stt-model and --tts-model. "
                                    "companion: a paired computer hears and speaks, with the on-robot "
                                    "models as fallback; needs `companion add` first")
+            item.add_argument("--place", type=place_label, help="Owner-defined location, for example office")
             item.add_argument("--face-follow", action="store_true",
                               help="Follow a nearby face locally during conversations; camera frames stay on the robot")
             item.add_argument("--face-follow-idle", action="store_true",
@@ -742,7 +750,7 @@ async def run(args) -> int:
                                 wake=wake_detector is not None or args.wave_wake, companion=link,
                                 command_transcriber=command_transcriber)
         service = ReachyService(identity=ident, executor=robot, sdk_token=config.sdk_token(),
-                               display_name="Reachy Mini", session_id=session_id,
+                               display_name="Reachy Mini", session_id=session_id, place=args.place,
                                prepare_chat=dedicated_chat.prepare if dedicated_chat else None,
                                owns_chat=dedicated_chat is not None,
                                introduce_to_muse=args.introduce_to_muse,

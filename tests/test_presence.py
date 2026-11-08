@@ -78,6 +78,7 @@ def test_presence_command_reads_camera_while_a_conversation_turn_is_running(monk
     controller._presence_detector = SimpleNamespace(detect=lambda _: [PersonBox(0, 0, .2, .3, .9)])
     rig.hardware.vision_budget = controller.vision_budget
     rig.hardware.presence = controller.presence
+    rig.hardware.presence_observations = controller.presence_observations
 
     async def muse(session, request):
         assert conversation._voice[1]._turn_active
@@ -92,7 +93,7 @@ def test_presence_command_reads_camera_while_a_conversation_turn_is_running(monk
         rig.say()
 
     run(rig, conversation, user)
-    assert results == [{"ok": True, "payload": {"present": True, "last_seen_seconds": 0}}]
+    assert results == [{"ok": True, "payload": {"present": True, "last_seen_seconds": 0, "source": "camera", "available": False}}]
     assert reads == [1]
 
 
@@ -207,7 +208,7 @@ def test_presence_deadline_bounds_camera_detector_and_lock_waits(monkeypatch, bl
         try:
             assert stalled.wait(1)
             assert pending.result(timeout=.2) == {
-                "ok": True, "payload": {"present": None, "last_seen_seconds": 20}}
+                "ok": True, "payload": {"present": None, "last_seen_seconds": 20, "source": "camera", "available": False}}
             assert reads == ([] if blocked == "lock" else [True])
         finally:
             resume.set()
@@ -215,3 +216,81 @@ def test_presence_deadline_bounds_camera_detector_and_lock_waits(monkeypatch, bl
                 controller._presence_lock.release()
     assert controller._presence_lock.acquire(timeout=2)
     controller._presence_lock.release()
+
+
+def test_fused_presence_keeps_recent_voice_despite_camera_absence_and_expires():
+    from reachy_muse.presence import PresenceFusion
+    fusion = PresenceFusion()
+    assert fusion.result(100) == {"present": None, "last_seen_seconds": None, "source": None}
+    fusion.mark("voice", 100)
+    fusion.observe("camera", Presence(False, 101, None))
+    assert fusion.result(101) == {"present": True, "last_seen_seconds": 1, "source": "voice"}
+    fusion.mark("wave", 102)
+    assert fusion.result(103) == {"present": True, "last_seen_seconds": 1, "source": "wave"}
+    fusion.mark("face", 104)
+    assert fusion.result(105) == {"present": True, "last_seen_seconds": 1, "source": "face"}
+    assert fusion.result(107) == {"present": True, "last_seen_seconds": 3, "source": "wave"}
+    assert fusion.result(133) == {"present": None, "last_seen_seconds": 29, "source": "face"}
+    fusion.observe("camera", Presence(False, 134, None))
+    assert fusion.result(134) == {"present": False, "last_seen_seconds": 30, "source": "face"}
+
+
+def test_presence_includes_place_only_when_configured_and_current_face_without_a_camera_read():
+    controller = ReachyController()
+    controller._face_follower = SimpleNamespace(last_seen_at=__import__("time").monotonic())
+    service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=controller,
+                           backends=lambda _: None, place="office")
+    assert service.presence_result() == {"present": True, "last_seen_seconds": 0, "source": "face",
+                                         "available": False, "place": "office"}
+    service.place = None
+    assert "place" not in service.presence_result()
+
+
+@pytest.mark.parametrize("source", ["voice", "wave"])
+def test_admitted_wake_records_its_presence_source(source):
+    import asyncio
+    from reachy_muse.capabilities import Mode
+    from reachy_muse.local_backends import backends_for
+    from reachy_muse.conversation import VoiceConversation
+    from test_conversation import FakeSession, FakeHardware
+
+    async def run():
+        session = FakeSession()
+        voice = VoiceConversation(session, FakeHardware(), backends=backends_for(Mode.ON_ROBOT, session))
+        await voice._admit_wake(__import__("time").monotonic(), strip_required=False, source=source)
+        assert voice._presence.result(__import__("time").monotonic()) == {
+            "present": True, "last_seen_seconds": 0, "source": source}
+    asyncio.run(run())
+
+
+def test_availability_reflects_sleep_hush_turn_and_output():
+    import asyncio
+    from reachy_muse.capabilities import Mode
+    from reachy_muse.conversation import VoiceConversation
+    from reachy_muse.device_command import WakeWindow
+    from reachy_muse.local_backends import backends_for
+    from test_conversation import FakeSession, FakeHardware
+
+    async def run():
+        session = FakeSession()
+        hardware = FakeHardware()
+        voice = VoiceConversation(session, hardware,
+                                  backends=backends_for(Mode.ON_ROBOT, session, speech=object()))
+        service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=hardware,
+                               backends=lambda _: None)
+        service._voice = (asyncio.get_running_loop(), voice)
+        assert service.presence_result()["available"] is False
+        voice._ready.set()
+        assert service.presence_result()["available"] is True
+        voice._wake_window = WakeWindow.ASLEEP
+        assert service.presence_result()["available"] is False
+        voice._wake_window = WakeWindow.AWAKE
+        voice._say_hushed = True
+        assert service.presence_result()["available"] is False
+        voice._say_hushed = False
+        voice._turn_active = True
+        assert service.presence_result()["available"] is False
+        voice._turn_active = False
+        voice._output_busy = True
+        assert service.presence_result()["available"] is False
+    asyncio.run(run())

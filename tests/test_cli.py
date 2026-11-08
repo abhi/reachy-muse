@@ -1149,3 +1149,12 @@ def test_one_off_window_crosses_midnight_without_reading_or_writing_the_daily_le
     routine.ledger.mark(date(2026, 10, 30))
     assert routine.ledger.done(date(2026, 10, 30)) is True
     assert path.read_text() == '{"version": 1, "briefed": "2026-10-30"}'
+
+
+def test_place_is_optional_and_owner_configured():
+    from reachy_muse.cli import parser
+    assert parser().parse_args(["run"]).place is None
+    assert parser().parse_args(["run", "--place", "office"]).place == "office"
+    for value in ("", "\nsecret\nplace", "x" * 65):
+        with pytest.raises(SystemExit):
+            parser().parse_args(["run", "--place", value])
