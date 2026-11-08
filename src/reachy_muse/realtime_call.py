@@ -38,8 +38,6 @@ FRAME_SAMPLES = 960
 LINK_TIMEOUT_S = 10.0
 READY_TIMEOUT_S = 8.0
 BACKLOG_S = LINK_TIMEOUT_S + READY_TIMEOUT_S + 2.0
-CATCH_UP_FRAMES = 10
-QUIET_RMS = 300.0
 SPEAKER_LEAD_S = 0.1
 IDLE_AFTER_S = 0.3
 SPEAKER_DRAIN_S = 5.0
@@ -181,18 +179,12 @@ class _Resampler:
         return np.concatenate(parts).astype(self._dtype) if parts else np.zeros(0, dtype=self._dtype)
 
 
-def _rms(pcm: bytes) -> float:
-    samples = np.frombuffer(pcm, dtype="<i2").astype(np.float64)
-    return float(np.sqrt(np.mean(samples * samples))) if len(samples) else 0.0
-
-
 class MicrophoneFeed:
     """Reachy's microphone as a call's input: 24 kHz PCM16 frames.
 
     Frames wait here until the call is ready, for as long as connecting and admission can take,
-    so Muse hears a request from its first word. Then they go out at the call's real-time pace. While
-    more than ``CATCH_UP_FRAMES`` wait, quiet frames are skipped so the backlog shrinks without
-    losing speech. ``sent`` counts frames the call has taken.
+    so Muse hears a request from its first word. Then they go out at the call's real-time pace.
+    ``sent`` counts frames the call has taken.
     """
 
     def __init__(self, input_rate: int) -> None:
@@ -224,8 +216,6 @@ class MicrophoneFeed:
 
     async def __anext__(self) -> bytes:
         while True:
-            while len(self._frames) > CATCH_UP_FRAMES and _rms(self._frames[0]) < QUIET_RMS:
-                self._frames.popleft()
             if self._frames:
                 self.sent += 1
                 return self._frames.popleft()

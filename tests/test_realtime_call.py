@@ -4,6 +4,8 @@ import asyncio
 import base64
 import json
 import threading
+import wave
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -91,7 +93,7 @@ def test_voice_link_passes_the_voice_app_id_when_the_sdk_accepts_it(monkeypatch,
     assert asyncio.run(scenario()) == expected
 
 
-def test_the_microphone_reaches_muse_as_24_khz_frames_and_a_backlog_sheds_silence_first():
+def test_the_microphone_reaches_muse_as_24_khz_frames_and_preserves_the_backlog():
     async def scenario():
         feed = MicrophoneFeed(16000)
         feed.push(np.zeros(16000, np.float32))
@@ -103,7 +105,7 @@ def test_the_microphone_reaches_muse_as_24_khz_frames_and_a_backlog_sheds_silenc
 
     count, loud, sizes, sent = asyncio.run(scenario())
     assert sizes == {1920}
-    assert (count, loud, sent) == (10, 4, 10)
+    assert (count, loud, sent) == (29, 4, 29)
 
 
 def test_the_microphone_keeps_a_whole_request_while_the_call_is_still_being_admitted():
@@ -115,6 +117,30 @@ def test_the_microphone_keeps_a_whole_request_while_the_call_is_still_being_admi
         return len([frame async for frame in feed])
 
     assert asyncio.run(scenario()) == 300
+
+
+def test_the_microphone_keeps_quiet_recorded_speech_after_a_connection_delay():
+    vad = pytest.importorskip("webrtcvad").Vad(2)
+    path = Path(__file__).parent / "companion_server" / "data" / "negation.wav"
+    with wave.open(str(path)) as wav:
+        assert (wav.getframerate(), wav.getnchannels(), wav.getsampwidth()) == (16000, 1, 2)
+        samples = np.frombuffer(wav.readframes(wav.getnframes()), "<i2").astype(np.float32)
+    quiet = (samples / np.max(np.abs(samples)) * 260).astype("<i2")
+    voiced = sum(vad.is_speech(quiet[start:start + 320].tobytes(), 16000)
+                 for start in range(0, len(quiet) - 319, 320))
+    assert voiced * .02 > 1
+    request = np.concatenate([np.repeat(quiet, 3)[::2], np.zeros(24000, dtype="<i2")])
+
+    async def scenario():
+        feed = MicrophoneFeed(24000)
+        for start in range(0, len(request), 960):
+            feed.push(request[start:start + 960].astype(np.float32) / 32767)
+        feed.close()
+        return [frame async for frame in feed]
+
+    frames = asyncio.run(scenario())
+    assert len(frames) == 230
+    assert b"".join(frames) == request.tobytes()
 
 
 class Speaker:
