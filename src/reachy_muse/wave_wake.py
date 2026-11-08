@@ -35,6 +35,7 @@ class WaveDetector:
     """
 
     def __init__(self) -> None:
+        self.confirmation_seconds = .75
         self.reset()
 
     def reset(self) -> None:
@@ -102,7 +103,7 @@ class WaveDetector:
         if abs(light) > 10 or outside.mean() > .08 or torso.size == 0 or torso.mean() > .08:
             self.reset()
             return False
-        if confirmed and now - self._completed_at <= .75:
+        if confirmed and now - self._completed_at <= self.confirmation_seconds:
             self._completed_at = -math.inf
             return True
         self.score = 0.0
@@ -144,7 +145,8 @@ class WaveWatcher:
 
     Idle sampling is 2 Hz. Motion permits a 3 s burst at 8 Hz followed by a
     2 s rest, even under continuous motion. Person inference is at most 0.8 Hz
-    in bursts. Throttling stretches the burst and sampling intervals by the same factor.
+    in bursts. Throttling spaces out person inference and idle sampling, while
+    gestures keep their 8 Hz cadence and can await the next person confirmation.
     Rearming requires 3 s without motion, including after pauses and reconnects.
     """
 
@@ -272,29 +274,29 @@ class WaveWatcher:
         gaze = self._read_gaze() if self._read_gaze is not None else None
         generation = gaze.generation if gaze is not None else None
         self._idle_tick = not self._idle_tick
-        idle_period = .4 if self._idle_tick else .6
+        idle_period = (.4 if self._idle_tick else .6) * scale
         if not self._gaze_valid(generation):
             self._discard_motion()
-            return .5
+            return .5 * scale
         if generation != self._generation:
             self._discard_motion()
             self._generation = generation
         if now < self._rest_until:
-            return .5
+            return .5 * scale
         if self._burst_until != -math.inf and now >= self._burst_until:
             self._reset()
             self._rest_until = now + 2
-            return .5
+            return .5 * scale
         try:
             frame = self._read_frame()
             if frame is None:
                 self._reset()
                 self._stats.frame_errors += 1
-                return .5
+                return .5 * scale
             if (not self._current(epoch) or not self._gaze_valid(generation) or self._budget is not None
                     and not math.isfinite(self._budget.delay())):
                 self._discard_motion()
-                return .5
+                return .5 * scale
             to_camera = None
             if self._projection is not None and gaze is not None:
                 frame, to_camera = self._projection.project(frame, gaze.rotation)
@@ -303,7 +305,7 @@ class WaveWatcher:
             self._stats.frames += 1
             if reading.lighting:
                 self._reset()
-                return .5
+                return .5 * scale
             if self._rearming:
                 if reading.moving:
                     self._quiet_since = None
@@ -323,6 +325,7 @@ class WaveWatcher:
                 self._boxes = detector.detect(frame)
                 cost = self._clock() - started
                 self._inference_after = started + max(1.25 * scale, cost * 5)
+                self._decision.confirmation_seconds = max(.75, self._inference_after - started)
                 self._detected_at = now
                 if len(self._boxes) == 1 and self._boxes[0].score >= .6:
                     self._confirmations += 1
@@ -331,7 +334,7 @@ class WaveWatcher:
                 self._stats.detector_runs += 1
             if not self._current(epoch) or not self._gaze_valid(generation):
                 self._discard_motion()
-                return .5
+                return .5 * scale
             detected = self._decision.observe(frame, self._boxes, now, confirmed=self._confirmations >= 2)
             self._stats.max_score = max(self._stats.max_score, self._decision.score)
             if detected and self._confirmations >= 2:
@@ -352,7 +355,7 @@ class WaveWatcher:
         except (ValueError, OSError):
             self._reset()
             self._stats.frame_errors += 1
-            return .5
+            return .5 * scale
         finally:
             # Only the reduced previous image may survive an active iteration.
             frame = None
@@ -386,9 +389,6 @@ class WaveWatcher:
                     period = self._sample(detector)
                     if not self._current(epoch):
                         self._discard_motion()
-                    scale = self._budget.delay() if self._budget is not None else 1.0
-                    if math.isfinite(scale):
-                        period *= scale
                 with self._condition:
                     if self._active and not self._closed:
                         self._condition.wait_for(lambda: self._closed or not self._active,

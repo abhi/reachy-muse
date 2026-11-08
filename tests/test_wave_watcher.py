@@ -45,11 +45,11 @@ def test_throttled_wave_gets_two_person_observations_before_evidence_expires(inf
     budget.observe("wake", 0, now=0)
     budget.observe("wake", .5, now=2)
     assert budget.level == 1
-    frames = list(clip("wave", 8, seconds=3))
+    frames = list(clip("wave", 8, seconds=6))
     runs, cues = [], []
 
     def read():
-        return frames[int(now[0] * 8) % len(frames)][1]
+        return frames[min(int(now[0] * 8), len(frames) - 1)][1]
 
     class People:
         def detect(self, frame):
@@ -66,7 +66,7 @@ def test_throttled_wave_gets_two_person_observations_before_evidence_expires(inf
             budget.observe("capture", now[0] - captured_at)
             captured_at = now[0]
             started = now[0]
-            period = watcher._sample(detector) * budget.delay()
+            period = watcher._sample(detector)
             if watcher.take_wave():
                 cues.append(now[0])
             now[0] = max(now[0], started + period)
