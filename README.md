@@ -36,6 +36,33 @@ or suspends local vision. See [microphone measurements](bench/microphone_budget.
 Keep screens showing people outside its view: a video of a
 waving person can also trigger it. See [wave measurements and limitations](bench/wave.md).
 
+## Presence and notifications
+
+Add `--place office` to `muse-reachy run` to tell Muse where Reachy sits. The label
+is optional and has a 64-byte limit. With `--face-follow --face-follow-idle`, a
+face can establish presence while Reachy is idle. Voice wakes, recent voice
+turns, wave cues and the morning arrival watcher also contribute. Frames stay
+on the robot; presence does not identify the person.
+
+Reachy's registration asks Muse to prefer it for notifications and proactive
+suggestions while someone is present. Muse checks `reachy.presence`, then calls
+`reachy.notify` with `mode: now` when present or `mode: when_present` otherwise.
+Reachy waits while asleep, hushed or in a conversation, then waves its antennas
+and speaks through its normal speech path. This requires `on-robot` or
+`companion` speech synthesis. Delivery goes to whoever is present; voice
+verification is not calibrated for notification recipients.
+
+The local JSON inbox survives restarts. It holds up to 20 IDs, including completed
+receipts until expiry, with a default lifetime of four hours and a maximum of
+24 hours. Reusing an ID retrieves its result without repeating completed speech.
+See the [command contract](docs/contract.md#registered-commands) for parameters,
+expiry, crash behavior and unpair cleanup.
+
+During the morning briefing window, a voice wake, wave or face seen by idle
+follow also counts as arrival. The briefing still runs at most once per day.
+Speaker-direction polling uses one worker and keep-alive connection at no more
+than 5 Hz, only around microphone activity or an open wake window.
+
 ## Install on the robot
 
 reachy-muse needs Python 3.10 or later. The robot's own environment uses Python 3.12.

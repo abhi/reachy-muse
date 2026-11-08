@@ -451,9 +451,10 @@ Otherwise Reachy asks "Yes?" and waits for a fresh question instead of forwardin
 the buffered words. After a confirmed wake, a capture gap discards the incomplete
 recording and keeps the listening window open for a fresh question.
 
-While waiting for the wake phrase, Reachy also reads the daemon's microphone
-direction at `/api/state/doa`. Silence polls run at 5 Hz and speech polls at
-15 Hz, outside audio capture and the motion thread. Each reading is transformed
+Reachy reads the daemon's microphone direction at `/api/state/doa` at no more
+than 5 Hz around microphone activity or while a wake window is open. Idle silence
+does not poll. A single worker reuses its HTTP keep-alive connection, outside audio
+capture and the motion thread. Each reading is transformed
 through the current head rotation into a world bearing. A short ring stores only
 speech bearings and monotonic times. Reachy's own output and echo tail invalidate
 the ring, including with echo-cancelled input. Capture gaps also clear it.
@@ -921,7 +922,9 @@ muse-reachy run --mode companion --morning-briefing 04:50-06:00 ...
 The window uses the robot's local clock. It cannot cross midnight. During the
 window, Reachy watches the room with its camera. At the window start it also
 asks Muse for the briefing, so the briefing is usually ready before you arrive.
-Reachy says nothing and shows no thinking pose while it waits.
+Reachy says nothing and shows no thinking pose while it waits. During the window,
+an admitted voice wake, a claimed wave cue, or a recent face detection by idle
+follow also triggers the briefing. These cues share the same once-per-day ledger.
 
 When a person walks in, Reachy wakes up if it is asleep and says "Good morning!"
 with a greeting motion. It then speaks the whole briefing: a good-morning wish,
@@ -1188,18 +1191,20 @@ happy or sad reply also get the generated motion described in
 Partial antenna mode applies this score to the working antenna and keeps the
 other target at its measured startup position.
 
-The device registers as `Reachy Mini` with four commands:
+The device registers as `Reachy Mini` with five commands:
 
 | Command | Behavior |
 | --- | --- |
 | `reachy.say` | Speaks a short message in the room through the normal speaker path. Required `text` is 1 to 240 UTF-8 bytes. Returns `spoken: true` after playback, otherwise `spoken: false` and a reason. |
-| `reachy.presence` | Checks whether a person is in camera view and reports roughly how many seconds ago one was last seen. Unknown values are null. No images or identity leave the robot. |
+| `reachy.presence` | Fuses camera, face, voice and wave observations. Returns `present`, `last_seen_seconds`, `source`, `available` and the optional owner-configured `place`. Unknown values are null. No images or identity leave the robot. |
+| `reachy.notify` | Queues or speaks a notification or suggestion using `id`, `text`, `mode` and `kind`, with optional `expires_in_s`. Returns `delivered`, `queued`, `expired` or `refused` with a reason. |
 | `reachy.expression` | Plays neutral, happy, sad, surprised, curious, nod, shake, listening, thinking, or error. An exact name from Pollen's official recorded emotions library loads that move on demand. The move crossfades in from the resting pose over 0.4 seconds while it plays, and back out over 0.4 seconds after it ends. Speech sway continues on top, and the result stays within the `reachy.move` limits. Sound effects stay off during Muse speech. |
 | `reachy.move` | Moves head translation, rotation, body yaw, and antennas smoothly within advertised limits. Invalid or nonfinite values are rejected. |
 
 Speech and presence results use the SDK envelope `{"ok": true, "payload": {...}}`.
-The `spoken`, `reason`, `present`, and `last_seen_seconds` fields belong inside
-`payload`. Invalid parameters return `{"ok": false, "error": "invalid_parameters"}`.
+Result fields belong inside `payload`. Invalid speech or presence parameters
+return `{"ok": false, "error": "invalid_parameters"}`. Invalid notifications
+return `status: refused` and `reason: invalid_parameters`.
 
 `reachy.say` refuses while asleep, hushed, handling a user turn, or before voice
 readiness. Otherwise it waits for the current line and rechecks before speaking.
@@ -1207,27 +1212,36 @@ Stop talking interrupts it and blocks further `reachy.say` calls until the next
 user request or wake. Sleep and hush survive reconnects. It preserves volume
 and motion settings. This version has no quiet-hours schedule. A timeout or
 disconnect cancels the pending line; partial playback can precede a refusal.
-There is no urgent override or deferred delivery.
+There is no urgent override. Use `reachy.notify` for deferred delivery.
 
 The command needs local or companion text synthesis. In `muse-voice` mode it
 returns `speech_unavailable`; ordinary voice turns continue to use Muse's TTS.
 Replies to Reachy's own requests already play aloud, so Muse need not call
 `reachy.say` for the same answer.
 
-Presence reuses recent arrival-detector state during watching. A moving camera,
-an unavailable watcher, or an observation older than two seconds returns
-unknown. Outside watching, it makes one local person check if the camera is
-available. The command returns unknown when its deadline expires, including
-while waiting for another check. The default timeout is five seconds. It never
-moves or wakes Reachy. The last-seen age stays in memory, without images or
-identity. A person in view need not be you, and absence in
-camera view does not establish that the home is empty. Both command handlers
-log only the command name and outcome.
+Presence reuses the arrival detector while watching, or checks one local frame
+on request otherwise. It also reads the face follower's most recent detection
+and recent admitted voice and wave cues. Camera and face cues stay fresh for two
+seconds, voice and wave cues for 30 seconds. It never moves or wakes Reachy.
+`available` is false during sleep, hush, conversation or speech, or without a ready
+speech path. Set `--place office` to publish an owner-defined place label.
 
-The full registration is 4,176 JSON bytes, or 4,180 bytes with the SDK's length
+Muse's registration guide asks it to prefer Reachy while present. Muse checks
+`reachy.presence`, then calls `reachy.notify` with `mode: now` if present or
+`mode: when_present` otherwise. Reachy delivers oldest first between turns with
+an antenna wave and normal speech. The local JSON inbox holds at most 20 IDs,
+including completed receipts until expiry. Lifetimes default to four hours and
+cannot exceed 24 hours. Repeated IDs do not repeat completed speech. Unpairing
+clears the ledger. No notification text is logged.
+
+Delivery goes to whoever is present; this does not verify identity. Voice
+verification is not calibrated for notification recipients. The command needs
+local or companion synthesis. See [the contract](contract.md) for storage,
+refusal reasons, expiry and crash behavior.
+
+The full registration is 5,553 JSON bytes, or 5,557 bytes with the SDK's length
 prefix, under the 8,192-byte cap. The exact registration and byte counts are
 pinned in `tests/pins/registration.json` and `tests/test_registration.py`.
-See [the contract](contract.md) for command results and refusal reasons.
 
 Muse is asked for plain spoken replies. The companion narrator assigns
 expressions to the lines it speaks. Some Muse runtimes do not expose custom

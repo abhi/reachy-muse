@@ -3287,7 +3287,7 @@ class ReachyService(PairedService):
                 **({"place": self.place} if self.place is not None else {})}
 
     def describe(self) -> DeviceDescription:
-        return reachy_description(self.identity.node_id)
+        return reachy_description(self.identity.node_id, place=self.place)
 
     def run_command(self, name: str, params: dict, timeout_ms: int | None = None, *,
                     session: LinkSession | None = None) -> dict:

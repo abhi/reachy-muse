@@ -35,7 +35,8 @@ COMMAND_SPECS = {
             "Speak a short message aloud to the user in the room now. Returns spoken=true only after "
             "playback finishes, otherwise spoken=false and a reason. Refuses while asleep, hushed, or "
             "handling a user turn; otherwise waits for the current spoken line. Requires local or "
-            "companion speech synthesis. Use reachy.presence to check whether a person is there. "
+            "companion speech synthesis. For notifications and suggestions, prefer reachy.notify after "
+            "checking reachy.presence. "
             "Reachy Mini is a tabletop robot surface in the user's home, another place to talk with Muse "
             "by voice, like the Muse app. " + REACHY_PERSONA + " "
             "Requests from this device are live speech transcripts and may contain recognition errors. "
@@ -53,12 +54,12 @@ COMMAND_SPECS = {
     },
     "reachy.presence": {
         "description": (
-            "Check whether a person is currently in Reachy Mini's camera view before speaking to the room. "
-            "Returns present (true, false, or null if unknown) and last_seen_seconds (rough seconds since "
-            "a person was last seen, or null if never seen). Uses recent arrival-detector state while "
-            "watching, otherwise one local camera check. No identity or images are returned; a person "
-            "in view need not be the user. This does not establish that the home is empty or that speech "
-            "was heard. It never moves or wakes Reachy."
+            "Check whether someone is near Reachy, the preferred way to reach the user while present. "
+            "Returns present (true/false/null), last_seen_seconds (rounded age or null), source "
+            "(camera/face/voice/wave or null), available (false while asleep, hushed, busy or speech is "
+            "unavailable), and place only if configured by the owner. Fuses local camera and face "
+            "observations with recent voice and wave cues. No images or identity; whoever is present "
+            "may hear notifications. Use reachy.notify now if present, when_present otherwise. Never wakes Reachy."
         ),
         "required": {},
         "optional": {},

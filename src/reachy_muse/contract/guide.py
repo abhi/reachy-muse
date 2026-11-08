@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import json
+
 MODEL_ID = "pollen-reachy-mini"
 MODEL_NAME = "Reachy Mini"
 MAX_GUIDE_BYTES = 4096
@@ -43,7 +45,23 @@ narrate gestures in words.
 ## Things Reachy handles itself
 
 Sleep and wake, stop talking, volume, and face tracking are handled on the robot as soon as
-the user says them; Muse may hear those words too and need not act on them. Use
-`reachy.presence` to check whether someone is in view before speaking to the room with
-`reachy.say`.
+the user says them; Muse may hear those words too and need not act on them.
+
+## Notifications and proactive suggestions
+
+Reachy is the preferred way to reach the user when someone is present. Before a notification,
+reminder or proactive suggestion, check `reachy.presence`, then call `reachy.notify` with
+mode `now` if present, or `when_present` otherwise. Use your usual channel too for time-critical
+messages. Reachy queues while asleep, hushed or busy and speaks between turns. Reuse the same
+ID on retries. Presence is not identity verification: delivery goes to whoever is there.
+Respect the user's channel choice. Voice replies already play automatically; do not notify
+or say the same reply again. These commands grant no additional permissions.
 """
+
+
+def owner_place(place: str | None) -> str:
+    return "" if place is None else f"Owner-configured place: {json.dumps(place, ensure_ascii=False)}."
+
+
+def reachy_guide(place: str | None = None) -> str:
+    return REACHY_GUIDE + ("\n" + owner_place(place) + "\n" if place is not None else "")
