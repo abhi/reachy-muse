@@ -9,6 +9,7 @@ import argparse
 import asyncio
 from dataclasses import dataclass
 from datetime import timedelta
+import fcntl
 import functools
 import getpass
 import json
@@ -27,7 +28,7 @@ from reachy_muse.contract.prompts import (
     CHAT_BOOTSTRAP, REACHY_INTRODUCTION, setup_challenge_reply, with_setup_challenge,
 )
 from reachy_muse.capabilities import Mode
-from reachy_muse.inbox import INBOX_FILE, Inbox, clear_inbox
+from reachy_muse.inbox import INBOX_FILE, INBOX_GENERATION, Inbox, clear_inbox
 
 
 CHAT_STATE_FILE = "reachy-chat.json"
@@ -650,7 +651,8 @@ async def run(args) -> int:
     from reachy_muse.local_backends import backends_for
     from reachy_muse.conversation import ReachyService
 
-    if not config.load_json(config.PAIRING_FILE):
+    pairing = config.load_json(config.PAIRING_FILE)
+    if not pairing:
         clear_inbox(config.state_dir() / INBOX_FILE)
         print("Reachy is not paired with Muse. Run `muse-reachy pair` on the robot first.",
               file=sys.stderr)
@@ -757,7 +759,8 @@ async def run(args) -> int:
                                owns_chat=dedicated_chat is not None,
                                introduce_to_muse=args.introduce_to_muse,
                                silence_s=silence_s, short_utterance_silence_s=SHORT_UTTERANCE_SILENCE_S,
-                               backends=backends, inbox=Inbox(config.state_dir() / INBOX_FILE),
+                               backends=backends, inbox=Inbox(config.state_dir() / INBOX_FILE,
+                                                             generation=pairing.get(INBOX_GENERATION, "")),
                                local_chat=args.local_chat == "on",
                                arbitration_shadow=args.arbitration_shadow,
                                audio_diagnostics=args.audio_diagnostics, wake_detector=wake_detector,
@@ -873,10 +876,16 @@ def pair_reachy(args) -> int:
         print(f"Setup open for {window.timeout_s // 60} minutes. In the Muse app, add a device "
               f"and choose {window.ble_name}.")
 
-    if args.force:
-        clear_inbox(config.state_dir() / INBOX_FILE)
+    generation = clear_inbox(config.state_dir() / INBOX_FILE) if args.force else None
     result = pair(on_open=setup_open, force=args.force, timeout_s=args.timeout)
     if result.outcome is PairOutcome.PAIRED:
+        with (config.state_dir() / "pairing.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            pairing = config.load_json(config.PAIRING_FILE)
+            if pairing is not None:
+                if generation is None:
+                    generation = clear_inbox(config.state_dir() / INBOX_FILE)
+                config.save_json(config.PAIRING_FILE, {**pairing, INBOX_GENERATION: generation})
         print(f"Reachy is paired with Muse. The pairing is saved in {config.state_dir()}.")
         if args.introduce is True or (args.introduce is None and sys.stdin.isatty()):
             from reachy_muse.introduction import introduce_paired

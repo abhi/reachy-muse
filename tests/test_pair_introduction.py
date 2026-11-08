@@ -58,8 +58,9 @@ def pairing_flow(tmp_path, monkeypatch):
         return PairResult(flow.outcome, sdk_token_problem="invalid SDK token")
 
     def fetch(token, api):
-        assert config.load_json(config.PAIRING_FILE, tmp_path) == {
-            "access_token": "fake-token", "username": "paired-user"}
+        saved = config.load_json(config.PAIRING_FILE, tmp_path)
+        assert saved["access_token"] == "fake-token"
+        assert saved["username"] == "paired-user"
         flow.fetched.append(token)
         return [{"vm_id": flow.vm_id, "is_default": True,
                  "vm_auth_token": "fake-vm-token"}], 200
@@ -160,8 +161,9 @@ def test_interactive_pair_shows_exact_text_and_asks_once(
     assert pairing_flow.pair_calls == [(False, 600)]
     assert [session.posts for session in pairing_flow.sessions] == ([[INTRODUCTION]] if sends else [])
     assert (tmp_path / "reachy-introduction.json").exists() is sends
-    assert config.load_json(config.PAIRING_FILE, tmp_path) == {
-        "access_token": "fake-token", "username": "paired-user"}
+    saved = config.load_json(config.PAIRING_FILE, tmp_path)
+    assert saved["access_token"] == "fake-token"
+    assert saved["username"] == "paired-user"
 
 
 @pytest.mark.parametrize("interactive, flags, sends", [

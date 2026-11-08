@@ -17,8 +17,9 @@ def test_queue_and_receipt_survive_restart_without_retaining_delivered_text(tmp_
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     inbox = Inbox(path, clock=lambda: 101)
     assert inbox.pending()["text"] == "Call Mom."
-    assert inbox.claim("n1") is True
-    inbox.finish("n1", spoken=True)
+    item = inbox.pending()
+    assert inbox.claim(item) is True
+    inbox.finish(item, spoken=True)
     assert "Call Mom." not in path.read_text()
     assert json.loads(path.read_text())["items"][0]["delivered_at"] == 101
     restarted = Inbox(path, clock=lambda: 102)
@@ -36,8 +37,9 @@ def test_twenty_ids_include_receipts_until_expiry_and_overflow_is_refused(tmp_pa
     assert inbox.add(notice("0", ttl=500))["status"] == "queued"
     assert inbox.pending()["expires_at"] == 110
     assert inbox.pending()["id"] == "0"
-    inbox.claim("0")
-    inbox.finish("0", spoken=True)
+    item = inbox.pending()
+    inbox.claim(item)
+    inbox.finish(item, spoken=True)
     assert inbox.pending()["id"] == "1"
     assert inbox.add(notice("overflow"))["reason"] == "inbox_full"
     now[0] = 110
@@ -60,7 +62,7 @@ def test_crash_during_delivery_does_not_replay_an_uncertain_line(tmp_path):
     path = tmp_path / "inbox.json"
     inbox = Inbox(path, clock=lambda: 100)
     inbox.add(notice())
-    assert inbox.claim("n1") is True
+    assert inbox.claim(inbox.pending()) is True
     restarted = Inbox(path, clock=lambda: 101)
     assert restarted.add(notice()) == {"ok": True, "status": "refused", "reason": "delivery_uncertain"}
     assert restarted.pending() is None

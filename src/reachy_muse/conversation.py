@@ -50,7 +50,7 @@ from reachy_muse.turn_timeline import TurnTimeline
 from reachy_muse.startup import StartupTimeline
 from reachy_muse.speaker_direction import WakeDirection
 from reachy_muse.presence import PresenceFusion
-from reachy_muse.inbox import Inbox, outcome
+from reachy_muse.inbox import INBOX_GENERATION, Inbox, outcome
 from reachy_muse.notifications import Notifications
 from reachy_muse.wake_policy import WakeContext
 
@@ -2456,6 +2456,7 @@ class VoiceConversation:
                     else strip_wake_prefix(text, self.wake_detector.phrase))
         if request.heard_over and (not text.strip() or repeats_playback(text, request.heard_over)):
             return TurnOutcome.EMPTY
+        self._presence.mark("voice", started)
         if text.strip() and await self._obey(text, started, request.timeline) is not None:
             return TurnOutcome.ACCEPTED
         call = request.call
@@ -3285,6 +3286,14 @@ class ReachyService(PairedService):
     def unpaired(self) -> None:
         self.inbox.clear()
 
+    async def _session(self, vm: dict, pairing: dict) -> tuple[Outcome, float]:
+        if self.inbox.path is not None:
+            self.inbox = Inbox(self.inbox.path, clock=self.inbox.clock,
+                               generation=pairing.get(INBOX_GENERATION, ""))
+        elif not self.inbox.current():
+            self.inbox = Inbox(clock=self.inbox.clock)
+        return await super()._session(vm, pairing)
+
     def presence_result(self) -> dict:
         observe = getattr(self.executor, "presence_observations", None)
         if observe is not None:
@@ -3358,7 +3367,9 @@ class ReachyService(PairedService):
             if not isinstance(params, _CommandParams):
                 params = _CommandParams("reachy.notify", params, timeout_ms)
             active = self._voice
-            if active is None or (session is not None and active[1].session is not session):
+            if session is not None and (active is None or active[1].session is not session):
+                result = outcome("refused", "disconnected")
+            elif active is None:
                 result = self.inbox.add(params)
             else:
                 loop, voice = active
@@ -3369,7 +3380,7 @@ class ReachyService(PairedService):
                     future = asyncio.run_coroutine_threadsafe(pending, loop)
                 except RuntimeError:
                     pending.close()
-                    result = self.inbox.add(params)
+                    result = outcome("refused", "disconnected")
                 else:
                     try:
                         result = future.result(max(0, params.deadline - time.monotonic()) + 1)
