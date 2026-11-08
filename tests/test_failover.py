@@ -45,6 +45,37 @@ def test_call_commands_use_companion_partials_without_requesting_or_waiting_for_
     asyncio.run(scenario())
 
 
+def test_a_failed_companion_endpoint_keeps_its_audio_and_logs_no_user_words(caplog):
+    from reachy_muse.protocol import Error, ErrorCode
+    from test_pins import Vad
+
+    private = "private-endpoint-error-marker"
+
+    async def scenario():
+        link = CompanionLink("ws://localhost:9", token="test", out_rate=16000, insecure=True)
+        link._connection = _Connection(None, (Op.HEAR,))
+        link._set(LinkState.UP)
+        rest = CompanionRoute(link).hearing
+        hearing = FailoverHearing(CompanionHearing(link), LocalHearing(), rest)
+        turn = hearing.open_turn(16000, silence_s=.1, vad=Vad())
+        turn.feed(np.full(8000, .25, np.float32))
+        assert turn.take().ended is None
+        stream, = link._connection.hearing.values()
+        turn.feed(np.zeros(1600, np.float32))
+        ended = turn.take().ended
+        link._receive(link._connection, encode(Error(ErrorCode.OVERLOADED, private, stream=stream.id)))
+        endpoint = await ended.endpoint()
+        assert endpoint.text is None
+        with wave.open(io.BytesIO(endpoint.audio), "rb") as wav:
+            assert wav.readframes(wav.getnframes()) == b"\x00\x20" * 8000 + b"\0\0" * 1600
+        assert rest._strikes == 1
+        assert link.state is LinkState.UP
+
+    asyncio.run(scenario())
+    assert private not in caplog.text
+    assert caplog.text.count("CapabilityUnavailable") == 2
+
+
 class EndedLate:
     truncated = False
 

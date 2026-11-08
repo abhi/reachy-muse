@@ -122,9 +122,9 @@ class _CompanionEnded:
         try:
             endpoint = await self._ended.endpoint()
         except CapabilityUnavailable as error:
-            log.warning("Reachy transcribes the turn itself: %s", error)
+            log.warning("Reachy transcribes the turn itself: %s", type(error).__name__)
             if not error.link_down:
-                self._rest.fail(str(error))
+                self._rest.fail(type(error).__name__)
             return Endpoint(self._ended.wav, None)
         self._rest.succeed()
         return endpoint
