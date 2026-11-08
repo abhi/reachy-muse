@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import os
+import stat
 import time
 
 import pytest
@@ -52,6 +54,30 @@ def test_now_gestures_then_speaks_once_and_never_logs_text(tmp_path, caplog):
             "ok": True, "status": "delivered", "reason": "spoken"}
     asyncio.run(check())
     assert "A private reminder" not in caplog.text
+
+
+def test_failed_claim_directory_sync_prevents_playback(tmp_path, monkeypatch):
+    async def check():
+        service, voice, _ = device(tmp_path)
+        service._presence.mark("voice", time.monotonic())
+        service.inbox.add(notice())
+        fsync = os.fsync
+
+        def sync(fd):
+            if stat.S_ISDIR(os.fstat(fd).st_mode):
+                raise OSError("directory sync failed")
+            fsync(fd)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "fsync", sync)
+            await voice.notifications.deliver(30)
+        assert voice.hardware.played == []
+        assert service.inbox.pending()["text"] == "Call Mom."
+        await voice.notifications.deliver(30)
+        assert sum(len(samples) for samples in voice.hardware.played) == 320
+        assert service.inbox.result("n1") == {"ok": True, "status": "delivered", "reason": "spoken"}
+
+    asyncio.run(check())
 
 
 @pytest.mark.parametrize("blocked", ["absent", "asleep", "hushed", "turn", "hearing", "output", "wake", "realtime"])

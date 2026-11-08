@@ -1,6 +1,7 @@
 """Local notifications survive restarts without repeating completed IDs."""
 
 import json
+import os
 import stat
 
 from reachy_muse.inbox import Inbox
@@ -67,6 +68,24 @@ def test_crash_during_delivery_does_not_replay_an_uncertain_line(tmp_path):
     assert restarted.add(notice()) == {"ok": True, "status": "refused", "reason": "delivery_uncertain"}
     assert restarted.pending() is None
     assert "Call Mom." not in path.read_text()
+
+
+def test_claim_syncs_the_replaced_directory_entry_before_returning(tmp_path, monkeypatch):
+    path = tmp_path / "inbox.json"
+    inbox = Inbox(path)
+    inbox.add(notice())
+    synced = []
+    fsync = os.fsync
+
+    def sync(fd):
+        fsync(fd)
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            item, = json.loads(path.read_text())["items"]
+            synced.append((item["status"], item["reason"], item["text"]))
+
+    monkeypatch.setattr(os, "fsync", sync)
+    assert inbox.claim(inbox.pending()) is True
+    assert synced == [("refused", "delivery_uncertain", None)]
 
 
 def test_unpair_removes_the_entire_ledger(tmp_path):

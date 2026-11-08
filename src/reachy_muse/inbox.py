@@ -129,6 +129,11 @@ class Inbox:
                 stream.flush()
                 os.fsync(stream.fileno())
             temporary.replace(self.path)
+            directory = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
         finally:
             temporary.unlink(missing_ok=True)
 
