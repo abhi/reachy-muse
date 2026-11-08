@@ -226,14 +226,19 @@ class WaveWatcher:
             return False
 
     def close(self, timeout=2.0):
-        self.set_active(False)
+        deadline = time.monotonic() + timeout
         with self._condition:
+            self._active = False
             self._closed = True
+            self._pending = None
+            self.wave_position = None
             self._condition.notify_all()
         if self._thread is not None:
-            self._thread.join(timeout)
+            self._thread.join(max(0.0, deadline - time.monotonic()))
             if self._thread.is_alive():
                 raise RuntimeError("Wave watcher did not stop")
+        else:
+            self._reset()
 
     def _sample(self, detector):
         now = self._clock()
@@ -361,11 +366,15 @@ class WaveWatcher:
                                                  timeout=max(.001, period - (self._clock() - started)))
         except Exception:
             # Retain neither exception/traceback nor frames on failure.
-            with self._work:
-                self._reset()
             with self._condition:
                 self._failed = True
                 self._active = False
                 self._pending = None
                 self.wave_position = None
             log.warning("Wave stats failures=1")
+        finally:
+            with self._work:
+                self._reset()
+                stats, self._stats = self._stats, WaveStats()
+            log.info("Wave stats frames=%d detector_runs=%d cues=%d max_score=%.3f frame_errors=%d",
+                     stats.frames, stats.detector_runs, stats.cues, stats.max_score, stats.frame_errors)

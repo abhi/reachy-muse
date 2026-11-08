@@ -75,6 +75,45 @@ def test_disabling_waits_for_in_flight_work_before_returning():
         watcher.close()
 
 
+def test_close_times_out_while_camera_read_is_blocked_and_discards_pending_cues(immediate_motion):
+    entered, release = threading.Event(), threading.Event()
+    now = [0.0]
+    blocking = [False]
+
+    def read():
+        if blocking[0]:
+            entered.set()
+            assert release.wait(3)
+        return np.zeros((120, 160, 3), np.uint8)
+
+    class People:
+        def detect(self, frame):
+            return [BOX]
+
+    watcher = wave.WaveWatcher(read, lambda: True, clock=lambda: now[0],
+                               detector_factory=lambda _: People())
+    watcher.set_active(True)
+    watcher._sample(People())
+    now[0] = 1.25
+    watcher._sample(People())
+    blocking[0] = True
+    watcher.start()
+    with ThreadPoolExecutor() as executor:
+        try:
+            assert entered.wait(2)
+            closed = executor.submit(watcher.close, .02)
+            with pytest.raises(RuntimeError, match="Wave watcher did not stop"):
+                closed.result(.2)
+            assert watcher.take_wave() is False
+            assert watcher.wave_position is None
+            with pytest.raises(RuntimeError, match="Wave watcher is closed"):
+                watcher.start()
+        finally:
+            release.set()
+            watcher.close()
+    assert watcher.take_wave() is False
+
+
 @pytest.fixture
 def immediate_motion(monkeypatch):
     class Gate:
