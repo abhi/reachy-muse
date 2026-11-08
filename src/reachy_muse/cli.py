@@ -359,7 +359,7 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--wake-model", type=Path,
                               help="Local model directory for the selected wake backend; enables wake-word invocation")
             item.add_argument("--wave-wake", action="store_true",
-                              help="Wake with a raised hand wave; local camera processing, 15-second cooldown")
+                              help="Wake and wave back at a raised hand wave; local camera processing, 3-second quiet rearm")
             item.add_argument("--wake-backend", choices=("sherpa", "vosk"), default="sherpa",
                               help="Local wake detector (default: sherpa); Vosk requires the reachy-wake-vosk extra")
             item.add_argument("--wake-phrase", default="hey muse",

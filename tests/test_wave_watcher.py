@@ -23,7 +23,7 @@ def until(predicate):
 def test_periodic_wave_survives_idle_sampling_and_slow_person_inference():
     from bench.wave import scheduled
     assert scheduled("wave", .32) == {
-        "reads": 19, "person_runs_at": [2.4, 4.095], "cues_at": [4.415]}
+        "reads": 26, "person_runs_at": [2.4, 4.095], "cues_at": [4.415]}
     assert scheduled("still", .32) == {"reads": 16, "person_runs_at": [], "cues_at": []}
     assert scheduled("curtain", .32) == {
         "reads": 27, "person_runs_at": [2.0, 3.695], "cues_at": []}
@@ -91,45 +91,36 @@ def immediate_motion(monkeypatch):
     monkeypatch.setattr(wave, "WaveDetector", Cue)
 
 
-def test_cooldown_survives_disable_and_enable_and_cue_is_consumed_once(immediate_motion):
-    now = [0.0]
-    reads, inferences = [], []
+def test_cooldown_survives_pauses_and_long_waves_until_three_quiet_seconds(immediate_motion, monkeypatch):
+    now, moving = [0.0], [True]
+    inferences = []
 
-    def read():
-        now[0] += .25
-        reads.append(now[0])
-        return np.zeros((120, 160, 3), np.uint8)
+    class Gate:
+        def update(self, frame, now):
+            return SimpleNamespace(moving=moving[0], lighting=False)
 
     class People:
         def detect(self, frame):
             inferences.append(now[0])
             return [BOX]
 
-    watcher = wave.WaveWatcher(read, lambda: True, clock=lambda: now[0],
-                               detector_factory=lambda _: People())
-    try:
-        watcher.start()
-        watcher.set_active(True)
-        until(watcher.take_wave)
-        assert watcher.wave_position == pytest.approx(
-            ((BOX.x + BOX.width / 2) * 160, (BOX.y + BOX.height / 2) * 120))
-        assert watcher.take_wave() is False
-        assert watcher.wave_position is None
-        assert inferences == [.25, 1.5]
-        assert reads == [.25, .5, .75, 1.0, 1.25, 1.5]
-        watcher.set_active(False)
-        now[0] = 16.49
-        watcher.set_active(True)
-        time.sleep(.03)
-        assert len(reads) == 6
-        assert watcher.take_wave() is False
-        watcher.set_active(False)
-        now[0] = 16.5
-        watcher.set_active(True)
-        until(watcher.take_wave)
-        assert inferences == [.25, 1.5, 16.75, 18.0]
-    finally:
-        watcher.close()
+    monkeypatch.setattr(wave, "MotionGate", Gate)
+    watcher = wave.WaveWatcher(lambda: np.zeros((120, 160, 3), np.uint8), lambda: True,
+                               clock=lambda: now[0])
+    watcher.set_active(True)
+    cues = []
+    for at in [0, 1.25, 2, 3, 4, 5, 6, 7, 8, 8.5, 9.75]:
+        now[0] = at
+        if at == 2:
+            watcher.set_active(False)
+            watcher.set_active(True)
+        moving[0] = at < 5 or at > 8
+        watcher._sample(People())
+        if watcher.take_wave():
+            cues.append(at)
+            assert watcher.take_wave() is False
+    assert cues == [1.25, 9.75]
+    assert inferences == [0, 1.25, 8.5, 9.75]
 
 
 def test_old_cue_expires_instead_of_waking_a_later_conversation(immediate_motion):

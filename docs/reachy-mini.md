@@ -480,12 +480,26 @@ Idle face following pauses during the turn. Conversation expressions then add
 to the gaze as usual. Wave admission still drains camera work and discards
 pre-wave audio, and morning arrival watching retains priority.
 
+Each admitted wave also triggers a 1.6-second antenna greeting with a small head
+bob and tilt. The motion adds to the current gaze and returns to it, including
+with `REACHY_MUSE_BREATHING=0`. The spoken wake greeting follows the gesture while
+capture continues; it is omitted if the user has already started a request.
+While awake and idle/listening, a wave gets only the gesture and leaves the open
+microphone window intact. Detection pauses while speaking or processing a turn,
+including a realtime reply; waves then are dropped. Playback starting during the
+gesture cancels it. No wave-back is queued for later.
+
+Rearming requires three seconds of quiet hand motion after a detection. Self-motion
+discards image history during the gesture and for at least half a second afterward,
+then the normal observed-pose settling check must pass. The existing motion owner
+writes every target and applies the usual pose and antenna limits.
+
 Check the mapping without a daemon or robot with
 `PYTHONPATH=src python bench/speaker_direction.py`.
 
 Capture runs independently of keyword inference and speech gating, including
-processing the buffered wake audio. A three-second audio queue absorbs processing
-bursts without losing parts of the wake phrase. An overflow
+processing the buffered wake audio. The dedicated reader and event-loop capture
+queue each retain at most three seconds of audio; wake pre-roll is separate. An overflow
 resets the speech detectors and recording rather than joining audio across the
 missing interval. Gap logs distinguish a capture stall from a queue overflow.
 Logs report sample coverage and inference timing every ten

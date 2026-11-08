@@ -3,17 +3,30 @@
 ## Design and measured choice
 
 `--wave-wake` adds a local visual invocation, with or without an acoustic wake
-model. The conversation consumes `hardware.take_wave()` only while waiting for
-invocation. It drains the wave worker, discards queued microphone audio, and uses
-the existing `WakeHeard` cue and sleep-exit motion. Fresh speech enters the usual
-conversation window without a wake-prefix requirement.
+model. The conversation consumes `hardware.take_wave()` while waiting for
+invocation or while awake and idle/listening. For a new invocation it drains the
+wave worker, discards queued microphone audio, and uses the existing `WakeHeard`
+cue and sleep-exit motion. Fresh speech enters the usual conversation window
+without a wake-prefix requirement. An already-open window is preserved.
+
+Both paths issue a 1.6-second procedural antenna greeting through the existing
+motion owner. Pollen's selected happy clip, `success1`, lasts 2.26 seconds before
+its fade, and the existing generated greeting lasts 2.5 seconds. Both are longer
+than the requested greeting. A visual invocation uses one procedural gesture.
+The procedural offset swings both
+antennas through three cycles with a sine-squared envelope and adds at most 3 mm
+of bob, 5 degrees of roll and 3 degrees of pitch. Yaw and body yaw remain with the
+gaze owner. The offset is zero at both endpoints and does not depend on breathing.
+Playback cancels it, and new gestures during speech are dropped. The spoken wake
+greeting follows the animation, unless the user has already begun a request.
 
 `WaveDetector.observe(frame, boxes, now) -> bool` owns image evidence.
 `WaveWatcher.set_active(bool)` owns cadence, person inference, cooldown and
 pending cues. Disabling waits for in-flight work and releases image history.
 The hardware supplies one locked camera reader to wave, arrival, face following
 and presence. Morning arrival watching has priority and suspends wave detection.
-The conversation also suspends wave work during calls, output and pending turns.
+The conversation suspends wave work during output and pending turns, including
+realtime replies, and permits it again while a call is idle.
 No wave worker exists unless enabled. Images stay in RAM on the robot; diagnostics
 contain frame/error/inference/cue counts and the maximum oscillation score.
 
@@ -31,8 +44,10 @@ after capture, after person inference, and when consuming a cue. Movement betwee
 camera samples therefore discards partial waves, person confirmations and pending
 cues even if the head has already settled again. The final conversation claim
 also checks the generation after draining camera work; breathing stays suspended
-through that handoff. The 15-second cooldown survives
-these resets. Content-free transitions read `Wave gaze: follow`,
+through that handoff. The quiet-rearm latch survives these resets. Three seconds
+of observed quiet are required before another cue. Self-motion is rejected for
+the gesture's duration plus at least 0.5 seconds and normal pose settling.
+Content-free transitions read `Wave gaze: follow`,
 `Wave gaze: settled`, and `Wave gaze: wave watching`.
 
 For eligible frames, camera calibration and the observed head rotation project the
@@ -130,8 +145,10 @@ phase repeatedly. Motion permits a three-second
 8 Hz burst, followed by two seconds without reads, even under continuous motion.
 YOLOX runs at most once per 1.25 seconds within a burst, or five times the last
 inference cost if longer. This deadline survives gaze resets. A cue requires two person
-observations. After a cue, the 15-second cooldown survives disable/re-enable and
-reconnects. Cues expire after 0.75 seconds. Nothing is queued for later wake.
+observations. After a cue, low-rate motion-gate reads continue, without person inference, until
+three seconds of quiet rearm the detector. Pauses and self-motion reset the quiet
+timer; the rearm requirement survives disable/re-enable and reconnects. Cues
+expire after 0.75 seconds. Nothing is queued for later wake.
 
 The measured YOLOX CPU median is 20.431 ms, p95 21.650 ms, on synthetic input.
 Following the explicitly approximate 10-15x CM4 multiplier in `bench/arrival.md`,
@@ -146,7 +163,8 @@ At most three person inferences per five-second burst/rest cycle cost roughly
 estimate after projection adds about 16% averaged over those cycles. That total
 is about 36% of one core, or 9% of the four-core CM4, excluding face inference.
 Combined face/wave worker throughput remains unmeasured on the robot.
-No wave inference starts while a conversation is active.
+No wave inference starts during speech, reply work or wake verification. An open
+conversation window permits detection when both sides are idle.
 Disabling drains one already-started inference before opening a call, which can
 add approximately 0.3 seconds to wake admission on the CM4.
 
@@ -154,8 +172,8 @@ The benchmark also drives the actual worker iteration with a virtual clock,
 oracle boxes and a 320 ms inference delay. All 40 final waves are detected both
 with and without that delay. For the seed-zero three-second wave beginning at
 2.0 s, the cue occurs at 4.150 s without delay and 4.415 s with delay. The delayed
-case reads 19 frames and runs person inference twice over eight seconds. A still
-room reads 16 frames and runs no inference. The curtain fixture runs inference
+case reads 26 frames, including quiet-rearm observations, and runs person
+inference twice over eight seconds. A still room reads 16 frames and runs no inference. The curtain fixture runs inference
 twice, emits no cue, then rests. These scheduling checks do not simulate
 camera decoding, operating-system contention or real person detection errors.
 
@@ -163,3 +181,8 @@ The three-second bursts and two-second rests trade missed waves for bounded CPU.
 An operator may need to repeat a wave during a rest or while morning watching
 owns the camera. Hardware throughput and real-camera accuracy remain unmeasured
 because this work did not access the robot.
+
+The wave-back offset itself measured 0.267 microseconds per 40 Hz tick on the
+development Mac, using five runs of 65,000 evaluations. This excludes the existing
+motion writer and daemon. The final microphone/vision cadence runs, including
+quiet rearming, are recorded in [microphone priority](microphone_budget.md).

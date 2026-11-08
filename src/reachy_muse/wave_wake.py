@@ -144,7 +144,7 @@ class WaveWatcher:
 
     Idle sampling is 2 Hz. Motion permits a 3 s burst at 8 Hz followed by a
     2 s rest, even under continuous motion. Person inference is at most 0.8 Hz
-    in bursts. The 15 s cooldown survives pauses and conversation reconnects.
+    in bursts. Rearming requires 3 s without motion, including after pauses and reconnects.
     """
 
     def __init__(self, read_frame, is_still, model_path=None, *, clock=time.monotonic,
@@ -163,6 +163,7 @@ class WaveWatcher:
         self._pending = None
         self.wave_position: tuple[float, float] | None = None
         self._cooldown_until = -math.inf
+        self._rearming = False
         self._failed = False
         self._idle_tick = False
         self._generation = None
@@ -170,6 +171,7 @@ class WaveWatcher:
         self._stats = WaveStats()
 
     def _reset(self):
+        self._quiet_since = None
         self._gate = MotionGate()
         self._decision = WaveDetector()
         self._boxes = []
@@ -249,7 +251,7 @@ class WaveWatcher:
         if generation != self._generation:
             self._discard_motion()
             self._generation = generation
-        if now < max(self._cooldown_until, self._rest_until):
+        if now < self._rest_until:
             return .5
         if self._burst_until != -math.inf and now >= self._burst_until:
             self._reset()
@@ -274,6 +276,15 @@ class WaveWatcher:
             if reading.lighting:
                 self._reset()
                 return .5
+            if self._rearming:
+                if reading.moving:
+                    self._quiet_since = None
+                elif self._quiet_since is None:
+                    self._quiet_since = now
+                elif now - self._quiet_since >= 3 and now >= self._cooldown_until:
+                    self._rearming = False
+                    self._reset()
+                return idle_period
             if self._burst_until == -math.inf:
                 if not reading.moving:
                     # Avoid sampling a periodic wave at exactly the same phase.
@@ -306,7 +317,8 @@ class WaveWatcher:
                             pixel = to_camera @ [*position, 1.0]
                             position = (float(pixel[0] / pixel[2]), float(pixel[1] / pixel[2]))
                         self._pending = (self._clock(), position, generation)
-                        self._cooldown_until = self._clock() + 15
+                        self._cooldown_until = self._clock() + 3
+                        self._rearming = True
                         self._stats.cues += 1
                 self._reset()
         except (ValueError, OSError):

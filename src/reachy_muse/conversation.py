@@ -1311,6 +1311,7 @@ class VoiceConversation:
         wave_active = False
         wave_poll_at = -math.inf
         wave_operation = None
+        wave_greeting = None
 
         async def watch_wave(active):
             nonlocal wave_active, wave_poll_at, wave_operation
@@ -1461,7 +1462,8 @@ class VoiceConversation:
                             wake_resampler = av.AudioResampler(format="flt", layout="mono", rate=16000)
                         await self._plan(plan.WakeClosed())
                         log.info("Reachy's wake window closed after inactivity")
-                wave_eligible = (self._wake_deadline is None and self.call is None and not self._call_tasks
+                wave_eligible = (self.wave_wake and not (self.call is not None and self.call.working)
+                                 and not self._call_tasks
                                  and not self._input_blocked() and not self._has_output()
                                  and turn_task is None and follow_up_task is None and held is None
                                  and not pending_turns and not self._briefing_slots and not recording_active())
@@ -1470,10 +1472,18 @@ class VoiceConversation:
                     await watch_wave(False)
                     if not self.hardware.claim_wave():
                         continue
+                    already_awake = self._wake_deadline is not None or self.call is not None
+                    if already_awake:
+                        await asyncio.to_thread(self.hardware.gesture, "wave")
+                        log.info("Wave back cues=1")
+                        continue
                     self._attend_wake(time.monotonic(), angle=getattr(self.hardware, "wave_direction", None))
                     asleep = self._wake_window is WakeWindow.ASLEEP
                     wake_epoch += 1
                     await self._admit_wake(time.monotonic(), strip_required=False)
+                    from reachy_muse.motion.wave_back import DURATION_S
+                    if self._wake_deadline is not None:
+                        self._wake_deadline += DURATION_S
                     self._wake_window = WakeWindow.AWAKE
                     self._wake_first_request_pending = False
                     recorder.abort()
@@ -1482,10 +1492,22 @@ class VoiceConversation:
                     pre_roll_samples = 0
                     if wake is not None:
                         await asyncio.to_thread(wake.reset)
-                    self._moments.cue(Moment.GREETING)
-                    await self._announce(WAKE_GREETING if asleep else WAKE_CUE, started=None, defer_playback=True)
                     capture.discard_pending()
-                    self._open_call()
+                    await asyncio.to_thread(self.hardware.gesture, "wave")
+
+                    async def greet_after_wave(was_asleep=asleep, turn_started=self._turn_started):
+                        from reachy_muse.motion.wave_back import DURATION_S
+                        await asyncio.sleep(DURATION_S)
+                        if self._wake_deadline is None:
+                            return
+                        if (self._turn_started == turn_started
+                                and not (self._has_output() or self._hearing_open() or self._turn_active)):
+                            await self._announce(WAKE_GREETING if was_asleep else WAKE_CUE,
+                                                 started=None, defer_playback=True)
+                        if self._wake_deadline is not None:
+                            self._open_call()
+
+                    wave_greeting = self._background(greet_after_wave())
                     log.info("Wave cues=1")
                     continue
                 captured = await capture.get()
@@ -1647,6 +1669,9 @@ class VoiceConversation:
                     # Retain resampler/VAD state and drain endpoints in this SDK chunk.
                     wav = await record(sample[:0])
         finally:
+            if wave_greeting is not None:
+                wave_greeting.cancel()
+                await asyncio.gather(wave_greeting, return_exceptions=True)
             if self.wave_wake:
                 if wave_operation is not None:
                     await asyncio.gather(wave_operation, return_exceptions=True)

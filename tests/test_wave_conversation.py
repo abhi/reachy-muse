@@ -21,6 +21,7 @@ class WaveCamera:
     def set_active(self, active):
         if active != self.active:
             self.transitions.append(active)
+            self.pending = False
         self.active = active
         if not active:
             self.pending = False
@@ -84,14 +85,15 @@ def test_wave_greets_and_only_fresh_speech_reaches_muse(monkeypatch, acoustic, c
         camera.pending = True
         await rig.wait_until_or_timeout(lambda: "tts:Yes?" in played(rig.recording.events))
         await rig.quiet("listening", "idle")
-        assert camera.active is False
+        assert camera.active is True
+        assert rig.hardware.gestures == ["wave"]
         assert sent_to_muse(rig.recording.events) == []
         rig.say()
 
     events = run(rig, conversation, user, rest=("idle", "listening"))
     assert sent_to_muse(events) == ["What is the weather tomorrow?"]
     assert played(events) == ["tts:Yes?", "tts:Sunny tomorrow."]
-    assert camera.transitions == [True, False]
+    assert camera.transitions == [True, False, True, False, True, False]
     assert {"robot": "set_state", "state": "listening", "expression": "happy"} in events
 
 
@@ -110,11 +112,13 @@ def test_wave_wakes_sleep_once_without_a_speech_request(monkeypatch):
         await rig.quiet("sleeping")
         assert camera.active is True
         camera.pending = True
+        await rig.wait_until_or_timeout(lambda: "tts:I'm awake." in played(rig.recording.events), 5)
 
     events = run(rig, conversation, user, rest=("listening", "idle"))
     assert played(events) == ["tts:Good night.", "tts:I'm awake."]
     assert sent_to_muse(events) == []
-    assert camera.transitions == [True, False, True, False]
+    assert rig.hardware.gestures == ["wave"]
+    assert camera.transitions == [True, False, True, False, True, False]
 
 
 def test_settled_pixel_wave_wakes_sleep_without_a_speech_request(monkeypatch):
@@ -430,7 +434,7 @@ def test_arrival_watching_invalidates_a_wave_during_camera_drain(monkeypatch, mu
 
 
 @pytest.mark.parametrize("continuous", [False, True])
-def test_wave_opens_realtime_after_camera_suspension_and_stays_suspended(monkeypatch, continuous):
+def test_wave_opens_realtime_after_suspension_and_watches_again_while_idle(monkeypatch, continuous):
     from reachy_muse.realtime_call import realtime_supported
     from test_realtime_turns import ScriptedCalls, StreamingTranscripts, rig_for, speak_live, room
     if not realtime_supported():
@@ -461,7 +465,8 @@ def test_wave_opens_realtime_after_camera_suspension_and_stays_suspended(monkeyp
         await rig.wait_until_or_timeout(lambda: bool(calls.opened), 5)
         await rig.quiet("listening", "idle")
         assert not any(any(frame) for frame in calls.frames)
-        assert camera.active is False
+        assert camera.active is True
+        assert rig.hardware.gestures == ["wave"]
         await speak_live(rig)
         await room(rig, .3)
         await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
@@ -469,6 +474,57 @@ def test_wave_opens_realtime_after_camera_suspension_and_stays_suspended(monkeyp
 
     events = run(rig, conversation, user, rest=("idle", "listening"))
     assert opened_while_camera_active == [False]
-    assert camera.transitions == [True, False]
+    assert camera.transitions[:4] == [True, False, True, False]
+    assert camera.transitions[-2:] == [True, False]
     assert sent_to_muse(events) == []
     assert played(events) == ["tts:Yes?", "muse", "muse"]
+
+
+def test_another_wave_while_awake_gets_a_gesture_without_reopening_or_speaking(monkeypatch):
+    rig = rig_with(monkeypatch)
+    camera = WaveCamera(rig.hardware)
+
+    async def muse(session, request):
+        raise AssertionError("A wave is not a request to Muse")
+
+    conversation = service(rig, muse, Transcripts(), wave_wake=True, wake_timeout_s=30)
+
+    async def user():
+        camera.pending = True
+        await rig.wait_until_or_timeout(lambda: "tts:Yes?" in played(rig.recording.events), 5)
+        await rig.quiet("listening", "idle")
+        assert camera.active is True
+        assert rig.hardware.gestures == ["wave"]
+        camera.pending = True
+        await rig.wait_until_or_timeout(lambda: len(rig.hardware.gestures) == 2)
+        assert rig.hardware.gestures == ["wave", "wave"]
+
+    events = run(rig, conversation, user, rest=("idle", "listening"))
+    assert played(events) == ["tts:Yes?"]
+    assert sent_to_muse(events) == []
+
+
+def test_wave_during_reply_is_not_saved_for_after_speech(monkeypatch):
+    from test_device_command_turns import LongVoice
+
+    rig = rig_with(monkeypatch, chunk_s=.05)
+    camera = WaveCamera(rig.hardware)
+
+    async def muse(session, request):
+        await session.answer(request, "Hello there.")
+
+    conversation = service(rig, muse, Transcripts("Hey Muse, say hello."), wave_wake=True,
+                           wake_detector=Wake(), wake_timeout_s=30, voice=LongVoice(rig.recording, 20))
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "tts:Hello there." in played(rig.recording.events), 5)
+        assert camera.active is False
+        camera.pending = True
+        await rig.quiet("listening", "idle")
+        assert camera.active is True
+        assert rig.hardware.gestures == []
+
+    events = run(rig, conversation, user, rest=("idle", "listening"))
+    assert played(events) == ["tts:Hello there."]
+    assert rig.hardware.gestures == []

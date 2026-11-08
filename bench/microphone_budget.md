@@ -86,3 +86,15 @@ out different Pi bindings, camera conversion, native scheduling or daemon load.
 The precise native cause of the reported Pi stalls remains unmeasured. This patch
 removes the demonstrated scheduling dependency and adds protection against both
 capture and inference throughput loss; it cannot certify Pi coverage offline.
+
+After adding wave-back and quiet rearming, the same 20-second runs measured
+0.9979 coverage under constrained-executor load and 0.9999 with native models.
+Both had zero continuity gaps. The p99/maximum reader intervals were
+29.88/39.40 ms and 29.10/29.97 ms respectively. Each run made 88 camera reads,
+40 face batches and two person batches. Quiet rearming adds only motion-gate
+reads, without repeated person inference. These final checks overlapped the
+remaining local test workers; they are not isolated host benchmarks.
+
+The requested full pytest command passed with 3,542 tests and seven skips in
+404.33 seconds. A separate OpenCV-enabled run passed all 129 vision, motion and
+attention tests, including the still-mode wave-back and self-motion checks.

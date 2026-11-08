@@ -255,6 +255,7 @@ class ReachyController:
         self._arrival_watcher = None
         self._wave_enabled = wave_wake
         self._wave_watching = False
+        self._wave_back_after = self._wave_ignore_until = -math.inf
         self._wave_pending: int | None = None
         self.wave_direction: float | None = None
         self._wave_watcher_factory = wave_watcher_factory
@@ -589,6 +590,8 @@ class ReachyController:
                 at = time.monotonic()
                 from reachy_muse.motion.sentence_delivery import NEUTRAL_LIMITS, neutral_motion
                 with self._state_lock:
+                    if self._gesture_name == "wave":
+                        self._gesture_name = None
                     epoch = self._sentences.epoch
                 if self._sentence_epoch != epoch:
                     self._sentence_delivery.clear()
@@ -686,6 +689,8 @@ class ReachyController:
             if self._starts_new_pose(state, expression):
                 self._state_started = time.monotonic()
             self._state = state
+            if state == "speaking" and self._gesture_name == "wave":
+                self._gesture_name = None
             if state == "speaking" and expression is None and self._sentence_active:
                 self._reply_expression = self._sentence_expression
             else:
@@ -701,12 +706,20 @@ class ReachyController:
                 or state != "thinking" and expression != self._reply_expression)
 
     def gesture(self, name: str) -> None:
-        """Play a head motion independently of the resting pose and its clock."""
-        if name not in HEAD_GESTURES:
+        """Play an offset gesture independently of the resting pose and its clock."""
+        if name not in HEAD_GESTURES and name != "wave":
             raise ValueError(f"Unknown head gesture: {name}")
         with self._state_lock:
+            now = time.monotonic()
+            if name == "wave":
+                if (not self._enable_motion or self._state not in ("idle", "listening", "sleeping")
+                        or now < max(self._wave_back_after, self._audio_end) or self._command_active):
+                    return
+                self._wave_back_after = now + GESTURE_DURATION_S + 3
+                self._wave_ignore_until = now + GESTURE_DURATION_S + .5
+                self._wave_gaze.invalidate()
             self._gesture_name = name
-            self._gesture_started = time.monotonic()
+            self._gesture_started = now
             self._gesture_epoch = None
 
     def cue_progress(self) -> None:
@@ -932,7 +945,8 @@ class ReachyController:
 
     def _wave_still(self) -> bool:
         return (not self._watching and not self._stop.is_set()
-                and self._state in ("idle", "sleeping") and self._failure is None
+                and self._state in ("idle", "listening", "sleeping") and self._failure is None
+                and time.monotonic() >= max(self._wave_ignore_until, self._audio_end)
                 and self._wave_gaze.gaze.settled
                 and 0 <= time.monotonic() - self._wave_gaze.gaze.observed_at <= .1)
 
@@ -1294,6 +1308,7 @@ class ReachyController:
         previous_written = None
         gaze = self._np.zeros(9)
         gesture_offset = self._np.zeros(9)
+        wave_gesture = False
         try:
             if hasattr(self._robot, "client"):
                 status = self._robot.client.get_status()
@@ -1413,7 +1428,7 @@ class ReachyController:
                         self._clear_speaker()
                     self._update_speaker(now, state, occupied=(
                         self._clip is not None or self._generated is not None
-                        or self._deferred is not None or commanded or gesture_active))
+                        or self._deferred is not None or commanded or gesture_active and gesture != "wave"))
                     self._update_face_tracking(state, commanded=(
                         commanded or self._deferred is not None or self._speaker_turn is not None))
                     if self._motion_epoch != self._sentences.epoch:
@@ -1483,8 +1498,12 @@ class ReachyController:
                                       and (gesture_epoch is None or gesture_epoch == self._sentences.epoch))
                     gesture_target = self._np.zeros(9)
                     if gesture_active:
-                        gesture_pose = self._gesture_pose(self._head(), gesture, gesture_age)
-                        gesture_target[:6] = list(self._pose_parameters(gesture_pose).values())
+                        if gesture == "wave":
+                            from reachy_muse.motion.wave_back import wave_back_offset
+                            gesture_target[:] = wave_back_offset(gesture_age)
+                        else:
+                            gesture_pose = self._gesture_pose(self._head(), gesture, gesture_age)
+                            gesture_target[:6] = list(self._pose_parameters(gesture_pose).values())
                     if previous_state == "sleeping" and state != "sleeping" and self._clip is None:
                         self._wake_up(now, pose, antennas)
                     previous_state = state
@@ -1504,7 +1523,11 @@ class ReachyController:
                     head_blend = _blend_factor(head_blend, dt)
                     antenna_blend = _blend_factor(antenna_blend, dt)
                     gaze += (gaze_target - gaze) * head_blend
-                    gesture_offset += (gesture_target - gesture_offset) * head_blend
+                    if gesture == "wave" or wave_gesture:
+                        gesture_offset[:] = gesture_target
+                    else:
+                        gesture_offset += (gesture_target - gesture_offset) * head_blend
+                    wave_gesture = gesture == "wave"
                     rest_pose, rest_antennas, rest_body_yaw = self._rest
                     body_yaw = math.radians(self._speaker_look.body) if self._speaker_look is not None else 0.0
                     self._rest = (self._interpolate_pose(rest_pose, pose, head_blend),
@@ -1531,7 +1554,7 @@ class ReachyController:
                     written = (composed + gaze + gesture_offset
                                + self._layers.sway_offset(now, active=state == "speaking")
                                + self._np.asarray(self._sentences.offset(now)))
-                    resting_camera = ((state in ("idle", "sleeping") or (state == "error" and self._watching))
+                    resting_camera = ((state in ("idle", "listening", "sleeping") or (state == "error" and self._watching))
                                       and not gesture_active and not commanded
                                       and self._clip is None and self._generated is None and self._deferred is None)
                     # Invalidate before writing a moving target, even between camera samples.

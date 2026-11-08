@@ -24,9 +24,12 @@ In `companion` mode, the Mac's narrator model also recognizes paraphrases such a
 
 Add `--wave-wake` in `on-robot` or `companion` mode to also wake Reachy with a
 raised hand moving side to side for about 1-3 seconds. It works with or without
-`--wake-model`, opens the same microphone window, and has a 15-second cooldown.
-Frames stay on the robot. Detection pauses during conversations and morning
-arrival watching. With `--face-follow-idle`, Reachy follows the face and watches
+`--wake-model` and opens the same microphone window. Reachy waves both antennas
+with a happy head bob for 1.6 seconds, even in still mode. It also waves back when
+already awake and idle or listening. Waves during speech are dropped. Another
+wave is eligible after three seconds without hand motion; Reachy's own gesture
+and settling motion are ignored. Frames stay on the robot. Detection pauses
+during speech, turn processing and morning arrival watching. With `--face-follow-idle`, Reachy follows the face and watches
 for a wave once its head settles. Head movement discards any partial wave.
 Microphone capture has its own reader; low audio coverage automatically throttles
 or suspends local vision. See [microphone measurements](bench/microphone_budget.md).
