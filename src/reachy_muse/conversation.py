@@ -76,8 +76,36 @@ CLOSING_QUIET_S = 0.3
 # The daemon plays a sound at a new volume, outside Reachy's own echo gate.
 VOLUME_SOUND_S = 1.0
 _SPEECH_SERIALS = itertools.count(1)
+_MICROPHONE_READER = threading.Lock()
 # What Reachy says when the wake phrase alone wakes it, the same words as "wake up".
 WAKE_GREETING = COMMANDS[DeviceCommand.WAKE_UP].reply
+
+
+@contextlib.contextmanager
+def _microphone_reader():
+    from reachy_muse.hardware import ReachyHardwareError
+    if not _MICROPHONE_READER.acquire(blocking=False):
+        message = "Reachy microphone reader is already running; refusing a second reader"
+        log.warning(message)
+        raise ReachyHardwareError(message)
+    try:
+        yield
+    finally:
+        _MICROPHONE_READER.release()
+
+
+async def _finish_cleanup(work):
+    task = asyncio.ensure_future(work)
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    result = task.result()
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
 
 
 def strip_wake_prefix(text: str, phrase: str) -> str:
@@ -986,10 +1014,14 @@ class VoiceConversation:
         self._startup.mark("chat_subscription")
         await hearing.start()
         self._startup.mark("hearing")
-        drain_until = time.monotonic() + 0.25
-        for _ in range(1000):
-            if time.monotonic() >= drain_until or await asyncio.to_thread(self.hardware.read_audio) is None:
-                break
+        with _microphone_reader():
+            drain_until = time.monotonic() + 0.25
+            for _ in range(1000):
+                if time.monotonic() >= drain_until:
+                    break
+                read = asyncio.get_running_loop().run_in_executor(None, self.hardware.read_audio)
+                if await _finish_cleanup(read) is None:
+                    break
         gap_quiet_samples = 0
         recorder = None
         recorder_for_call = False
@@ -1307,7 +1339,9 @@ class VoiceConversation:
                 if wake is not None:
                     await asyncio.to_thread(wake.reset)
         capture = _CaptureBuffer(self.hardware.sample_rate, capacity_s=3.0)
-        producer = asyncio.create_task(self._capture_microphone(capture), name="reachy-microphone-capture")
+        capture_stop = threading.Event()
+        producer = asyncio.create_task(self._capture_microphone(capture, stop=capture_stop),
+                                       name="reachy-microphone-capture")
         speaker = asyncio.create_task(self._play_output(), name="reachy-speaker")
         direction_task = None
         if (self.wake_enabled and callable(getattr(self.hardware, "read_doa", None))
@@ -1676,41 +1710,38 @@ class VoiceConversation:
                     # Retain resampler/VAD state and drain endpoints in this SDK chunk.
                     wav = await record(sample[:0])
         finally:
-            if wave_greeting is not None:
-                wave_greeting.cancel()
-                await asyncio.gather(wave_greeting, return_exceptions=True)
-            if self.wave_wake:
-                if wave_operation is not None:
-                    await asyncio.gather(wave_operation, return_exceptions=True)
-                await asyncio.to_thread(self.hardware.set_wave_watching, False)
-            if direction_task is not None:
-                direction_task.cancel()
-                await asyncio.gather(direction_task, return_exceptions=True)
-            self._wake_direction = None
-            producer.cancel()
-            await asyncio.gather(producer, return_exceptions=True)
-            recorder.abort()
-            self._hearing_open = lambda: False
-            for task in (turn_task, follow_up_task):
-                if task is not None:
-                    task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
+            capture_stop.set()
+            tasks = [task for task in (producer, speaker, direction_task, wave_greeting,
+                                      turn_task, follow_up_task) if task is not None]
+            tasks.extend(call_recognitions.values())
+            for task in tasks:
+                task.cancel()
             for ended in turns_awaiting_transcript:
                 ended.cancel()
-            for task in call_recognitions.values():
-                task.cancel()
-            await asyncio.gather(*call_recognitions.values(), return_exceptions=True)
-            await asyncio.gather(*(ended.endpoint() for ended in turns_awaiting_transcript), return_exceptions=True)
-            speaker.cancel()
-            await asyncio.gather(speaker, return_exceptions=True)
-            self._playback.set_user_speaking(False)
-            recorder_worker.shutdown(wait=True)
+            self._wake_direction = None
+            self._hearing_open = lambda: False
 
-    async def _capture_microphone(self, capture: _CaptureBuffer) -> None:
+            async def cleanup():
+                try:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    if self.wave_wake:
+                        if wave_operation is not None:
+                            await asyncio.gather(wave_operation, return_exceptions=True)
+                        await asyncio.to_thread(self.hardware.set_wave_watching, False)
+                    await asyncio.gather(*(ended.endpoint() for ended in turns_awaiting_transcript),
+                                         return_exceptions=True)
+                finally:
+                    recorder.abort()
+                    self._playback.set_user_speaking(False)
+                    recorder_worker.shutdown(wait=True)
+
+            await _finish_cleanup(cleanup())
+
+    async def _capture_microphone(self, capture: _CaptureBuffer, *, stop=None) -> None:
         """Drain the SDK on one dedicated reader, independent of asyncio progress."""
         from reachy_muse.hardware import ReachyHardwareError
         loop = asyncio.get_running_loop()
-        stop = threading.Event()
+        stop = stop if stop is not None else threading.Event()
         lock = threading.Lock()
         pending = deque()
         pending_samples = 0
@@ -1785,20 +1816,24 @@ class VoiceConversation:
             except Exception as exc:
                 loop.call_soon_threadsafe(capture.fail, exc)
 
-        worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reachy-microphone")
-        if budget is not None:
-            budget.capture_active(True)
-        running = loop.run_in_executor(worker, read_continuously)
         try:
-            await asyncio.shield(running)
-        finally:
-            stop.set()
-            try:
-                await running
-            finally:
-                worker.shutdown(wait=True)
+            with _microphone_reader():
+                worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reachy-microphone")
                 if budget is not None:
-                    budget.capture_active(False)
+                    budget.capture_active(True)
+                running = loop.run_in_executor(worker, read_continuously)
+                try:
+                    await asyncio.shield(running)
+                finally:
+                    stop.set()
+                    try:
+                        await _finish_cleanup(running)
+                    finally:
+                        worker.shutdown(wait=True)
+                        if budget is not None:
+                            budget.capture_active(False)
+        except ReachyHardwareError as exc:
+            capture.fail(exc)
 
     async def turn(self, wav: bytes | None, *, wake_strip_required: bool | None = None,
                    recognized_text: str | None = None, defer_playback: bool = False,

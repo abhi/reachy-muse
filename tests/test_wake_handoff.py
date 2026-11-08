@@ -137,7 +137,7 @@ def handoff(monkeypatch, request):
         if hearing is not None:
             conversation.backends = replace(conversation.backends, hearing=hearing)
 
-        async def capture(buffer):
+        async def capture(buffer, *, stop):
             original_get = buffer.get
             acknowledgements = {}
             previous = None

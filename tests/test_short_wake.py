@@ -97,7 +97,7 @@ def wake_scenario(monkeypatch):
 
         conversation.turn = turn
 
-        async def capture(buffer):
+        async def capture(buffer, *, stop):
             while True:
                 sample, gap = await incoming.get()
                 buffer.push(sample, discard=conversation._muted, gap=gap)

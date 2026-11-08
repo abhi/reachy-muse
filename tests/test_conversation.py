@@ -3000,6 +3000,146 @@ def test_capture_cancellation_waits_for_the_outstanding_sdk_read():
     asyncio.run(bounded(scenario()))
 
 
+def test_double_cancel_during_wave_drain_reaps_reader_before_next_session():
+    np = pytest.importorskip("numpy")
+    drain_entered, release_drain = threading.Event(), threading.Event()
+
+    class Hardware(FakeHardware):
+        draining = False
+
+        def set_wave_watching(self, active):
+            if not active and self.draining:
+                drain_entered.set()
+                release_drain.wait(2)
+
+        def take_wave(self):
+            return False
+
+    class Wake:
+        phrase = "hey muse"
+
+        def __init__(self):
+            self.frames = []
+
+        def reset(self):
+            pass
+
+        def feed(self, sample):
+            self.frames.extend(int(value) for value in sample[::256])
+            return False
+
+    async def scenario():
+        hardware = Hardware()
+        session = FakeSession()
+        session.chat_subscribed.set()
+
+        def start(wake):
+            conversation = VoiceConversation(session, hardware,
+                backends=backends_for(Mode.MUSE_VOICE, session), wake_detector=wake, wave_wake=True)
+            return asyncio.create_task(conversation._microphone())
+
+        first = start(Wake())
+        second = None
+        try:
+            while not hardware.states:
+                await asyncio.sleep(.001)
+            hardware.draining = True
+            first.cancel()
+            assert await asyncio.to_thread(drain_entered.wait, 1)
+            first.cancel()
+            await asyncio.sleep(.01)
+            first.cancel()
+            release_drain.set()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            assert len([t for t in threading.enumerate() if t.name.startswith("reachy-microphone")]) == 0
+
+            hardware.states.clear()
+            wake = Wake()
+            second = start(wake)
+            while not hardware.states:
+                await asyncio.sleep(.001)
+            for marker in range(50):
+                hardware.samples.put(np.full(256, marker, dtype=np.float32))
+                await asyncio.sleep(.016)
+            while len(wake.frames) < 50:
+                await asyncio.sleep(.001)
+            assert len([t for t in threading.enumerate() if t.name.startswith("reachy-microphone")]) == 1
+            assert wake.frames == list(range(50))
+            assert len(wake.frames) * .016 / .8 == 1.0
+        finally:
+            release_drain.set()
+            for task in (first, second):
+                if task is not None and not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+            producers = [t for t in asyncio.all_tasks() if t.get_name() == "reachy-microphone-capture"]
+            for task in producers:
+                task.cancel()
+            await asyncio.gather(*producers, return_exceptions=True)
+        assert len([t for t in threading.enumerate() if t.name.startswith("reachy-microphone")]) == 0
+
+    asyncio.run(bounded(scenario()))
+
+
+@pytest.mark.parametrize("startup", [False, True])
+def test_competing_capture_is_refused_until_the_reader_exits(caplog, startup):
+    np = pytest.importorskip("numpy")
+    from reachy_muse.hardware import ReachyHardwareError
+    entered, release = threading.Event(), threading.Event()
+
+    class Hardware(FakeHardware):
+        def read_audio(self):
+            entered.set()
+            release.wait(2)
+            return super().read_audio()
+
+    async def scenario():
+        hardware, session = Hardware(), FakeSession()
+        conversation = VoiceConversation(session, hardware, backends=backends_for(Mode.MUSE_VOICE, session))
+        first_buffer = reachy_muse.conversation._CaptureBuffer(16000)
+        first = asyncio.create_task(conversation._capture_microphone(first_buffer))
+        second = None
+        try:
+            assert await asyncio.to_thread(entered.wait, 1)
+            first.cancel()
+            await asyncio.sleep(.01)
+            first.cancel()
+            second_buffer = reachy_muse.conversation._CaptureBuffer(16000)
+            if startup:
+                session.chat_subscribed.set()
+                second = asyncio.create_task(conversation._microphone())
+            else:
+                second = asyncio.create_task(conversation._capture_microphone(second_buffer))
+            with pytest.raises(ReachyHardwareError, match="microphone reader is already running"):
+                if startup:
+                    await second
+                else:
+                    await asyncio.wait_for(second_buffer.get(), .5)
+            assert [r.message for r in caplog.records] == [
+                "Reachy microphone reader is already running; refusing a second reader"]
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            await asyncio.gather(second, return_exceptions=True)
+            hardware.samples.put(np.zeros(256, dtype=np.float32))
+            third_buffer = reachy_muse.conversation._CaptureBuffer(16000)
+            third = asyncio.create_task(conversation._capture_microphone(third_buffer))
+            try:
+                chunk = await third_buffer.get()
+                assert len(chunk.samples) == 256
+            finally:
+                await cancel_task(third)
+        finally:
+            release.set()
+            for task in (first, second):
+                if task is not None and not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(bounded(scenario()))
+
+
 def test_read_started_during_playback_stays_discarded_after_unmute():
     np = pytest.importorskip("numpy")
     entered = threading.Event()
