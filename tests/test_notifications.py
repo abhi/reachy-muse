@@ -8,12 +8,16 @@ import time
 
 import pytest
 
+from musegadget import config
+
 from reachy_muse.device_command import WakeWindow
 from reachy_muse.inbox import Inbox
 from reachy_muse.notifications import Notifications
 from reachy_muse.presence import Presence
 from test_inbox import notice
 from test_registered_commands import command_device, wait_until, registered_device
+
+pytestmark = pytest.mark.usefixtures("paired_inbox")
 
 
 @pytest.fixture(autouse=True)
@@ -72,10 +76,12 @@ def test_failed_claim_directory_sync_prevents_playback(tmp_path, monkeypatch):
             patch.setattr(os, "fsync", sync)
             await voice.notifications.deliver(30)
         assert voice.hardware.played == []
-        assert service.inbox.pending()["text"] == "Call Mom."
+        assert service.inbox.result("n1") == {
+            "ok": True, "status": "refused", "reason": "delivery_uncertain"}
+        assert service.inbox.add(notice("n2"))["status"] == "queued"
         await voice.notifications.deliver(30)
         assert sum(len(samples) for samples in voice.hardware.played) == 320
-        assert service.inbox.result("n1") == {"ok": True, "status": "delivered", "reason": "spoken"}
+        assert service.inbox.result("n2") == {"ok": True, "status": "delivered", "reason": "spoken"}
 
     asyncio.run(check())
 
@@ -295,26 +301,9 @@ def test_notification_is_registered_and_returns_the_sdk_wire_payload(monkeypatch
     asyncio.run(check())
 
 
-def test_unpair_event_clears_queued_and_delivered_ids(tmp_path, monkeypatch):
-    async def check():
-        service, _, _ = device(tmp_path)
-        async with registered_device(service, monkeypatch) as (session, vm, voice):
-            await notify(service, **notice())
-            await vm.send_message({"type": "event", "event": "link.unpaired"})
-            await wait_until(lambda: not (tmp_path / "inbox.json").exists())
-            assert service.inbox.pending() is None
-    asyncio.run(check())
-
-
 @pytest.mark.parametrize("during_gesture", [False, True])
-def test_forced_pairing_invalidates_the_running_inbox(tmp_path, monkeypatch, during_gesture):
-    from musegadget import config
-    from musegadget.pair import PairOutcome, PairResult
-    from reachy_muse import cli
+def test_changed_credentials_discard_the_running_inbox(tmp_path, during_gesture):
     from reachy_muse.inbox import INBOX_FILE
-
-    monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
-    monkeypatch.setattr("musegadget.pair.pair", lambda **kwargs: PairResult(PairOutcome.PAIRED))
 
     async def check():
         service, voice, speech = device()
@@ -324,7 +313,7 @@ def test_forced_pairing_invalidates_the_running_inbox(tmp_path, monkeypatch, dur
         service.inbox.add(notice())
 
         def repair():
-            assert cli.pair_reachy(cli.parser().parse_args(["pair", "--force", "--no-introduce"])) == 0
+            config.save_json(config.PAIRING_FILE, {"username": "new", "access_token": "new-token"})
 
         if during_gesture:
             voice.hardware.gesture = lambda _: repair()
@@ -342,15 +331,11 @@ def test_forced_pairing_invalidates_the_running_inbox(tmp_path, monkeypatch, dur
 
 
 @pytest.mark.parametrize("streaming", [False, True])
-def test_forced_pairing_stops_notification_pcm_already_playing(tmp_path, monkeypatch, streaming):
-    from musegadget import config
-    from musegadget.pair import PairOutcome, PairResult
-    from reachy_muse import cli
+@pytest.mark.parametrize("unpaired", [False, True])
+def test_changed_credentials_stop_notification_pcm_already_playing(tmp_path, streaming, unpaired):
     from reachy_muse.inbox import INBOX_FILE
     from test_registered_commands import np
 
-    monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
-    monkeypatch.setattr("musegadget.pair.pair", lambda **kwargs: PairResult(PairOutcome.PAIRED))
     closed = []
 
     class Speech:
@@ -371,7 +356,10 @@ def test_forced_pairing_stops_notification_pcm_already_playing(tmp_path, monkeyp
         def repair_after_write(samples):
             play(samples)
             if len(voice.hardware.played) == 1:
-                assert cli.pair_reachy(cli.parser().parse_args(["pair", "--force", "--no-introduce"])) == 0
+                if unpaired:
+                    config.delete_json(config.PAIRING_FILE)
+                else:
+                    config.save_json(config.PAIRING_FILE, {"username": "new", "access_token": "new-token"})
 
         voice.hardware.play_audio = repair_after_write
         await notify(service, **{**notice(), "mode": "now"})
@@ -379,6 +367,32 @@ def test_forced_pairing_stops_notification_pcm_already_playing(tmp_path, monkeyp
         assert voice.hardware.cleared == 1
         assert closed == [True]
         assert not (tmp_path / INBOX_FILE).exists()
+    asyncio.run(check())
+
+
+def test_reconnect_with_same_credentials_keeps_the_queue(tmp_path, monkeypatch):
+    from reachy_muse.pairing import PairedService
+
+    async def check():
+        service, _, speech = device(tmp_path)
+        assert service.inbox.add(notice())["status"] == "queued"
+        pairing = config.load_json(config.PAIRING_FILE)
+
+        async def connected(self, vm, credentials):
+            async with registered_device(self, monkeypatch) as (_, _, voice):
+                assert self.inbox.pending()["text"] == "Call Mom."
+                await voice.notifications.deliver(30)
+                if vm["present"]:
+                    assert self.inbox.result("n1") == {"ok": True, "status": "delivered", "reason": "spoken"}
+                else:
+                    assert self.inbox.result("n1") == {"ok": True, "status": "queued", "reason": "awaiting_presence"}
+
+        monkeypatch.setattr(PairedService, "_session", connected)
+        await service._session({"present": False}, pairing)
+        service._presence.mark("voice", time.monotonic())
+        await service._session({"present": True}, pairing)
+        assert speech.words == ["Call Mom."]
+
     asyncio.run(check())
 
 
@@ -423,8 +437,8 @@ def test_reconnect_preserves_new_items_when_an_old_notification_expires(tmp_path
 
         monkeypatch.setattr(PairedService, "_session", connected)
         try:
-            await service._session({}, {})
-            await service._session({}, {})
+            await service._session({}, config.load_json(config.PAIRING_FILE))
+            await service._session({}, config.load_json(config.PAIRING_FILE))
         finally:
             release.set()
     asyncio.run(check())
@@ -435,7 +449,7 @@ def test_obsolete_sdk_invocation_cannot_repopulate_an_unpaired_inbox(tmp_path, m
         service, _, speech = device(tmp_path)
         async with registered_device(service, monkeypatch) as (session, vm, voice):
             old_command = session._run_command
-            service.unpaired()
+            config.delete_json(config.PAIRING_FILE)
         service.inbox = Inbox(tmp_path / "inbox.json")
         async with registered_device(service, monkeypatch):
             result = await asyncio.to_thread(old_command, "reachy.notify", notice())
@@ -447,7 +461,6 @@ def test_obsolete_sdk_invocation_cannot_repopulate_an_unpaired_inbox(tmp_path, m
 
 
 def test_repair_reconnect_binds_the_inbox_to_replacement_credentials(tmp_path, monkeypatch):
-    from musegadget import config
     from musegadget.pair import PairOutcome, PairResult
     from reachy_muse import cli
     from reachy_muse.inbox import INBOX_FILE
@@ -499,7 +512,7 @@ def test_unpair_during_notification_admission_cannot_restore_the_old_message(tmp
         pending = asyncio.create_task(notify(service, **notice()))
         try:
             await asyncio.wait_for(entered.wait(), 2)
-            service.unpaired()
+            config.delete_json(config.PAIRING_FILE)
             release.set()
             assert await pending == {
                 "ok": True, "payload": {"status": "refused", "reason": "disconnected"}}

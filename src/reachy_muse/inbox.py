@@ -16,44 +16,28 @@ import threading
 import time
 import uuid
 
+from musegadget import config, muse_api
+
 INBOX_FILE = "reachy-inbox.json"
-INBOX_GENERATION = "reachy_inbox_generation"
 MAX_ITEMS = 20
 
 
-def clear_inbox(path: Path) -> str:
-    with _storage(path) as (lock, _):
-        return _clear(path, lock)
-
-
-def _clear(path: Path, lock) -> str:
-    generation = _rotate(lock)
-    path.unlink(missing_ok=True)
-    path.with_suffix(".tmp").unlink(missing_ok=True)
-    return generation
-
-
-def _rotate(lock) -> str:
-    generation = uuid.uuid4().hex
-    lock.seek(0)
-    lock.truncate()
-    lock.write(generation)
-    lock.flush()
-    os.fsync(lock.fileno())
-    return generation
+def owner_binding(pairing: dict | None) -> str:
+    if not pairing or not pairing.get("access_token") or not pairing.get("username"):
+        return ""
+    account = [muse_api.api_root(pairing.get("api_url_v2", "")), pairing["username"]]
+    return hashlib.sha256(json.dumps(account).encode()).hexdigest()
 
 
 @contextmanager
 def _storage(path: Path | None):
     if path is None:
-        yield None
+        yield
         return
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with path.with_suffix(".lock").open("a+") as lock:
+    with path.with_suffix(".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        lock.seek(0)
-        generation = lock.read()
-        yield lock, generation
+        yield
 
 
 def outcome(status: str, reason: str) -> dict:
@@ -61,59 +45,68 @@ def outcome(status: str, reason: str) -> dict:
 
 
 class Inbox:
-    def __init__(self, path: Path | None = None, *, clock=time.time, generation: str | None = None):
+    def __init__(self, path: Path | None = None, *, clock=time.time, owner: str | None = None):
         self.path = path
         self.clock = clock
         self._lock = threading.Lock()
         self._items: dict[str, dict] = {}
-        self._invalidated = False
-        with _storage(path) as storage:
-            current = storage[1] if storage is not None else uuid.uuid4().hex
-            self._generation = current if generation is None else generation
-            if self._generation != current:
-                self._invalidated = True
+        self._owner = self._disk_owner() if owner is None else owner
+        with self._locked():
+            self._prune()
+
+    def _disk_owner(self) -> str:
+        directory = self.path.parent if self.path is not None else None
+        return owner_binding(config.load_json(config.PAIRING_FILE, directory))
+
+    def _load(self, owner: str) -> None:
+        if self.path is None:
+            return
+        self._items.clear()
+        if not owner:
+            self.path.unlink(missing_ok=True)
+            self.path.with_suffix(".tmp").unlink(missing_ok=True)
+            return
+        if not self.path.exists():
+            return
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError()
+            if data.get("owner") != owner:
+                self.path.unlink()
+                self.path.with_suffix(".tmp").unlink(missing_ok=True)
                 return
-            if path is None or not path.exists():
+            if self._owner != owner:
                 return
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                if not isinstance(data, dict):
+            if data["version"] != 1 or len(data["items"]) > MAX_ITEMS:
+                raise ValueError()
+            for item in data["items"]:
+                if (not isinstance(item["id"], str) or type(item["expires_at"]) not in (int, float)
+                        or not math.isfinite(item["expires_at"])
+                        or item["status"] not in ("queued", "delivered", "refused")
+                        or not isinstance(item["receipt"], str)
+                        or not isinstance(item["fingerprint"], str)
+                        or not isinstance(item["reason"], str)
+                        or item["status"] == "queued" and not isinstance(item["text"], str)):
                     raise ValueError()
-                if data.get("generation") != self._generation:
-                    path.unlink()
-                    return
-                if data["version"] != 1 or len(data["items"]) > MAX_ITEMS:
-                    raise ValueError()
-                for item in data["items"]:
-                    if (not isinstance(item["id"], str) or type(item["expires_at"]) not in (int, float)
-                            or not math.isfinite(item["expires_at"])
-                            or item["status"] not in ("queued", "delivered", "refused")
-                            or not isinstance(item["fingerprint"], str)
-                            or not isinstance(item["reason"], str)
-                            or item["status"] == "queued" and not isinstance(item["text"], str)):
-                        raise ValueError()
-                    self._items[item["id"]] = item
-                    item["generation"] = uuid.uuid4().hex
-                self._prune()
-            except (OSError, ValueError, KeyError, TypeError):
-                raise ValueError("Reachy's inbox could not be read") from None
+                self._items[item["id"]] = item
+        except (OSError, ValueError, KeyError, TypeError):
+            raise ValueError("Reachy's inbox could not be read") from None
 
     @contextmanager
     def _locked(self):
-        with self._lock, _storage(self.path) as storage:
-            if storage is not None and storage[1] != self._generation:
-                self._invalidated = True
+        with self._lock, _storage(self.path):
+            owner = self._disk_owner()
+            self._load(owner)
+            matches = bool(owner and owner == self._owner)
+            if not matches:
                 self._items.clear()
-            yield storage
+            yield matches
 
-    def current(self, pending: dict | None = None, *, generation: str | None = None) -> bool:
+    def current(self, pending: dict) -> bool:
         with self._locked():
-            if self._invalidated or (generation is not None and generation != self._generation):
-                return False
-            if pending is None:
-                return True
             item = self._items.get(pending["id"])
-            return (item is not None and item["generation"] == pending["generation"]
+            return (item is not None and item["receipt"] == pending["receipt"]
                     and self.clock() < item["expires_at"])
 
     def _save(self) -> None:
@@ -124,7 +117,7 @@ class Inbox:
         try:
             with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as stream:
                 os.fchmod(stream.fileno(), 0o600)
-                json.dump({"version": 1, "generation": self._generation,
+                json.dump({"version": 1, "owner": self._owner,
                            "items": list(self._items.values())}, stream)
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -145,8 +138,8 @@ class Inbox:
             self._save()
 
     def add(self, params: dict) -> dict:
-        with self._locked():
-            if self._invalidated:
+        with self._locked() as matches:
+            if not matches:
                 return outcome("refused", "disconnected")
             previous = self._items.get(params["id"])
             self._prune()
@@ -162,7 +155,7 @@ class Inbox:
             if len(self._items) >= MAX_ITEMS:
                 return outcome("refused", "inbox_full")
             item = {"id": params["id"], "text": params["text"], "kind": params["kind"],
-                    "generation": uuid.uuid4().hex,
+                    "receipt": uuid.uuid4().hex,
                     "fingerprint": fingerprint, "expires_at": self.clock() + params["expires_in_s"],
                     "status": "queued", "reason": "awaiting_presence", "delivered_at": None}
             self._items[item["id"]] = item
@@ -182,7 +175,7 @@ class Inbox:
         with self._locked():
             self._prune()
             item = self._items.get(pending["id"])
-            if (item is None or item["generation"] != pending["generation"]
+            if (item is None or item["receipt"] != pending["receipt"]
                     or item["status"] != "queued"):
                 return False
             previous = dict(item)
@@ -197,7 +190,7 @@ class Inbox:
     def finish(self, pending: dict, *, spoken: bool, reason: str = "spoken") -> None:
         with self._locked():
             item = self._items.get(pending["id"])
-            if item is not None and item["generation"] == pending["generation"]:
+            if item is not None and item["receipt"] == pending["receipt"]:
                 item.update(status="delivered" if spoken else "refused", reason=reason,
                             delivered_at=self.clock() if spoken else None, text=None)
                 self._save()
@@ -207,10 +200,3 @@ class Inbox:
             self._prune()
             item = self._items.get(id)
             return outcome(item["status"], item["reason"]) if item else outcome("expired", "ttl_elapsed")
-
-    def clear(self) -> None:
-        with self._locked() as storage:
-            self._items.clear()
-            if not self._invalidated and storage is not None:
-                _clear(self.path, storage[0])
-            self._invalidated = True

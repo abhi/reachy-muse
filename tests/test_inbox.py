@@ -4,7 +4,13 @@ import json
 import os
 import stat
 
+import pytest
+
+from musegadget import config
+
 from reachy_muse.inbox import Inbox
+
+pytestmark = pytest.mark.usefixtures("paired_inbox")
 
 
 def notice(id="n1", text="Call Mom.", *, ttl=14400, kind="notification"):
@@ -93,10 +99,10 @@ def test_unpair_removes_the_entire_ledger(tmp_path):
     inbox = Inbox(path)
     inbox.add(notice())
     path.with_suffix(".tmp").write_text("Call Mom.")
-    inbox.clear()
+    config.delete_json(config.PAIRING_FILE)
+    assert inbox.pending() is None
     assert path.with_suffix(".tmp").exists() is False
     assert path.exists() is False
-    assert inbox.pending() is None
     assert Inbox(path).pending() is None
 
 
@@ -109,3 +115,42 @@ def test_storage_failure_never_accepts_an_unpersisted_notification(tmp_path, mon
     monkeypatch.setattr(inbox, "_save", fail)
     assert inbox.add(notice()) == {"ok": True, "status": "refused", "reason": "storage_unavailable"}
     assert inbox.pending() is None
+
+
+@pytest.mark.parametrize("change", ["account", "server", "missing", "legacy"])
+def test_open_discards_items_without_a_matching_owner(tmp_path, change):
+    path = tmp_path / "inbox.json"
+    inbox = Inbox(path)
+    assert inbox.add(notice())["status"] == "queued"
+    if change == "missing":
+        config.delete_json(config.PAIRING_FILE)
+    elif change == "legacy":
+        data = json.loads(path.read_text())
+        del data["owner"]
+        path.write_text(json.dumps(data))
+    else:
+        pairing = config.load_json(config.PAIRING_FILE)
+        pairing.update({"username": "next-owner"} if change == "account" else
+                       {"api_url_v2": "https://other.example"})
+        config.save_json(config.PAIRING_FILE, pairing)
+    assert Inbox(path).pending() is None
+    assert path.exists() is False
+    assert inbox.pending() is None
+
+
+def test_rotating_tokens_preserves_the_owner_and_queue_without_storing_tokens(tmp_path):
+    path = tmp_path / "inbox.json"
+    inbox = Inbox(path)
+    assert inbox.add(notice())["status"] == "queued"
+    pairing = config.load_json(config.PAIRING_FILE)
+    config.save_json(config.PAIRING_FILE, {**pairing, "access_token": "rotated-access",
+                                         "refresh_token": "rotated-refresh", "access_token_saved_at": 200})
+    reopened = Inbox(path)
+    assert reopened.pending()["text"] == "Call Mom."
+    item = reopened.pending()
+    assert reopened.claim(item) is True
+    reopened.finish(item, spoken=True)
+    assert inbox.result("n1") == {"ok": True, "status": "delivered", "reason": "spoken"}
+    assert "private-token" not in path.read_text()
+    assert "rotated-access" not in path.read_text()
+    assert "rotated-refresh" not in path.read_text()

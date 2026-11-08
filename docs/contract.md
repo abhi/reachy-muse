@@ -88,8 +88,12 @@ replayed. `delivered` means playback finished, not that anyone heard it. Zero
 lifetime or expiry before playback returns `expired`. Invalid parameters,
 conflicting IDs, full storage and storage failures return `refused` with reasons
 such as `invalid_parameters`, `id_conflict`, `inbox_full` or `storage_unavailable`.
-Queued results explain waiting for presence or availability. Unpair events,
-revoked pairing, forced re-pairing and starting without a pairing clear the inbox.
+Queued results explain waiting for presence or availability. The inbox binds to
+the paired account using a hash of the SDK's username and API endpoint, never a
+token. Opening it or checking delivery when credentials are missing or the owner
+has changed deletes the old queue. The same check stops speech during playback.
+Failed or cancelled pairing, token refresh and reconnecting to the same account
+preserve the queue. Older inbox files without an owner binding are discarded.
 
 Presence is not identity verification. Notifications and suggestions go to
 whoever is present. Voice verification is not calibrated for delivery recipients.

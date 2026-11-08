@@ -1232,8 +1232,10 @@ Muse's registration guide asks it to prefer Reachy while present. Muse checks
 `mode: when_present` otherwise. Reachy delivers oldest first between turns with
 an antenna wave and normal speech. The local JSON inbox holds at most 20 IDs,
 including completed receipts until expiry. Lifetimes default to four hours and
-cannot exceed 24 hours. Repeated IDs do not repeat completed speech. Unpairing
-clears the ledger. No notification text is logged.
+cannot exceed 24 hours. Repeated IDs do not repeat completed speech. Removing
+credentials or pairing with a different account discards the previous account's
+queue and stops its speech. Failed pairing and reconnecting to the same account
+keep the queue. No notification text is logged.
 
 Delivery goes to whoever is present; this does not verify identity. Voice
 verification is not calibrated for notification recipients. The command needs

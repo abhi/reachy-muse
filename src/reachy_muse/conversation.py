@@ -50,7 +50,7 @@ from reachy_muse.turn_timeline import TurnTimeline
 from reachy_muse.startup import StartupTimeline
 from reachy_muse.speaker_direction import WakeDirection
 from reachy_muse.presence import PresenceFusion
-from reachy_muse.inbox import INBOX_GENERATION, Inbox, outcome
+from reachy_muse.inbox import Inbox, outcome, owner_binding
 from reachy_muse.notifications import Notifications
 from reachy_muse.wake_policy import WakeContext
 
@@ -3294,16 +3294,9 @@ class ReachyService(PairedService):
         if self._hardware_error is not None:
             raise self._hardware_error
 
-    def unpaired(self) -> None:
-        self.inbox.clear()
-
     async def _session(self, vm: dict, pairing: dict) -> tuple[Outcome, float]:
         if self.inbox.path is not None:
-            generation = pairing.get(INBOX_GENERATION, "")
-            if not self.inbox.current(generation=generation):
-                self.inbox = Inbox(self.inbox.path, clock=self.inbox.clock, generation=generation)
-        elif not self.inbox.current():
-            self.inbox = Inbox(clock=self.inbox.clock)
+            self.inbox = Inbox(self.inbox.path, clock=self.inbox.clock, owner=owner_binding(pairing))
         return await super()._session(vm, pairing)
 
     def presence_result(self) -> dict:
@@ -3551,8 +3544,6 @@ class ReachyService(PairedService):
             await asyncio.gather(voice_task, stop_task, return_exceptions=True)
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(link_task, 5)
-        if outcome is Outcome.UNPAIRED:
-            self.unpaired()
         if outcome is not Outcome.STOPPED:
             await asyncio.to_thread(hardware.set_state, "sleeping" if self._asleep else "error")
         return outcome
