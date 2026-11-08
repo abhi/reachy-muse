@@ -2619,6 +2619,7 @@ def test_delayed_wake_endpoint_and_pending_same_chunk_keep_the_question(monkeypa
                 await asyncio.sleep(.001)
             for marker in (1, 2, 3):
                 hardware.samples.put(np.full(160, marker, dtype=np.float32))
+                await asyncio.sleep(.01)
             while not turns:
                 await asyncio.sleep(.001)
             assert turns == [b"wake question"]
@@ -2671,8 +2672,10 @@ def test_sleeping_detector_receives_stateful_16k_resampling_and_preroll_is_bound
         try:
             while not hardware.states:
                 await asyncio.sleep(.001)
-            for _ in range(40):
+            for index in range(40):
                 hardware.samples.put(np.full(4800, .25, dtype=np.float32))
+                while sum(len(chunk) for chunk in wake.received) < (index + 1) * 1600 - 32:
+                    await asyncio.sleep(.001)
             assert await asyncio.to_thread(captured_complete.wait, 1)
             assert sum(len(chunk) for chunk in captured) == 3 * 48000
             output = np.concatenate(wake.received)
@@ -3690,6 +3693,7 @@ def test_microphone_continues_draining_echo_while_reply_is_active(monkeypatch):
         def reset(self):
             pass
 
+    import numpy as np
     from reachy_muse import voice_audio
     monkeypatch.setattr(voice_audio, "TurnRecorder", Recorder)
 
@@ -3697,6 +3701,11 @@ def test_microphone_continues_draining_echo_while_reply_is_active(monkeypatch):
         session = FakeSession()
         session.chat_subscribed.set()
         hardware = FakeHardware()
+        read = hardware.read_audio
+        def read_pcm():
+            sample = read()
+            return np.frombuffer(sample, dtype=np.uint8).copy() if sample is not None else None
+        hardware.read_audio = read_pcm
         conversation = VoiceConversation(session, hardware, backends=backends_for(Mode.MUSE_VOICE, session))
         started = asyncio.Event()
         release = asyncio.Event()

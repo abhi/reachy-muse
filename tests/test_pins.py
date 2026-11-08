@@ -584,7 +584,10 @@ def test_detail_said_while_muse_works_goes_to_the_same_chat_and_the_answer_waits
     async def user():
         rig.say()
         await rig.quiet("thinking")
-        rig.say(voiced_s=1)
+        for _ in range(50):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, dtype=np.float32))
+            await asyncio.sleep(.02)
+        rig.say(voiced_s=0)
     check("follow_up_detail", run_scenario(rig, service, user))
 
 

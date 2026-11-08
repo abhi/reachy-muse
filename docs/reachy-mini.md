@@ -855,6 +855,13 @@ By default, it also pauses while waiting for the wake phrase. Add
 `--face-follow-idle` alongside `--face-follow` to keep watching while idle at
 two frames per second, including in still mode with `REACHY_MUSE_BREATHING=0`.
 Idle following pauses during sleep and morning arrival watching.
+Audio takes priority over local vision. New camera/inference work pauses during
+user speech, reply playback, turn processing and wake verification. At other
+times the rates above are ceilings: each detector also respects a measured
+compute budget. Two-second capture and wake-processing windows below 95% coverage
+throttle, then suspend vision. Recovery requires 20 healthy seconds per step.
+`Vision budget` logs report these transitions. See the offline
+[microphone cadence measurements](../bench/microphone_budget.md).
 Face following requires motion, so `--no-motion` cannot be combined with these
 flags. "Stop looking at me" disables both conversation and idle following
 until "look at me" enables them again.

@@ -167,6 +167,7 @@ class WakePolicy:
             raise ValueError("Wake cooldown must be finite and nonnegative")
         if not math.isfinite(verification_window_s) or not 1 <= verification_window_s <= 2:
             raise ValueError("Wake verification audio must cover between one and two seconds")
+        self.verifying = False
         self.verifier = verifier or WakeVerifier()
         self.fallback_threshold = fallback_threshold
         self.cooldown_samples = int(cooldown_s * RATE)
@@ -192,6 +193,12 @@ class WakePolicy:
 
     async def feed(self, detector, samples, *, context: WakeContext = WakeContext(),
                    valid=lambda: True) -> bool:
+        try:
+            return await self._feed(detector, samples, context=context, valid=valid)
+        finally:
+            self.verifying = False
+
+    async def _feed(self, detector, samples, *, context, valid) -> bool:
         import numpy as np
 
         audio = np.asarray(samples, dtype=np.float32)
@@ -225,6 +232,7 @@ class WakePolicy:
             self._audio_samples -= taken
         if not found:
             return False
+        self.verifying = True
         self._sequence += 1
         reason, source, floor = "accepted", "none", None
         verification = "not_run"

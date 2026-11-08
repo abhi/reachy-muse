@@ -28,6 +28,8 @@ raised hand moving side to side for about 1-3 seconds. It works with or without
 Frames stay on the robot. Detection pauses during conversations and morning
 arrival watching. With `--face-follow-idle`, Reachy follows the face and watches
 for a wave once its head settles. Head movement discards any partial wave.
+Microphone capture has its own reader; low audio coverage automatically throttles
+or suspends local vision. See [microphone measurements](bench/microphone_budget.md).
 Keep screens showing people outside its view: a video of a
 waving person can also trigger it. See [wave measurements and limitations](bench/wave.md).
 

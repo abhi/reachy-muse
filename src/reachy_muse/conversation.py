@@ -16,6 +16,7 @@ import itertools
 import logging
 import math
 import re
+import threading
 import time
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -774,7 +775,7 @@ class VoiceConversation:
     def _wake_capture_context(self, now):
         return WakeContext(blocked=self._input_blocked() or now < self._wake_unknown_output_until,
                            speaking=self._muted or now < self._echo_until,
-                           playback=tuple(text for text, until in self._audible if until > now - 2.5))
+                           playback=tuple(text for text, until in tuple(self._audible) if until > now - 2.5))
 
     async def run(self) -> None:
         await self.session.registered.wait()
@@ -1166,6 +1167,9 @@ class VoiceConversation:
 
         async def detects_wake(sample, context=None) -> tuple[bool, int | None]:
             async def feed(audio):
+                budget = getattr(self.hardware, "vision_budget", None)
+                if budget is not None:
+                    budget.observe("wake", len(audio) / 16000)
                 if context is not None:
                     return await self._wake_policy.feed(wake, audio, context=context,
                                                         valid=lambda: not capture.gap)
@@ -1566,8 +1570,12 @@ class VoiceConversation:
                             if wake_tail:
                                 candidate = candidate[:-wake_tail]
                             candidate = candidate[-int(1.5 * self.hardware.sample_rate):]
-                            decision = await asyncio.to_thread(
-                                self.voice_verifier.verify, candidate, self.hardware.sample_rate)
+                            self._voice_verifying = True
+                            try:
+                                decision = await asyncio.to_thread(
+                                    self.voice_verifier.verify, candidate, self.hardware.sample_rate)
+                            finally:
+                                self._voice_verifying = False
                             if not decision.allowed:
                                 pre_roll.clear()
                                 pre_roll_samples = 0
@@ -1667,45 +1675,88 @@ class VoiceConversation:
             recorder_worker.shutdown(wait=True)
 
     async def _capture_microphone(self, capture: _CaptureBuffer) -> None:
-        """Drain the SDK independently of keyword inference and conversation work."""
+        """Drain the SDK on one dedicated reader, independent of asyncio progress."""
         from reachy_muse.hardware import ReachyHardwareError
-        last_sample = time.monotonic()
-        previous_duration = None
-        generation = capture.generation
+        loop = asyncio.get_running_loop()
+        stop = threading.Event()
+        lock = threading.Lock()
+        pending = deque()
+        pending_samples = 0
+        scheduled = False
+        overflow = False
+        budget = getattr(self.hardware, "vision_budget", None)
+
+        def deliver():
+            nonlocal pending_samples, scheduled, overflow
+            if budget is not None:
+                budget.audio_busy(self._turn_active or self._has_output() or self._hearing_open()
+                                  or getattr(self._wake_policy, "verifying", False)
+                                  or getattr(self, "_voice_verifying", False))
+            with lock:
+                chunks = list(pending)
+                pending.clear()
+                lost, overflow = overflow, False
+                pending_samples = 0
+                scheduled = False
+            for generation, sample, options in chunks:
+                if generation == capture.generation:
+                    if lost:
+                        options.update(gap=True, gap_reason="capture handoff overflow")
+                        lost = False
+                    capture.push(sample, **options)
+
+        def read_continuously():
+            nonlocal pending_samples, scheduled, overflow
+            last_sample = time.monotonic()
+            previous_duration = None
+            generation = capture.generation
+            try:
+                while not stop.is_set():
+                    muted_at_start = self._input_blocked()
+                    reader = self.hardware.read_audio
+                    if generation != capture.generation:
+                        generation = capture.generation
+                        previous_duration = None
+                        reader = self.hardware.discard_microphone
+                    sample = reader()
+                    now = time.monotonic()
+                    duration = len(sample) / self.hardware.sample_rate if sample is not None else 0
+                    if budget is not None:
+                        budget.observe("capture", duration, now=now)
+                    if generation != capture.generation:
+                        continue
+                    if not duration:
+                        if now - last_sample > 15:
+                            raise ReachyHardwareError("Reachy microphone supplied no audio for 15 seconds")
+                        stop.wait(.002)
+                        continue
+                    gap = previous_duration is not None and now - last_sample > max(duration, previous_duration) + .25
+                    previous_duration, last_sample = duration, now
+                    options = dict(discard=muted_at_start or self._input_blocked(), gap=gap,
+                                   captured_at=now, gap_reason="SDK read or capture scheduling stall" if gap else None)
+                    if self._wake_policy is not None:
+                        options["wake_context"] = self._wake_capture_context(now)
+                    with lock:
+                        if pending_samples + len(sample) > capture.limit:
+                            pending.clear()
+                            pending_samples = 0
+                            overflow = True
+                        pending.append((generation, sample, options))
+                        pending_samples += len(sample)
+                        if not scheduled:
+                            scheduled = True
+                            loop.call_soon_threadsafe(deliver)
+            except Exception as exc:
+                loop.call_soon_threadsafe(capture.fail, exc)
+
+        worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reachy-microphone")
+        running = loop.run_in_executor(worker, read_continuously)
         try:
-            while True:
-                muted_at_start = self._input_blocked()
-                reader = self.hardware.read_audio
-                if generation != capture.generation:
-                    generation = capture.generation
-                    previous_duration = None
-                    reader = self.hardware.discard_microphone
-                read = asyncio.create_task(asyncio.to_thread(reader))
-                try:
-                    sample = await asyncio.shield(read)
-                except asyncio.CancelledError:
-                    await asyncio.gather(read, return_exceptions=True)
-                    raise
-                now = time.monotonic()
-                if generation != capture.generation:
-                    continue
-                if sample is None or not len(sample):
-                    if now - last_sample > 15:
-                        raise ReachyHardwareError("Reachy microphone supplied no audio for 15 seconds")
-                    await asyncio.sleep(.002)
-                    continue
-                duration = len(sample) / self.hardware.sample_rate
-                # SDK audio has no PTS. A long wall-time stall is a conservative gap signal.
-                gap = previous_duration is not None and now - last_sample > max(duration, previous_duration) + .25
-                previous_duration = duration
-                last_sample = now
-                capture.push(sample, discard=muted_at_start or self._input_blocked(), gap=gap,
-                             captured_at=now, gap_reason="SDK read or capture scheduling stall" if gap else None,
-                             **({"wake_context": self._wake_capture_context(now)} if self._wake_policy is not None else {}))
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            capture.fail(exc)
+            await asyncio.shield(running)
+        finally:
+            stop.set()
+            await running
+            worker.shutdown(wait=True)
 
     async def turn(self, wav: bytes | None, *, wake_strip_required: bool | None = None,
                    recognized_text: str | None = None, defer_playback: bool = False,

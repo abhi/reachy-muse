@@ -177,9 +177,10 @@ class FaceFollower:
     def __init__(self, read_frame: Callable, model_path: Path | None = None, *,
                  read_head_angles: Callable[[], tuple[float, float]], camera_matrix,
                  distortion=None, sample_hz: float = 5.0, clock: Callable = time.monotonic,
-                 detector_factory: Callable | None = None):
+                 detector_factory: Callable | None = None, budget=None):
         if not math.isfinite(sample_hz) or not 1 <= sample_hz <= 15:
             raise ValueError("Face tracking sample rate must be between 1 and 15 Hz")
+        self._budget = budget
         self._read_frame = read_frame
         self._read_angles = read_head_angles
         self._model = Path(model_path) if model_path is not None else default_face_model()
@@ -259,8 +260,16 @@ class FaceFollower:
                     tracker = _FaceTracker(self._period)
                     generation = current_generation
                 started = self._clock()
+                scale = self._budget.delay() if self._budget is not None else 1.0
+                if not math.isfinite(scale):
+                    with self._condition:
+                        self._target = None
+                        self._condition.wait(.1)
+                    continue
                 frame = self._read_frame()
                 observed_at = self._clock()
+                if frame is not None and self._budget is not None and not math.isfinite(self._budget.delay()):
+                    frame = None
                 if frame is not None:
                     try:
                         angles = self._read_angles()
@@ -275,7 +284,11 @@ class FaceFollower:
                     if self._closed:
                         return
                     if self._active and self._generation == generation:
-                        self._condition.wait(max(0.0, self._sample_period - (self._clock() - started)))
+                        cost = self._clock() - started
+                        period = max(self._sample_period * scale, cost * 5)
+                        self._condition.wait_for(
+                            lambda: self._closed or not self._active or self._generation != generation,
+                            timeout=max(.001, period - cost))
         except Exception as exc:
             # A traceback could otherwise retain its camera frame indefinitely.
             exc.__traceback__ = exc.__context__ = exc.__cause__ = None

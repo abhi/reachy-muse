@@ -399,6 +399,7 @@ def test_a_wake_without_a_trustworthy_audio_boundary_preserves_the_request_by_ch
         for index in range(51):
             value = VOICE_SAMPLE if index < 25 else WAKE_SAMPLE if index == 25 else 0
             rig.hardware.samples.put(np.full(sample_rate // 50, value, np.float32))
+            await asyncio.sleep(.02)
 
     events = run(rig, conversation, user)
     assert sent_to_muse(events) == ["what's the weather tomorrow?"]

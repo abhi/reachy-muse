@@ -264,6 +264,8 @@ class ReachyController:
         self._wave_gaze_status = None
         self._wave_lock = threading.Lock()
         self._camera_lock = threading.Lock()
+        from reachy_muse.vision_budget import VisionBudget
+        self.vision_budget = VisionBudget()
         self._arrival_warned = False
         self._presence = Presence()
         self._presence_detector = None
@@ -923,7 +925,8 @@ class ReachyController:
     def _read_camera_frame(self):
         """All local vision consumers share this reader; no frame cache survives it."""
         with self._camera_lock:
-            if self._robot is None or self._stop.is_set():
+            if (self._robot is None or self._stop.is_set()
+                    or not math.isfinite(self.vision_budget.delay())):
                 return None
             return self._robot.media.get_frame()
 
@@ -970,7 +973,8 @@ class ReachyController:
                 camera = getattr(self._robot.media, "camera", None)
                 self._wave_watcher = factory(self._read_camera_frame, self._wave_still,
                                              self._arrival_model, read_gaze=self._read_wave_gaze,
-                                             camera_matrix=getattr(camera, "K", None))
+                                             camera_matrix=getattr(camera, "K", None),
+                                             budget=self.vision_budget)
                 self._wave_watcher.start()
             if self._wave_watcher is not None:
                 self._wave_watcher.set_active(active)
@@ -1056,6 +1060,7 @@ class ReachyController:
             read_head_angles=self._read_head_angles,
             camera_matrix=self._robot.media.camera.K,
             distortion=self._robot.media.camera.D,
+            budget=self.vision_budget,
         )
         self._face_follower.start()
         self._face_failure_logged = False

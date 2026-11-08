@@ -23,10 +23,10 @@ def until(predicate):
 def test_periodic_wave_survives_idle_sampling_and_slow_person_inference():
     from bench.wave import scheduled
     assert scheduled("wave", .32) == {
-        "reads": 17, "person_runs_at": [2.4, 3.72], "cues_at": [4.165]}
+        "reads": 19, "person_runs_at": [2.4, 4.095], "cues_at": [4.415]}
     assert scheduled("still", .32) == {"reads": 16, "person_runs_at": [], "cues_at": []}
     assert scheduled("curtain", .32) == {
-        "reads": 26, "person_runs_at": [2.0, 3.32, 4.64], "cues_at": []}
+        "reads": 27, "person_runs_at": [2.0, 3.695], "cues_at": []}
 
 
 def test_short_wave_waits_for_the_second_person_observation():
@@ -182,3 +182,39 @@ def test_failure_logs_only_counts_and_releases_camera_frame(immediate_motion, ca
     gc.collect()
     assert [record.getMessage() for record in caplog.records] == ["Wave stats failures=1"]
     assert all(reference() is None for reference in references)
+
+
+def test_audio_priority_prevents_camera_and_model_work():
+    from reachy_muse.vision_budget import VisionBudget
+    budget = VisionBudget()
+    budget.audio_busy(True)
+    events = []
+    watcher = wave.WaveWatcher(lambda: events.append("camera"), lambda: True, budget=budget,
+                               detector_factory=lambda _: events.append("model"))
+    watcher.start()
+    watcher.set_active(True)
+    try:
+        time.sleep(.15)
+        assert events == []
+    finally:
+        watcher.close()
+
+
+def test_motion_resets_do_not_reset_person_compute_deadline(immediate_motion):
+    now = [0.0]
+    calls = []
+
+    class Person:
+        def detect(self, frame):
+            calls.append(now[0])
+            now[0] += .32
+            return [BOX]
+
+    watcher = wave.WaveWatcher(lambda: np.zeros((120, 160, 3), np.uint8), lambda: True,
+                               clock=lambda: now[0])
+    watcher.set_active(True)
+    for at in [0, .5, 1, 1.5, 2]:
+        now[0] = at
+        watcher._discard_motion()
+        watcher._sample(Person())
+    assert calls == [0, 2]

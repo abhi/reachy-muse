@@ -128,7 +128,8 @@ Idle sampling averages 2 Hz with alternating 0.4/0.6-second intervals. A fixed
 0.5-second interval completely missed a periodic fixture by sampling the same
 phase repeatedly. Motion permits a three-second
 8 Hz burst, followed by two seconds without reads, even under continuous motion.
-YOLOX runs at most once per 1.25 seconds within a burst. A cue requires two person
+YOLOX runs at most once per 1.25 seconds within a burst, or five times the last
+inference cost if longer. This deadline survives gaze resets. A cue requires two person
 observations. After a cue, the 15-second cooldown survives disable/re-enable and
 reconnects. Cues expire after 0.75 seconds. Nothing is queued for later wake.
 
@@ -152,10 +153,10 @@ add approximately 0.3 seconds to wake admission on the CM4.
 The benchmark also drives the actual worker iteration with a virtual clock,
 oracle boxes and a 320 ms inference delay. All 40 final waves are detected both
 with and without that delay. For the seed-zero three-second wave beginning at
-2.0 s, the cue occurs at 4.150 s without delay and 4.165 s with delay. The delayed
-case reads 17 frames and runs person inference twice over eight seconds. A still
+2.0 s, the cue occurs at 4.150 s without delay and 4.415 s with delay. The delayed
+case reads 19 frames and runs person inference twice over eight seconds. A still
 room reads 16 frames and runs no inference. The curtain fixture runs inference
-three times, emits no cue, then rests. These scheduling checks do not simulate
+twice, emits no cue, then rests. These scheduling checks do not simulate
 camera decoding, operating-system contention or real person detection errors.
 
 The three-second bursts and two-second rests trade missed waves for bounded CPU.

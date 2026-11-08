@@ -148,7 +148,9 @@ class WaveWatcher:
     """
 
     def __init__(self, read_frame, is_still, model_path=None, *, clock=time.monotonic,
-                 detector_factory=YoloxPersonDetector, read_gaze=None, camera_matrix=None):
+                 detector_factory=YoloxPersonDetector, read_gaze=None, camera_matrix=None, budget=None):
+        self._budget = budget
+        self._inference_after = -math.inf
         self._read_frame, self._is_still = read_frame, is_still
         self._read_gaze = read_gaze
         self._projection = GazeProjection(camera_matrix) if camera_matrix is not None else None
@@ -233,6 +235,10 @@ class WaveWatcher:
 
     def _sample(self, detector):
         now = self._clock()
+        scale = self._budget.delay() if self._budget is not None else 1.0
+        if not math.isfinite(scale):
+            self._discard_motion()
+            return .1
         gaze = self._read_gaze() if self._read_gaze is not None else None
         generation = gaze.generation if gaze is not None else None
         self._idle_tick = not self._idle_tick
@@ -255,7 +261,8 @@ class WaveWatcher:
                 self._reset()
                 self._stats.frame_errors += 1
                 return .5
-            if not self._gaze_valid(generation):
+            if (not self._gaze_valid(generation) or self._budget is not None
+                    and not math.isfinite(self._budget.delay())):
                 self._discard_motion()
                 return .5
             to_camera = None
@@ -272,8 +279,11 @@ class WaveWatcher:
                     # Avoid sampling a periodic wave at exactly the same phase.
                     return idle_period
                 self._burst_until = now + 3
-            if now - self._detected_at >= 1.25:
+            if now >= self._inference_after and now - self._detected_at >= 1.25:
+                started = self._clock()
                 self._boxes = detector.detect(frame)
+                cost = self._clock() - started
+                self._inference_after = started + max(1.25 * scale, cost * 5)
                 self._detected_at = now
                 if len(self._boxes) == 1 and self._boxes[0].score >= .6:
                     self._confirmations += 1
@@ -316,6 +326,12 @@ class WaveWatcher:
                     self._condition.wait_for(lambda: self._closed or self._active)
                     if self._closed:
                         return
+                if self._budget is not None and not math.isfinite(self._budget.delay()):
+                    with self._work:
+                        self._discard_motion()
+                    with self._condition:
+                        self._condition.wait(.1)
+                    continue
                 started = self._clock()
                 with self._work:
                     with self._condition:
@@ -324,9 +340,13 @@ class WaveWatcher:
                     if detector is None:
                         detector = self._factory(self._model)
                     period = self._sample(detector)
+                    scale = self._budget.delay() if self._budget is not None else 1.0
+                    if math.isfinite(scale):
+                        period *= scale
                 with self._condition:
                     if self._active and not self._closed:
-                        self._condition.wait(max(.001, period - (self._clock() - started)))
+                        self._condition.wait_for(lambda: self._closed or not self._active,
+                                                 timeout=max(.001, period - (self._clock() - started)))
         except Exception:
             # Retain neither exception/traceback nor frames on failure.
             with self._work:
