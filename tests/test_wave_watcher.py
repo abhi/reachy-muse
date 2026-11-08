@@ -299,7 +299,7 @@ def test_failure_logs_only_counts_and_releases_camera_frame(immediate_motion, ca
     until(lambda: bool(caplog.records))
     watcher.close()
     gc.collect()
-    assert [record.getMessage() for record in caplog.records] == ["Wave stats failures=1"]
+    assert [record.getMessage() for record in caplog.records] == ["Wave watcher failed"]
     assert all(reference() is None for reference in references)
 
 
@@ -338,3 +338,56 @@ def test_motion_resets_do_not_reset_person_compute_deadline(immediate_motion):
         watcher._discard_motion()
         watcher._sample(Person())
     assert calls == [0, 2]
+
+
+def test_wave_stats_never_exceed_one_line_per_minute_across_repeated_drains(caplog):
+    caplog.set_level("INFO", logger="reachy_muse.wave_wake")
+    now = [0.0]
+    watcher = wave.WaveWatcher(lambda: np.zeros((120, 160, 3), np.uint8), lambda: True,
+                               clock=lambda: now[0])
+    try:
+        for tick in range(481):
+            now[0] = tick / 4
+            watcher.set_active(True)
+            watcher._sample(object())
+            watcher.set_active(False)
+            watcher.drain()
+        watcher.start()
+    finally:
+        watcher.close()
+    assert [r.message for r in caplog.records] == [
+        "Wave stats frames=1 detector_runs=0 cues=0 max_score=0.000 frame_errors=0",
+        "Wave stats frames=240 detector_runs=0 cues=0 max_score=0.000 frame_errors=0",
+        "Wave stats frames=240 detector_runs=0 cues=0 max_score=0.000 frame_errors=0",
+    ]
+
+
+def test_suspended_wave_worker_ignores_redundant_notifications_and_resumes():
+    checked = threading.Event()
+    calls = []
+    suspended = [True]
+
+    class Budget:
+        def delay(self):
+            calls.append("budget")
+            checked.set()
+            return float("inf") if suspended[0] else 1.0
+
+    watcher = wave.WaveWatcher(lambda: np.zeros((120, 160, 3), np.uint8), lambda: True,
+                               budget=Budget(), detector_factory=lambda _: object())
+    watcher.start()
+    watcher.set_active(True)
+    try:
+        assert checked.wait(1)
+        for _ in range(20):
+            with watcher._condition:
+                watcher._condition.notify_all()
+            time.sleep(.002)
+        assert calls == ["budget"]
+        assert watcher._stats.frames == 0
+        suspended[0] = False
+        until(lambda: watcher._stats.frames == 1)
+        watcher.set_active(False)
+        assert (watcher._stats.frames, watcher._stats.frame_errors) == (1, 0)
+    finally:
+        watcher.close()

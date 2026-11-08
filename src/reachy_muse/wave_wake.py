@@ -174,6 +174,7 @@ class WaveWatcher:
         self._generation = None
         self._reset()
         self._stats = WaveStats()
+        self._stats_at = -math.inf
 
     def _reset(self):
         self._quiet_since = None
@@ -222,9 +223,16 @@ class WaveWatcher:
                 if self._active:
                     return
                 self._reset()
-                stats, self._stats = self._stats, WaveStats()
+                self._log_stats()
         finally:
             self._work.release()
+
+    def _log_stats(self):
+        now = self._clock()
+        if now - self._stats_at < 60:
+            return
+        self._stats_at = now
+        stats, self._stats = self._stats, WaveStats()
         log.info("Wave stats frames=%d detector_runs=%d cues=%d max_score=%.3f frame_errors=%d",
                  stats.frames, stats.detector_runs, stats.cues, stats.max_score, stats.frame_errors)
 
@@ -270,7 +278,7 @@ class WaveWatcher:
         scale = self._budget.delay() if self._budget is not None else 1.0
         if not math.isfinite(scale):
             self._discard_motion()
-            return .1
+            return .5
         gaze = self._read_gaze() if self._read_gaze is not None else None
         generation = gaze.generation if gaze is not None else None
         self._idle_tick = not self._idle_tick
@@ -363,6 +371,7 @@ class WaveWatcher:
 
     def _run(self):
         detector = None
+        suspended = False
         try:
             while True:
                 with self._condition:
@@ -370,11 +379,14 @@ class WaveWatcher:
                     if self._closed:
                         return
                 if self._budget is not None and not math.isfinite(self._budget.delay()):
-                    with self._work:
-                        self._discard_motion()
+                    if not suspended:
+                        with self._work:
+                            self._discard_motion()
+                        suspended = True
                     with self._condition:
-                        self._condition.wait(.1)
+                        self._condition.wait_for(lambda: self._closed or not self._active, timeout=.5)
                     continue
+                suspended = False
                 started = self._clock()
                 with self._work:
                     with self._condition:
@@ -400,10 +412,8 @@ class WaveWatcher:
                 self._active = False
                 self._pending = None
                 self.wave_position = None
-            log.warning("Wave stats failures=1")
+            log.warning("Wave watcher failed")
         finally:
             with self._work:
                 self._reset()
-                stats, self._stats = self._stats, WaveStats()
-            log.info("Wave stats frames=%d detector_runs=%d cues=%d max_score=%.3f frame_errors=%d",
-                     stats.frames, stats.detector_runs, stats.cues, stats.max_score, stats.frame_errors)
+                self._log_stats()
