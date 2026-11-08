@@ -269,3 +269,39 @@ def test_idle_sampling_uses_less_camera_work_and_wake_preserves_the_target():
         assert item.target() is None
     finally:
         item.close()
+
+
+def test_throttled_idle_gaze_keeps_the_same_face_between_samples():
+    from types import SimpleNamespace
+
+    now = [0.0]
+    reads = []
+    first = face(x=.1, width=.15, yaw=8)
+    other = face(x=.65, width=.3, yaw=-15)
+
+    class People:
+        def __init__(self, *args):
+            pass
+
+        def detect(self, frame):
+            return [first] if len(reads) == 1 else [other, first]
+
+    item = FaceFollower(lambda: reads.append(now[0]) or object(),
+                        read_head_angles=lambda: (0, 0), camera_matrix=None,
+                        detector_factory=People, clock=lambda: now[0],
+                        budget=SimpleNamespace(delay=lambda: 3))
+    try:
+        item.start()
+        item.set_active(True, idle=True)
+        wait_for(lambda: item.target() is not None)
+        original = item.target()
+        for at in (.8, 1.4):
+            now[0] = at
+            assert item.target() == original
+        now[0] = 1.5
+        wait_for(lambda: item.target() is not None and item.target().observed_at == 1.5, timeout=2)
+        assert item.target().yaw > 0
+        now[0] = 4
+        assert item.target() is None
+    finally:
+        item.close()

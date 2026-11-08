@@ -120,6 +120,7 @@ class _YuNetDetector:
 class _FaceTracker:
     def __init__(self, sample_period: float):
         self._period = sample_period
+        self.loss_seconds = FACE_LOSS_SECONDS
         self._face: _Face | None = None
         self._target: FaceTarget | None = None
 
@@ -128,7 +129,7 @@ class _FaceTracker:
         faces = [face for face in faces if face.score >= 0.7 and face.area > 0
                  and all(math.isfinite(value) for value in (*face.box, face.yaw_error,
                                                             face.pitch_error, face.score))]
-        if self._target is not None and now - self._target.observed_at >= FACE_LOSS_SECONDS:
+        if self._target is not None and now - self._target.observed_at >= self.loss_seconds:
             self._face = self._target = None
         chosen = None
         if self._face is not None:
@@ -189,6 +190,7 @@ class FaceFollower:
         self._detector_factory = detector_factory or _YuNetDetector
         self._period = 1.0 / sample_hz
         self._sample_period = self._period
+        self._loss_seconds = FACE_LOSS_SECONDS
         self._clock = clock
         self._condition = threading.Condition()
         self._active = False
@@ -230,7 +232,7 @@ class FaceFollower:
         with self._condition:
             target = self._target
             if (not self._active or target is None
-                    or self._clock() - target.observed_at >= FACE_LOSS_SECONDS):
+                    or self._clock() - target.observed_at >= self._loss_seconds):
                 return None
             return target
 
@@ -286,6 +288,7 @@ class FaceFollower:
                     if self._active and self._generation == generation:
                         cost = self._clock() - started
                         period = max(self._sample_period * scale, cost * 5)
+                        tracker.loss_seconds = self._loss_seconds = max(FACE_LOSS_SECONDS, period + self._period)
                         self._condition.wait_for(
                             lambda: self._closed or not self._active or self._generation != generation,
                             timeout=max(.001, period - cost))
