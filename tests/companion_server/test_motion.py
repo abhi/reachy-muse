@@ -193,6 +193,41 @@ def test_out_of_range_frames_are_clamped_into_pose_limits_and_stay_reachable():
     assert np.round(frames[1, 7:], 3).tolist() == [90.0, -90.0]
 
 
+def test_encoded_animation_frames_stay_reachable_after_rounding_and_clamping(tmp_path):
+    import asyncio
+    from dataclasses import replace
+
+    pytest.importorskip("reachy_mini_rust_kinematics")
+    from common.motion import to_move
+    from common.reach import Reach
+    from reachy_muse.companion_server.motion import reachable
+    from reachy_muse.protocol import ANIMATION_CHANNELS, AnimateResult, Sender, decode, encode
+
+    reach = Reach()
+    low, high = np.array([POSE_LIMITS[channel] for channel in ANIMATION_CHANNELS]).T
+    upstream = _upstream(np.random.default_rng(4).uniform(low, high, (25, 9)))
+
+    class Projected(StubPipeline):
+        def run(self, intent, duration_hint_s=None):
+            frames, projected, clamped, unreachable = reachable(upstream, reach)
+            return replace(super().run(intent, duration_hint_s), frames=frames,
+                           projected_fraction=projected, clamped_frames=clamped, unreachable=unreachable)
+
+    engine = MotionEngine(tmp_path, build=Projected)
+    try:
+        animation = asyncio.run(engine.animate("stretch", 1.0))
+    finally:
+        engine.close()
+    result = decode(encode(AnimateResult(1, animation.fps, animation.frames)), sender=Sender.COMPANION)
+    frames = np.clip(result.frames, low, high)
+    move = to_move(_upstream(frames))
+
+    assert len(result.frames) == 25
+    assert np.max(np.abs(frames[:, :6])) > 10
+    assert [index for index, frame in enumerate(move["set_target_data"])
+            if not reach.ok(np.array(frame["head"]), frame["body_yaw"])] == []
+
+
 def _swings(series, travel):
     count, direction, extreme = 0, 0, series[0]
     for value in series:

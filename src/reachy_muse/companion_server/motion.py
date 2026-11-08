@@ -186,8 +186,8 @@ class Pipeline:
 def reachable(upstream: np.ndarray, reach: Any) -> Tuple[np.ndarray, float, int, int]:
     """An upstream (T, 9) trajectory -> (frames in CHANNELS order and units, fraction projected, frames clamped, frames unreachable).
 
-    Clamps to POSE_LIMITS, projects onto the reachable set, and clamps again, because projection moves
-    a frame toward the last reachable one along a rotation path that can leave the limits box.
+    Clamps to POSE_LIMITS, projects onto the reachable set, then clamps and quantizes for the wire.
+    Poses invalidated by either step retreat toward the previous reachable pose.
     """
     from common.motion import rpy, to_move
 
@@ -203,6 +203,23 @@ def reachable(upstream: np.ndarray, reach: Any) -> Tuple[np.ndarray, float, int,
     frames = projected[:, _UPSTREAM] * _SCALE
     final = np.clip(frames, _LOW, _HIGH)
     touched |= np.any(final != frames, axis=1)
+    final = np.round(final, 1)
+    last = np.zeros(7)
+    for row in final:
+        if not reach.ok(_head(row), np.radians(row[6])):
+            target = row[:7].copy()
+            row[:7] = last
+            low, high = 0.0, 1.0
+            for _ in range(12):
+                middle = (low + high) / 2
+                candidate = row.copy()
+                candidate[:7] = np.round(last + middle * (target - last), 1)
+                if reach.ok(_head(candidate), np.radians(candidate[6])):
+                    row[:7] = candidate[:7]
+                    low = middle
+                else:
+                    high = middle
+        last = row[:7].copy()
     unreachable = sum(not reach.ok(_head(row), np.radians(row[6])) for row in final)
     return final, projected_fraction, int(touched.sum()), unreachable
 
