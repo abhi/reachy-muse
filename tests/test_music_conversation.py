@@ -4,14 +4,13 @@ import time
 from types import SimpleNamespace
 
 import numpy as np
-import pytest
 
 from reachy_muse import expression_plan as plan
 from reachy_muse.conversation import VoiceConversation, _CaptureBuffer
 from reachy_muse.music import MusicController
 from reachy_muse.wake_policy import WakeContext, WakePolicy, WakeVerifier
 from test_music import Sink, constant
-from test_registered_commands import command_device
+from test_registered_commands import command_device, wait_until
 from test_wake_policy import Detector, Local
 
 
@@ -42,6 +41,7 @@ def test_wake_ducks_before_listening_holds_through_turn_and_hush_stops():
             await voice._apply_cue(plan.SetState(plan.State.IDLE))
             voice._turn_active = False
             voice._sync_music()
+            await wait_until(lambda: music.dancing)
             assert music.dancing
             voice._hush()
             assert music.status() == {"playing": False, "elapsed": 0., "dancing": False}

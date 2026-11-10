@@ -13,12 +13,11 @@ from pathlib import Path
 import queue
 import random
 import threading
-import time
 
 import numpy as np
 
 from reachy_muse.motion.dance import BeatTracker, DanceTimeline
-from reachy_muse.music_audio import AudioBlock, MusicOutput, decode
+from reachy_muse.music_audio import AudioBlock, MusicMix, MusicOutput, decode
 
 log = logging.getLogger(__name__)
 DUCK_GAIN = 10 ** (-18 / 20)
@@ -34,7 +33,7 @@ def select_track(folder: Path, query: str) -> Path:
         if path.suffix.lower() in FORMATS and path.is_file():
             resolved = path.resolve()
             if (resolved.is_relative_to(root)
-                    and (query.casefold() == "shuffle" or query.casefold() in path.stem.casefold())):
+                    and (query.casefold() == "shuffle" or query.casefold() in path.name.casefold())):
                 matches.append(resolved)
     if not matches:
         raise ValueError("No matching music file")
@@ -96,6 +95,7 @@ class MusicController:
     def dancing(self):
         with self._lock:
             return (self._session is not None and self._session.dance and not self._holds
+                    and (self._session.source is None or self._clock() < self._session.tail + .06)
                     and self._clock() >= self.output.speech_until)
 
     def status(self):
@@ -252,6 +252,7 @@ class MusicController:
             session.primed = True
         mixed = np.zeros(count, dtype=np.float32)
         used = 0
+        scheduled = []
         while used < count:
             if session.block is None:
                 try:
@@ -263,17 +264,14 @@ class MusicController:
             size = min(count - used, len(block.pcm) - position)
             mixed[used:used + size] = block.pcm[position:position + size]
             beats = tuple(b for b in block.beats if block.offset + position <= b.sample < block.offset + position + size)
-            self.dance.offer(beats, block.offset + position, start + used / self.output.rate + .06,
-                             self.output.rate)
+            scheduled.append((beats, block.offset + position, start + used / self.output.rate + .06))
             session.position += size
-            session.consumed += size
             used += size
             if session.position == len(block.pcm):
                 session.block = None
         if not used:
             return None
-        session.tail = start + used / self.output.rate
-        target = session.volume * (DUCK_GAIN if self._holds or speech else 1.)
+        target = session.volume * (DUCK_GAIN if self._holds or speech or start < self.output.speech_until else 1.)
         if target != session.gain_target:
             session.gain_target = target
             session.gain_remaining = max(1, round(self.output.rate * (.04 if target < session.gain else .4)))
@@ -284,7 +282,12 @@ class MusicController:
             gains[:ramp] = session.gain + step * np.arange(1, ramp + 1)
             session.gain += step * ramp
             session.gain_remaining -= ramp
-        return mixed * gains
+        def accepted():
+            session.tail = start + used / self.output.rate
+            session.consumed += used
+            for beats, offset, at in scheduled:
+                self.dance.offer(beats, offset, at, self.output.rate)
+        return MusicMix(mixed * gains, accepted)
 
     def tick(self):
         with self._lock:

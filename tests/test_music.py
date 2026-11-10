@@ -1,13 +1,11 @@
-import asyncio
 import threading
 import time
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 from reachy_muse.music import MusicController, select_track
-from reachy_muse.music_audio import AudioBlock, MusicOutput, decode
+from reachy_muse.music_audio import AudioBlock, MusicMix, MusicOutput, decode
 
 
 def until(condition):
@@ -43,7 +41,7 @@ def constant(source, rate, cancelled):
 def test_music_and_speech_overlay_on_one_sample_clock():
     sink = Sink()
     output = sink.output()
-    output.music = lambda count, at, speech: np.full(count, .1, dtype=np.float32)
+    output.music = lambda count, at, speech: MusicMix(np.full(count, .1, dtype=np.float32), lambda: None)
     output.pump()
     start = output.push_speech(np.full(640, .2, dtype=np.float32))
     assert start == pytest.approx(10.02)
@@ -61,7 +59,7 @@ def test_music_and_speech_overlay_on_one_sample_clock():
 def test_output_pump_does_not_build_an_unbounded_sink_queue():
     sink = Sink()
     output = sink.output()
-    output.music = lambda n, at, speech: np.full(n, .1)
+    output.music = lambda n, at, speech: MusicMix(np.full(n, .1), lambda: None)
     for _ in range(100):
         output.pump()
     assert output.tail == pytest.approx(10.04)
@@ -197,6 +195,7 @@ def test_local_search_is_case_insensitive_and_confined(tmp_path):
     secret.touch()
     (folder / "outside.flac").symlink_to(secret)
     assert select_track(folder, "sUnN") == folder / "Sunny.MP3"
+    assert select_track(folder, "sunny.mp3") == folder / "Sunny.MP3"
     assert select_track(folder, "shuffle") == folder / "Sunny.MP3"
     with pytest.raises(ValueError, match="No matching music file"):
         select_track(folder, "outside")
@@ -213,3 +212,119 @@ def test_real_pyav_decode_resamples_and_detects_beats(tmp_path):
     assert sum(len(block.pcm) for block in blocks) == 48000
     assert [beat.sample for block in blocks for beat in block.beats] == [3200, 11200, 19200, 27200, 35200, 43200]
     assert blocks[0].pcm.dtype == np.float32
+
+
+@pytest.mark.parametrize("suffix,codec", [(".mp3", "mp3"), (".ogg", "libopus"), (".flac", "flac")])
+def test_real_compressed_music_formats(tmp_path, suffix, codec):
+    import av
+    source = tmp_path / ("synthetic" + suffix)
+    audio = np.sin(np.arange(16000) * 2 * np.pi * 440 / 16000).astype(np.float32) * .2
+    with av.open(str(source), "w") as container:
+        stream = container.add_stream(codec, rate=16000)
+        stream.layout = "mono"
+        frame = av.AudioFrame.from_ndarray(audio[None, :], format="fltp", layout="mono")
+        frame.sample_rate = 16000
+        for packet in (*stream.encode(frame), *stream.encode(None)):
+            container.mux(packet)
+    blocks = list(decode(source, 16000, threading.Event()))
+    pcm = np.concatenate([block.pcm for block in blocks])
+    assert len(pcm) == pytest.approx(16000, abs=2048)
+    assert float(np.sqrt(np.mean(pcm ** 2))) == pytest.approx(.1414, abs=.02)
+
+
+def test_http_audio_uses_the_same_decoder_without_a_second_player(tmp_path):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import io
+    import wave
+    content = io.BytesIO()
+    with wave.open(content, "wb") as wav:
+        wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        wav.writeframes(np.full(1600, 8192, dtype="<i2").tobytes())
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Content-Length", str(len(content.getvalue())))
+            self.end_headers()
+            self.wfile.write(content.getvalue())
+
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = threading.Thread(target=server.serve_forever)
+    worker.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/audio"
+        pcm = np.concatenate([block.pcm for block in decode(url, 16000, threading.Event())])
+        assert pcm.tolist() == [.25] * 1600
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join()
+
+
+def test_failed_sink_never_publishes_accepted_music_timing():
+    sink = Sink()
+    def fail(pcm):
+        raise RuntimeError("closed")
+    output = MusicOutput(16000, fail, sink.clear, clock=lambda: sink.now)
+    accepted = []
+    output.music = lambda n, at, speech: MusicMix(np.full(n, .1), lambda: accepted.append(at))
+    with pytest.raises(RuntimeError, match="closed"):
+        output.pump()
+    assert accepted == []
+    assert output.tail == 0
+
+
+@pytest.mark.parametrize("ending", ["sleep", "close"])
+def test_hardware_sleep_and_shutdown_cancel_music_workers(ending):
+    from test_hardware import FakeRobot, start_controller
+    robot = FakeRobot()
+    hardware = start_controller(robot, enable_motion=False)
+    music = hardware.music
+    music._decode = constant
+    try:
+        music.play({"url": "https://example.com/audio", "dance": False})
+        until(lambda: bool(robot.media.output))
+        if ending == "sleep":
+            hardware.set_state("sleeping")
+        else:
+            hardware.close()
+        assert not music.active
+        assert robot.media.clear_count == 1
+        count = len(robot.media.output)
+        time.sleep(.06)
+        assert len(robot.media.output) == count
+    finally:
+        hardware.close()
+    assert not music._worker.is_alive()
+    assert not music._pump.is_alive()
+
+
+def test_music_dance_uses_the_existing_motor_writer_and_yields_to_listening():
+    from reachy_muse.motion.dance import BeatTracker
+    from reachy_muse.motion import MotionStyle
+    from test_dance import clicks
+    from test_hardware import FakeRobot, start_controller
+    def track(source, rate, cancelled):
+        pcm = clicks(120, seconds=4, rate=rate)
+        tracker = BeatTracker(rate)
+        for offset in range(0, len(pcm), 640):
+            part = pcm[offset:offset + 640]
+            yield AudioBlock(offset, part, tracker.feed(part))
+    robot = FakeRobot()
+    hardware = start_controller(robot, style=MotionStyle(breathing=False, expression_clips=False))
+    hardware.music._decode = track
+    try:
+        hardware.music.play({"url": "https://example.com/audio"})
+        start = len(robot.frames)
+        until(lambda: any(abs(hardware._pose_parameters(frame[1])["pitch"]) > 1.5
+                          for frame in robot.frames[start:]))
+        assert len(robot.writers) == 1
+        assert all(abs(np.degrees(frame[3])) <= 7 for frame in robot.frames[start:])
+        hardware.set_state("listening")
+        time.sleep(.5)
+        assert hardware.music.dance.sample(time.monotonic(), eligible=False).tolist() == [0.] * 9
+        assert len(robot.writers) == 1
+    finally:
+        hardware.close()

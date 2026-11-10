@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import threading
 import time
+from typing import Callable
 
 import numpy as np
 
@@ -19,6 +20,12 @@ class AudioBlock:
     offset: int
     pcm: np.ndarray
     beats: tuple[Beat, ...]
+
+
+@dataclass(frozen=True)
+class MusicMix:
+    pcm: np.ndarray
+    accepted: Callable[[], None]
 
 
 def decode(source, rate: int, cancelled: threading.Event):
@@ -86,8 +93,10 @@ class MusicOutput:
         music = self.music(len(pcm), start, speech) if self.music is not None else None
         if music is None and not speech:
             return start
-        mixed = pcm if music is None else np.clip(pcm + music, -1, 1).astype(np.float32)
+        mixed = pcm if music is None else np.clip(pcm + music.pcm, -1, 1).astype(np.float32)
         self._push(mixed)
+        if music is not None:
+            music.accepted()
         self.tail = start + len(pcm) / self.rate
         if speech:
             self.speech_until = self.tail + .06
