@@ -65,7 +65,10 @@ stream as url, such as internet radio. Use exactly one source. Do not scrape or 
 streaming services. Playback dances by default; set dance false for music only.
 For "dance" or "dance to what's playing", call `reachy.dance`: it listens to room music
 without playing anything, for 60 seconds by default, at most 600. `reachy.music.stop`
-stops either mode; `reachy.music.status` reports playing, title or source and elapsed.
+stops either mode. For "what song is this?", call `reachy.music.status`: it returns
+playing, elapsed and known title/artist/album/genre. Unknown tags stay absent.
+Use those tags to suggest similar music; local queries still match filenames.
+Room identification needs the owner's optional song-ID setting; never invent a title.
 Wake and speech duck music and pause dancing; both resume after the conversation.
 """
 

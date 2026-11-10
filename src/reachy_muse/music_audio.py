@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import dataclass
 import threading
 import time
@@ -15,6 +16,8 @@ import numpy as np
 from reachy_muse.motion.dance import Beat, BeatTracker
 from reachy_muse.music_analysis import AudioAnalyzer, AudioFeatures
 from reachy_muse.music_structure import SongPlan, StructureTracker
+from reachy_muse.music_metadata import TrackMetadata
+from reachy_muse.music_stream import HTTPAudio
 
 
 @dataclass(frozen=True)
@@ -24,6 +27,7 @@ class AudioBlock:
     beats: tuple[Beat, ...]
     features: tuple[AudioFeatures, ...] = ()
     plan: SongPlan = SongPlan()
+    metadata: TrackMetadata = TrackMetadata()
 
 
 @dataclass(frozen=True)
@@ -36,9 +40,12 @@ def decode(source, rate: int, cancelled: threading.Event):
     """Yield 40 ms mono blocks; FFmpeg diagnostics never leave this worker."""
     import av
 
-    options = {"protocol_whitelist": "http,https,tcp,tls,crypto"} if isinstance(source, str) else {}
-    with av.logging.Capture(local=True) as diagnostics:
-        with av.open(str(source), timeout=(3., 2.), options=options) as container:
+    with ExitStack() as stack:
+        diagnostics = stack.enter_context(av.logging.Capture(local=True))
+        network = stack.enter_context(HTTPAudio(source, cancelled)) if isinstance(source, str) else None
+        options = {"probesize": "32768", "analyzeduration": "100000", "protocol_whitelist": "http,https,tcp,tls,crypto"}
+        with av.open(network if network is not None else str(source), timeout=(3., 2.),
+                     options=options if network is not None else {}) as container:
             if not container.streams.audio:
                 raise ValueError("No audio stream")
             stream = container.streams.audio[0]
@@ -49,17 +56,25 @@ def decode(source, rate: int, cancelled: threading.Event):
             structure = StructureTracker(rate)
             pending = np.empty(0, dtype=np.float32)
             offset = 0
+            tags = TrackMetadata.from_tags(container.metadata, stream.metadata)
+            metadata = tags
             size = max(1, round(rate * .04))
 
             def frames():
-                for frame in container.decode(stream):
+                current = tags
+                for packet in container.demux(stream):
                     if cancelled.is_set():
                         return
-                    yield from resampler.resample(frame)
+                    if network is not None and packet.pos is not None:
+                        current = network.metadata_at(max(0, packet.pos)) or tags
+                    for decoded in packet.decode():
+                        for frame in resampler.resample(decoded):
+                            yield frame, current
                 if not cancelled.is_set():
-                    yield from resampler.resample(None)
+                    for frame in resampler.resample(None):
+                        yield frame, current
 
-            for frame in frames():
+            for frame, metadata in frames():
                 diagnostics.clear()
                 pcm = np.nan_to_num(frame.to_ndarray().reshape(-1), nan=0., posinf=0., neginf=0.)
                 pending = np.concatenate((pending, np.clip(pcm, -1, 1)))
@@ -67,12 +82,12 @@ def decode(source, rate: int, cancelled: threading.Event):
                     part, pending = pending[:size].copy(), pending[size:]
                     features = analyzer.feed(part)
                     structure.feed(features)
-                    yield AudioBlock(offset, part, tracker.feed(part), features, structure.plan())
+                    yield AudioBlock(offset, part, tracker.feed(part), features, structure.plan(), metadata)
                     offset += len(part)
             if len(pending) and not cancelled.is_set():
                 features = analyzer.feed(pending) + analyzer.finish()
                 structure.feed(features)
-                yield AudioBlock(offset, pending.copy(), tracker.feed(pending), features, structure.plan())
+                yield AudioBlock(offset, pending.copy(), tracker.feed(pending), features, structure.plan(), metadata)
 
 
 class MusicOutput:

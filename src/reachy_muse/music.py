@@ -22,6 +22,7 @@ from reachy_muse.motion.dance import BeatTracker, DanceTimeline
 from reachy_muse.motion.dance_signature import DanceSignature
 from reachy_muse.music_analysis import AudioAnalyzer
 from reachy_muse.music_structure import SongPlan, StructureTracker
+from reachy_muse.music_metadata import TrackMetadata
 from reachy_muse.music_audio import AudioBlock, MusicMix, MusicOutput, decode
 
 log = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ class _Session:
     room_gap: bool = False
     primed: bool = False
     plan: SongPlan = SongPlan()
+    metadata: TrackMetadata = TrackMetadata()
     signatures: dict = field(default_factory=dict)
     requested: set = field(default_factory=set)
 
@@ -117,7 +119,7 @@ class MusicController:
             label = ({"title": session.title} if session.title is not None else
                      {"source": session.source} if session.source is not None else {})
             return {"playing": session.source is not None, "elapsed": round(elapsed, 2),
-                    "dancing": self.dancing, **label}
+                    "dancing": self.dancing, **label, **session.metadata.payload()}
 
     def play(self, params, *, allowed=lambda: True):
         source = params.get("url") or select_track(self.folder, params["query"])
@@ -350,7 +352,7 @@ class MusicController:
             beats = tuple(b for b in block.beats if block.offset + position <= b.sample < block.offset + position + size)
             features = tuple(f for f in block.features if block.offset + position <= f.sample < block.offset + position + size)
             scheduled.append((beats, features, block.offset + position, start + used / self.output.rate + .06,
-                              session.plan if session.plan.at((block.offset + position) / self.output.rate) is not None else block.plan))
+                              session.plan if session.plan.at((block.offset + position) / self.output.rate) is not None else block.plan, block.metadata))
             session.position += size
             used += size
             if session.position == len(block.pcm):
@@ -371,7 +373,8 @@ class MusicController:
         def accepted():
             session.tail = start + used / self.output.rate
             session.consumed += used
-            for beats, features, offset, at, plan in scheduled:
+            for beats, features, offset, at, plan, metadata in scheduled:
+                session.metadata = metadata
                 if features:
                     self.dance.offer_features(features, offset, at, self.output.rate, plan, session.signatures)
                 self.dance.offer(beats, offset, at, self.output.rate)

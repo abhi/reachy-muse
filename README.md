@@ -48,7 +48,8 @@ room music through the existing microphone, without playing audio. Room dancing
 lasts 60 seconds by default, at most 600, and stops after about eight seconds
 without beats. Wake, replies and notifications duck music and pause dancing.
 Hush, sleep and "stop" stop both. Muse can use `reachy.music.stop` to stop either
-mode and `reachy.music.status` to check playback. Track names and URLs are never
+mode and `reachy.music.status` to check playback, including known title, artist,
+album and genre tags. HTTP radio titles update as the stream changes. Track names and URLs are never
 logged. See the [design and local measurements](docs/design/music-dance.md).
 
 ## Presence and notifications
