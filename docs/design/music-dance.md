@@ -1,134 +1,204 @@
 # Music and dance
 
-Design recorded before implementation in commit `3e3c2ed`, 2026-11-09, then
-updated with implementation details and measurements. Base: `edbeb09`, branch
-`robot/music-dance`. Work stays local. No robot, Muse, launchd, or ports
-8765/8766 are involved.
+Redesign recorded before implementation on 2026-11-09, after `f638b94`.
+Base remains deployed `edbeb09`; branch `robot/music-dance`. All work and tests
+stay local. No robot, Muse, launchd, deployment or ports 8765/8766.
 
-## Existing ownership
+## Ownership and caller behavior
 
-`conversation._capture_microphone` drains the SDK on one dedicated reader.
-Its bounded handoff feeds wake detection and authorized turn capture. A room
-music tap belongs immediately after that read, before speech admission drops
-samples. It must only copy into a bounded queue, never run FFTs or open a mic.
+Keep playback selection, the streaming BeatTracker, the shared MusicOutput
+accepted sample clock, PCM mixing, wake/turn/notify/hush holds and the single
+microphone reader and motor writer. The commands keep their existing shapes.
+`reachy.music.status` adds title, artist, album and genre when known, plus music
+confidence, energy and character. Missing identity stays unknown. Titles,
+artists, queries, URLs, paths, fingerprints and API keys never enter logs.
 
-`ReachyController._motion_loop` writes all motor targets every 25 ms. Rest,
-breathing, speech sway, sentence accents, recorded/generated clips and gaze
-compose there, with `clamp_to_limits` at `_write_vector`. Dance is another
-bounded offset sampled there, never another motion writer. Explicit commands,
-gestures, clips, listening and speech take priority.
+`conversation._capture_microphone` only copies into the bounded room queue.
+`ReachyController._motion_loop` samples one bounded dance offset every 25 ms,
+composes existing layers, then calls `clamp_to_limits` at `_write_vector`.
+Explicit motions, listening, speech and holds continue to take priority.
 
-`play_audio` is a speech API. It schedules sentence motion and sway using
-accepted sample lengths plus `SWAY_LATENCY_S = .06`. `PCMPlayer` paces 40 ms
-chunks with 40 ms lead. Music must not pass through speech analysis. A shared
-output clock must include both music-only and mixed writes.
-
-`_has_output` and `_input_blocked` describe speech. Counting music there would
-disable wake and notification delivery for whole songs. `Notifications.deliver`
-waves before acquiring the shared speech owner. `VisionBudget` observes capture
-and wake coverage and sheds vision load; music must not mark it permanently busy.
-
-Read motion/*, hardware.py, speech_playback.py, voice_audio.py, the microphone
-and lifecycle paths in conversation.py, vision_budget.py, contract/{guide,commands}.py,
-notifications.py and duplex_audio.py. The specified virtualenv has no importable
-`reachy_mini`. Instead, inspected official SDK v1.9.0
-[AudioBase](https://github.com/pollen-robotics/reachy_mini/blob/v1.9.0/src/reachy_mini/media/audio_base.py),
-[GStreamerAudio](https://github.com/pollen-robotics/reachy_mini/blob/v1.9.0/src/reachy_mini/media/audio_gstreamer.py),
-and [MediaManager](https://github.com/pollen-robotics/reachy_mini/blob/v1.9.0/src/reachy_mini/media/media_manager.py).
-Those sources append PCM contiguously through one appsrc. There is no public
-second mixing lane or DAC cursor. `play_sound` uses a separate playbin and
-cannot supply the required PCM clock. Robot SDK parity remains unverified.
-
-## Usage and data
-
-Muse calls `reachy.music.play` with exactly one `query` or `url`, `dance=true`
-by default and optional volume. Query is a case-insensitive substring of files
-under owner `--music-dir`, default `~/Music`, or `shuffle`. Formats are mp3,
-ogg, flac and wav. URL must be http(s) audio, without service scraping or
-credential lookup. `reachy.music.stop` stops both modes; `reachy.music.status`
-returns playing, title or source, and elapsed seconds. `reachy.dance` listens
-to room music for 60 seconds by default, at most 600, stopping after about
-8 seconds without rhythmic activity. Playback and room listening replace one
-another. No track title, query, URL, path or PCM enters logs.
-
-Core shapes:
+## Data and module boundaries
 
 ```python
-Beat(sample: int, period: float, index: int, energy: float)
-AudioBlock(offset: int, pcm: float32[N], beats: tuple[Beat, ...])
-RoomFrame(pcm: float32[N], captured_at: float, gap: bool)
-_Session(source: str | Path | None, title: str | None, dance: bool,
-         volume: float, started: float, deadline: float, cancelled: Event, ...)
-MusicMix(pcm: float32[N], accepted: Callable[[], None])
+AudioFeatures(sample: int, loudness: float, bass: float, snare: float,
+              treble: float, harmony: float, chroma: tuple[float, ...],
+              timbre: tuple[float, ...], flatness: float, tonal: float,
+              period: float, phase: float, regularity: float,
+              music: bool, character: str)
+AudioBlock(offset: int, pcm: float32[N], beats: tuple[Beat, ...],
+           features: tuple[AudioFeatures, ...], metadata: TrackMetadata)
+Section(start: float, end: float, family: int, occurrence: int,
+        chorus: bool, energy: float, build: float, drop: bool,
+        period: float, character: str)
+SongPlan(sections: tuple[Section, ...], complete: bool)
+TrackMetadata(title: str | None, artist: str | None,
+              album: str | None, genre: str | None)
 
-BeatTracker.feed(pcm) -> tuple[Beat, ...]
-DanceTimeline.offer(beats, source_offset, audible_start, rate) -> None
+AudioAnalyzer.feed(pcm) -> tuple[AudioFeatures, ...]
+StructureTracker.feed(features) -> None
+StructureTracker.plan(complete=False) -> SongPlan
+DanceTimeline.offer_features(features, offset, audible_start, rate, plan) -> None
 DanceTimeline.sample(now, eligible) -> float64[9]
-MusicController.play(params) -> status
-MusicController.listen(seconds) -> status
-MusicController.stop() -> None
-MusicController.hold(reason, active) -> None
-MusicController.tap(pcm, captured_at, gap=False) -> None
-MusicController.status() -> dict
-MusicOutput.push_speech(pcm) -> accepted_start
+MusicController.signatures(source: MotionSource) -> async long-running task
 ```
 
-`RoomFrame` is a tuple in the implementation. Session object identity and its
-cancellation event replace a numeric generation. Each session holds at most
-25 decoded blocks and 25 microphone frames. Queue overflow or a capture reset
-resets room tempo estimates. Command serials separately prevent a delayed
-folder lookup from starting after stop, hush, replacement, or disconnection.
-`MusicMix.accepted` publishes beat times and consumed samples only after the
-SDK accepts the PCM.
+`music_analysis.py` owns the FFT, band envelopes, chroma/timbre descriptors,
+classification and character. `music_structure.py` owns compact self-similarity,
+section families, build/drop evidence and section intensity. `motion/dance.py`
+owns continuous feature-to-pose mapping, timed signatures and smoothing.
+`music_audio.py` owns decode, tags and transport. `music_stream.py` handles ICY
+framing. `music.py` owns session cancellation, acceptance and worker lifetimes.
+`music_identity.py` owns optional fingerprint collection and lookup.
 
-## Modules and clock
+The robot does all audio analysis and pose sampling. The Mac companion only
+looks up occasional signature moves through existing `generate(intent, duration)`.
+No PCM or song identity is sent to the companion for dance. Signature requests
+contain a bounded character and tempo intent. The existing ANIMATE wire schema
+and ordinary expression lookup remain backward compatible.
 
-`motion/dance.py` owns streaming onset/tempo tracking and analytic safe dance
-poses. Numpy RMS energy rises in 10 ms frames detect onsets, with a 240 ms
-refractory period and a median of up to eight tempo intervals. The timeline
-predicts poses between onsets using that tempo. Playback analyzes decoded PCM
-ahead of the speaker. Beat indices group into inferred four-beat bars, not
-claims about actual musical meter. Three patterns change every four bars with
-a blend. Head bob, small body yaw and downbeat antenna accents scale with energy.
-Attack/release take about .4 s. On interruption, freeze beat-driven movement
-and release the last offset toward rest; there are no new beat pulses in turns.
+## Continuous motion
 
-`music_audio.py` owns PyAV decoding and a serialized software mixer. Decode
-resamples to output-rate mono float32, bounds lookahead to about one second,
-and uses network open/read deadlines. Only the latest requested session survives
-replacement. A stalled read cannot submit audio after cancellation. The
-decoder uses one codec thread, a three-second open timeout and a two-second
-read timeout. Playback waits for 480 ms of decoded PCM or EOF before starting.
-File selection is confined to the owner folder, including resolved symlinks.
-URL decoding restricts protocols to network audio, not local files. PyAV
-diagnostics are captured and discarded; errors crossing the boundary are fixed
-strings. No downloaded track cache persists.
+Analyze Hann-windowed audio every 40 ms, with a roughly 64 ms window. Features
+carry the final source sample of their hop so fragmented decoder blocks cannot
+lose an event that was discovered in the next block. Keep original BeatTracker
+for tempo/phase; feature envelopes continue even without confident beats.
+Bands are bass 35-180 Hz, middle 180-2500 Hz and high above 2500 Hz.
+Positive band flux distinguishes middle onsets from sustained harmony.
+Absolute loudness sets amplitude, so normalization cannot turn a quiet intro
+into a loud dance. Silence produces zero target.
 
-The mixer uses one lock and one accepted-output tail. A 20 ms pump fills gaps;
-speech pushes synchronously mix exactly the next music samples under the same
-lock. Both advance `tail = max(now, tail) + count/rate`. This avoids a second
-speech queue and keeps speech-only calls synchronous. Hardware returns the
-accepted tail to PCMPlayer, which uses it instead of inventing another clock.
-Speech sentence events and sway use that same accepted start. Music samples
-are mapped to wall time only on successful sink acceptance:
+Bass energy drives alternating body yaw. Snare-like middle onsets drive z/pitch
+bob. High-band flux drives opposed antenna twitches. Sustained tonal energy
+drives slow roll/head yaw and small x/y lean. Mood is a coarse signal-derived
+character: calm sway, upbeat bounce or head-nod groove. Character changes axis
+gain and pace; it never overrides which audio band drives an axis. Fixed patterns
+remain a low-amplitude fallback only when beat evidence is ambiguous and music
+is admitted. A kick-only fixture must move body yaw, and a high-only fixture
+must move antennas, without borrowing unrelated axes.
 
-`audible_beat = accepted_start + (beat.sample - source_offset)/rate + .06`.
+The final target is capped to [2, 2, 3, 5, 7, 4, 14, 14, 9] mm/degrees.
+Three cascaded exponential stages preserve the convex position bounds across
+retarget, stop and holds. Exact integration uses the elapsed monotonic interval.
+For each axis, continuous jerk is bounded by `8 * cap / tau**3`, with tau=.12 s;
+velocity and acceleration are bounded by `2 * cap / tau` and
+`4 * cap / tau**2`. Tests exercise finite differences and analytic derivatives.
+These are bounds on the additive dance layer. The final composed clamp and
+other priority layers require physical verification for motor comfort.
 
-Underflow emits no phantom source progress. New PCM anchors at the actual next
-accepted time. Dancing releases when accepted music runs out, and stale onset
-energy also decays. Elapsed status follows submitted
-samples with the outstanding output lead subtracted, not decoder progress.
-Natural EOF drains accepted audio then releases dance. The sink delay is an
-estimate; real acoustic and motor phase need robot measurement.
+## Song structure and timing
 
-`music.py` owns sessions, bounded room handoff, the decoder worker, output pump
-and stop/hold policy. Hardware owns this controller after audio startup and
-closes it before media shutdown. It runs no capture API. Conversation supplies
-the tap and foreground holds. A held session continues playing at
-`10**(-18/20) = .12589254` gain but has no beat-driven motion. Default volume
-is .35, maximum .5, with output clipped to normalized PCM. Gain ramps take
-40 ms to duck and 400 ms to start or restore. Unqualified AEC
-paths cap music more conservatively at .2. These are digital gains, not SPL.
+Playback still primes after 480 ms of decoded PCM or EOF. Analysis never gates
+this threshold. A single separate cancellable worker scans local files as fast
+as its duty budget permits, discards PCM and publishes compact section plans
+while scanning and at EOF. Replacements coalesce; never create a scan thread
+per command. Playback has its own bounded worker, so full analysis cannot block
+its decoder. A scan may finish after playback starts, in which case only future
+accepted frames use its result.
+
+Aggregate one-second chroma and normalized spectral-band timbre. Compare nearby
+aggregates for novelty and section boundaries, and compare section centroids
+for recurring families. Bound rolling history to 120 s and family prototypes
+to 64; compact long-file summaries rather than retaining PCM or every FFT.
+A repeated energetic family is a chorus candidate. Full-file recurrence marks
+its first occurrence too. Repeated sections keep the same signature/family,
+with bounded growth per return. Rising energy across several seconds adds
+tension; an abrupt energy rise after a quieter passage marks a drop. Drops get
+the largest allowed gain. The complete plan fades the outro over its last four
+seconds. These are musical heuristics, not authoritative verse/chorus labels.
+
+Streams use the existing one-second decode lookahead and 120 s past summary,
+with no second network decode. Room mode has only captured past audio and online
+repetition detection. Gaps reset classification, timing and recurrence.
+
+Only `MusicMix.accepted` publishes frames and metadata onto audible time.
+`audible_feature = accepted_start + (sample - source_offset)/rate + .06`.
+Underflow produces no source progress. Rejected sink writes terminate the music
+session, including rejection during speech, rather than retrying consumed data.
+A new plan cannot change already accepted features. Natural EOF drains accepted
+samples and releases movement; stop and replacement discard future features.
+
+## Companion signatures
+
+Peak sections request a two- or four-beat move before their accepted start.
+A conversation-owned async task permits one outstanding dance request and a
+small per-session cache. It skips foreground holds. Library lookup accepts
+canonical dance intents matched to character/tempo, with aliases to existing
+expression variants when a dance-specific library has not been built.
+The robot validates finite nine-axis poses, centers them as offsets, caps them,
+and time-warps their normalized progress over an integer beat duration. Repeated
+choruses reuse cached frames. The same audio bands continue modulating the move.
+
+An absent, saturated or slow companion leaves band-driven motion running.
+A late result is usable for a later peak only, never inserted mid-move. ANIMATE
+has no cancel message and canceled requests occupy a connection slot until the
+remote answers; keep one request alive instead of repeatedly timing out/retrying.
+Stop/replacement discards results by session identity, and conversation shutdown
+cancels the task.
+
+## Music admission and optional identity
+
+Use deterministic spectral evidence instead of adding an unmeasured ONNX model
+and assets. YAMNet is a candidate for later evaluation, but this checkout has no
+Pi timing or validated ONNX artifact for it. Reuse tonal concentration, chroma
+stability, spectral flatness, sustained energy and multi-band tempo regularity.
+Room admission requires sustained harmonic content and repeated rhythmic or
+polyphonic evidence over several seconds. A periodic single tap is insufficient.
+Close admission on speech/noise evidence, silence or stale capture. Only admitted
+music refreshes the eight-second room timeout. A room request alone must not
+suppress gaze or claim dancing. Playback speech/noise also produces no dance.
+Test generated music, isolated stems, single taps, noise and the repository's
+recorded speech fixtures. A broad room/TV corpus remains a robot qualification
+requirement; spectral heuristics can miss sparse music or reject vocals.
+
+PyAV reads file container and stream tags. PyAV 16.1 and current main copy
+container metadata at open, so live ICY titles need a bounded HTTP reader that
+requests `Icy-MetaData: 1`, strips fragmented metadata blocks, and supplies audio
+to PyAV. Test actual local ICY audio decoding and changes. Restrict redirects to
+HTTP(S), preserve cancellation/read deadlines, and discard transport diagnostics.
+
+`--room-song-id` defaults off. `--acoustid-api-key` or `ACOUSTID_API_KEY` supplies
+the owner's key. Only an active requested room dance collects a bounded admitted
+music window. Chromaprint runs locally via fpcalc, with PCM through stdin and
+no temporary audio file. At most one lookup is outstanding; use HTTPS POST for
+fingerprint, duration, client key and requested result fields. No PCM, transcript,
+location or device identity leaves the robot. This is optional best-effort
+recognition: AcoustID's recording fingerprints may not match short noisy excerpts.
+Missing fpcalc/key, cancellation and service failure skip without affecting dance.
+
+## Budget and verification plan
+
+Assume four Pi cores, reserving at least 3.5 for wake, STT, vision and operating
+system work. Target sustained live music work below 10% of one Pi core; full-file
+background scanning may use another 15% of one core. Bound scan CPU by sleeping
+against thread CPU time, with a startup yield until playback is primed. Measure
+Mac process CPU/audio duration and first-480-ms decode latency; do not extrapolate
+Mac speed into a claimed Pi result. Keep rolling state and full-file compact
+plans below 32 MiB, and include full analysis plus classification in benchmarks.
+
+Each requested part gets its own commit. Tests use literal expectations for
+band isolation, quiet/drop scaling, different-song trajectories, A-B-A-B family
+reuse, build/drop/outro, companion failure and beat retiming, metadata updates,
+speech/tap rejection, stop/replacement and position/jerk bounds. Run the requested
+full suite and review the resulting integration twice before finalizing.
+
+## Design comparison
+
+Two independent candidates and a cross-judge reviewed the existing code. Choose
+A's end-anchored accepted features and motor-owned filter; add B's compact family
+map, single companion request and explicit lifecycle limits. Both initially
+mapped some instruments to the wrong axes, corrected above to the user's mapping.
+Reject a full precomputed pose score because late analysis would need to revise
+past movement. Reject full analysis in the bounded playback decoder because the
+queue prevents it reaching later sections. Preserve the shared output architecture.
+
+## References
+
+- [PyAV metadata snapshot](https://github.com/PyAV-Org/PyAV/blob/v16.1.0/av/container/input.pyx)
+- [FFmpeg ICY options](https://ffmpeg.org/ffmpeg-protocols.html#http)
+- [YAMNet model](https://github.com/tensorflow/models/tree/master/research/audioset/yamnet)
+- [AcoustID lookup protocol](https://acoustid.org/webservice)
+- [Chromaprint stdin and format options](https://github.com/acoustid/chromaprint/blob/master/src/cmd/fpcalc.cpp)
 
 ## Wake, speech and lifecycle
 
@@ -161,48 +231,7 @@ assumed echo-cancelled. Qualification proves configuration, not residual echo
 quality. Gain limits, stronger wake threshold and prompt ducking protect wake;
 lyrics saying the exact wake phrase and loud room music remain acoustic risks.
 
-## Design comparison
-
-Independent candidates A and B are recorded in `/tmp/reachy-dance-a.md` and
-`/tmp/reachy-dance-b.md`. Both traced the one-reader, one-motor-writer invariants.
-A places output ownership in hardware; B starts with controller-owned lanes
-and evaluates speaker-lock handoff. Select A's hardware-owned shared clock,
-adapt B's full lifecycle holds and captured-context preservation. Replace A's
-queued speech writer with synchronous mixing under one output lock. This
-hides the same timing complexity with fewer queues and preserves call behavior.
-Reject speaker-lock serialization because it pauses rather than ducks music;
-reject a second SDK player because its timeline and flushing are independent.
-Both candidates used the same available model family, so review diversity is
-architectural rather than model-based. No design checkpoint was requested.
-Cross-review at `/tmp/reachy-dance-review.md` agreed with this choice and
-identified lazy installation during a reply as a race. Construct the output
-owner eagerly at hardware startup, but start workers only on demand. Its
-speech-only path remains a synchronous, unchanged PCM push.
-
-## Verification and remaining risks
-
-Separate commits cover tracker/motion, playback/coexistence, then contract/CLI/docs.
-Literal tests cover 90/120/150 BPM clicks, beat and pose timing, energy, limits,
-pattern changes, silence and duration, mixing/duck ratios, stop/replacement,
-wake/hush/sleep/notification, single reader and payload validation. Preserve
-4096-byte guide and 8192-byte registration budgets. The guide is 3124 bytes;
-registration is 6753 bytes including framing, or 7039 with the worst escaped
-place label. Codec tests decode actual MP3, Ogg Opus, FLAC and WAV, plus WAV
-over an ephemeral loopback HTTP server. Sink acceptance, stale commands,
-nonblocking capture, shutdown and the actual motor loop run against local fakes.
-
-Remaining risks include ambiguous beats, tempo changes, SDK differences, Pi
-CPU contention and thermal behavior. Sustained music without sharp onsets can
-produce no dance. Speech and other rhythmic sounds can produce onsets; the
-tracker classifies neither music nor meter. Continuous conversation
-holds dancing, including an open listening window. Dancing suppresses face
-tracking and camera eligibility for wave wake, so acoustic wake is the way to
-interrupt an active dance. No local benchmark
-can verify four Pi cores under simultaneous wake, STT and vision. No local
-test can verify speaker SPL, physical stop latency, motor comfort or acoustic
-echo cancellation. Those remain explicit robot-only checks.
-
-## Measurements
+## Previous implementation measurements
 
 The reproducible benchmark is `bench/music.py`; `bench/music.json` contains
 the numeric results. This run used arm64 macOS 26.4, Python 3.13.14, NumPy
