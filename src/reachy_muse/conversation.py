@@ -3355,7 +3355,9 @@ class ReachyService(PairedService):
     def run_command(self, name: str, params: dict, timeout_ms: int | None = None, *,
                     session: LinkSession | None = None) -> dict:
         if name in MUSIC_COMMANDS:
-            return self._music_command(name, params, timeout_ms, session=session)
+            result = self._music_command(name, params, timeout_ms, session=session)
+            log.info("Reachy command name=%s outcome=%s", name, "ok" if result["ok"] else result["error"])
+            return result
         if name == "reachy.notify":
             return self._notify(params, timeout_ms, session=session)
         if name in ("reachy.expression", "reachy.move"):
@@ -3412,7 +3414,8 @@ class ReachyService(PairedService):
         try:
             if not isinstance(params, _CommandParams):
                 params = _CommandParams(name, params, timeout_ms)
-        except ValueError:
+        except ValueError as error:
+            log.info("Reachy %s parameters rejected: %s", name, error)
             return {"ok": False, "error": "invalid_parameters"}
         active = self._voice
         if active is None or session is not None and active[1].session is not session:
@@ -3460,7 +3463,8 @@ class ReachyService(PairedService):
         except (CommandTimeout, CommandCancelled):
             future.cancel()
             return {"ok": False, "error": "interrupted"}
-        except Exception:
+        except Exception as error:
+            log.warning("Reachy %s failed: %s", name, type(error).__name__)
             return {"ok": False, "error": "music_unavailable"}
         finally:
             cancelled.set()
