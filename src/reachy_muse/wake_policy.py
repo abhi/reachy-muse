@@ -41,6 +41,7 @@ class WakeContext:
     blocked: bool = False
     speaking: bool = False
     playback: tuple[str, ...] = ()
+    music: bool = False
 
 
 @dataclass(frozen=True)
@@ -274,6 +275,18 @@ class WakePolicy:
                 alignment_ms = (time.monotonic() - started) * 1000
         if reason == "accepted" and not valid():
             reason = "capture_gap"
+        if reason == "accepted" and context.music:
+            if replay:
+                floor = max(.35, self.fallback_threshold)
+                strong = await asyncio.to_thread(detector.replay_candidate, floor)
+            else:
+                score = getattr(candidate, "score", None)
+                strong = (getattr(candidate, "phrase_verified", False)
+                          and isinstance(score, (int, float)) and score >= .9)
+            if not strong:
+                reason = "music_threshold"
+            elif not valid():
+                reason = "capture_gap"
         accepted = reason == "accepted"
         if accepted:
             self._last_accept = self._samples

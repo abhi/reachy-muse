@@ -328,6 +328,7 @@ class _CaptureBuffer:
                 playback += item.playback[overlap:]
             context = WakeContext(blocked=any(item.blocked for item in contexts),
                                   speaking=any(item.speaking for item in contexts),
+                                  music=any(item.music for item in contexts),
                                   playback=playback)
         result = _CapturedAudio(samples, chunk.discard, self.gap, self.gap_reason,
                                 captured_at=captured_at, wake_context=context)
@@ -593,6 +594,7 @@ class VoiceConversation:
         self._startup = startup or StartupTimeline()
         self._ready = asyncio.Event()
         self.hardware = hardware
+        self.music = getattr(hardware, "music", None)
         self.session_id = session_id
         self.owns_chat = owns_chat
         self.silence_s = silence_s
@@ -674,6 +676,8 @@ class VoiceConversation:
             await self._apply_cue(cue)
 
     async def _apply_cue(self, cue: plan.Cue) -> None:
+        if self.music is not None and isinstance(cue, plan.SetState):
+            self.music.hold("pose", cue.state.value != "idle")
         if isinstance(cue, plan.Gesture):
             await asyncio.to_thread(self.hardware.gesture, cue.name)
         else:
@@ -823,6 +827,7 @@ class VoiceConversation:
     def _wake_capture_context(self, now):
         return WakeContext(blocked=self._input_blocked() or now < self._wake_unknown_output_until,
                            speaking=self._muted or now < self._echo_until,
+                           music=self.music is not None and self.music.playing,
                            playback=tuple(text for text, until in tuple(self._audible) if until > now - 2.5))
 
     async def run(self) -> None:
@@ -845,6 +850,8 @@ class VoiceConversation:
             raise ConnectionError("Muse voice stream ended")
         finally:
             self._closed = True
+            if self.music is not None:
+                self.music.stop(speech=True)
             tasks.update(self._command_tasks)
             for task in tasks:
                 task.cancel()
@@ -1225,9 +1232,10 @@ class VoiceConversation:
                 budget = getattr(self.hardware, "vision_budget", None)
                 if budget is not None:
                     budget.observe("wake", len(audio) / 16000)
-                if context is not None:
-                    return await self._wake_policy.feed(wake, audio, context=context,
-                                                        valid=lambda: not capture.gap)
+                if self._wake_policy is not None:
+                    return await self._wake_policy.feed(wake, audio,
+                        context=context or self._wake_capture_context(time.monotonic()),
+                        valid=lambda: not capture.gap)
                 return await asyncio.to_thread(wake.feed, audio)
             if wake_resampler is None:
                 detected = await feed(sample)
@@ -1525,6 +1533,7 @@ class VoiceConversation:
                                  and turn_task is None and follow_up_task is None and held is None
                                  and not pending_turns and not self._briefing_slots and not recording_active())
                 await watch_wave(wave_eligible)
+                self._sync_music()
                 if self.wave_wake and wave_eligible and self.hardware.take_wave():
                     await watch_wave(False)
                     if not self.hardware.claim_wave():
@@ -1767,6 +1776,7 @@ class VoiceConversation:
         scheduled = False
         overflow = False
         budget = getattr(self.hardware, "vision_budget", None)
+        music = getattr(self, "music", None)
 
         def deliver():
             nonlocal pending_samples, scheduled, overflow
@@ -1818,6 +1828,8 @@ class VoiceConversation:
                         continue
                     gap = previous_duration is not None and now - last_sample > max(duration, previous_duration) + .25
                     previous_duration, last_sample = duration, now
+                    if music is not None:
+                        music.tap(sample, now, gap=gap)
                     options = dict(discard=muted_at_start or self._input_blocked(), gap=gap,
                                    captured_at=now, gap_reason="SDK read or capture scheduling stall" if gap else None)
                     if self._wake_policy is not None:
@@ -2399,7 +2411,8 @@ class VoiceConversation:
         return _HeldRequest(endpoint.audio, text, request.wake_epoch, request.timeline)
 
     async def _obey(self, text: str, started: float, timeline: TurnTimeline) -> DeviceCommand | None:
-        allowed = executable(wake=self.wake_enabled, output=self._has_output(),
+        allowed = executable(wake=self.wake_enabled, output=self._has_output()
+                             or self.music is not None and self.music.active,
                              face=getattr(self.hardware, "face_tracking_enabled", False) is True,
                              volume=callable(getattr(self.hardware, "change_volume", None)))
         command = await self.backends.commands.recognize(text, allowed)
@@ -2618,6 +2631,8 @@ class VoiceConversation:
                 log.info("Muse moved Reachy during its realtime reply; Reachy's own expressions wait")
 
     def _hush(self) -> None:
+        if self.music is not None:
+            self.music.stop(speech=True)
         self._moments.stop()
         self._hush_floor = next(_SPEECH_SERIALS)
         self._say_hushed = True
@@ -2631,6 +2646,8 @@ class VoiceConversation:
 
     async def _admit_wake(self, now: float, *, strip_required: bool, source: str = "voice") -> None:
         """Shared acoustic/visual wake state and greeting motion."""
+        if self.music is not None:
+            self.music.hold("conversation", True)
         self._say_hushed = False
         self._observe_presence(source)
         self._wake_at = now
@@ -2736,12 +2753,27 @@ class VoiceConversation:
     @contextlib.asynccontextmanager
     async def _own_speaker(self, cursor: PlaybackCursor):
         async with self._speaker_lock:
+            if self.music is not None:
+                self.music.hold("speech", True)
             if self._wake_direction is not None:
                 self._wake_direction.clear()
             if self._speaker_cursor is not None and self._speaker_cursor is not cursor:
                 await self._drain_speech(self._speaker_cursor)
             self._speaker_cursor = cursor
-            yield
+            try:
+                yield
+            finally:
+                if self.music is not None:
+                    self.music.hold("speech", False)
+                    self._sync_music()
+
+    def _sync_music(self):
+        if self.music is not None:
+            self.music.hold("conversation", bool(
+                self._wake_deadline is not None or self._wake_first_request_pending
+                or self._turn_active or self.job is not None or self._hearing_open()
+                or self._has_output() or self._playback.user_speaking
+                or self.call is not None and self.call.working))
 
     def _prepare_line(self, voice, line: SpokenLine):
         prepared = voice.prepare(line, self.hardware.output_sample_rate)
@@ -2972,7 +3004,7 @@ class VoiceConversation:
             await hardware_call(self.hardware.set_state, state,
                                 expression=None if timed_motion else self._pose_expression(state, expression))
             log.info("Reachy speech resumed after microphone silence")
-        async def push(samples) -> None:
+        async def push(samples) -> float | None:
             nonlocal samples_played
             if self._hush_floor != hush_floor or (allowed is not None and not allowed()):
                 raise _SpeechSuperseded
@@ -2999,11 +3031,11 @@ class VoiceConversation:
                         nonlocal entered, finished
                         entered = time.monotonic()
                         try:
-                            self.hardware.play_audio(samples, **motion)
+                            return self.hardware.play_audio(samples, **motion)
                         finally:
                             finished = time.monotonic()
                     try:
-                        await hardware_call(measured_write)
+                        accepted_end = await hardware_call(measured_write)
                     finally:
                         resumed = time.monotonic()
                         for key, elapsed in (("dispatch_ms_max", entered - dispatched),
@@ -3011,13 +3043,14 @@ class VoiceConversation:
                                              ("return_ms_max", resumed - finished)):
                             write_timing[key] = max(write_timing[key], elapsed * 1000)
                 else:
-                    await hardware_call(self.hardware.play_audio, samples, **motion)
+                    accepted_end = await hardware_call(self.hardware.play_audio, samples, **motion)
                 if accepting:
                     audible()
                 samples_played += len(samples)
                 if on_audio is not None:
                     on_audio()
                 self._speech_progress_at = time.monotonic()
+                return accepted_end
             finally:
                 if accepting and on_accepting is not None:
                     await on_accepting(False)

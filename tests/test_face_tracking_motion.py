@@ -47,6 +47,7 @@ def drive(monkeypatch, action, *, ticks=140, **options):
                                  sleep_on_close=False, **options)
     controller._np, controller._robot = np, robot
     controller._output_sample_rate = 16000
+    controller._start_music()
     controller._layers = MotionLayers(controller._style)
     controller._generated_gain = Ramp(1)
     controller._face_follower = follower = Follower()

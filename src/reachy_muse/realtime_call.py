@@ -434,26 +434,27 @@ class RealtimeSpeaker:
         if mark.accent is not None and self._timed:
             self._extras.setdefault("accents", []).append((0, mark.accent))
 
-    async def _push(self, samples) -> None:
+    async def _push(self, samples) -> float | None:
         extras, self._extras = self._extras, {}
         task = asyncio.create_task(asyncio.to_thread(self._hardware.play_audio, samples, **extras))
         cancelled = False
         while True:
             try:
-                await asyncio.shield(task)
+                accepted_end = await asyncio.shield(task)
                 break
             except asyncio.CancelledError:
                 if task.cancelled():
                     raise
                 cancelled = True
         now = time.monotonic()
-        until = max(self._cursor.end, now) + len(samples) / self._rate
+        until = accepted_end if accepted_end is not None else max(self._cursor.end, now) + len(samples) / self._rate
         self._audible_responses[self._response_id] = until
         if len(self._audible_responses) > 8:
             del self._audible_responses[min(self._audible_responses, key=self._audible_responses.get)]
         self._on_audible(self._audible_text, until)
         if cancelled:
             raise asyncio.CancelledError
+        return accepted_end
 
     async def _finish(self, player: PCMPlayer) -> None:
         await player.finish()

@@ -98,6 +98,7 @@ def run(expressive):
                                   sleep_on_close=False, style=MotionStyle())
     c._np, c._robot = np, robot
     c._output_sample_rate = 16000
+    c._start_music()
     c._layers, c._generated_gain = MotionLayers(MotionStyle()), Ramp(1)
     c._moves = Library()
     c._require_running = lambda: None

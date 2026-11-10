@@ -29,6 +29,7 @@ def controller():
     hardware._layers = MotionLayers(MotionStyle(sway='sdk'))
     hardware._robot = type('Robot', (), {'media': Speaker()})()
     hardware._require_running = lambda: None
+    hardware._start_music()
     return hardware
 
 

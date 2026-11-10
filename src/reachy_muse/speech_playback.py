@@ -98,7 +98,7 @@ class PCMPlayer:
     def __init__(
         self,
         sample_rate: int,
-        push: Callable[[object], Awaitable[None]],
+        push: Callable[[object], Awaitable[float | None]],
         gate: SpeechPlayback,
         *,
         on_start: Callable[[], Awaitable[None]] | None = None,
@@ -233,18 +233,19 @@ class PCMPlayer:
                 chunk = samples[offset:offset + self._chunk_samples]
                 await self._ready()
                 if metrics is None:
-                    await self._push(chunk)
+                    accepted_end = await self._push(chunk)
                 else:
                     push_started = self._clock()
                     try:
-                        await self._push(chunk)
+                        accepted_end = await self._push(chunk)
                     finally:
                         waited = max(0.0, self._clock() - push_started)
                         self._push_wait_s.append(waited)
                         metrics["push_count"] += 1
                         metrics["push_wait_ms_max"] = max(metrics["push_wait_ms_max"], waited * 1000)
                 self._samples_sent += len(chunk)
-                self._cursor.end = max(self._cursor.end, self._clock()) + len(chunk) / self._rate
+                self._cursor.end = (accepted_end if accepted_end is not None else
+                                    max(self._cursor.end, self._clock()) + len(chunk) / self._rate)
                 await self._sleep_until(self._cursor.end - self._lead_s)
         finally:
             if metrics is not None:

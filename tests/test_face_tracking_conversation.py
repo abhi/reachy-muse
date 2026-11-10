@@ -28,6 +28,7 @@ def test_conversation_enables_gaze_while_listening_thinking_and_speaking(monkeyp
     controller._np, controller._robot = np, FakeRobot()
     controller._layers = MotionLayers(MotionStyle())
     controller._output_sample_rate = rig.hardware.output_sample_rate
+    controller._start_music()
     controller._require_running = lambda: None
     controller._face_follower = follower = Follower()
     states = []

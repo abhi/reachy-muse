@@ -145,6 +145,7 @@ def test_subtle_fallback_and_library_variants_stay_within_calibrated_bounds():
 def test_actual_speaker_push_precedes_analysis_and_refinement_keeps_the_sentence_serial(monkeypatch):
     hardware = controller()
     hardware._output_sample_rate = 24000
+    hardware._start_music()
     observed = []
     hardware._robot.media.push_audio_sample = lambda audio: observed.append(hardware._sentence_delivery.samples)
     monkeypatch.setattr("reachy_muse.hardware.time.monotonic", lambda: 10.)
@@ -163,6 +164,7 @@ def test_actual_speaker_push_precedes_analysis_and_refinement_keeps_the_sentence
 def test_command_preemption_cannot_restart_from_old_prosody():
     hardware = controller()
     hardware._output_sample_rate = 24000
+    hardware._start_music()
     pcm = rising_pcm()
     hardware.play_audio(pcm[:960], sentence=classify_sentence("The report is ready."))
     hardware._sentences.cancel()
@@ -281,6 +283,7 @@ def test_a_greeting_split_across_realtime_deltas_corrects_the_playing_variant():
 def test_an_unplayed_or_empty_chunk_does_not_consume_a_variant():
     hardware = controller()
     hardware._output_sample_rate = 24000
+    hardware._start_music()
     plan = classify_sentence("The report is on the desk.")
     hardware.play_audio(np.array([], dtype=np.float32), sentence=plan)
     hardware._robot.media.fail = True

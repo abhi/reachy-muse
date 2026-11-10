@@ -1256,6 +1256,7 @@ def test_a_command_during_a_spoken_clip_waits_for_its_fade_out_without_a_jump(mo
                                  sleep_on_close=False, style=MotionStyle(sway="sdk", breathing=False))
     controller._np, controller._robot = np, robot
     controller._output_sample_rate = 16000
+    controller._start_music()
     controller._layers, controller._generated_gain = MotionLayers(controller._style), Ramp(1)
     controller._moves = move_library()(EMOTIONS_DATASET)
     controller._require_running = lambda: None
@@ -1319,6 +1320,7 @@ def test_replacement_clip_fades_continuously_when_interrupted(monkeypatch, inter
                                  sleep_on_close=False, style=MotionStyle(sway="sdk", breathing=False))
     controller._np, controller._robot = np, robot
     controller._output_sample_rate = 16000
+    controller._start_music()
     controller._layers, controller._generated_gain = MotionLayers(controller._style), Ramp(1)
     controller._moves = Library()
     controller._require_running = lambda: None
@@ -1428,6 +1430,7 @@ def test_clear_after_sentence_gesture_assignment_cancels_only_sentence_motion(
     )
     controller._np, controller._robot = np, robot
     controller._output_sample_rate = 16000
+    controller._start_music()
     controller._layers, controller._generated_gain = MotionLayers(controller._style), Ramp(1)
     controller._require_running = lambda: None
 
@@ -2156,6 +2159,7 @@ def test_library_sentence_motion_is_audio_ordered_and_cancelled_with_epoch(monke
     controller = ReachyController(pose_factory=pose_factory, sleep_on_close=False)
     controller._np, controller._robot = np, robot
     controller._output_sample_rate = 16000
+    controller._start_music()
     controller._layers = MotionLayers(controller._style)
     controller._require_running = lambda: None
     monkeypatch.setattr(reachy_muse.hardware.time, 'monotonic', lambda: 1000.0)
@@ -2227,6 +2231,7 @@ def test_library_sentence_motion_uses_static_pose_when_clips_are_disabled(monkey
     )
     controller._np, controller._robot = np, robot
     controller._output_sample_rate = 16000
+    controller._start_music()
     controller._layers, controller._generated_gain = MotionLayers(controller._style), Ramp(1)
     motion = Motion(25, ((0., 0., 0., 16., 0., 0., -10., 10., 0.),) * 50)
 

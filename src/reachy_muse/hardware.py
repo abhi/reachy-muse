@@ -228,6 +228,7 @@ class ReachyController:
         pose_factory: Callable | None = None, pose_interpolator: Callable | None = None,
         moves_factory: Callable | None = None,
         speaker_eq_gains: tuple[float, ...] | None = None,
+        music_dir: Path = Path("~/Music"),
         style: MotionStyle = MotionStyle(),
     ) -> None:
         if antenna_mode not in ("both", "left", "right", "none"):
@@ -290,6 +291,8 @@ class ReachyController:
         self._robot = None
         self._speaker_eq = None
         self._speaker_eq_gains = speaker_eq_gains
+        self._music_dir = music_dir
+        self.music = None
         self._np = None
         self._sample_rate = 0
         self._output_sample_rate = 0
@@ -541,6 +544,7 @@ class ReachyController:
             self._robot.media.start_playing()
             from reachy_muse.duplex_audio import verified_echo_cancelled_input
             self.echo_cancelled_input = verified_echo_cancelled_input(self._robot.media.audio)
+            self._start_music()
             log.info("Reachy microphone echo cancellation: %s",
                      "verified hardware duplex" if self.echo_cancelled_input else "playback gating")
             if self._speaker_eq is not None:
@@ -560,6 +564,14 @@ class ReachyController:
         except BaseException:
             self.close()
             raise
+
+    def _start_music(self) -> None:
+        from reachy_muse.music import MusicController
+        from reachy_muse.music_audio import MusicOutput
+        output = MusicOutput(self._output_sample_rate, lambda pcm: self._robot.media.push_audio_sample(pcm),
+                             lambda: self._robot.media.audio.clear_player(), clock=lambda: time.monotonic())
+        self.music = MusicController(output, self._sample_rate, folder=self._music_dir,
+                                     echo_cancelled=self.echo_cancelled_input, motion=self._enable_motion)
 
     def _require_running(self) -> None:
         if self._failure is not None:
@@ -594,7 +606,7 @@ class ReachyController:
             raise ReachyHardwareError(f"Reachy Mini microphone flush failed: {exc}") from exc
 
     def play_audio(self, samples: np.ndarray, *, sentence: SentenceMotion | None = None,
-                   accents: Sequence[tuple[int, str]] = ()) -> None:
+                   accents: Sequence[tuple[int, str]] = ()) -> float | None:
         """Queue mono float32 samples at output_sample_rate without waiting.
 
         ``accents`` are (sample index into ``samples``, terminal) pairs: a sentence-end accent
@@ -608,7 +620,7 @@ class ReachyController:
             audio = self._np.ascontiguousarray(self._np.clip(audio, -1, 1))
             with self._audio_lock:
                 try:
-                    self._robot.media.push_audio_sample(audio)
+                    start = self.music.output.push_speech(audio)
                 except Exception as exc:
                     raise ReachyHardwareError(f"Reachy Mini speaker failed: {exc}") from exc
                 at = time.monotonic()
@@ -635,7 +647,6 @@ class ReachyController:
                         move = _Frames(clamp_to_limits(poses), planned.fps, False, self._head)
                 from reachy_muse.motion.layers import SWAY_LATENCY_S
                 from reachy_muse.motion.sentence_timeline import SentenceEvent
-                start = max(at, self._audio_end)
                 self._audio_end = start + audio.size / self._output_sample_rate
                 with self._state_lock:
                     if sentence is not None and epoch == self._sentences.epoch:
@@ -659,7 +670,8 @@ class ReachyController:
                     for index, terminal in accents:
                         self._sentences.offer(SentenceEvent(start + index / self._output_sample_rate + SWAY_LATENCY_S,
                                                             epoch, "end", (terminal, -1)))
-                self._layers.feed_speech(audio, self._output_sample_rate, at)
+                self._layers.feed_speech(audio, self._output_sample_rate, start)
+                return self._audio_end
 
     def finish_sentence(self) -> None:
         """Schedule a sentence-end accent at the accepted audio tail."""
@@ -677,11 +689,8 @@ class ReachyController:
         self._require_running()
         with self._audio_lock:
             try:
-                audio_backend = self._robot.media.audio
-                clear_player = getattr(audio_backend, "clear_player", None)
-                if clear_player is None:
-                    raise RuntimeError("Reachy Mini audio backend cannot flush playback; use SDK 1.9 or newer")
-                clear_player()
+                self.music.output.clear()
+                self.music.dance.clear()
             except Exception as exc:
                 raise ReachyHardwareError(f"Reachy Mini playback flush failed: {exc}") from exc
             now = time.monotonic()
@@ -701,6 +710,8 @@ class ReachyController:
             raise ValueError(f"Unknown conversation state: {state}")
         if expression is not None and expression not in BUILTIN_EXPRESSIONS:
             raise ValueError(f"Unknown reply expression: {expression}")
+        if state == "sleeping" and self.music is not None:
+            self.music.stop()
         if expression in HEAD_GESTURES:
             self.gesture(expression)
             expression = None
@@ -1083,6 +1094,8 @@ class ReachyController:
             return claimed
 
     def close(self) -> None:
+        if self.music is not None:
+            self.music.close()
         self._stop.set()
         self._close_doa()
         with self._wave_lock:
@@ -1108,6 +1121,7 @@ class ReachyController:
                 robot.__exit__(None, None, None)
         self._sample_rate = 0
         self._output_sample_rate = 0
+        self.music = None
         self.echo_cancelled_input = False
         if self._shutdown_failure is not None:
             failure, self._shutdown_failure = self._shutdown_failure, None
@@ -1412,6 +1426,7 @@ class ReachyController:
                     gesture_epoch = self._gesture_epoch
                 gesture_active = (gesture is not None and gesture_age < GESTURE_DURATION_S
                                   and (gesture_epoch is None or gesture_epoch == self._sentences.epoch))
+                dancing = self.music is not None and self.music.dancing and state == "idle"
                 wants_wobbling = self._style.sway == "sdk" and state == "speaking" and not gesture_active
                 if self.wobbling_available and wants_wobbling != wobbling_active:
                     try:
@@ -1487,7 +1502,7 @@ class ReachyController:
                         self._clip is not None or self._generated is not None
                         or self._deferred is not None or commanded or gesture_active and gesture != "wave"))
                     self._update_face_tracking(state, commanded=(
-                        commanded or self._deferred is not None or self._speaker_turn is not None))
+                        commanded or dancing or self._deferred is not None or self._speaker_turn is not None))
                     if self._motion_epoch != self._sentences.epoch:
                         self._motion_epoch = self._sentences.epoch
                         self._clip_line = state_started
@@ -1543,7 +1558,7 @@ class ReachyController:
                     if not commanded and self._deferred is None:
                         self._cue_clip(now, state, expression, state_started)
                     pose, antennas = self._state_pose(state, elapsed, expression, progress_age=progress_age)
-                    followed = self._face_pose(pose)
+                    followed = pose if dancing else self._face_pose(pose)
                     tracking = followed is not pose
                     gaze_target = self._np.zeros(9)
                     if tracking:
@@ -1600,6 +1615,7 @@ class ReachyController:
                             self._speaker_turn = None
                     resting = self._pose_vector(*self._rest) + self._layers.breathing_offset(
                         now, active=state in ("idle", "listening") and not gesture_active
+                        and not dancing
                         and not (self._watching or self._wave_watching or self._wave_pending is not None))
                     accenting = progress_age is not None and 0 <= progress_age < PROGRESS_ACCENT_S
                     generated = self._show_generated(now, resting, yielding=gesture_active or accenting)
@@ -1610,8 +1626,12 @@ class ReachyController:
                     written = (composed + gaze + gesture_offset
                                + self._layers.sway_offset(now, active=state == "speaking")
                                + self._np.asarray(self._sentences.offset(now)))
+                    if self.music is not None:
+                        written += self.music.dance.sample(now, eligible=(dancing and not gesture_active
+                            and not commanded and self._clip is None and self._generated is None
+                            and self._deferred is None and self._speaker_turn is None))
                     resting_camera = ((state in ("idle", "listening", "sleeping") or (state == "error" and self._watching))
-                                      and not gesture_active and not commanded
+                                      and not dancing and not gesture_active and not commanded
                                       and self._clip is None and self._generated is None and self._deferred is None)
                     # Invalidate before writing a moving target, even between camera samples.
                     self._update_wave_gaze(now, written, eligible=resting_camera)

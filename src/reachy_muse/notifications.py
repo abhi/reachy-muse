@@ -4,6 +4,7 @@
 """Deliver the local inbox between conversation turns through Reachy's speech owner."""
 
 import asyncio
+from contextlib import asynccontextmanager
 import logging
 import time
 
@@ -47,7 +48,7 @@ class Notifications:
         if (item is None or self._lock.locked() or self.presence()["present"] is not True
                 or not self.available() or timeout_s <= ATTENTION_S):
             return
-        async with self._lock:
+        async with self._lock, self._music_hold():
             item = self.inbox.pending()
             if item is None:
                 return
@@ -70,3 +71,14 @@ class Notifications:
             if not claimed and result.get("reason") in ("busy", "asleep", "hushed", "not_ready", "unavailable", "interrupted"):
                 return
             self.inbox.finish(item, spoken=result["spoken"], reason=result.get("reason", "spoken"))
+
+    @asynccontextmanager
+    async def _music_hold(self):
+        music = getattr(self.voice, "music", None)
+        if music is not None:
+            music.hold("notification", True)
+        try:
+            yield
+        finally:
+            if music is not None:
+                music.hold("notification", False)

@@ -29,6 +29,7 @@ def simulate(monkeypatch, events, *, ticks=120, follower=None):
                                   sleep_on_close=False, style=MotionStyle(breathing=False, expression_clips=False))
     controller._np, controller._robot = np, robot
     controller._output_sample_rate = 16000
+    controller._start_music()
     controller._layers, controller._generated_gain = MotionLayers(controller._style), Ramp(1)
     controller._face_follower = follower
 

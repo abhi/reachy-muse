@@ -39,13 +39,14 @@ class Hardware(FakeHardware):
         self.controller._layers = MotionLayers(MotionStyle(sway="sdk"))
         self.controller._require_running = lambda: None
         self.controller._robot = SimpleNamespace(media=SimpleNamespace(push_audio_sample=self.accept))
+        self.controller._start_music()
 
     def accept(self, samples):
         self.pushes.append(time.perf_counter())
         self.pcm.append(samples.copy())
 
     def play_audio(self, samples, **kwargs):
-        self.controller.play_audio(samples, **kwargs)
+        return self.controller.play_audio(samples, **kwargs)
 
     def finish_sentence(self):
         self.controller.finish_sentence()
