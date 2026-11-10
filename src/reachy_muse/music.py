@@ -67,6 +67,9 @@ class _Session:
     gain_target: float = -1.
     gain_remaining: int = 0
     last_beat: float = 0.
+    is_music: bool = False
+    energy: float = 0.
+    character: str = "calm"
     room_gap: bool = False
     primed: bool = False
     plan: SongPlan = SongPlan()
@@ -104,7 +107,8 @@ class MusicController:
     @property
     def dancing(self):
         with self._lock:
-            return (self._session is not None and self._session.dance and not self._holds
+            return (self._session is not None and self._session.dance and self._session.is_music
+                    and self._clock() - self._session.last_beat < 1. and not self._holds
                     and (self._session.source is None or self._clock() < self._session.tail + .06)
                     and self._clock() >= self.output.speech_until)
 
@@ -119,7 +123,9 @@ class MusicController:
             label = ({"title": session.title} if session.title is not None else
                      {"source": session.source} if session.source is not None else {})
             return {"playing": session.source is not None, "elapsed": round(elapsed, 2),
-                    "dancing": self.dancing, **label, **session.metadata.payload()}
+                    "dancing": self.dancing, "music_detected": session.is_music,
+                    "energy": round(session.energy, 3), "character": session.character,
+                    **label, **session.metadata.payload()}
 
     def play(self, params, *, allowed=lambda: True):
         source = params.get("url") or select_track(self.folder, params["query"])
@@ -324,8 +330,12 @@ class MusicController:
                         self.dance.clear()
                     session.plan = structure.plan()
                     self.dance.offer_features(features, offset, start, self.input_rate, session.plan, session.signatures)
-                    if beats:
-                        session.last_beat = at
+                    if features:
+                        latest = features[-1]
+                        session.is_music = latest.music
+                        session.energy, session.character = latest.loudness, latest.character
+                        if latest.music:
+                            session.last_beat = at
             offset += len(pcm)
 
     def _mix(self, count, start, speech):
@@ -375,6 +385,12 @@ class MusicController:
             session.consumed += used
             for beats, features, offset, at, plan, metadata in scheduled:
                 session.metadata = metadata
+                if features:
+                    latest = features[-1]
+                    session.is_music = latest.music
+                    session.energy, session.character = latest.loudness, latest.character
+                    if latest.music:
+                        session.last_beat = at + (latest.sample - offset) / self.output.rate
                 if features:
                     self.dance.offer_features(features, offset, at, self.output.rate, plan, session.signatures)
                 self.dance.offer(beats, offset, at, self.output.rate)

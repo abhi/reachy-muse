@@ -8,6 +8,7 @@ import math
 import numpy as np
 
 from reachy_muse.motion.dance import BeatTracker
+from reachy_muse.music_classifier import MusicClassifier
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +50,7 @@ class AudioAnalyzer:
         self._tracker = BeatTracker(rate)
         self._last_beat = 0
         self._beat_index = 0
+        self._classifier = MusicClassifier()
 
     def feed(self, pcm) -> tuple[AudioFeatures, ...]:
         audio = np.concatenate((self._pending, pcm))
@@ -86,14 +88,15 @@ class AudioAnalyzer:
             loudness = min(1., rms / .25)
             character = "calm" if loudness < .3 else "upbeat" if period < .48 and regularity > .5 else "groove"
             self._sample += self.hop
-            result.append(AudioFeatures(
+            feature = AudioFeatures(
                 self._sample - 1, loudness, min(1., float(levels[0]) / .22),
                 min(1., self._snare), min(1., self._treble),
                 min(1., math.sqrt(pitched_power) / .22) * tonal,
                 tuple(map(float, chroma)), tuple(map(float, levels / max(float(np.linalg.norm(levels)), 1e-10))),
                 flatness, tonal, period,
                 self._beat_index + (self._sample - 1 - self._last_beat) / self.rate / period,
-                regularity, character=character))
+                regularity, character=character)
+            result.append(replace(feature, music=self._classifier.feed(feature)))
         return tuple(result)
 
     def finish(self) -> tuple[AudioFeatures, ...]:

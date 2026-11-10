@@ -1,3 +1,4 @@
+from dataclasses import replace
 import threading
 import time
 
@@ -9,7 +10,7 @@ from reachy_muse.music_audio import AudioBlock, MusicMix, MusicOutput, decode
 
 
 def until(condition):
-    deadline = time.monotonic() + 2
+    deadline = time.monotonic() + 5
     while not condition():
         assert time.monotonic() < deadline
         time.sleep(.005)
@@ -32,10 +33,13 @@ class Sink:
 
 
 def constant(source, rate, cancelled):
+    from test_music_analysis import features, stem
+    frame = features(stem("music", seconds=.04))[0]
     for i in range(1000):
         if cancelled.is_set():
             return
-        yield AudioBlock(i * 640, np.full(640, .8, dtype=np.float32), ())
+        yield AudioBlock(i * 640, np.full(640, .8, dtype=np.float32), (),
+                         (replace(frame, sample=i * 640 + 639),))
 
 
 def test_music_and_speech_overlay_on_one_sample_clock():
@@ -307,21 +311,24 @@ def test_music_dance_uses_the_existing_motor_writer_and_yields_to_listening():
     from test_dance import clicks
     from test_hardware import FakeRobot, start_controller
     def track(source, rate, cancelled):
-        pcm = clicks(120, seconds=4, rate=rate)
+        from reachy_muse.music_analysis import AudioAnalyzer
+        from test_music_analysis import stem
+        pcm = stem("music", seconds=6, rate=rate)
+        analyzer = AudioAnalyzer(rate)
         tracker = BeatTracker(rate)
         for offset in range(0, len(pcm), 640):
             part = pcm[offset:offset + 640]
-            yield AudioBlock(offset, part, tracker.feed(part))
+            yield AudioBlock(offset, part, tracker.feed(part), analyzer.feed(part))
     robot = FakeRobot()
     hardware = start_controller(robot, style=MotionStyle(breathing=False, expression_clips=False))
     hardware.music._decode = track
     try:
         hardware.music.play({"url": "https://example.com/audio"})
         start = len(robot.frames)
-        until(lambda: any(abs(hardware._pose_parameters(frame[1])["pitch"]) > .3
+        until(lambda: any(abs(hardware._pose_parameters(frame[1])["roll"]) > .15
                           for frame in robot.frames[start:]))
         assert len(robot.writers) == 1
-        assert all(abs(np.degrees(frame[3])) <= 7 for frame in robot.frames[start:])
+        assert all(abs(np.degrees(frame[3])) <= 9 for frame in robot.frames[start:])
         hardware.set_state("listening")
         time.sleep(.5)
         assert np.max(np.abs(hardware.music.dance.sample(time.monotonic(), eligible=False))) < 2

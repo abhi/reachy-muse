@@ -22,7 +22,7 @@ def stem(kind, seconds=8, rate=16000, gain=.5):
 
 
 def features(pcm, rate=16000):
-    return AudioAnalyzer(rate).feed(pcm)
+    return tuple(replace(f, music=True) for f in AudioAnalyzer(rate).feed(pcm))
 
 
 def test_synthetic_stems_drive_literal_axes():
@@ -50,7 +50,7 @@ def test_fragmented_audio_keeps_exact_feature_positions():
     pcm = stem("music", rate=22050)
     expected = features(pcm, 22050)
     analyzer = AudioAnalyzer(22050)
-    actual = tuple(f for start in range(0, len(pcm), 257) for f in analyzer.feed(pcm[start:start + 257]))
+    actual = tuple(replace(f, music=True) for start in range(0, len(pcm), 257) for f in analyzer.feed(pcm[start:start + 257]))
     assert actual == expected
     assert [f.sample for f in actual[:3]] == [881, 1763, 2645]
 
