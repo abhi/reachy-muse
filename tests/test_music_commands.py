@@ -77,12 +77,12 @@ def test_registered_music_commands_and_stale_play_after_stop_or_hush():
     asyncio.run(run())
 
 
-def test_slow_folder_lookup_cannot_restart_music_after_stop(monkeypatch):
+def test_slow_folder_lookup_cannot_restart_music_after_stop(monkeypatch, tmp_path):
     entered, release = threading.Event(), threading.Event()
     def find(*args):
         entered.set()
         release.wait(2)
-        return Path("/private/tmp/music.wav")
+        return tmp_path / "music.wav"
     monkeypatch.setattr("reachy_muse.music.select_track", find)
     async def run():
         service, voice, _ = command_device()
