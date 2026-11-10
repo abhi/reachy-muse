@@ -229,6 +229,8 @@ class ReachyController:
         moves_factory: Callable | None = None,
         speaker_eq_gains: tuple[float, ...] | None = None,
         music_dir: Path = Path("~/Music"),
+        room_song_id: bool = False,
+        acoustid_api_key: str | None = None,
         style: MotionStyle = MotionStyle(),
     ) -> None:
         if antenna_mode not in ("both", "left", "right", "none"):
@@ -292,6 +294,8 @@ class ReachyController:
         self._speaker_eq = None
         self._speaker_eq_gains = speaker_eq_gains
         self._music_dir = music_dir
+        self._room_song_id = room_song_id
+        self._acoustid_api_key = acoustid_api_key
         self.music = None
         self._np = None
         self._sample_rate = 0
@@ -571,7 +575,8 @@ class ReachyController:
         output = MusicOutput(self._output_sample_rate, lambda pcm: self._robot.media.push_audio_sample(pcm),
                              lambda: self._robot.media.audio.clear_player(), clock=lambda: time.monotonic())
         self.music = MusicController(output, self._sample_rate, folder=self._music_dir,
-                                     echo_cancelled=self.echo_cancelled_input, motion=self._enable_motion)
+                                     echo_cancelled=self.echo_cancelled_input, motion=self._enable_motion,
+                                     room_song_id=self._room_song_id, acoustid_api_key=self._acoustid_api_key)
 
     def _require_running(self) -> None:
         if self._failure is not None:

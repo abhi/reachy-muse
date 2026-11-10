@@ -1407,3 +1407,20 @@ motor commands. No robot or Muse account is needed for those tests. Use
 The robot command list contains only the Reachy commands. It does not advertise
 the generic Linux shell or file commands. State files and credentials retain
 the Muse Gadget SDK's owner-only storage policy.
+
+### Optional room song identification
+
+`--room-song-id` enables a single AcoustID lookup during an explicitly requested
+room dance. It defaults off and requires a local Chromaprint `fpcalc` executable
+plus an owner-supplied `ACOUSTID_API_KEY` environment variable or
+`--acoustid-api-key`. Keys, fingerprints and returned song identity are never
+logged. The robot sends only its locally computed fingerprint, clip duration,
+client key and lookup options, using HTTPS POST. It never uploads PCM for song
+identification. Collection resets on speech, capture gaps and conversation holds;
+stop discards pending work and late results. Already sent requests cannot be
+recalled. Missing tools or failed/uncertain matches skip cleanly.
+
+Chromaprint/AcoustID matches are best effort for short room excerpts. This is
+not a promise of recognition through noise. See the
+[AcoustID protocol](https://acoustid.org/webservice) and the
+[Chromaprint project](https://github.com/acoustid/chromaprint).

@@ -336,6 +336,10 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--place", type=place_label, help="Owner-defined location, for example office")
             item.add_argument("--music-dir", type=Path, default=Path("~/Music"),
                               help="Owner music folder for mp3/ogg/flac/wav playback (default: ~/Music)")
+            item.add_argument("--room-song-id", action="store_true",
+                              help="Opt in to room song lookup: send a local Chromaprint fingerprint to AcoustID")
+            item.add_argument("--acoustid-api-key", default=os.environ.get("ACOUSTID_API_KEY"),
+                              help="Owner AcoustID client key; prefer ACOUSTID_API_KEY to avoid shell history")
             item.add_argument("--face-follow", action="store_true",
                               help="Follow a nearby face locally during conversations; camera frames stay on the robot")
             item.add_argument("--face-follow-idle", action="store_true",
@@ -502,6 +506,8 @@ def _hardware(args, *, motion=True):
                            face_follow_idle=getattr(args, "face_follow_idle", False),
                            speaker_eq_gains=COMPANION_SPEAKER_EQ_GAINS if companion else SPEAKER_EQ_GAINS,
                            music_dir=getattr(args, "music_dir", Path("~/Music")).expanduser(),
+                           room_song_id=getattr(args, "room_song_id", False),
+                           acoustid_api_key=getattr(args, "acoustid_api_key", None),
                            style=MotionStyle.from_env(), **watcher)
 
 

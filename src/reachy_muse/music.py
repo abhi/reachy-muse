@@ -23,6 +23,7 @@ from reachy_muse.motion.dance_signature import DanceSignature
 from reachy_muse.music_analysis import AudioAnalyzer
 from reachy_muse.music_structure import SongPlan, StructureTracker
 from reachy_muse.music_metadata import TrackMetadata
+from reachy_muse.music_identity import RoomSongID
 from reachy_muse.music_audio import AudioBlock, MusicMix, MusicOutput, decode
 
 log = logging.getLogger(__name__)
@@ -80,9 +81,12 @@ class _Session:
 
 class MusicController:
     def __init__(self, output: MusicOutput, input_rate: int, *, folder=Path("~/Music"),
-                 echo_cancelled=False, motion=True, decoder=decode):
+                 echo_cancelled=False, motion=True, decoder=decode, room_song_id=False, acoustid_api_key=None):
         self.output, self.input_rate = output, input_rate
         self.folder, self.motion = folder, motion
+        self._identity_key = acoustid_api_key if room_song_id else None
+        self._identity_job = None
+        self._identity_worker = None
         self._cap = .5 if echo_cancelled else .2
         self._decode = decoder
         self._clock = output.clock
@@ -153,6 +157,9 @@ class MusicController:
                 self._pump = threading.Thread(target=self._run_output, name="reachy-music-output", daemon=True)
                 self._analysis_worker = threading.Thread(target=self._analyze_files, name="reachy-music-analysis", daemon=True)
                 self._analysis_worker.start()
+                if self._identity_key:
+                    self._identity_worker = threading.Thread(target=self._identify_room, name="reachy-music-identity", daemon=True)
+                    self._identity_worker.start()
                 self._worker.start()
                 self._pump.start()
             self._changed.set()
@@ -168,6 +175,7 @@ class MusicController:
     def stop(self, *, speech=False):
         with self._lock:
             session, self._session = self._session, None
+            self._identity_job = None
             if session is not None:
                 session.cancelled.set()
                 self.dance.clear()
@@ -179,7 +187,7 @@ class MusicController:
         self.stop(speech=True)
         self._closed.set()
         self._changed.set()
-        for worker in (self._worker, self._pump, self._analysis_worker):
+        for worker in (self._worker, self._pump, self._analysis_worker, self._identity_worker):
             if worker is not None:
                 worker.join(timeout=6)
                 if worker.is_alive():
@@ -303,6 +311,7 @@ class MusicController:
                 log.warning("Music analysis failed")
 
     def _room(self, session):
+        identifier = RoomSongID(self.input_rate, self._identity_key) if self._identity_key else None
         tracker = BeatTracker(self.input_rate)
         analyzer = AudioAnalyzer(self.input_rate)
         structure = StructureTracker(self.input_rate)
@@ -316,6 +325,8 @@ class MusicController:
                 continue
             pcm, at, gap = frame
             if gap:
+                if identifier is not None:
+                    identifier.feed(np.empty(0), False)
                 tracker = BeatTracker(self.input_rate)
                 analyzer = AudioAnalyzer(self.input_rate)
                 structure = StructureTracker(self.input_rate)
@@ -336,7 +347,23 @@ class MusicController:
                         session.energy, session.character = latest.loudness, latest.character
                         if latest.music:
                             session.last_beat = at
+                    if identifier is not None:
+                        audio = identifier.feed(pcm, session.is_music and not self._holds)
+                        if audio is not None:
+                            self._identity_job = (session, identifier, audio)
             offset += len(pcm)
+
+    def _identify_room(self):
+        while not self._closed.wait(.05):
+            with self._lock:
+                job, self._identity_job = self._identity_job, None
+            if job is None:
+                continue
+            session, identifier, audio = job
+            metadata = identifier.lookup(audio, session.cancelled)
+            with self._lock:
+                if self._session is session and not session.cancelled.is_set() and metadata is not None:
+                    session.metadata = metadata
 
     def _mix(self, count, start, speech):
         session = self._session
