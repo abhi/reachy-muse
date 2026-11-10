@@ -140,7 +140,7 @@ class DanceTimeline:
             for beat in beats:
                 self._beats.append((start + (beat.sample - offset) / rate, beat))
 
-    def offer_features(self, frames, offset: int, start: float, rate: int, plan=None) -> None:
+    def offer_features(self, frames, offset: int, start: float, rate: int, plan=None, signatures=None) -> None:
         with self._lock:
             for frame in frames:
                 seconds = frame.sample / rate
@@ -148,7 +148,10 @@ class DanceTimeline:
                 if section is not None:
                     frame = replace(frame, phase=(seconds - section.start) / frame.period)
                 gain = plan.gain(seconds) if plan is not None else 1.
-                pose = np.clip(feature_pose(frame) * gain, -DANCE_CAP, DANCE_CAP)
+                pose = feature_pose(frame)
+                if section is not None and signatures and section.family in signatures and frame.music:
+                    pose += signatures[section.family].sample(section, seconds, frame)
+                pose = np.clip(pose * gain, -DANCE_CAP, DANCE_CAP)
                 self._features.append((start + (frame.sample - offset) / rate, pose))
 
     def clear(self) -> None:

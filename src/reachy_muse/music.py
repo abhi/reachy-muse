@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import deque
 from dataclasses import dataclass, field
 import logging
@@ -18,6 +19,7 @@ import time
 import numpy as np
 
 from reachy_muse.motion.dance import BeatTracker, DanceTimeline
+from reachy_muse.motion.dance_signature import DanceSignature
 from reachy_muse.music_analysis import AudioAnalyzer
 from reachy_muse.music_structure import SongPlan, StructureTracker
 from reachy_muse.music_audio import AudioBlock, MusicMix, MusicOutput, decode
@@ -67,6 +69,8 @@ class _Session:
     room_gap: bool = False
     primed: bool = False
     plan: SongPlan = SongPlan()
+    signatures: dict = field(default_factory=dict)
+    requested: set = field(default_factory=set)
 
 
 class MusicController:
@@ -207,7 +211,7 @@ class MusicController:
                 continue
             try:
                 for block in self._decode(session.source, self.output.rate, session.cancelled):
-                    if isinstance(session.source, str):
+                    if isinstance(session.source, str) and block.plan.sections:
                         with self._lock:
                             session.plan = block.plan
                     while not session.cancelled.is_set():
@@ -225,6 +229,37 @@ class MusicController:
             finally:
                 with self._lock:
                     session.eof = True
+
+    async def signatures(self, source):
+        while True:
+            await asyncio.sleep(.1)
+            if source is None or not getattr(source, "library_available", False):
+                continue
+            with self._lock:
+                session = self._session
+                if session is None or not session.dance or self._holds or len(session.requested) >= 8:
+                    continue
+                seconds = (session.consumed / self.output.rate if session.source is not None
+                           else self._clock() - session.started)
+                peak = next((s for s in session.plan.sections
+                             if (s.chorus or s.drop) and s.family not in session.requested
+                             and s.end > seconds), None)
+                if peak is None:
+                    continue
+                session.requested.add(peak.family)
+            try:
+                motion = await source.generate("dance_" + peak.character, 4 * peak.period)
+                with self._lock:
+                    if self._session is session and not session.cancelled.is_set():
+                        ready = (session.consumed / self.output.rate if session.source is not None
+                                 else self._clock() - session.started)
+                        signature = DanceSignature.from_motion(motion, ready)
+                        if signature is not None:
+                            session.signatures[peak.family] = signature
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.warning("Music signature unavailable")
 
     def _analyze_files(self):
         handled = None
@@ -286,7 +321,7 @@ class MusicController:
                     if gap:
                         self.dance.clear()
                     session.plan = structure.plan()
-                    self.dance.offer_features(features, offset, start, self.input_rate, session.plan)
+                    self.dance.offer_features(features, offset, start, self.input_rate, session.plan, session.signatures)
                     if beats:
                         session.last_beat = at
             offset += len(pcm)
@@ -338,7 +373,7 @@ class MusicController:
             session.consumed += used
             for beats, features, offset, at, plan in scheduled:
                 if features:
-                    self.dance.offer_features(features, offset, at, self.output.rate, plan)
+                    self.dance.offer_features(features, offset, at, self.output.rate, plan, session.signatures)
                 self.dance.offer(beats, offset, at, self.output.rate)
         return MusicMix(mixed * gains, accepted)
 

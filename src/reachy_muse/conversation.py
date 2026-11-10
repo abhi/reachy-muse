@@ -839,6 +839,8 @@ class VoiceConversation:
             microphone = asyncio.create_task(self._microphone())
             warming = asyncio.create_task(self._warm_after_ready())
             moments = asyncio.create_task(self._moments.keep_ready())
+            if self.music is not None:
+                tasks.add(asyncio.create_task(self.music.signatures(self.backends.motion)))
             morning = asyncio.create_task(self._morning.run(self)) if self._morning is not None else None
             notifications = asyncio.create_task(self.notifications.run()) if self.notifications is not None else None
             watched = {task for task in (subscriber, microphone, notifications, morning) if task is not None}

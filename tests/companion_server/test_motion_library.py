@@ -214,3 +214,13 @@ def test_builder_repairs_malformed_manifest_entries(tmp_path, malformed):
     path.write_text(json.dumps(manifest))
     assert library.build_library(tmp_path, Engine(), {}, variants=1, only=["happy"]) == 1
     assert animate(load(tmp_path)).frames
+
+
+def test_dance_intents_use_existing_library_and_keep_expression_lookup(tmp_path):
+    library.build_library(tmp_path, Engine(), {}, variants=1, only=["nod"])
+    animator = load(tmp_path)
+    dance = animate(animator, intent="dance_groove", duration=2.)
+    speech = animate(animator, intent="nod", duration=2.5)
+    assert len(dance.frames) == 50
+    assert len(speech.frames) == 62
+    assert dance.frames[0] == speech.frames[0]

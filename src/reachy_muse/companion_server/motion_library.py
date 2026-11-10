@@ -49,6 +49,13 @@ _EXPRESSION_PROMPTS = {
 INTENTS = {expression.value: IntentSpec(prompts) for expression, prompts in _EXPRESSION_PROMPTS.items()}
 INTENTS.update({moment.value: IntentSpec(spec.intents, spec.duration_s) for moment, spec in MOMENTS.items()})
 INTENTS["wake"] = IntentSpec(("waking up with a gentle stretch", "perking up after a quiet rest"))
+INTENTS.update({
+    "dance_calm": IntentSpec(("a slow flowing musical sway with a gentle head tilt",)),
+    "dance_groove": IntentSpec(("a rhythmic head nod and body groove on four musical beats",)),
+    "dance_upbeat": IntentSpec(("an energetic musical bounce with playful antenna accents",)),
+})
+DANCE_FALLBACK = {"dance_calm": "neutral", "dance_groove": "nod", "dance_upbeat": "happy"}
+
 
 
 def _json(value: Any) -> bytes:
@@ -255,6 +262,8 @@ class LibraryAnimator:
         if not math.isfinite(duration_s) or not 0.5 <= duration_s <= 15:
             return empty
         key = self._aliases.get(intent, intent)
+        if key in DANCE_FALLBACK and key not in self._animations:
+            key = DANCE_FALLBACK[key]
         choices = self._animations.get(key, ())
         cursor = self._next.get(key, 0)
         ordered = choices[cursor:] + choices[:cursor]
