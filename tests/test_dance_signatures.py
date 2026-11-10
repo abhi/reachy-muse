@@ -91,3 +91,101 @@ def test_one_slow_request_survives_replacement_without_retry_storm():
             await asyncio.gather(task, return_exceptions=True)
             music.close()
     asyncio.run(run())
+
+
+def test_signature_aligns_to_measured_offbeat_origin():
+    signature = DanceSignature.from_motion(Motion(25, ((0.,) * 9, (2.,) * 9, (0.,) * 9)), 1.)
+    section = Section(6., 10., 0, 0, True, .8, 0, False, .5, "groove", beat_origin=.25)
+    frame = replace(features(stem("music", seconds=.2))[-1], bass=1, loudness=1)
+    assert signature.sample(section, 6.1, frame).tolist() == [0.] * 9
+    assert signature.sample(section, 7.25, frame)[8] == pytest.approx(.7)
+
+
+def test_stream_lookahead_requests_first_peak_before_playback_reaches_it():
+    from reachy_muse.music_analysis import AudioAnalyzer
+    from reachy_muse.music_audio import AudioBlock
+    from reachy_muse.music_structure import StructureTracker
+    from test_music_structure import song
+    async def run():
+        sink = Sink()
+        called = asyncio.Event()
+        def decoder(source, rate, cancelled):
+            analyzer, structure = AudioAnalyzer(rate), StructureTracker(rate)
+            pcm = song()
+            for offset in range(0, len(pcm), 640):
+                if cancelled.is_set():
+                    return
+                part = pcm[offset:offset + 640]
+                frames = analyzer.feed(part)
+                structure.feed(frames)
+                yield AudioBlock(offset, part, (), frames, structure.plan())
+        music = MusicController(sink.output(), 16000, decoder=decoder)
+        class Source:
+            library_available = True
+            async def generate(self, intent, duration):
+                assert music._session.consumed / 16000 < 6
+                called.set()
+                return Motion(25, ((0.,) * 9, (1.,) * 9))
+        task = asyncio.create_task(music.signatures(Source()))
+        try:
+            music.play({"url": "https://example.invalid/live"})
+            for _ in range(350):
+                sink.now += .02
+                music.tick()
+                await asyncio.sleep(.005)
+                if called.is_set():
+                    break
+            assert called.is_set()
+            assert music._session.signatures
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            music.close()
+    asyncio.run(run())
+
+
+def test_paced_live_stream_prepares_peak_character_before_first_drop():
+    import time
+    from reachy_muse.music_analysis import AudioAnalyzer
+    from reachy_muse.music_audio import AudioBlock
+    from reachy_muse.music_structure import StructureTracker
+    from test_music_structure import song
+    async def run():
+        sink = Sink()
+        def decoder(source, rate, cancelled):
+            analyzer, structure = AudioAnalyzer(rate), StructureTracker(rate)
+            pcm = song()
+            began = time.monotonic()
+            for offset in range(0, len(pcm), 640):
+                if cancelled.wait(max(0., began + (offset + 640) / rate - time.monotonic())):
+                    return
+                part = pcm[offset:offset + 640]
+                frames = analyzer.feed(part)
+                structure.feed(frames)
+                yield AudioBlock(offset, part, (), frames, structure.plan())
+        controller = MusicController(sink.output(), 16000, decoder=decoder)
+        class Source:
+            library_available = True
+            async def generate(self, intent, duration):
+                return Motion(25, ((0.,) * 9, (1.,) * 9, (0.,) * 9))
+        task = asyncio.create_task(controller.signatures(Source()))
+        try:
+            began = time.monotonic()
+            controller.play({"url": "https://example.invalid/live"})
+            while time.monotonic() - began < 8:
+                sink.now = 10 + time.monotonic() - began
+                controller.tick()
+                await asyncio.sleep(.02)
+                peak = next((s for s in controller._session.plan.sections if s.drop and s.start >= 6), None)
+                if peak is not None:
+                    signature = controller._session.signatures[0, peak.character]
+                    assert signature.ready_after < 6
+                    assert controller._session.consumed / 16000 < 6
+                    break
+            else:
+                pytest.fail("No live drop preview")
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            controller.close()
+    asyncio.run(run())

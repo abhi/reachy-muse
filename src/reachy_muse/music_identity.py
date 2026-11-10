@@ -5,7 +5,9 @@ import shutil
 import subprocess
 import time
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from reachy_muse.music_http import open_http as urlopen, read_budget
 
 import numpy as np
 
@@ -68,8 +70,19 @@ class RoomSongID:
                               headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
             if cancelled.is_set():
                 return None
-            with urlopen(request, timeout=4.) as response:
-                payload = json.loads(response.read(65537))
+            with urlopen(request, timeout=4., cancelled=cancelled) as response:
+                read_budget(response, 4.)
+                parts, size = [], 0
+                deadline = time.monotonic() + 4.
+                while size <= 65536 and not cancelled.is_set() and time.monotonic() < deadline:
+                    part = response.read1(min(4096, 65537 - size))
+                    if not part:
+                        break
+                    parts.append(part)
+                    size += len(part)
+                else:
+                    return None
+                payload = json.loads(b"".join(parts))
             if cancelled.is_set() or payload.get("status") != "ok":
                 return None
             matches = sorted(payload.get("results", []), key=lambda item: item.get("score", 0), reverse=True)

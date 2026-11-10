@@ -90,3 +90,82 @@ def test_status_changes_only_with_accepted_blocks():
             "title": "Two", "artist": "Artist", "album": "Album", "genre": "Genre"}
     finally:
         music.close()
+
+
+def test_slow_http_body_returns_control_for_cancellation(monkeypatch):
+    import http.client
+    import socket
+    import time
+    from types import SimpleNamespace
+    from reachy_muse.music_stream import HTTPAudio
+    client, peer = socket.socketpair()
+    client.settimeout(.03)
+    done = threading.Event()
+    def send():
+        try:
+            peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+            while not done.wait(.01):
+                peer.sendall(b"x")
+        except OSError:
+            pass
+    worker = threading.Thread(target=send)
+    worker.start()
+    response = http.client.HTTPResponse(client)
+    response.begin()
+    monkeypatch.setattr("reachy_muse.music_stream.open_http", lambda *a, **kw: response)
+    cancelled = threading.Event()
+    try:
+        with HTTPAudio("http://example.invalid/audio", cancelled) as source:
+            started = time.monotonic()
+            assert source.read(4096) == b"x"
+            assert time.monotonic() - started < .1
+            cancelled.set()
+            assert source.read(4096) == b""
+    finally:
+        done.set()
+        client.close()
+        peer.close()
+        worker.join()
+
+
+@pytest.mark.parametrize("phase", ["headers", "chunks"])
+def test_cancellation_interrupts_slow_headers_and_chunk_framing(phase):
+    import time
+    from reachy_muse.music_stream import HTTPAudio
+    cancelled, done = threading.Event(), threading.Event()
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            try:
+                if phase == "headers":
+                    wire = b"HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\n\r\n"
+                else:
+                    self.wfile.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+                    self.wfile.flush()
+                    wire = b"000000000000000000000000000001\r\nx\r\n"
+                for byte in wire:
+                    if done.wait(.02):
+                        return
+                    self.wfile.write(bytes([byte]))
+                    self.wfile.flush()
+            except OSError:
+                pass
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = threading.Thread(target=server.serve_forever)
+    worker.start()
+    timer = threading.Timer(.15, cancelled.set)
+    timer.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(Exception):
+            with HTTPAudio(f"http://127.0.0.1:{server.server_port}/audio", cancelled) as source:
+                source.read(4096)
+        assert time.monotonic() - started < .6
+    finally:
+        cancelled.set()
+        done.set()
+        timer.cancel()
+        server.shutdown()
+        server.server_close()
+        worker.join()

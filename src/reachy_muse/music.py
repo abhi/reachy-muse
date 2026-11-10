@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import logging
 import math
 from pathlib import Path
@@ -56,7 +56,7 @@ class _Session:
     started: float
     deadline: float
     cancelled: threading.Event = field(default_factory=threading.Event)
-    blocks: queue.Queue = field(default_factory=lambda: queue.Queue(maxsize=25))
+    blocks: queue.Queue = field(default_factory=lambda: queue.Queue(maxsize=75))
     rooms: deque = field(default_factory=lambda: deque(maxlen=25))
     eof: bool = False
     failed: bool = False
@@ -72,6 +72,8 @@ class _Session:
     energy: float = 0.
     character: str = "calm"
     room_gap: bool = False
+    room_position: int = 0
+    analysis_epoch: int = 0
     primed: bool = False
     plan: SongPlan = SongPlan()
     metadata: TrackMetadata = TrackMetadata()
@@ -98,6 +100,7 @@ class MusicController:
         self._changed = threading.Event()
         self._worker = self._pump = self._analysis_worker = None
         output.music = self._mix
+        output.failed = self._output_failed
 
     @property
     def active(self):
@@ -227,9 +230,16 @@ class MusicController:
                 continue
             try:
                 for block in self._decode(session.source, self.output.rate, session.cancelled):
-                    if isinstance(session.source, str) and block.plan.sections:
+                    if isinstance(session.source, str):
                         with self._lock:
-                            session.plan = block.plan
+                            if block.epoch != session.analysis_epoch:
+                                session.analysis_epoch = block.epoch
+                                session.plan = block.plan
+                                session.signatures = {key: value for key, value in session.signatures.items()
+                                                      if key[0] >= block.epoch - 1}
+                                session.requested = {key for key in session.requested if key[0] >= block.epoch - 1}
+                            elif block.plan.sections:
+                                session.plan = block.plan
                     while not session.cancelled.is_set():
                         try:
                             session.blocks.put(block, timeout=.05)
@@ -253,25 +263,41 @@ class MusicController:
                 continue
             with self._lock:
                 session = self._session
-                if session is None or not session.dance or self._holds or len(session.requested) >= 8:
+                if (session is None or not session.dance or self._holds or len(session.requested) >= 8
+                        or session.source is None and not session.is_music):
                     continue
                 seconds = (session.consumed / self.output.rate if session.source is not None
-                           else self._clock() - session.started)
+                           else session.room_position / self.input_rate)
                 peak = next((s for s in session.plan.sections
-                             if (s.chorus or s.drop) and s.family not in session.requested
+                             if (s.chorus or s.drop) and (session.analysis_epoch, s.family) not in session.requested
                              and s.end > seconds), None)
+                epoch = session.analysis_epoch
+                key = (epoch, peak.family) if peak is not None else None
+                if peak is None and not session.plan.complete and session.plan.sections:
+                    profile = session.plan.sections[-1]
+                    for character in (profile.character, "upbeat" if profile.period < .48 else "groove"):
+                        if (epoch, character) not in session.requested:
+                            peak = replace(profile, character=character)
+                            key = (epoch, character)
+                            break
                 if peak is None:
                     continue
-                session.requested.add(peak.family)
+                session.requested.add(key)
+                prepared = session.signatures.get((epoch, peak.character))
+                if prepared is not None:
+                    session.signatures[key] = prepared
+                    continue
             try:
                 motion = await source.generate("dance_" + peak.character, 4 * peak.period)
                 with self._lock:
-                    if self._session is session and not session.cancelled.is_set():
+                    if (self._session is session and not session.cancelled.is_set()
+                            and epoch >= session.analysis_epoch - int(session.source is not None)):
                         ready = (session.consumed / self.output.rate if session.source is not None
-                                 else self._clock() - session.started)
+                                 else session.room_position / self.input_rate)
                         signature = DanceSignature.from_motion(motion, ready)
                         if signature is not None:
-                            session.signatures[peak.family] = signature
+                            session.signatures[key] = signature
+                            session.signatures.setdefault((epoch, peak.character), signature)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -331,6 +357,15 @@ class MusicController:
                 analyzer = AudioAnalyzer(self.input_rate)
                 structure = StructureTracker(self.input_rate)
                 offset = 0
+                with self._lock:
+                    session.room_position = 0
+                    session.analysis_epoch += 1
+                    session.signatures.clear()
+                    session.requested.clear()
+                    session.plan = SongPlan()
+                    session.is_music = False
+                    session.metadata = TrackMetadata()
+                    self._identity_job = None
             beats = tracker.feed(pcm)
             features = analyzer.feed(pcm)
             structure.feed(features)
@@ -340,7 +375,8 @@ class MusicController:
                     if gap:
                         self.dance.clear()
                     session.plan = structure.plan()
-                    self.dance.offer_features(features, offset, start, self.input_rate, session.plan, session.signatures)
+                    session.room_position = offset + len(pcm)
+                    self.dance.offer_features(features, offset, start, self.input_rate, session.plan, session.signatures, session.analysis_epoch)
                     if features:
                         latest = features[-1]
                         session.is_music = latest.music
@@ -350,7 +386,7 @@ class MusicController:
                     if identifier is not None:
                         audio = identifier.feed(pcm, session.is_music and not self._holds)
                         if audio is not None:
-                            self._identity_job = (session, identifier, audio)
+                            self._identity_job = (session, session.analysis_epoch, identifier, audio)
             offset += len(pcm)
 
     def _identify_room(self):
@@ -359,11 +395,16 @@ class MusicController:
                 job, self._identity_job = self._identity_job, None
             if job is None:
                 continue
-            session, identifier, audio = job
-            metadata = identifier.lookup(audio, session.cancelled)
-            with self._lock:
-                if self._session is session and not session.cancelled.is_set() and metadata is not None:
-                    session.metadata = metadata
+            self._identify_one(job)
+            job = None
+
+    def _identify_one(self, job):
+        session, epoch, identifier, audio = job
+        metadata = identifier.lookup(audio, session.cancelled)
+        with self._lock:
+            if (self._session is session and not session.cancelled.is_set()
+                    and session.analysis_epoch == epoch and metadata is not None):
+                session.metadata = metadata
 
     def _mix(self, count, start, speech):
         session = self._session
@@ -389,7 +430,9 @@ class MusicController:
             beats = tuple(b for b in block.beats if block.offset + position <= b.sample < block.offset + position + size)
             features = tuple(f for f in block.features if block.offset + position <= f.sample < block.offset + position + size)
             scheduled.append((beats, features, block.offset + position, start + used / self.output.rate + .06,
-                              session.plan if session.plan.at((block.offset + position) / self.output.rate) is not None else block.plan, block.metadata))
+                              session.plan if session.analysis_epoch == block.epoch
+                              and session.plan.at((block.offset + position) / self.output.rate) is not None
+                              else block.plan, block.metadata, block.epoch))
             session.position += size
             used += size
             if session.position == len(block.pcm):
@@ -410,7 +453,7 @@ class MusicController:
         def accepted():
             session.tail = start + used / self.output.rate
             session.consumed += used
-            for beats, features, offset, at, plan, metadata in scheduled:
+            for beats, features, offset, at, plan, metadata, epoch in scheduled:
                 session.metadata = metadata
                 if features:
                     latest = features[-1]
@@ -419,7 +462,7 @@ class MusicController:
                     if latest.music:
                         session.last_beat = at + (latest.sample - offset) / self.output.rate
                 if features:
-                    self.dance.offer_features(features, offset, at, self.output.rate, plan, session.signatures)
+                    self.dance.offer_features(features, offset, at, self.output.rate, plan, session.signatures, epoch)
                 self.dance.offer(beats, offset, at, self.output.rate)
         return MusicMix(mixed * gains, accepted)
 
@@ -435,14 +478,18 @@ class MusicController:
                     self.stop()
             self.output.pump()
 
+    def _output_failed(self):
+        with self._lock:
+            session, self._session = self._session, None
+            self._identity_job = None
+            if session is not None:
+                session.cancelled.set()
+            self.dance.clear()
+
     def _run_output(self):
         while not self._closed.wait(.01):
             try:
                 self.tick()
             except Exception:
                 log.warning("Music output failed")
-                with self._lock:
-                    session, self._session = self._session, None
-                    if session is not None:
-                        session.cancelled.set()
-                    self.dance.clear()
+                self._output_failed()

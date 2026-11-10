@@ -25,7 +25,7 @@ class DanceSignature:
         return cls(frames, ready_after)
 
     def sample(self, section, seconds, frame):
-        start = math.ceil(section.start / section.period - 1e-8) * section.period
+        start = section.beat_origin + math.ceil((section.start - section.beat_origin) / section.period - 1e-8) * section.period
         if self.ready_after >= start or not (section.chorus or section.drop):
             return np.zeros(9)
         progress = (seconds - start) / (4 * section.period)

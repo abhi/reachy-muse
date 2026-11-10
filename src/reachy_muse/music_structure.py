@@ -20,6 +20,7 @@ class Section:
     drop: bool
     period: float
     character: str
+    beat_origin: float = 0.
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,8 @@ class SongPlan:
         section = self.at(seconds)
         gain = 1.
         if section is not None:
-            gain += min(.36, .12 * section.occurrence) + .2 * section.build
+            tension = min(1., max(0., (seconds - section.start) / max(1., section.end - section.start)))
+            gain += min(.36, .12 * section.occurrence) + .2 * section.build * tension
             if section.drop and seconds < section.start + section.period * 4:
                 gain *= 1.7
         if self.complete and self.sections:
@@ -70,6 +72,7 @@ class StructureTracker:
         self._bins = 0
         self._energy = deque(maxlen=4)
         self._current = None
+        self._preview = None
         self._latest = SongPlan()
 
     def feed(self, frames) -> None:
@@ -79,10 +82,34 @@ class StructureTracker:
                 self._summarize((self._second + 1))
             self._second = second
             self._frames.append(frame)
+            self._preview_drop()
+
+    def _preview_drop(self):
+        if self._current is None or len(self._frames) < 4 or not self._energy:
+            return
+        tail = self._frames[-4:]
+        start = (tail[0].sample + 1) / self.rate - .04
+        energy = sum(f.loudness for f in tail) / 4
+        if self._preview is None:
+            if (start - self._current.start < 2 or min(f.loudness for f in tail) < .15
+                    or energy < max(self._energy[-1] * 1.8, self._energy[-1] + .1)):
+                return
+            descriptor = _unit(np.concatenate((_unit(np.mean([f.chroma for f in tail], axis=0)) * .9,
+                                               _unit(np.mean([f.timbre for f in tail], axis=0)) * .4)))
+            scores = [float(descriptor @ prototype) for prototype in self._families]
+            family = int(np.argmax(scores)) if scores and max(scores) >= .9 else min(63, len(scores))
+            count = self._counts[family] if family < len(self._counts) else 0
+            first = tail[0]
+            self._preview = Section(start, start + .16, family, count, count > 0, energy, 0., True,
+                                    first.period, first.character, first.sample / self.rate - first.phase * first.period)
+        self._preview = replace(self._preview, end=(tail[-1].sample + 1) / self.rate)
+        past = self._plan(False).sections
+        self._latest = SongPlan((*past, self._preview))
 
     def _summarize(self, end):
         frames, self._frames = self._frames, []
         beginning = frames[0].sample // self.rate
+        self._preview = None
         chroma = _unit(np.mean([f.chroma for f in frames], axis=0))
         timbre = _unit(np.mean([f.timbre for f in frames], axis=0))
         descriptor = _unit(np.concatenate((chroma * .9, timbre * .4)))
@@ -109,7 +136,8 @@ class StructureTracker:
                     self._counts.append(0)
             occurrence = self._counts[family]
             self._counts[family] += 1
-            self._current = Section(beginning, end, family, occurrence, False, energy, build, drop, period, character)
+            self._current = Section(beginning, end, family, occurrence, False, energy, build, drop, period, character,
+                                    frames[0].sample / self.rate - frames[0].phase * frames[0].period)
             self._sum, self._bins = descriptor.copy(), 1
         else:
             self._bins += 1

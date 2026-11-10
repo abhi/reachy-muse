@@ -335,3 +335,22 @@ def test_music_dance_uses_the_existing_motor_writer_and_yields_to_listening():
         assert len(robot.writers) == 1
     finally:
         hardware.close()
+
+
+def test_rejected_mixed_speech_cancels_music_without_publishing_progress():
+    sink = Sink()
+    output = sink.output()
+    music = MusicController(output, 16000, decoder=constant)
+    try:
+        music.play({"url": "https://example.invalid/audio"})
+        until(lambda: bool(sink.frames))
+        session = music._session
+        consumed = session.consumed
+        output._push = lambda pcm: (_ for _ in ()).throw(RuntimeError("sink rejected"))
+        with pytest.raises(RuntimeError, match="sink rejected"):
+            output.push_speech(np.zeros(640, np.float32))
+        assert music.active is False
+        assert session.cancelled.is_set()
+        assert session.consumed == consumed
+    finally:
+        music.close()

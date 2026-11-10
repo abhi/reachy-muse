@@ -93,3 +93,17 @@ def test_full_analysis_does_not_block_playback_priming_or_survive_stop(tmp_path)
     finally:
         release.set()
         music.close()
+
+
+def test_drop_preview_precedes_480_ms_live_playback_lead():
+    tracker = StructureTracker(16000)
+    analyzer = AudioAnalyzer(16000)
+    pcm = song()
+    first_seen = None
+    for offset in range(0, 7 * 16000, 640):
+        tracker.feed(analyzer.feed(pcm[offset:offset + 640]))
+        if any(s.drop and s.start >= 6 for s in tracker.plan().sections):
+            first_seen = (offset + 640) / 16000
+            break
+    assert first_seen == pytest.approx(6.16, abs=.04)
+    assert first_seen - .48 < 6

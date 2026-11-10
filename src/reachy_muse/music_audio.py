@@ -28,6 +28,7 @@ class AudioBlock:
     features: tuple[AudioFeatures, ...] = ()
     plan: SongPlan = SongPlan()
     metadata: TrackMetadata = TrackMetadata()
+    epoch: int = 0
 
 
 @dataclass(frozen=True)
@@ -74,7 +75,13 @@ def decode(source, rate: int, cancelled: threading.Event):
                     for frame in resampler.resample(None):
                         yield frame, current
 
+            previous_metadata = tags
+            epoch = 0
             for frame, metadata in frames():
+                if network is not None and metadata != previous_metadata:
+                    structure = StructureTracker(rate)
+                    epoch += 1
+                    previous_metadata = metadata
                 diagnostics.clear()
                 pcm = np.nan_to_num(frame.to_ndarray().reshape(-1), nan=0., posinf=0., neginf=0.)
                 pending = np.concatenate((pending, np.clip(pcm, -1, 1)))
@@ -82,12 +89,12 @@ def decode(source, rate: int, cancelled: threading.Event):
                     part, pending = pending[:size].copy(), pending[size:]
                     features = analyzer.feed(part)
                     structure.feed(features)
-                    yield AudioBlock(offset, part, tracker.feed(part), features, structure.plan(), metadata)
+                    yield AudioBlock(offset, part, tracker.feed(part), features, structure.plan(), metadata, epoch)
                     offset += len(part)
             if len(pending) and not cancelled.is_set():
                 features = analyzer.feed(pending) + analyzer.finish()
                 structure.feed(features)
-                yield AudioBlock(offset, pending.copy(), tracker.feed(pending), features, structure.plan(), metadata)
+                yield AudioBlock(offset, pending.copy(), tracker.feed(pending), features, structure.plan(), metadata, epoch)
 
 
 class MusicOutput:
@@ -103,6 +110,7 @@ class MusicOutput:
         self.lock = threading.RLock()
         self.tail = self.speech_until = 0.
         self.music = None
+        self.failed = None
 
     def push_speech(self, pcm) -> float:
         with self.lock:
@@ -119,7 +127,12 @@ class MusicOutput:
         if music is None and not speech:
             return start
         mixed = pcm if music is None else np.clip(pcm + music.pcm, -1, 1).astype(np.float32)
-        self._push(mixed)
+        try:
+            self._push(mixed)
+        except Exception:
+            if self.failed is not None:
+                self.failed()
+            raise
         if music is not None:
             music.accepted()
         self.tail = start + len(pcm) / self.rate

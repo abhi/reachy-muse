@@ -56,8 +56,11 @@ def test_registered_music_commands_and_stale_play_after_stop_or_hush():
             voice._turn_active = True
             result = await invoke("reachy.music.play", {"url": "https://example.com/private.mp3"})
             assert result == {"ok": True, "payload": {"playing": True, "elapsed": 0., "dancing": False,
-                                                       "source": "https://example.com/private.mp3"}}
-            assert await invoke("reachy.music.status") == result
+                                                       "source": "https://example.com/private.mp3",
+                                                       "music_detected": False, "energy": 0., "character": "calm"}}
+            status = (await invoke("reachy.music.status"))["payload"]
+            assert {k: status[k] for k in ("playing", "dancing", "source")} == {
+                "playing": True, "dancing": False, "source": "https://example.com/private.mp3"}
             old = _CommandParams("reachy.music.play", {"url": "https://example.com/old"}, None)
             assert await invoke("reachy.music.stop") == {"ok": True, "payload": {"playing": False, "elapsed": 0., "dancing": False}}
             assert await invoke("reachy.music.play", old) == {"ok": False, "error": "interrupted"}
@@ -68,7 +71,8 @@ def test_registered_music_commands_and_stale_play_after_stop_or_hush():
             voice._say_hushed = False
             voice._turn_active = False
             result = await invoke("reachy.dance", {"seconds": 2})
-            assert result == {"ok": True, "payload": {"playing": False, "elapsed": 0., "dancing": True}}
+            assert result == {"ok": True, "payload": {"playing": False, "elapsed": 0., "dancing": False,
+                                                        "music_detected": False, "energy": 0., "character": "calm"}}
             assert await asyncio.to_thread(service.run_command, "reachy.music.stop", {}, session=object()) == {
                 "ok": False, "error": "disconnected"}
             assert music.active

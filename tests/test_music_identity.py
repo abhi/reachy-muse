@@ -34,7 +34,7 @@ def test_only_fingerprint_and_protocol_fields_leave_robot(monkeypatch, caplog):
             return 0
     monkeypatch.setattr(music_identity.subprocess, "Popen", Process)
     calls = []
-    def lookup(request, timeout):
+    def lookup(request, timeout, cancelled):
         calls.append(request)
         assert request.full_url == "https://api.acoustid.org/v2/lookup"
         assert request.method == "POST"
@@ -87,3 +87,54 @@ def test_opt_in_flag_and_environment_key(monkeypatch):
     on = parser().parse_args(["run", "--room-song-id", "--acoustid-api-key", "flag-key"])
     assert on.room_song_id is True
     assert on.acoustid_api_key == "flag-key"
+
+
+def test_completed_lookup_drops_raw_audio_reference():
+    import gc
+    import weakref
+    from reachy_muse.music_metadata import TrackMetadata
+    from test_music import until
+    controller = MusicController(Sink().output(), 16000, room_song_id=True, acoustid_api_key="key")
+    class Identifier:
+        def lookup(self, pcm, cancelled):
+            return TrackMetadata(title="Known")
+    try:
+        controller.listen()
+        pcm = np.ones(320000, np.float32)
+        reference = weakref.ref(pcm)
+        controller._identity_job = (controller._session, 0, Identifier(), pcm)
+        del pcm
+        until(lambda: controller.status().get("title") == "Known")
+        controller.stop()
+        gc.collect()
+        until(lambda: reference() is None)
+    finally:
+        controller.close()
+
+
+def test_capture_epoch_change_discards_inflight_identity():
+    import weakref
+    from test_music import until
+    from reachy_muse.music_metadata import TrackMetadata
+    entered, release = threading.Event(), threading.Event()
+    controller = MusicController(Sink().output(), 16000, room_song_id=True, acoustid_api_key="key")
+    class Identifier:
+        def lookup(self, pcm, cancelled):
+            entered.set()
+            release.wait(1)
+            return TrackMetadata(title="Old song")
+    try:
+        controller.listen()
+        session = controller._session
+        audio = np.ones(320000, np.float32)
+        reference = weakref.ref(audio)
+        controller._identity_job = (session, 0, Identifier(), audio)
+        del audio
+        assert entered.wait(1)
+        session.analysis_epoch += 1
+        release.set()
+        until(lambda: reference() is None)
+        assert controller.status().get("title") is None
+    finally:
+        release.set()
+        controller.close()
