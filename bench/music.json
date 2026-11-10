@@ -6,96 +6,42 @@
     "numpy": "2.5.3",
     "av": "19.0.2"
   },
-  "tracker_and_motion": [
+  "analysis_structure_classifier_and_motion": [
     {
       "rate": 16000,
       "audio_s": 600,
-      "cpu_s": 0.3057,
-      "wall_s": 0.3059,
-      "one_core_percent": 0.051,
+      "cpu_s": 2.4378,
+      "wall_s": 2.4393,
+      "one_core_percent": 0.4063,
       "beats": 1200,
-      "motion_ticks": 30000
+      "motion_ticks": 30000,
+      "feature_frames": 15000,
+      "admitted_frames": 14932
     },
     {
       "rate": 48000,
       "audio_s": 600,
-      "cpu_s": 0.3083,
-      "wall_s": 0.3087,
-      "one_core_percent": 0.0514,
+      "cpu_s": 2.6981,
+      "wall_s": 2.6997,
+      "one_core_percent": 0.4497,
       "beats": 1200,
-      "motion_ticks": 30000
+      "motion_ticks": 30000,
+      "feature_frames": 15000,
+      "admitted_frames": 14932
     }
   ],
-  "decode_and_tracker": {
+  "decode_and_full_analysis": {
     "audio_s": 60,
     "output_samples": 960000,
-    "cpu_s": 0.0473,
-    "wall_s": 0.0473,
-    "one_core_percent": 0.0788
+    "cpu_s": 0.2364,
+    "wall_s": 0.2365,
+    "one_core_percent": 0.394,
+    "first_480_ms_pcm_wall_ms": 12.496,
+    "sections": 1
   },
-  "wake": {
-    "clip_sha256": "1f401bde31192d2c956f218ce0f54a05abbcce0663fe5c614090bd38cb5d3254",
-    "verifier": "unavailable; production conservative replay",
-    "trials": [
-      {
-        "condition": "clean",
-        "hits": 1,
-        "audio_s": 2.0853125,
-        "cpu_s": 0.0625,
-        "decisions": [
-          {
-            "accepted": true,
-            "reason": "accepted",
-            "replay_floor": 0.25
-          }
-        ]
-      },
-      {
-        "condition": "music_20_db",
-        "hits": 1,
-        "audio_s": 2.0853125,
-        "cpu_s": 0.0801,
-        "decisions": [
-          {
-            "accepted": true,
-            "reason": "accepted",
-            "replay_floor": 0.35
-          }
-        ]
-      },
-      {
-        "condition": "music_10_db",
-        "hits": 1,
-        "audio_s": 2.0853125,
-        "cpu_s": 0.0809,
-        "decisions": [
-          {
-            "accepted": true,
-            "reason": "accepted",
-            "replay_floor": 0.35
-          }
-        ]
-      },
-      {
-        "condition": "music_0_db",
-        "hits": 0,
-        "audio_s": 2.0853125,
-        "cpu_s": 0.0766,
-        "decisions": [
-          {
-            "accepted": false,
-            "reason": "music_threshold",
-            "replay_floor": 0.35
-          }
-        ]
-      },
-      {
-        "condition": "music_only",
-        "hits": 0,
-        "audio_s": 30.0,
-        "cpu_s": 0.4472,
-        "decisions": []
-      }
-    ]
+  "assumed_pi_budget": {
+    "live_one_core_percent": 10,
+    "background_one_core_percent": 15,
+    "other_work_reserved_cores": 3.5
   }
 }

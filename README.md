@@ -56,6 +56,16 @@ mode and `reachy.music.status` to check playback, including known title, artist,
 album and genre tags. HTTP radio titles update as the stream changes. Track names and URLs are never
 logged. See the [design and local measurements](docs/design/music-dance.md).
 
+Room song identification is off by default. To opt in, install Chromaprint's
+`fpcalc`, set your own `ACOUSTID_API_KEY`, and add `--room-song-id` to
+`muse-reachy run`. `--acoustid-api-key` also accepts the key, but an environment
+variable avoids putting it in shell history. During a requested room dance,
+Reachy collects 20 seconds of admitted music and fingerprints it locally.
+Only the fingerprint, duration, API key and lookup options go to AcoustID over
+HTTPS. Raw audio and transcripts stay on the robot. There is at most one lookup
+per dance request. Missing fpcalc/key or lookup failure leaves dancing running.
+Short or noisy room excerpts may have no match; status then has no song identity.
+
 ## Presence and notifications
 
 Add `--place office` to `muse-reachy run` to tell Muse where Reachy sits. The label
@@ -165,13 +175,3 @@ Install the same way with the `robot,test` extras, or `companion-server,test`, t
 
 Apache-2.0. See [LICENSE](LICENSE). The face detection model in `src/reachy_muse/data/face_tracking` has its own MIT license next to it.
 Speech sway and motion crossfades come from [reachy-animation](https://github.com/pham-tuan-binh/reachy-animation), also Apache-2.0. See [NOTICE](NOTICE).
-
-Room song identification is off by default. To opt in, install Chromaprint's
-`fpcalc`, set your own `ACOUSTID_API_KEY`, and add `--room-song-id` to
-`muse-reachy run`. `--acoustid-api-key` also accepts the key, but an environment
-variable avoids putting it in shell history. During a requested room dance,
-Reachy collects 20 seconds of admitted music and fingerprints it locally.
-Only the fingerprint, duration, API key and lookup options go to AcoustID over
-HTTPS. Raw audio and transcripts stay on the robot. There is at most one lookup
-per dance request. Missing fpcalc/key or lookup failure leaves dancing running.
-Short or noisy room excerpts may have no match; status then has no song identity.

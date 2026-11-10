@@ -338,26 +338,39 @@ ends the session; status then reports stopped. PyAV decodes off the microphone
 thread into a bounded queue. No streaming-service integration or scraping occurs.
 
 `reachy.dance` listens to music already in the room without playback. Optional
-`seconds` defaults to 60 and is capped at 600. No beats for eight seconds also
-ends room dancing. It uses the one existing microphone reader. Tempo estimates
-need several onsets; sustained music without a clear pulse may not produce a
-dance. Four-beat antenna accents use inferred grouping, not a meter classifier.
+`seconds` defaults to 60 and is capped at 600. Eight seconds without admitted
+music ends room dancing. It uses the existing microphone reader. A spectral
+classifier requires sustained harmonic and rhythmic evidence before movement;
+conversation, periodic tapping and noise fixtures fail admission. Sparse or
+percussion-only music may be rejected. Room mode uses past audio only.
 
-Music shares the accepted speaker clock with speech. Head bob and body sway
-follow the music's phase and energy, with three patterns changing every four
-inferred bars. Safe pose limits, inactive antenna settings and the existing
-motor writer still apply. Conversation, deliberate moves and notifications
+Music shares the accepted speaker clock with speech. Bass drives body yaw,
+mid-band onsets drive head bob, high transients drive antenna twitches, and
+sustained harmony drives slow head tilt and lean. Loudness controls amplitude.
+Files receive background whole-track analysis; streams use bounded lookahead
+and early energy previews. Repeated sections reuse a move signature with modest
+growth, builds add tension, drops accent and complete file outros settle.
+The Mac companion may supply a cached four-beat signature for a peak. Missing
+or late responses leave the audio-driven movement running. Fixed patterns are
+only a small fallback when musical evidence has ambiguous beats.
+
+The dance offset has position and analytic jerk bounds, then the existing motor
+writer applies `clamp_to_limits` to the composed pose. These software bounds do
+not qualify physical comfort. Conversation, deliberate moves and notifications
 take priority. Wake and speech duck music by 18 dB; dancing resumes after the
 listening window and all turn/output work finish. `--no-motion` still permits
 playback, but room-dance commands fail as unavailable.
 
-Hush, sleep, shutdown and `reachy.music.stop` stop both modes. The music stop
-preserves an active spoken reply; already mixed output can take up to about
+Hush, sleep, shutdown and `reachy.music.stop` stop both modes. A music stop
+preserves an active spoken reply; accepted mixed output can take up to about
 140 ms to drain with normal speech pacing and the estimated sink delay. Without
 speech it flushes the speaker queue. Dance drive stops and the last offset
-settles over 400 ms. A new source replaces the previous session. Status returns
-`playing`, `elapsed`, `dancing`, and a local `title` or URL `source` while active.
-Those values are command responses only; logs contain no source or audio content.
+settles smoothly through its filter. A new source replaces the previous session.
+Status returns `playing`, `elapsed`, `dancing`, `music_detected`, `energy` and
+`character`, with known `title`, `artist`, `album`, `genre` tags. ICY titles update
+during radio streams. Missing tags stay absent; room song names need the optional
+identification setting below. Logs contain no titles, artists, queries, URLs,
+fingerprints, API keys or audio.
 
 Wake remains active during music, with a stronger acoustic replay threshold.
 The configured Wireless XVF3800 path supports echo cancellation when runtime
@@ -365,6 +378,23 @@ checks succeed. This does not establish acoustic suppression quality. Local
 synthetic replay missed a wake when speech and music had equal RMS energy.
 Physical wake recognition, speaker/motor latency and Pi contention still need
 robot testing. See [design and measurements](design/music-dance.md).
+
+### Optional room song identification
+
+`--room-song-id` enables a single AcoustID lookup during an explicitly requested
+room dance. It defaults off and requires a local Chromaprint `fpcalc` executable
+plus an owner-supplied `ACOUSTID_API_KEY` environment variable or
+`--acoustid-api-key`. Keys, fingerprints and returned song identity are never
+logged. The robot sends only its locally computed fingerprint, clip duration,
+client key and lookup options, using HTTPS POST. It never uploads PCM for song
+identification. Collection resets on speech, capture gaps and conversation holds;
+stop discards pending work and late results. Already sent requests cannot be
+recalled. Missing tools or failed/uncertain matches skip cleanly.
+
+Chromaprint/AcoustID matches are best effort for short room excerpts. This is
+not a promise of recognition through noise. See the
+[AcoustID protocol](https://acoustid.org/webservice) and the
+[Chromaprint project](https://github.com/acoustid/chromaprint).
 
 ## Spoken progress for long requests
 
@@ -1243,7 +1273,7 @@ The device registers as `Reachy Mini` with nine commands:
 | --- | --- |
 | `reachy.music.play` | Plays owner-folder music by substring or shuffle, or a direct HTTP(S) audio URL. Dances by default. |
 | `reachy.music.stop` | Stops music and dancing. |
-| `reachy.music.status` | Reports playing, title or source, elapsed seconds and dancing. |
+| `reachy.music.status` | Reports playback, elapsed seconds, dancing, energy/character and known title/artist/album/genre. |
 | `reachy.dance` | Dances to room audio without playback, default 60 seconds, maximum 600. |
 | `reachy.say` | Speaks a short message in the room through the normal speaker path. Required `text` is 1 to 240 UTF-8 bytes. Returns `spoken: true` after playback, otherwise `spoken: false` and a reason. |
 | `reachy.presence` | Fuses camera, face, voice and wave observations. Returns `present`, `last_seen_seconds`, `source`, `available` and the optional owner-configured `place`. Unknown values are null. No images or identity leave the robot. |
@@ -1407,20 +1437,3 @@ motor commands. No robot or Muse account is needed for those tests. Use
 The robot command list contains only the Reachy commands. It does not advertise
 the generic Linux shell or file commands. State files and credentials retain
 the Muse Gadget SDK's owner-only storage policy.
-
-### Optional room song identification
-
-`--room-song-id` enables a single AcoustID lookup during an explicitly requested
-room dance. It defaults off and requires a local Chromaprint `fpcalc` executable
-plus an owner-supplied `ACOUSTID_API_KEY` environment variable or
-`--acoustid-api-key`. Keys, fingerprints and returned song identity are never
-logged. The robot sends only its locally computed fingerprint, clip duration,
-client key and lookup options, using HTTPS POST. It never uploads PCM for song
-identification. Collection resets on speech, capture gaps and conversation holds;
-stop discards pending work and late results. Already sent requests cannot be
-recalled. Missing tools or failed/uncertain matches skip cleanly.
-
-Chromaprint/AcoustID matches are best effort for short room excerpts. This is
-not a promise of recognition through noise. See the
-[AcoustID protocol](https://acoustid.org/webservice) and the
-[Chromaprint project](https://github.com/acoustid/chromaprint).

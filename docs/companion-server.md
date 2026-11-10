@@ -98,6 +98,14 @@ Use `reachy-companion motion-library build` to generate motions separately, then
 [library guide](motion-library.md) covers resume, invalidation, optional sentence
 expressions and the uninstalled nightly launchd example.
 
+Music uses the same backward-compatible `animate` request with canonical
+`dance_calm`, `dance_groove` and `dance_upbeat` intents and a four-beat duration.
+The robot sends no title, artist, query or PCM for these requests. New offline
+libraries can include those intent variants. Existing libraries fall back to
+`neutral`, `nod` and `happy` respectively. The robot retimes the returned frames
+to the measured beat grid and keeps at most one dance request outstanding.
+Absent or late moves do not block playback or band-driven motion.
+
 `serve --motion` offers the protocol's `animate` op. It runs
 [reachy-motion-generator](https://github.com/pham-tuan-binh/reachy-motion-generator) (Apache-2.0): a
 fine-tuned Qwen3.5 4B planner, 8-bit on MLX, writes a short recipe for an intent such as "thinking hard", and a

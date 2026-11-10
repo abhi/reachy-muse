@@ -10,7 +10,7 @@ Keep playback selection, the streaming BeatTracker, the shared MusicOutput
 accepted sample clock, PCM mixing, wake/turn/notify/hush holds and the single
 microphone reader and motor writer. The commands keep their existing shapes.
 `reachy.music.status` adds title, artist, album and genre when known, plus music
-confidence, energy and character. Missing identity stays unknown. Titles,
+music admission, energy and character. Missing identity stays unknown. Titles,
 artists, queries, URLs, paths, fingerprints and API keys never enter logs.
 
 `conversation._capture_microphone` only copies into the bounded room queue.
@@ -27,10 +27,11 @@ AudioFeatures(sample: int, loudness: float, bass: float, snare: float,
               period: float, phase: float, regularity: float,
               music: bool, character: str)
 AudioBlock(offset: int, pcm: float32[N], beats: tuple[Beat, ...],
-           features: tuple[AudioFeatures, ...], metadata: TrackMetadata)
+           features: tuple[AudioFeatures, ...], plan: SongPlan,
+           metadata: TrackMetadata, epoch: int)
 Section(start: float, end: float, family: int, occurrence: int,
         chorus: bool, energy: float, build: float, drop: bool,
-        period: float, character: str)
+        period: float, character: str, beat_origin: float)
 SongPlan(sections: tuple[Section, ...], complete: bool)
 TrackMetadata(title: str | None, artist: str | None,
               album: str | None, genre: str | None)
@@ -48,7 +49,8 @@ classification and character. `music_structure.py` owns compact self-similarity,
 section families, build/drop evidence and section intensity. `motion/dance.py`
 owns continuous feature-to-pose mapping, timed signatures and smoothing.
 `music_audio.py` owns decode, tags and transport. `music_stream.py` handles ICY
-framing. `music.py` owns session cancellation, acceptance and worker lifetimes.
+framing; `music_http.py` bounds header, chunk and body reads with cancellation
+and monotonic deadlines. `music.py` owns session cancellation, acceptance and worker lifetimes.
 `music_identity.py` owns optional fingerprint collection and lookup.
 
 The robot does all audio analysis and pose sampling. The Mac companion only
@@ -107,9 +109,15 @@ tension; an abrupt energy rise after a quieter passage marks a drop. Drops get
 the largest allowed gain. The complete plan fades the outro over its last four
 seconds. These are musical heuristics, not authoritative verse/chorus labels.
 
-Streams use the existing one-second decode lookahead and 120 s past summary,
-with no second network decode. Room mode has only captured past audio and online
-repetition detection. Gaps reset classification, timing and recurrence.
+Streams permit up to three seconds of decoded lookahead and keep a 120 s past summary,
+with no second network decode. Live stations may provide only the initial 480 ms
+lead, so a four-frame energy preview detects drops in about 160 ms. The companion
+task prepares the current character and likely energetic character before a peak
+is certain. A test paces the producer against a real 40 ms audio clock and proves
+that the cached move and drop preview precede playback reaching that drop.
+Room mode has only captured past audio and online repetition detection. Gaps
+reset classification, timing, recurrence and identified song. Source epochs keep
+pending identity/companion responses from restoring discarded state.
 
 Only `MusicMix.accepted` publishes frames and metadata onto audible time.
 `audible_feature = accepted_start + (sample - source_offset)/rate + .06`.
@@ -120,9 +128,9 @@ samples and releases movement; stop and replacement discard future features.
 
 ## Companion signatures
 
-Peak sections request a two- or four-beat move before their accepted start.
+Peak sections request a four-beat move before their accepted start.
 A conversation-owned async task permits one outstanding dance request and a
-small per-session cache. It skips foreground holds. Library lookup accepts
+small per-session cache, with at most eight request keys. It skips foreground holds. Library lookup accepts
 canonical dance intents matched to character/tempo, with aliases to existing
 expression variants when a dance-specific library has not been built.
 The robot validates finite nine-axis poses, centers them as offsets, caps them,
@@ -130,10 +138,13 @@ and time-warps their normalized progress over an integer beat duration. Repeated
 choruses reuse cached frames. The same audio bands continue modulating the move.
 
 An absent, saturated or slow companion leaves band-driven motion running.
-A late result is usable for a later peak only, never inserted mid-move. ANIMATE
+A late result is usable for a later peak only, never inserted mid-move.
+The measured beat origin survives section boundaries. Section-relative
+whole-beat counts repeat the slow sway shape without shifting fractional phase. ICY epochs retain the
+current and next song's cached moves separately while PCM is buffered. ANIMATE
 has no cancel message and canceled requests occupy a connection slot until the
 remote answers; keep one request alive instead of repeatedly timing out/retrying.
-Stop/replacement discards results by session identity, and conversation shutdown
+Stop/replacement discards results by session identity and analysis epoch, and conversation shutdown
 cancels the task.
 
 ## Music admission and optional identity
@@ -147,7 +158,11 @@ polyphonic evidence over several seconds. A periodic single tap is insufficient.
 Close admission on speech/noise evidence, silence or stale capture. Only admitted
 music refreshes the eight-second room timeout. A room request alone must not
 suppress gaze or claim dancing. Playback speech/noise also produces no dance.
-Test generated music, isolated stems, single taps, noise and the repository's
+Admission starts after at least 60 analysis frames plus ten consecutive positive
+frames, about 2.76 s. This conservative gate also applies to playback, so sparse
+or percussion-only tracks can remain still. Isolated-stem mapping tests supply
+admitted features; separate tests assert that those stems cannot open room
+admission. Test generated music, isolated stems, single taps, noise and the repository's
 recorded speech fixtures. A broad room/TV corpus remains a robot qualification
 requirement; spectral heuristics can miss sparse music or reject vocals.
 
@@ -221,7 +236,8 @@ independently with the SDK. Music alone has 20-40 ms of output lead. Normal
 speech pacing can leave up to 80 ms queued, plus the estimated 60 ms sink path.
 Thus a music-only stop during speech may take about 140 ms to become inaudible.
 Hush flushes both. Beat drive stops immediately and the last offset settles
-over 400 ms. New play commands stamped
+through the three-stage filter. A static step releases about 65% in
+400 ms and over 98% in one second. New play commands stamped
 before a hush, expired commands, and old sessions cannot resurrect playback.
 
 The Wireless SDK path routes ALSA through the XMOS loopback. This repo's
@@ -231,10 +247,57 @@ assumed echo-cancelled. Qualification proves configuration, not residual echo
 quality. Gain limits, stronger wake threshold and prompt ducking protect wake;
 lyrics saying the exact wake phrase and loud room music remain acoustic risks.
 
+## Current measurements and review
+
+`bench/music.py` and `bench/music.json` record this redesign on arm64 macOS 26.4,
+Python 3.13.14, NumPy 2.5.3 and PyAV 19.0.2. CPU percentage divides process CPU
+seconds by represented audio seconds; 100% means one core. Synthetic generation
+and imports are outside the timed sections. SDK writes, scheduler wakeups,
+concurrent STT/vision and physical actuators are excluded.
+
+| Work | Audio | CPU | Wall | One core |
+| --- | ---: | ---: | ---: | ---: |
+| 16 kHz FFT, classifier, structure and 50 Hz motion | 600 s | 2.4378 s | 2.4393 s | 0.4063% |
+| 48 kHz FFT, classifier, structure and 50 Hz motion | 600 s | 2.6981 s | 2.6997 s | 0.4497% |
+| WAV decode, resample and complete analysis | 60 s | 0.2364 s | 0.2365 s | 0.3940% |
+
+Each live trial processed 15,000 spectral frames, admitted 14,932, found 1,200
+onsets and sampled 30,000 poses. The decode trial produced exactly 960,000
+samples and had 480 ms of PCM ready in 12.496 ms. An earlier cold run
+measured 302.101 ms for that prefix. These are two local observations, not a
+startup percentile or a Pi guarantee. The full 60-second scan completed in
+0.2365 s without CPU throttling. Production's separate file worker applies its
+15%-of-one-core duty budget and starts only after playback primes.
+
+The assumed Pi budget remains 10% of one core for live music and another 15%
+for background scanning, leaving at least 3.5 of four cores for other work.
+The Mac result has margin against that target, but cannot establish Pi timing,
+thermal behavior or wake/STT/vision contention. No new model assets are required.
+
+Two fresh review rounds covered both old plumbing and new analysis. Fixes include
+failure during mixed speech canceling the session, timestamp-correct filter
+integration, measured beat origins, live drop preview and advance signature
+preparation, bounded slow HTTP headers/chunks, separate stream identity epochs,
+room-gap invalidation and releasing fingerprint audio after work ends.
+The exact requested full suite passed on the final implementation: 3,797 passed,
+7 skipped in 343.64 s with six workers and the 180-second per-test timeout.
+The guide is 3,364 UTF-8 bytes, below its 4,096-byte limit. Decoder and ICY
+checks also pass on the robot's pinned PyAV 16.1.0, 26 focused tests.
+Local tests cover the actual decoder, local HTTP/ICY, socket-pair drip behavior,
+recorded speech, a paced live producer, the fake hardware motor loop, fingerprint
+payload contents, and literal structure, motion and jerk expectations.
+
+Real-robot checks remain acoustic/motor phase including filter delay, composite
+joint comfort and limits, speaker loudness and physical stop latency, wake/AEC
+with lyrics and overlapping speech, sustained Pi CPU/thermal behavior under
+wake/STT/vision, room classifier accuracy on music/conversation/TV/tapping, and
+optional Chromaprint identification of noisy room excerpts. No local result
+qualifies those physical behaviors.
+
 ## Previous implementation measurements
 
-The reproducible benchmark is `bench/music.py`; `bench/music.json` contains
-the numeric results. This run used arm64 macOS 26.4, Python 3.13.14, NumPy
+The previous benchmark results are retained in `bench/music.previous.json`.
+The following numbers describe the superseded beat-pattern implementation. This run used arm64 macOS 26.4, Python 3.13.14, NumPy
 2.5.3 and PyAV 19.0.2. CPU percentages divide process CPU seconds by represented
 audio seconds, expressed as a fraction of one core. Synthetic PCM generation
 and imports occur outside the timed sections. These offline costs exclude

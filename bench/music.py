@@ -15,33 +15,41 @@ import wave
 import numpy as np
 
 from reachy_muse.motion.dance import BeatTracker, DanceTimeline
+from reachy_muse.music_analysis import AudioAnalyzer
+from reachy_muse.music_structure import StructureTracker
 from reachy_muse.music_audio import decode
 
 
 def synthetic_music(seconds, rate=16000):
     t = np.arange(round(seconds * rate)) / rate
     pulse = np.exp(-((t % .5) / .025))
-    chord = .12 * np.sin(2 * np.pi * 220 * t) + .08 * np.sin(2 * np.pi * 330 * t)
+    chord = sum(.08 * np.sin(2 * np.pi * hz * t) for hz in (261.63, 329.63, 392))
     return (chord + .65 * pulse * np.sin(2 * np.pi * 80 * t)).astype(np.float32)
 
 
 def cpu_trial(rate, seconds=600):
     chunk = synthetic_music(1, rate)
     tracker, dance = BeatTracker(rate), DanceTimeline()
+    analyzer, structure = AudioAnalyzer(rate), StructureTracker(rate)
     wall, cpu = time.perf_counter(), time.process_time()
-    beats = ticks = 0
+    beats = ticks = feature_count = admitted = 0
     for second in range(seconds):
         for offset in range(0, rate, rate // 50):
             part = chunk[offset:offset + rate // 50]
             found = tracker.feed(part)
             beats += len(found)
             start = second + offset / rate
-            dance.offer(found, second * rate + offset, start + .06, rate)
+            frames = analyzer.feed(part)
+            structure.feed(frames)
+            feature_count += len(frames)
+            admitted += sum(f.music for f in frames)
+            dance.offer_features(frames, second * rate + offset, start + .06, rate, structure.plan())
             dance.sample(start, eligible=True)
             ticks += 1
     cpu, wall = time.process_time() - cpu, time.perf_counter() - wall
     return {"rate": rate, "audio_s": seconds, "cpu_s": round(cpu, 4), "wall_s": round(wall, 4),
-            "one_core_percent": round(100 * cpu / seconds, 4), "beats": beats, "motion_ticks": ticks}
+            "one_core_percent": round(100 * cpu / seconds, 4), "beats": beats, "motion_ticks": ticks,
+            "feature_frames": feature_count, "admitted_frames": admitted}
 
 
 def decode_trial():
@@ -53,10 +61,19 @@ def decode_trial():
             wav.setparams((1, 2, 48000, 0, "NONE", "not compressed"))
             wav.writeframes((synthetic_music(60, 48000) * 32767).astype("<i2").tobytes())
         cpu, wall = time.process_time(), time.perf_counter()
-        samples = sum(len(block.pcm) for block in decode(path, 16000, threading.Event()))
+        samples = 0
+        first_pcm_ms = None
+        structure = StructureTracker(16000, rolling=False)
+        for block in decode(path, 16000, threading.Event()):
+            samples += len(block.pcm)
+            structure.feed(block.features)
+            if first_pcm_ms is None and samples >= 7680:
+                first_pcm_ms = (time.perf_counter() - wall) * 1000
+        plan = structure.plan(complete=True)
         cpu, wall = time.process_time() - cpu, time.perf_counter() - wall
     return {"audio_s": 60, "output_samples": samples, "cpu_s": round(cpu, 4),
-            "wall_s": round(wall, 4), "one_core_percent": round(100 * cpu / 60, 4)}
+            "wall_s": round(wall, 4), "one_core_percent": round(100 * cpu / 60, 4),
+            "first_480_ms_pcm_wall_ms": round(first_pcm_ms, 3), "sections": len(plan.sections)}
 
 
 async def wake_trial(model, clip):
@@ -104,7 +121,10 @@ def main():
     args = parser.parse_args()
     result = {"machine": platform.machine(), "system": platform.platform(), "python": platform.python_version(),
               "versions": {name: version(name) for name in ("numpy", "av")},
-              "tracker_and_motion": [cpu_trial(16000), cpu_trial(48000)], "decode_and_tracker": decode_trial()}
+              "analysis_structure_classifier_and_motion": [cpu_trial(16000), cpu_trial(48000)],
+              "decode_and_full_analysis": decode_trial(),
+              "assumed_pi_budget": {"live_one_core_percent": 10, "background_one_core_percent": 15,
+                                    "other_work_reserved_cores": 3.5}}
     if args.wake_model and args.wake_clip:
         result["wake"] = asyncio.run(wake_trial(args.wake_model, args.wake_clip))
     print(json.dumps(result, indent=2))
