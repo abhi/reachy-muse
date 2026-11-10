@@ -318,13 +318,13 @@ def test_music_dance_uses_the_existing_motor_writer_and_yields_to_listening():
     try:
         hardware.music.play({"url": "https://example.com/audio"})
         start = len(robot.frames)
-        until(lambda: any(abs(hardware._pose_parameters(frame[1])["pitch"]) > 1.5
+        until(lambda: any(abs(hardware._pose_parameters(frame[1])["pitch"]) > .3
                           for frame in robot.frames[start:]))
         assert len(robot.writers) == 1
         assert all(abs(np.degrees(frame[3])) <= 7 for frame in robot.frames[start:])
         hardware.set_state("listening")
         time.sleep(.5)
-        assert hardware.music.dance.sample(time.monotonic(), eligible=False).tolist() == [0.] * 9
+        assert np.max(np.abs(hardware.music.dance.sample(time.monotonic(), eligible=False))) < 2
         assert len(robot.writers) == 1
     finally:
         hardware.close()

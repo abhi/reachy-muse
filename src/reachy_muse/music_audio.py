@@ -13,6 +13,7 @@ from typing import Callable
 import numpy as np
 
 from reachy_muse.motion.dance import Beat, BeatTracker
+from reachy_muse.music_analysis import AudioAnalyzer, AudioFeatures
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class AudioBlock:
     offset: int
     pcm: np.ndarray
     beats: tuple[Beat, ...]
+    features: tuple[AudioFeatures, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,7 @@ def decode(source, rate: int, cancelled: threading.Event):
             stream.codec_context.thread_count = 1
             resampler = av.AudioResampler(format="fltp", layout="mono", rate=rate)
             tracker = BeatTracker(rate)
+            analyzer = AudioAnalyzer(rate)
             pending = np.empty(0, dtype=np.float32)
             offset = 0
             size = max(1, round(rate * .04))
@@ -59,10 +62,10 @@ def decode(source, rate: int, cancelled: threading.Event):
                 pending = np.concatenate((pending, np.clip(pcm, -1, 1)))
                 while len(pending) >= size and not cancelled.is_set():
                     part, pending = pending[:size].copy(), pending[size:]
-                    yield AudioBlock(offset, part, tracker.feed(part))
+                    yield AudioBlock(offset, part, tracker.feed(part), analyzer.feed(part))
                     offset += len(part)
             if len(pending) and not cancelled.is_set():
-                yield AudioBlock(offset, pending.copy(), tracker.feed(pending))
+                yield AudioBlock(offset, pending.copy(), tracker.feed(pending), analyzer.feed(pending) + analyzer.finish())
 
 
 class MusicOutput:

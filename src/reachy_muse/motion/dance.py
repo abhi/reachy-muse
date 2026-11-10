@@ -100,41 +100,104 @@ def dance_pose(beats: float, energy: float) -> np.ndarray:
         pattern((bar_group - 1) % 3) * (1 - blend) + pattern(bar_group % 3) * blend)
 
 
+DANCE_CAP = np.array([2., 2., 3., 5., 7., 4., 14., 14., 9.])
+SMOOTH_S = .12
+JERK_LIMIT = 8 * DANCE_CAP / SMOOTH_S ** 3
+
+
+def feature_pose(frame) -> np.ndarray:
+    phase = frame.phase * 2 * math.pi
+    pose = np.zeros(9)
+    if not frame.music or frame.loudness < .008:
+        return pose
+    pace = .7 if frame.character == "calm" else 1.
+    pose[8] = 9 * frame.bass * math.sin(phase / 4)
+    pose[2] = -3 * frame.snare
+    pose[4] = 7 * frame.snare
+    pose[6:8] = (-14 * frame.treble, 14 * frame.treble)
+    pose[0] = 2 * frame.harmony * math.sin(phase / 16)
+    pose[1] = 2 * frame.harmony * math.cos(phase / 16)
+    pose[3] = 5 * frame.harmony * math.sin(phase / 8)
+    pose[5] = 4 * frame.harmony * math.cos(phase / 8)
+    if frame.regularity < .25 and frame.harmony > .1:
+        pose += .08 * frame.harmony * dance_pose(frame.phase, frame.loudness)
+    return np.clip(pose * frame.loudness * pace, -DANCE_CAP, DANCE_CAP)
+
+
 class DanceTimeline:
     def __init__(self):
         self._lock = threading.Lock()
         self._beats = deque(maxlen=256)
-        self._active = False
-        self._changed = 0.
-        self._last = np.zeros(9)
-        self._release = np.zeros(9)
+        self._features = deque(maxlen=256)
+        self._filter = np.zeros((3, 9))
+        self._time = None
+        self._target = np.zeros(9)
+        self._current = None
+        self._eligible = False
 
     def offer(self, beats: tuple[Beat, ...], offset: int, start: float, rate: int) -> None:
         with self._lock:
             for beat in beats:
                 self._beats.append((start + (beat.sample - offset) / rate, beat))
 
+    def offer_features(self, frames, offset: int, start: float, rate: int) -> None:
+        with self._lock:
+            for frame in frames:
+                self._features.append((start + (frame.sample - offset) / rate, feature_pose(frame)))
+
     def clear(self) -> None:
         with self._lock:
             self._beats.clear()
+            self._features.clear()
+            self._current = None
+
+    def _advance(self, now):
+        step = min(max(0., now - self._time) / SMOOTH_S, 100.)
+        a, b, c = self._filter - self._target
+        self._filter = (np.array((a, b + a * step, c + b * step + a * step ** 2 / 2))
+                        * math.exp(-step) + self._target)
+        self._time = now
+
+    def _advance_until(self, now):
+        if self._current is not None:
+            expiry = self._current[0] + .24
+            if self._time < expiry < now:
+                self._advance(expiry)
+                self._target = np.zeros(9)
+        self._advance(now)
 
     def sample(self, now: float, *, eligible: bool) -> np.ndarray:
         with self._lock:
-            while len(self._beats) > 1 and self._beats[1][0] <= now:
-                self._beats.popleft()
-            current = self._beats[0] if self._beats and self._beats[0][0] <= now else None
-            active = eligible and current is not None and now - current[0] < 2
-            if active != self._active:
-                self._release = self._last.copy()
-                self._changed = now
-                self._active = active
-            blend = crossfade_weight(now - self._changed)
-            if active:
-                at, beat = current
-                phase = beat.index + (now - at) / beat.period
-                decay = 1 - crossfade_weight(now - at - max(.6, beat.period * 1.25), .6)
-                pose = dance_pose(phase, beat.energy * decay)
-                self._last = self._release * (1 - blend) + pose * blend
-            else:
-                self._last = self._release * (1 - blend)
-            return self._last.copy()
+            if self._time is None:
+                self._time = now
+                self._eligible = eligible
+            now = max(now, self._time)
+            while self._features and self._features[0][0] <= now:
+                at, pose = self._features.popleft()
+                self._advance_until(max(self._time, at))
+                self._current = (at, pose)
+                self._target = pose if self._eligible else np.zeros(9)
+            self._advance_until(now)
+            target = np.zeros(9)
+            if eligible:
+                if self._current is not None:
+                    at, pose = self._current
+                    if at <= now < at + .24:
+                        target = pose
+                elif not self._features:
+                    while len(self._beats) > 1 and self._beats[1][0] <= now:
+                        self._beats.popleft()
+                    if self._beats:
+                        at, beat = self._beats[0]
+                        if at <= now < at + 1:
+                            target = np.clip(dance_pose(beat.index + (now - at) / beat.period,
+                                                       beat.energy), -DANCE_CAP, DANCE_CAP)
+            self._target = target
+            self._eligible = eligible
+            return self._filter[2].copy()
+
+    @property
+    def jerk(self) -> np.ndarray:
+        with self._lock:
+            a, b, c = self._filter
+            return (self._target - 3 * a + 3 * b - c) / SMOOTH_S ** 3

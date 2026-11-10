@@ -17,6 +17,7 @@ import threading
 import numpy as np
 
 from reachy_muse.motion.dance import BeatTracker, DanceTimeline
+from reachy_muse.music_analysis import AudioAnalyzer
 from reachy_muse.music_audio import AudioBlock, MusicMix, MusicOutput, decode
 
 log = logging.getLogger(__name__)
@@ -219,6 +220,7 @@ class MusicController:
 
     def _room(self, session):
         tracker = BeatTracker(self.input_rate)
+        analyzer = AudioAnalyzer(self.input_rate)
         offset = 0
         while not self._closed.is_set() and not session.cancelled.is_set():
             with self._lock:
@@ -230,14 +232,16 @@ class MusicController:
             pcm, at, gap = frame
             if gap:
                 tracker = BeatTracker(self.input_rate)
+                analyzer = AudioAnalyzer(self.input_rate)
                 offset = 0
             beats = tracker.feed(pcm)
+            features = analyzer.feed(pcm)
             start = at - len(pcm) / self.input_rate
             with self._lock:
                 if self._session is session:
                     if gap:
                         self.dance.clear()
-                    self.dance.offer(beats, offset, start, self.input_rate)
+                    self.dance.offer_features(features, offset, start, self.input_rate)
                     if beats:
                         session.last_beat = at
             offset += len(pcm)
@@ -264,7 +268,8 @@ class MusicController:
             size = min(count - used, len(block.pcm) - position)
             mixed[used:used + size] = block.pcm[position:position + size]
             beats = tuple(b for b in block.beats if block.offset + position <= b.sample < block.offset + position + size)
-            scheduled.append((beats, block.offset + position, start + used / self.output.rate + .06))
+            features = tuple(f for f in block.features if block.offset + position <= f.sample < block.offset + position + size)
+            scheduled.append((beats, features, block.offset + position, start + used / self.output.rate + .06))
             session.position += size
             used += size
             if session.position == len(block.pcm):
@@ -285,7 +290,9 @@ class MusicController:
         def accepted():
             session.tail = start + used / self.output.rate
             session.consumed += used
-            for beats, offset, at in scheduled:
+            for beats, features, offset, at in scheduled:
+                if features:
+                    self.dance.offer_features(features, offset, at, self.output.rate)
                 self.dance.offer(beats, offset, at, self.output.rate)
         return MusicMix(mixed * gains, accepted)
 

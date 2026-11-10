@@ -48,26 +48,24 @@ def test_energy_scales_motion_and_all_patterns_stay_safe():
     assert np.max(np.abs(dance_pose(16 - 1e-5, 1) - dance_pose(16 + 1e-5, 1))) < .01
 
 
-def test_accepted_clock_sets_bob_peak_within_one_motion_tick():
+def test_accepted_clock_does_not_drive_before_audible_time():
     dance = DanceTimeline()
-    dance.offer(tuple(Beat(i * 8000, .5, i, 1) for i in range(8)), 0, 10.06, 16000)
-    times = np.arange(10.06, 12, .025)
-    poses = np.array([dance.sample(t, eligible=True) for t in times])
-    window = (times >= 11.45) & (times <= 11.7)
-    peak = times[window][np.argmax(poses[window, 4])]
-    assert peak == pytest.approx(11.56, abs=.025)
+    dance.offer((Beat(8000, .5, 0, 1),), 0, 10.06, 16000)
+    assert dance.sample(10, eligible=True).tolist() == [0.] * 9
+    assert dance.sample(10.55, eligible=True).tolist() == [0.] * 9
+    dance.sample(10.6, eligible=True)
+    assert np.linalg.norm(dance.sample(10.625, eligible=True)) > 0
 
 
-def test_pause_freezes_the_offset_then_releases_without_more_beats():
+def test_pause_releases_without_new_beat_drive():
     dance = DanceTimeline()
     dance.offer(tuple(Beat(i * 8000, .5, i, 1) for i in range(8)), 0, 0, 16000)
-    dance.sample(0, eligible=True)
-    before = dance.sample(.5, eligible=True)
-    assert dance.sample(.51, eligible=False) == pytest.approx(before)
-    assert dance.sample(.71, eligible=False) == pytest.approx(before * .5)
-    assert dance.sample(.92, eligible=False).tolist() == [0.] * 9
-    assert dance.sample(1, eligible=True).tolist() == [0.] * 9
-    assert np.any(dance.sample(1.5, eligible=True))
+    for now in np.arange(0, 1, .025):
+        before = dance.sample(now, eligible=True)
+    after = dance.sample(1, eligible=False)
+    assert np.max(np.abs(after - before)) < .5
+    for now in np.arange(1.025, 2.5, .025):
+        released = dance.sample(now, eligible=False)
+    assert np.max(np.abs(released)) < .003
     dance.clear()
-    dance.sample(1.51, eligible=False)
-    assert dance.sample(2, eligible=False).tolist() == [0.] * 9
+    assert np.max(np.abs(dance.sample(3, eligible=True))) < .0001
