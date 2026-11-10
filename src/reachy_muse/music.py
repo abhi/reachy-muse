@@ -13,11 +13,13 @@ from pathlib import Path
 import queue
 import random
 import threading
+import time
 
 import numpy as np
 
 from reachy_muse.motion.dance import BeatTracker, DanceTimeline
 from reachy_muse.music_analysis import AudioAnalyzer
+from reachy_muse.music_structure import SongPlan, StructureTracker
 from reachy_muse.music_audio import AudioBlock, MusicMix, MusicOutput, decode
 
 log = logging.getLogger(__name__)
@@ -64,6 +66,7 @@ class _Session:
     last_beat: float = 0.
     room_gap: bool = False
     primed: bool = False
+    plan: SongPlan = SongPlan()
 
 
 class MusicController:
@@ -80,7 +83,7 @@ class MusicController:
         self.dance = DanceTimeline()
         self._closed = threading.Event()
         self._changed = threading.Event()
-        self._worker = self._pump = None
+        self._worker = self._pump = self._analysis_worker = None
         output.music = self._mix
 
     @property
@@ -136,6 +139,8 @@ class MusicController:
             if self._worker is None:
                 self._worker = threading.Thread(target=self._work, name="reachy-music-decode", daemon=True)
                 self._pump = threading.Thread(target=self._run_output, name="reachy-music-output", daemon=True)
+                self._analysis_worker = threading.Thread(target=self._analyze_files, name="reachy-music-analysis", daemon=True)
+                self._analysis_worker.start()
                 self._worker.start()
                 self._pump.start()
             self._changed.set()
@@ -162,7 +167,7 @@ class MusicController:
         self.stop(speech=True)
         self._closed.set()
         self._changed.set()
-        for worker in (self._worker, self._pump):
+        for worker in (self._worker, self._pump, self._analysis_worker):
             if worker is not None:
                 worker.join(timeout=6)
                 if worker.is_alive():
@@ -202,6 +207,9 @@ class MusicController:
                 continue
             try:
                 for block in self._decode(session.source, self.output.rate, session.cancelled):
+                    if isinstance(session.source, str):
+                        with self._lock:
+                            session.plan = block.plan
                     while not session.cancelled.is_set():
                         try:
                             session.blocks.put(block, timeout=.05)
@@ -218,9 +226,43 @@ class MusicController:
                 with self._lock:
                     session.eof = True
 
+    def _analyze_files(self):
+        handled = None
+        while not self._closed.wait(.02):
+            with self._lock:
+                session = self._session
+            if (session is None or session is handled or not isinstance(session.source, Path)
+                    or not session.primed):
+                continue
+            handled = session
+            structure = StructureTracker(16000, rolling=False)
+            cpu_start, wall_start = time.thread_time(), time.monotonic()
+            published = 0
+            try:
+                for block in self._decode(session.source, 16000, session.cancelled):
+                    if session.cancelled.is_set():
+                        break
+                    structure.feed(block.features)
+                    if block.offset / 16000 >= published + 4:
+                        published = block.offset / 16000
+                        with self._lock:
+                            if self._session is session:
+                                session.plan = structure.plan()
+                        delay = (time.thread_time() - cpu_start) / .15 - (time.monotonic() - wall_start)
+                        if session.cancelled.wait(max(0., delay)):
+                            break
+                if not session.cancelled.is_set():
+                    plan = structure.plan(complete=True)
+                    with self._lock:
+                        if self._session is session:
+                            session.plan = plan
+            except Exception:
+                log.warning("Music analysis failed")
+
     def _room(self, session):
         tracker = BeatTracker(self.input_rate)
         analyzer = AudioAnalyzer(self.input_rate)
+        structure = StructureTracker(self.input_rate)
         offset = 0
         while not self._closed.is_set() and not session.cancelled.is_set():
             with self._lock:
@@ -233,15 +275,18 @@ class MusicController:
             if gap:
                 tracker = BeatTracker(self.input_rate)
                 analyzer = AudioAnalyzer(self.input_rate)
+                structure = StructureTracker(self.input_rate)
                 offset = 0
             beats = tracker.feed(pcm)
             features = analyzer.feed(pcm)
+            structure.feed(features)
             start = at - len(pcm) / self.input_rate
             with self._lock:
                 if self._session is session:
                     if gap:
                         self.dance.clear()
-                    self.dance.offer_features(features, offset, start, self.input_rate)
+                    session.plan = structure.plan()
+                    self.dance.offer_features(features, offset, start, self.input_rate, session.plan)
                     if beats:
                         session.last_beat = at
             offset += len(pcm)
@@ -269,7 +314,8 @@ class MusicController:
             mixed[used:used + size] = block.pcm[position:position + size]
             beats = tuple(b for b in block.beats if block.offset + position <= b.sample < block.offset + position + size)
             features = tuple(f for f in block.features if block.offset + position <= f.sample < block.offset + position + size)
-            scheduled.append((beats, features, block.offset + position, start + used / self.output.rate + .06))
+            scheduled.append((beats, features, block.offset + position, start + used / self.output.rate + .06,
+                              session.plan if session.plan.at((block.offset + position) / self.output.rate) is not None else block.plan))
             session.position += size
             used += size
             if session.position == len(block.pcm):
@@ -290,9 +336,9 @@ class MusicController:
         def accepted():
             session.tail = start + used / self.output.rate
             session.consumed += used
-            for beats, features, offset, at in scheduled:
+            for beats, features, offset, at, plan in scheduled:
                 if features:
-                    self.dance.offer_features(features, offset, at, self.output.rate)
+                    self.dance.offer_features(features, offset, at, self.output.rate, plan)
                 self.dance.offer(beats, offset, at, self.output.rate)
         return MusicMix(mixed * gains, accepted)
 

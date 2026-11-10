@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import threading
 
@@ -140,10 +140,16 @@ class DanceTimeline:
             for beat in beats:
                 self._beats.append((start + (beat.sample - offset) / rate, beat))
 
-    def offer_features(self, frames, offset: int, start: float, rate: int) -> None:
+    def offer_features(self, frames, offset: int, start: float, rate: int, plan=None) -> None:
         with self._lock:
             for frame in frames:
-                self._features.append((start + (frame.sample - offset) / rate, feature_pose(frame)))
+                seconds = frame.sample / rate
+                section = plan.at(seconds) if plan is not None else None
+                if section is not None:
+                    frame = replace(frame, phase=(seconds - section.start) / frame.period)
+                gain = plan.gain(seconds) if plan is not None else 1.
+                pose = np.clip(feature_pose(frame) * gain, -DANCE_CAP, DANCE_CAP)
+                self._features.append((start + (frame.sample - offset) / rate, pose))
 
     def clear(self) -> None:
         with self._lock:

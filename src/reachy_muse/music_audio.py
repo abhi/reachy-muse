@@ -14,6 +14,7 @@ import numpy as np
 
 from reachy_muse.motion.dance import Beat, BeatTracker
 from reachy_muse.music_analysis import AudioAnalyzer, AudioFeatures
+from reachy_muse.music_structure import SongPlan, StructureTracker
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class AudioBlock:
     pcm: np.ndarray
     beats: tuple[Beat, ...]
     features: tuple[AudioFeatures, ...] = ()
+    plan: SongPlan = SongPlan()
 
 
 @dataclass(frozen=True)
@@ -44,6 +46,7 @@ def decode(source, rate: int, cancelled: threading.Event):
             resampler = av.AudioResampler(format="fltp", layout="mono", rate=rate)
             tracker = BeatTracker(rate)
             analyzer = AudioAnalyzer(rate)
+            structure = StructureTracker(rate)
             pending = np.empty(0, dtype=np.float32)
             offset = 0
             size = max(1, round(rate * .04))
@@ -62,10 +65,14 @@ def decode(source, rate: int, cancelled: threading.Event):
                 pending = np.concatenate((pending, np.clip(pcm, -1, 1)))
                 while len(pending) >= size and not cancelled.is_set():
                     part, pending = pending[:size].copy(), pending[size:]
-                    yield AudioBlock(offset, part, tracker.feed(part), analyzer.feed(part))
+                    features = analyzer.feed(part)
+                    structure.feed(features)
+                    yield AudioBlock(offset, part, tracker.feed(part), features, structure.plan())
                     offset += len(part)
             if len(pending) and not cancelled.is_set():
-                yield AudioBlock(offset, pending.copy(), tracker.feed(pending), analyzer.feed(pending) + analyzer.finish())
+                features = analyzer.feed(pending) + analyzer.finish()
+                structure.feed(features)
+                yield AudioBlock(offset, pending.copy(), tracker.feed(pending), features, structure.plan())
 
 
 class MusicOutput:
