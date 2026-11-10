@@ -321,6 +321,51 @@ ssh pollen@reachy-mini.local 'journalctl -u muse-reachy --since "-2h" --no-pager
   | python3 tools/turn_timeline.py --steps
 ```
 
+## Music playback and dancing
+
+`muse-reachy run --music-dir ~/Music` selects the owner music folder. `~/Music`
+is also the default. Search matches filenames case-insensitively in that folder
+and its subfolders, for `.mp3`, `.ogg`, `.flac` and `.wav`; `shuffle` chooses a
+matching file at random. The scan is bounded to 10,000 entries and ignores
+symlinks resolving outside the folder. There is no command to list the folder.
+
+Muse can call `reachy.music.play` with `{"query":"shuffle"}`, a filename
+substring, or `{"url":"https://example.com/radio.mp3"}` for a direct audio
+stream. It accepts exactly one source, optional `dance` default true, and
+`volume` from 0 to 0.5, default 0.35. An unverified AEC route caps gain at 0.2.
+These values are digital gain, not a measured loudness limit. Decoder failure
+ends the session; status then reports stopped. PyAV decodes off the microphone
+thread into a bounded queue. No streaming-service integration or scraping occurs.
+
+`reachy.dance` listens to music already in the room without playback. Optional
+`seconds` defaults to 60 and is capped at 600. No beats for eight seconds also
+ends room dancing. It uses the one existing microphone reader. Tempo estimates
+need several onsets; sustained music without a clear pulse may not produce a
+dance. Four-beat antenna accents use inferred grouping, not a meter classifier.
+
+Music shares the accepted speaker clock with speech. Head bob and body sway
+follow the music's phase and energy, with three patterns changing every four
+inferred bars. Safe pose limits, inactive antenna settings and the existing
+motor writer still apply. Conversation, deliberate moves and notifications
+take priority. Wake and speech duck music by 18 dB; dancing resumes after the
+listening window and all turn/output work finish. `--no-motion` still permits
+playback, but room-dance commands fail as unavailable.
+
+Hush, sleep, shutdown and `reachy.music.stop` stop both modes. The music stop
+preserves an active spoken reply; already mixed output can take up to about
+140 ms to drain with normal speech pacing and the estimated sink delay. Without
+speech it flushes the speaker queue. Dance drive stops and the last offset
+settles over 400 ms. A new source replaces the previous session. Status returns
+`playing`, `elapsed`, `dancing`, and a local `title` or URL `source` while active.
+Those values are command responses only; logs contain no source or audio content.
+
+Wake remains active during music, with a stronger acoustic replay threshold.
+The configured Wireless XVF3800 path supports echo cancellation when runtime
+checks succeed. This does not establish acoustic suppression quality. Local
+synthetic replay missed a wake when speech and music had equal RMS energy.
+Physical wake recognition, speaker/motor latency and Pi contention still need
+robot testing. See [design and measurements](design/music-dance.md).
+
 ## Spoken progress for long requests
 
 With local speech enabled, Reachy can give a short progress update when an
@@ -1192,10 +1237,14 @@ happy or sad reply also get the generated motion described in
 Partial antenna mode applies this score to the working antenna and keeps the
 other target at its measured startup position.
 
-The device registers as `Reachy Mini` with five commands:
+The device registers as `Reachy Mini` with nine commands:
 
 | Command | Behavior |
 | --- | --- |
+| `reachy.music.play` | Plays owner-folder music by substring or shuffle, or a direct HTTP(S) audio URL. Dances by default. |
+| `reachy.music.stop` | Stops music and dancing. |
+| `reachy.music.status` | Reports playing, title or source, elapsed seconds and dancing. |
+| `reachy.dance` | Dances to room audio without playback, default 60 seconds, maximum 600. |
 | `reachy.say` | Speaks a short message in the room through the normal speaker path. Required `text` is 1 to 240 UTF-8 bytes. Returns `spoken: true` after playback, otherwise `spoken: false` and a reason. |
 | `reachy.presence` | Fuses camera, face, voice and wave observations. Returns `present`, `last_seen_seconds`, `source`, `available` and the optional owner-configured `place`. Unknown values are null. No images or identity leave the robot. |
 | `reachy.notify` | Queues or speaks a notification or suggestion using `id`, `text`, `mode` and `kind`, with optional `expires_in_s`. Returns `delivered`, `queued`, `expired` or `refused` with a reason. |

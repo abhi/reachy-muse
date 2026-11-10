@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import urlsplit
 
 from reachy_muse.contract.persona import REACHY_PERSONA
 
@@ -29,7 +30,35 @@ POSE_LIMITS = {
     "right_antenna": (-90.0, 90.0), "left_antenna": (-90.0, 90.0),
 }
 
+MUSIC_COMMANDS = frozenset({"reachy.music.play", "reachy.music.stop", "reachy.music.status", "reachy.dance"})
+
 COMMAND_SPECS = {
+    "reachy.music.play": {
+        "description": "Play owner-folder music by query or shuffle, or a direct HTTP(S) audio stream. "
+                       "Choose exactly one query or url. Ducks during conversation; dances by default. No service scraping.",
+        "required": {},
+        "optional": {
+            "query": {"type": "string", "description": "Case-insensitive filename substring or shuffle."},
+            "url": {"type": "string", "description": "Direct HTTP(S) audio URL."},
+            "dance": {"type": "boolean", "description": "Dance with playback; default true."},
+            "volume": {"type": "number", "description": "Gain 0 to 0.5; default 0.35, capped at 0.2 without verified AEC."},
+        },
+        "timeout_ms": 5000,
+    },
+    "reachy.music.stop": {
+        "description": "Stop music and dancing, including dance to room audio.",
+        "required": {}, "optional": {}, "timeout_ms": 5000,
+    },
+    "reachy.music.status": {
+        "description": "Return playing, title or source, elapsed seconds, and dancing. No audio is returned.",
+        "required": {}, "optional": {}, "timeout_ms": 5000,
+    },
+    "reachy.dance": {
+        "description": "Dance to music already playing in the room, without playback. Stops after 8 seconds without beats or the duration limit.",
+        "required": {},
+        "optional": {"seconds": {"type": "number", "description": "Duration 1 to 600 seconds; default 60."}},
+        "timeout_ms": 5000,
+    },
     "reachy.say": {
         "description": (
             "Speak a short message aloud to the user in the room now. Returns spoken=true only after "
@@ -155,7 +184,33 @@ def parse_command(name: str, params: object, *, antenna_mode: str = "both",
     if unknown:
         raise ValueError(f"unknown parameter: {sorted(unknown)[0]}")
     checked = dict(params)
-    if name == "reachy.expression":
+    if name == "reachy.music.play":
+        if ("query" in params) == ("url" in params):
+            raise ValueError("provide exactly one query or url")
+        key = "query" if "query" in params else "url"
+        value = params[key]
+        limit = 240 if key == "query" else 2048
+        if (not isinstance(value, str) or not value.strip() or len(value.encode("utf-8")) > limit
+                or any(ord(char) < 32 for char in value)):
+            raise ValueError("invalid music source")
+        checked[key] = value.strip()
+        if key == "url":
+            try:
+                url = urlsplit(value)
+                valid = (url.scheme in ("http", "https") and url.hostname and not url.username
+                         and not url.password and not url.fragment and url.port != 0
+                         and not any(char.isspace() for char in value))
+            except ValueError:
+                valid = False
+            if not valid:
+                raise ValueError("url must be an HTTP(S) audio URL without credentials or fragment")
+        if type(params.get("dance", True)) is not bool:
+            raise ValueError("dance must be a boolean")
+        checked["dance"] = params.get("dance", True)
+        checked["volume"] = _number(params, "volume", .35, 0, .5)
+    elif name == "reachy.dance":
+        checked["seconds"] = _number(params, "seconds", 60, 1, 600)
+    elif name == "reachy.expression":
         expression = params.get("name")
         if not isinstance(expression, str) or not expression or len(expression) > 80:
             raise ValueError("name must be an expression name")

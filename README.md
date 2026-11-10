@@ -36,6 +36,21 @@ or suspends local vision. See [microphone measurements](bench/microphone_budget.
 Keep screens showing people outside its view: a video of a
 waving person can also trigger it. See [wave measurements and limitations](bench/wave.md).
 
+## Music and dance
+
+Say "play some music" to play a shuffled file from the robot's `~/Music` folder,
+or ask for a filename. Set `--music-dir /path/to/music` to use another folder.
+MP3, Ogg, FLAC and WAV are supported. Muse can also supply a direct HTTP(S)
+audio stream, such as internet radio. Playback does not scrape streaming services.
+
+Reachy dances with playback by default. "Dance to what's playing" listens to
+room music through the existing microphone, without playing audio. Room dancing
+lasts 60 seconds by default, at most 600, and stops after about eight seconds
+without beats. Wake, replies and notifications duck music and pause dancing.
+Hush, sleep and "stop" stop both. Muse can use `reachy.music.stop` to stop either
+mode and `reachy.music.status` to check playback. Track names and URLs are never
+logged. See the [design and local measurements](docs/design/music-dance.md).
+
 ## Presence and notifications
 
 Add `--place office` to `muse-reachy run` to tell Muse where Reachy sits. The label

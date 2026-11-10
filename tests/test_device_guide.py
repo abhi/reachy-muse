@@ -40,6 +40,8 @@ def test_the_guide_fits_the_device_guide_limit_and_names_the_commands_muse_may_c
     assert REACHY_GUIDE.startswith("# Reachy Mini\n")
     for command in ("`reachy.expression`", "`reachy.move`", "`nod`", "`shake`"):
         assert command in REACHY_GUIDE
+    for command in ("reachy.music.play", "reachy.music.stop", "reachy.music.status", "reachy.dance"):
+        assert f"`{command}`" in REACHY_GUIDE
 
 
 def test_owner_place_reaches_guides_and_command_only_sdks_without_mutating_defaults():

@@ -29,7 +29,7 @@ def test_an_expression_keeps_its_name_and_takes_an_explicit_timeout():
 
 
 @pytest.mark.parametrize("name, params, antenna_mode, error", [
-    ("reachy.dance", {}, "both", "unsupported command: reachy.dance"),
+    ("reachy.walk", {}, "both", "unsupported command: reachy.walk"),
     ("reachy.move", [], "both", "command parameters must be an object"),
     ("reachy.move", {"yaw": 1, "speed": 2, "angle": 3}, "both", "unknown parameter: angle"),
     ("reachy.move", {"duration": 1}, "both", "provide at least one head, antenna, or body coordinate"),

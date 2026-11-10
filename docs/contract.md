@@ -19,11 +19,23 @@ briefing request asks for its own 60 to 90 seconds, roughly 150 to 220 words.
 
 | Command | Parameters and result |
 | --- | --- |
+| `reachy.music.play` | Exactly one `query` or `url`. Query is a filename substring or `shuffle`, at most 240 UTF-8 bytes. URL is direct HTTP(S) audio, at most 2048 bytes, without credentials or fragment. Optional `dance`, boolean default true, and `volume`, finite 0 to 0.5, default 0.35. Gain is capped at 0.2 without verified AEC. Accepts playback asynchronously. |
+| `reachy.music.stop` | No parameters. Stops playback and room dancing. Preserves speech already playing. |
+| `reachy.music.status` | No parameters. Returns `playing`, `elapsed` seconds, `dancing`, and `title` for local music or `source` for a URL. Stopped result is `{"playing": false, "elapsed": 0.0, "dancing": false}`. |
+| `reachy.dance` | Optional finite `seconds`, 1 to 600, default 60. Replaces playback with dancing to the existing microphone stream. Stops after about eight seconds without beats. |
 | `reachy.say` | Required `text`, 1 to 240 UTF-8 bytes. Uses the normal local or companion speaker path. Returns `{"ok": true, "payload": {"spoken": true}}` after complete playback, or `{"ok": true, "payload": {"spoken": false, "reason": "..."}}` on refusal. The default timeout is 30 seconds. |
 | `reachy.presence` | No parameters. Returns `{"ok": true, "payload": {"present": true, "last_seen_seconds": 0, "source": "face", "available": true, "place": "office"}}`. `present` is true, false, or null; age and source may be null. `place` is omitted unless the owner supplies `--place`. No images or identity. |
 | `reachy.notify` | Required `id` (1 to 128 UTF-8 bytes), `text` (1 to 240 UTF-8 bytes), `mode` (`now` or `when_present`) and `kind` (`notification` or `suggestion`). Optional `expires_in_s`, default 14400, range 0 to 86400. Returns `{"ok": true, "payload": {"status": "queued", "reason": "awaiting_presence"}}`. Status is `delivered`, `queued`, `expired` or `refused`. |
 | `reachy.expression` | Required expression `name`, optional `intensity` and `duration`. Built-in or recorded motions remain bounded and serialized. |
 | `reachy.move` | Optional head, body, and antenna coordinates, plus `duration` and `hold`. At least one coordinate is required. `POSE_LIMITS` defines the bounds. |
+
+Music results use `{"ok": true, "payload": {...}}` with the status fields above.
+The default command timeout is five seconds, including source lookup; playback
+continues after command completion. Invalid parameters return `invalid_parameters`.
+Unavailable, stale, disconnected or expired starts return a fixed error and do
+not enqueue music. Music requested during a turn starts ducked and waits for
+conversation to end before dancing. Hush invalidates older starts. Stop and
+status remain available while asleep or hushed. The source is never logged.
 
 `reachy.say` refuses while asleep, hushed, handling a user turn, or before voice
 readiness. It waits for the current line otherwise, then checks again before
@@ -118,20 +130,24 @@ use the notification result format with `status: refused`.
 
 `tests/pins/registration.json` pins the entire SDK registration with a fixed
 36-character request ID and the SDK's 15-character node ID. The compact JSON
-is **5,553 bytes**, or **5,557 bytes** including the four-byte length prefix,
-under the 8,192-byte cap. `commands_v2` occupies 5,277 bytes.
+is **6,749 bytes**, or **6,753 bytes** including the four-byte length prefix,
+under the 8,192-byte cap. `commands_v2` occupies 6,473 bytes.
 
 | Command description | UTF-8 bytes |
 | --- | ---: |
+| `reachy.music.play` | 178 |
+| `reachy.music.stop` | 54 |
+| `reachy.music.status` | 84 |
+| `reachy.dance` | 120 |
 | `reachy.say` | 1,471 |
 | `reachy.presence` | 537 |
 | `reachy.notify` | 475 |
 | `reachy.expression` | 446 |
 | `reachy.move` | 393 |
 
-The guide is 2,425 UTF-8 bytes, within its 4,096-byte limit. Configuring `office`
-makes the current SDK registration 5,593 bytes including its prefix. The worst
-escaped 64-byte place label makes it 5,843 bytes, still below 8,192.
+The guide is 3,124 UTF-8 bytes, within its 4,096-byte limit. Configuring `office`
+makes the current SDK registration 6,789 bytes including its prefix. The worst
+escaped 64-byte place label makes it 7,039 bytes, still below 8,192.
 
 `tests/test_registration.py` compares the literal registration fixture and
 measures the actual SDK `encode_message` output, including the prefix. It also

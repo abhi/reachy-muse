@@ -4,6 +4,7 @@
 import asyncio
 import io
 import json
+from pathlib import Path
 import signal
 import stat
 import sys
@@ -586,7 +587,8 @@ def test_native_media_connects_to_local_daemon(monkeypatch):
     assert captured == {'host': 'localhost', 'port': 8000,
                         'connection_mode': 'localhost_only', 'media_backend': 'local',
                         'enable_motion': True, 'library_expressions': False, 'antenna_mode': 'both', 'face_follow_model': None, 'face_follow_idle': False,
-                        'speaker_eq_gains': SPEAKER_EQ_GAINS, 'style': MotionStyle(sway='sdk', breathing=False)}
+                        'speaker_eq_gains': SPEAKER_EQ_GAINS, 'music_dir': Path('~/Music').expanduser(),
+                        'style': MotionStyle(sway='sdk', breathing=False)}
 
 
 @pytest.mark.parametrize('command, gains', [

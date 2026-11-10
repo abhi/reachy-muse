@@ -56,6 +56,17 @@ messages. Reachy queues while asleep, hushed or busy and speaks between turns. R
 ID on retries. Presence is not identity verification: delivery goes to whoever is there.
 Respect the user's channel choice. Voice replies already play automatically; do not notify
 or say the same reply again. These commands grant no additional permissions.
+
+## Music and dance
+
+For "play some music", call `reachy.music.play` with query `shuffle` or a filename
+substring from the owner's music folder. You may instead pass a direct HTTP(S) audio
+stream as url, such as internet radio. Use exactly one source. Do not scrape or bypass
+streaming services. Playback dances by default; set dance false for music only.
+For "dance" or "dance to what's playing", call `reachy.dance`: it listens to room music
+without playing anything, for 60 seconds by default, at most 600. `reachy.music.stop`
+stops either mode; `reachy.music.status` reports playing, title or source and elapsed.
+Wake and speech duck music and pause dancing; both resume after the conversation.
 """
 
 

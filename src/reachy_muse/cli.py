@@ -334,6 +334,8 @@ def parser() -> argparse.ArgumentParser:
                                    "companion: a paired computer hears and speaks, with the on-robot "
                                    "models as fallback; needs `companion add` first")
             item.add_argument("--place", type=place_label, help="Owner-defined location, for example office")
+            item.add_argument("--music-dir", type=Path, default=Path("~/Music"),
+                              help="Owner music folder for mp3/ogg/flac/wav playback (default: ~/Music)")
             item.add_argument("--face-follow", action="store_true",
                               help="Follow a nearby face locally during conversations; camera frames stay on the robot")
             item.add_argument("--face-follow-idle", action="store_true",
@@ -499,6 +501,7 @@ def _hardware(args, *, motion=True):
                            antenna_mode=args.antenna_mode, face_follow_model=face_model,
                            face_follow_idle=getattr(args, "face_follow_idle", False),
                            speaker_eq_gains=COMPANION_SPEAKER_EQ_GAINS if companion else SPEAKER_EQ_GAINS,
+                           music_dir=getattr(args, "music_dir", Path("~/Music")).expanduser(),
                            style=MotionStyle.from_env(), **watcher)
 
 

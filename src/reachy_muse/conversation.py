@@ -26,7 +26,7 @@ from typing import Awaitable, Callable
 from reachy_muse import expression_plan as plan
 from musegadget.link_client import DeviceDescription, LinkSession, Outcome, acknowledgement
 from musegadget.muse_turn import AgentStatus, MuseTurn, ReplayScope, Reply, TaskFinished, TurnEvent
-from reachy_muse.contract.commands import parse_command
+from reachy_muse.contract.commands import MUSIC_COMMANDS, parse_command
 from reachy_muse.contract.expressions import Expression
 from reachy_muse.contract.prompts import STOP_REQUEST, muse_request
 from reachy_muse.contract.replies import (ReplyProtocolError, ReplyRevisionError, ReplyStyle, SentenceStream,
@@ -169,7 +169,7 @@ class _CommandParams(dict):
         command = parse_command(name, params, timeout_ms=timeout_ms)
         super().__init__(command.params)
         self.deadline = received_at + command.timeout_s
-        if name == "reachy.say":
+        if name == "reachy.say" or name in MUSIC_COMMANDS:
             self.serial = next(_SPEECH_SERIALS)
 
 
@@ -625,6 +625,7 @@ class VoiceConversation:
         self._wake_first_request_pending = False
         self._wake_window = WakeWindow.AWAKE
         self._hush_floor = 0
+        self._music_floor = 0
         self._say_hushed = False
         self._turn_active = False
         self._command_tasks: set[asyncio.Task] = set()
@@ -1802,6 +1803,7 @@ class VoiceConversation:
             last_sample = time.monotonic()
             previous_duration = None
             generation = 0
+            music_gap = False
             try:
                 while not stop.is_set():
                     muted_at_start = self._input_blocked()
@@ -1811,6 +1813,7 @@ class VoiceConversation:
                         generation = capture.generation
                         discarded = capture.discarded
                         previous_duration = None
+                        music_gap = True
                         reader = self.hardware.discard_microphone
                     sample = reader()
                     now = time.monotonic()
@@ -1829,7 +1832,8 @@ class VoiceConversation:
                     gap = previous_duration is not None and now - last_sample > max(duration, previous_duration) + .25
                     previous_duration, last_sample = duration, now
                     if music is not None:
-                        music.tap(sample, now, gap=gap)
+                        music.tap(sample, now, gap=gap or music_gap)
+                    music_gap = False
                     options = dict(discard=muted_at_start or self._input_blocked(), gap=gap,
                                    captured_at=now, gap_reason="SDK read or capture scheduling stall" if gap else None)
                     if self._wake_policy is not None:
@@ -2631,11 +2635,11 @@ class VoiceConversation:
                 log.info("Muse moved Reachy during its realtime reply; Reachy's own expressions wait")
 
     def _hush(self) -> None:
-        if self.music is not None:
-            self.music.stop(speech=True)
         self._moments.stop()
         self._hush_floor = next(_SPEECH_SERIALS)
         self._say_hushed = True
+        if self.music is not None:
+            self.music.stop(speech=True)
         for task in self._command_tasks:
             task.cancel()
 
@@ -3348,6 +3352,8 @@ class ReachyService(PairedService):
 
     def run_command(self, name: str, params: dict, timeout_ms: int | None = None, *,
                     session: LinkSession | None = None) -> dict:
+        if name in MUSIC_COMMANDS:
+            return self._music_command(name, params, timeout_ms, session=session)
         if name == "reachy.notify":
             return self._notify(params, timeout_ms, session=session)
         if name in ("reachy.expression", "reachy.move"):
@@ -3399,6 +3405,63 @@ class ReachyService(PairedService):
         if result["ok"]:
             return {"ok": True, "payload": {key: value for key, value in result.items() if key != "ok"}}
         return result
+
+    def _music_command(self, name, params, timeout_ms, *, session):
+        try:
+            if not isinstance(params, _CommandParams):
+                params = _CommandParams(name, params, timeout_ms)
+        except ValueError:
+            return {"ok": False, "error": "invalid_parameters"}
+        active = self._voice
+        if active is None or session is not None and active[1].session is not session:
+            return {"ok": False, "error": "disconnected"}
+        loop, voice = active
+        cancelled = threading.Event()
+
+        def allowed():
+            return (not cancelled.is_set() and not voice._closed and self._voice is active
+                    and params.serial == voice._music_floor and params.serial > voice._hush_floor
+                    and not voice._say_hushed and voice._wake_window is not WakeWindow.ASLEEP
+                    and time.monotonic() < params.deadline)
+
+        async def invoke():
+            music = voice.music
+            if music is None:
+                return {"ok": False, "error": "music_unavailable"}
+            if voice._closed or time.monotonic() >= params.deadline:
+                return {"ok": False, "error": "expired"}
+            if name == "reachy.music.status":
+                return {"ok": True, "payload": music.status()}
+            if params.serial <= voice._music_floor:
+                return {"ok": False, "error": "interrupted"}
+            voice._music_floor = params.serial
+            if name == "reachy.music.stop":
+                music.stop()
+            else:
+                if not voice._ready.is_set() or not allowed():
+                    return {"ok": False, "error": "unavailable"}
+                voice._sync_music()
+                if name == "reachy.dance":
+                    music.listen(params["seconds"])
+                else:
+                    await asyncio.to_thread(music.play, params, allowed=allowed)
+            return {"ok": True, "payload": music.status()}
+
+        pending = invoke()
+        try:
+            future = asyncio.run_coroutine_threadsafe(pending, loop)
+        except RuntimeError:
+            pending.close()
+            return {"ok": False, "error": "disconnected"}
+        try:
+            return future.result(max(0, params.deadline - time.monotonic()) + .1)
+        except (CommandTimeout, CommandCancelled):
+            future.cancel()
+            return {"ok": False, "error": "interrupted"}
+        except Exception:
+            return {"ok": False, "error": "music_unavailable"}
+        finally:
+            cancelled.set()
 
     def _notify(self, params: dict, timeout_ms: int | None, *, session: LinkSession | None) -> dict:
         try:
@@ -3493,7 +3556,7 @@ class ReachyService(PairedService):
 
         def invoke(message):
             name = message.get("command")
-            if name in ("reachy.say", "reachy.presence", "reachy.notify"):
+            if name in ("reachy.say", "reachy.presence", "reachy.notify") or name in MUSIC_COMMANDS:
                 params = message.get("params")
                 try:
                     params = _CommandParams(name, params if isinstance(params, dict) else {},
