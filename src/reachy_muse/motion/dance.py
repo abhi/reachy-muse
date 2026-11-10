@@ -145,6 +145,9 @@ class DanceTimeline:
             for frame in frames:
                 seconds = frame.sample / rate
                 section = plan.at(seconds) if plan is not None else None
+                if section is not None:
+                    first_beat = math.floor((section.start - section.beat_origin) / section.period + 1e-8)
+                    frame = replace(frame, phase=frame.phase - first_beat)
                 gain = plan.gain(seconds) if plan is not None else 1.
                 pose = feature_pose(frame)
                 if section is not None and signatures and frame.music:

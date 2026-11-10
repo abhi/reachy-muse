@@ -50,7 +50,7 @@ def test_repeated_chorus_reuses_shape_at_larger_gain():
     for tick in range(95):
         seconds = tick * .04
         f = frames[150 + tick]
-        r = replace(f, sample=f.sample + 12 * 16000)
+        r = frames[450 + tick]
         first.offer_features((f,), 6 * 16000, 0., 16000, plan)
         repeat.offer_features((r,), 18 * 16000, 0., 16000, plan)
         a, b = first.sample(seconds, eligible=True), repeat.sample(seconds, eligible=True)
