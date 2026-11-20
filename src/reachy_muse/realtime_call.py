@@ -609,11 +609,21 @@ class RealtimeCall:
         if not self.done:
             self._closing = True
         self.feed.close()
+        speaker = asyncio.create_task(self.speaker.close())
         if self._task is not None and not self._task.done():
             self._task.cancel()
-            await asyncio.gather(self._task, return_exceptions=True)
-        await self.speaker.close()
+        cleanup = asyncio.gather(*(task for task in (speaker, self._task) if task is not None),
+                                 return_exceptions=True)
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(cleanup)
+                break
+            except asyncio.CancelledError:
+                cancelled = True
         self.motion.close()
+        if cancelled:
+            raise asyncio.CancelledError
 
 
 class _SilentOutput:
