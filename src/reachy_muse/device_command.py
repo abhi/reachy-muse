@@ -7,7 +7,9 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from enum import Enum
+from itertools import groupby
 from types import MappingProxyType
 from typing import FrozenSet, Mapping, Optional, Protocol
 
@@ -146,6 +148,43 @@ def whole_command(text: str) -> Optional[DeviceCommand]:
     if classify_follow_up(text) is FollowUp.SILENCE:
         return DeviceCommand.STOP_TALKING
     return None
+
+
+_SOUND_CODES = str.maketrans({letter: str(code) for code, letters in enumerate(
+    ("aeiouhwy", "bfpv", "cgjkqsxz", "dt", "l", "mn", "r")) for letter in letters})
+
+
+def _sound_key(word: str) -> str:
+    return "".join(code for code, _ in groupby(word.translate(_SOUND_CODES)) if code != "0")
+
+
+def command_after_wake(text: str, phrase: str) -> Optional[str]:
+    """Match an acoustic wake prefix without consuming a recognized device command."""
+    words, wake = _words(text), _words(phrase)
+    if not wake:
+        return None
+    boundary_guards = (_NEGATIONS | _ELSEWHERE | _QUESTION_OPENERS) - set(wake)
+    expected = "".join(wake)
+    leading = "".join(wake[:-1])
+    best_score = 0.0
+    command = None
+    for end in range(max(1, len(wake) - 1), min(len(words), len(wake) + 2)):
+        prefix = words[:end]
+        if not "".join(prefix).startswith(leading) or boundary_guards.intersection(prefix):
+            continue
+        if len(prefix) > len(wake) and "".join(prefix) != expected:
+            continue
+        score = SequenceMatcher(None, "".join(prefix), expected, autojunk=False).ratio()
+        sound = (len(prefix) == len(wake) and prefix[:-1] == wake[:-1]
+                 and len(_sound_key(wake[-1])) >= 2 and _sound_key(prefix[-1]) == _sound_key(wake[-1]))
+        if sound:
+            score = 1.0
+        if score > best_score:
+            best_score = score
+            remainder = " ".join(words[end:])
+            if score >= .75 and whole_command(remainder) is not None:
+                command = remainder
+    return command
 
 
 def worth_asking(text: str, asked: FrozenSet[DeviceCommand]) -> bool:

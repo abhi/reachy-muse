@@ -272,8 +272,9 @@ selects the on-robot phrases locally without an additional model request.
 Startup caches their audio. Empty
 recognition does not send a message to Muse. A timed wake opens question capture
 without transcribing the wake phrase. Untimed wake results retain the local
-"Yes?" retry cue when recognition cannot confirm the phrase; other empty
-recordings stay quiet.
+"Yes?" retry cue when recognition cannot confirm the phrase, except when a
+tolerant wake prefix leaves a complete device command that Reachy can execute
+locally. Other empty recordings stay quiet.
 Local recognition still takes several seconds on the tested Pi. The
 acknowledgment covers Muse's generation time; it does not remove that work.
 Piper synthesizes a complete sentence before yielding its audio, so long
@@ -444,11 +445,15 @@ after the wake phrase; it also stays in memory. After wake acceptance, supported
 Sherpa models at 16 kHz replay the keyword to verify acoustic timing and discard
 the buffered audio before the final wake token. Only the question audio enters
 request recognition or a Muse call. This avoids recognizing the invocation again
-as part of the request. If timing cannot be verified, the first recording must
-contain the exact wake phrase in its transcription. Only the words after that
-phrase can be forwarded to Muse.
-Otherwise Reachy asks "Yes?" and waits for a fresh question instead of forwarding
-the buffered words. After a confirmed wake, a capture gap discards the incomplete
+as part of the request. If timing cannot be verified, forwarding a request to
+Muse requires the exact wake phrase in the first transcription. Only the words
+after that phrase can be forwarded to Muse. A misspelled final wake word can still precede
+a complete device command, such as "Hey Mew, stop listening". Reachy handles
+that command locally only if it can execute it now. If the command is unavailable
+or no complete command follows, Reachy asks "Yes?" and waits for a fresh question
+instead of forwarding the buffered words. Timed wakes and open-window follow-ups
+also accept this local command recovery; otherwise they keep the original request.
+After a confirmed wake, a capture gap discards the incomplete
 recording and keeps the listening window open for a fresh question.
 
 Reachy reads the daemon's microphone direction at `/api/state/doa` at no more

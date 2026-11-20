@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from reachy_muse.device_command import COMMANDS, Commands, DeviceCommand, executable, parse_command
+from reachy_muse.device_command import COMMANDS, Commands, DeviceCommand, command_after_wake, executable, parse_command
 
 D = DeviceCommand
 EVERYTHING = frozenset(DeviceCommand)
@@ -73,6 +73,45 @@ EVERYTHING = frozenset(DeviceCommand)
 ])
 def test_parse_command(utterance, expected):
     assert parse_command(utterance) is expected
+
+
+@pytest.mark.parametrize("phrase, utterance, expected", [
+    ("hey muse", "Hey Mew stop listening.", "stop listening"),
+    ("hey muse", "Hey news, that's all.", "that's all"),
+    ("hey muse", "Hey, Muse. Stop listening.", "stop listening"),
+    ("hey muse", "Hey Muse stop listening", "stop listening"),
+    ("okay reachy", "Okay Reechy, go to sleep.", "go to sleep"),
+    ("hello robot", "Hello robott, volume down.", "volume down"),
+    ("hey muse", "Hey mu se stop listening.", "stop listening"),
+    ("hey muse", "Heymuse stop listening.", "stop listening"),
+    ("hey muse", "Hey mu be quiet", "be quiet"),
+    ("hey muse", "Hey Mew, stop listening to the radio", None),
+    ("hey muse", "Hey Mew", None),
+    ("hey muse", "The news stopped listening to him", None),
+    ("hey muse", "Hey Mew what's the weather", None),
+    ("hey muse", "Hey Mew stopped listening.", None),
+    ("hey muse", "Hey Mew don't stop listening", None),
+    ("hey muse", "Hey Mew never stop listening", None),
+    ("hey muse", "Hey Muse no stop listening", None),
+    ("hey muse", "Hey Muse radio stop listening", None),
+    ("hey muse", "Hey Mew stop listening and tell me a joke", None),
+    ("hey muse", "Hey Muse and stop listening", None),
+    ("hey muse", "Hey mus and stop listening", None),
+    ("hey muse", "Hey mus one stop listening", None),
+    ("hey muse", "I said Hey Mew stop listening", None),
+    ("hey muse", "The news stop listening", None),
+    ("hey muse", "They must go to sleep.", None),
+    ("hey muse", "Hey, I must go to sleep.", None),
+    ("hey muse", "Hey, we must go to sleep.", None),
+    ("hey muse", "Hey, he must go to sleep.", None),
+    ("hey muse", "Hey, my users go to sleep.", None),
+    ("hey muse", "Hey Mew, I need you to go to sleep.", "i need you to go to sleep"),
+    ("hey muse", "Hay Muse, stop listening.", None),
+    ("hello robot", "Hey Mew stop listening", None),
+    ("", "stop listening", None),
+])
+def test_only_a_whole_command_can_follow_a_tolerant_leading_wake(phrase, utterance, expected):
+    assert command_after_wake(utterance, phrase) == expected
 
 
 def test_every_command_has_one_row():

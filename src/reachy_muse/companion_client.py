@@ -686,7 +686,7 @@ class CompanionHearingTurn:
             elif isinstance(event, SpeechEnd) and self._open is not None:
                 stream, self._open = self._open, None
                 if self._commands_only:
-                    text = self.partial.text if self.partial is not None else ""
+                    text = self.partial.text if self.partial is not None else None
                     for message in stream.inbox:
                         text = message.text
                     end_sample = self._vad_ends.popleft() if self._vad_ends else self._fed

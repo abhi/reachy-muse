@@ -21,7 +21,7 @@ from reachy_muse.voice_audio import SpeechAudio, SpeechEnd
 np = pytest.importorskip("numpy")
 
 
-@pytest.mark.parametrize("text", ["volume down", "", "stop talking"])
+@pytest.mark.parametrize("text", [None, "volume down", "", "stop talking"])
 def test_call_commands_use_companion_partials_without_requesting_or_waiting_for_its_endpoint(text):
     from test_pins import Vad
 
@@ -34,7 +34,8 @@ def test_call_commands_use_companion_partials_without_requesting_or_waiting_for_
         turn.feed(np.full(8000, .2, np.float32))
         assert turn.take().ended is None
         stream, = link._connection.hearing.values()
-        stream.inbox.append(HearPartial(stream.id, 1, text))
+        if text is not None:
+            link._receive(link._connection, encode(HearPartial(stream.id, 1, text)))
         turn.feed(np.zeros(1600, np.float32))
         ended = turn.take().ended
         endpoint = await asyncio.wait_for(ended.endpoint(), .05)

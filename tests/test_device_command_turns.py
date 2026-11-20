@@ -156,6 +156,46 @@ def test_go_to_sleep_never_reaches_muse_and_puts_reachy_to_sleep_until_the_wake_
     assert rig.states()[-1] == "sleeping"
 
 
+@pytest.mark.parametrize("text, expected", [
+    ("Hey Mew stop listening.", "tts:Okay, I'll stop listening."),
+    ("Hey news, that's all.", "tts:Okay, I'll stop listening."),
+    ("Hey Mew what's the weather", "tts:Yes?"),
+    ("Hey Mew don't stop listening", "tts:Yes?"),
+    ("They must go to sleep.", "tts:Yes?"),
+    ("Hay Muse, stop listening.", "tts:Yes?"),
+])
+def test_chat_recovers_only_device_commands_after_a_misspelled_acoustic_wake(monkeypatch, text, expected):
+    rig = rig_with(monkeypatch)
+    conversation = service(rig, never_asked, Transcripts(text), wake_detector=Wake(), wake_timeout_s=.2)
+
+    async def user():
+        rig.say(wake=True)
+
+    events = run(rig, conversation, user)
+    assert played(events) == [expected]
+    assert sent_to_muse(events) == []
+
+
+@pytest.mark.parametrize("text", [
+    "Hey Mew stop talking", "Hey Mew volume up", "Hey Mew volume down",
+    "Hey Mew look at me", "Hey Mew look away",
+])
+def test_unavailable_commands_after_a_misspelled_wake_do_not_reach_muse(monkeypatch, text):
+    rig = Rig(monkeypatch)
+
+    async def muse(session, request):
+        await session.answer(request, "Okay.")
+
+    conversation = service(rig, muse, Transcripts(text), wake_detector=Wake(), wake_timeout_s=.2)
+
+    async def user():
+        rig.say(wake=True)
+
+    events = run(rig, conversation, user)
+    assert sent_to_muse(events) == []
+    assert played(events) == ["tts:Yes?"]
+
+
 def test_a_paraphrase_the_model_names_turns_the_volume_down_without_muse(monkeypatch):
     rig = rig_with(monkeypatch)
     model = FakeModel(DeviceCommand.VOLUME_DOWN)

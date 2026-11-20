@@ -33,7 +33,8 @@ from reachy_muse.contract.replies import (ReplyProtocolError, ReplyRevisionError
                                           first_plain_sentence, spoken_reply)
 from reachy_muse.capabilities import EMOJI, MARKUP, WAKE_CUE, Backends, CapabilityUnavailable, EndedTurn, Endpoint, Heard, LocalReply, SpokenLine
 from reachy_muse.protocol import MAX_LINE_BYTES
-from reachy_muse.device_command import COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow, executable
+from reachy_muse.device_command import (COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow,
+                                       command_after_wake, executable, whole_command)
 from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, interrupts_playback, request_topic,
                                    too_short_for_follow_up, repeats_playback)
 from reachy_muse.contract.intent import Intent, maybe_chat
@@ -686,6 +687,20 @@ class VoiceConversation:
             return question_after_wake(text, phrase) or ""
         return strip_wake_prefix(text, phrase)
 
+    def _wake_prefix(self, text: str, strip_required: bool) -> tuple[str, str, bool]:
+        if self.wake_detector is None:
+            return text, "none", False
+        phrase = self.wake_detector.phrase
+        stripped = (question_after_wake(text, phrase) if strip_required
+                    else strip_wake_prefix(text, phrase))
+        if stripped is not None and (strip_required or stripped != text.strip()):
+            return stripped, "exact", False
+        recovered = command_after_wake(text, phrase)
+        if recovered is not None:
+            unavailable = whole_command(recovered) not in self._executable_commands()
+            return (stripped or "") if unavailable else recovered, "tolerant", unavailable
+        return stripped or "", "none", False
+
     def _pose_expression(self, state: str, expression: str | None) -> str | None:
         if state != "thinking" or expression is not None:
             return expression
@@ -1265,7 +1280,7 @@ class VoiceConversation:
         self._hearing_open = lambda: (turn_open or bool(turns_awaiting_transcript) or follow_up_task is not None
                                      or (voice_gate is not None and voice_gate.active))
 
-        async def recognize_call(recorded, call):
+        async def recognize_call(recorded, call, timeline):
             from reachy_muse.streaming_transcription import StreamingTranscriptionError
 
             recognition = asyncio.create_task(recorded.ended.endpoint())
@@ -1273,10 +1288,12 @@ class VoiceConversation:
                 remaining = recorded.endpoint_at + CALL_COMMAND_DEADLINE_S - time.monotonic()
                 done, _ = await asyncio.wait({recognition}, timeout=max(0.0, remaining))
                 if not done and (call.audio_sent or not call.failed):
+                    timeline.facts["command_transcript"] = "deadline"
                     raise asyncio.TimeoutError
                 endpoint = await recognition
             except (asyncio.TimeoutError, CapabilityUnavailable, StreamingTranscriptionError):
                 recorded.ended.cancel()
+                timeline.facts.setdefault("command_transcript", "missing")
                 endpoint = Endpoint(b"", "")
             finally:
                 if not recognition.done():
@@ -1291,7 +1308,16 @@ class VoiceConversation:
                     if call.audible:
                         await call.barge_in()
                 else:
+                    transcript = endpoint.text if endpoint is not None else None
+                    self._log_realtime_command(transcript,
+                                               self._wake_prefix(transcript or "", self._wake_strip_required),
+                                               transcript=timeline.facts.get("command_transcript"), drop="barge_in")
                     return None
+            if timeline.facts.get("command_transcript") == "deadline":
+                self._log_realtime_command(None, self._wake_prefix("", self._wake_strip_required),
+                                           transcript="deadline", drop="deadline")
+            elif endpoint is None:
+                self._log_realtime_command(None, self._wake_prefix("", self._wake_strip_required))
             return endpoint
 
         async def follow_up(request, held):
@@ -1318,12 +1344,12 @@ class VoiceConversation:
             if recorded.ended.truncated:
                 log.info("voice turn reached the 60-second recording limit; continuing capture")
             if len(pending_turns) < PENDING_TURN_LIMIT:
+                timeline = TurnTimeline()
                 if self.call is None and self._lost_call is None:
                     recorded.ended.start()
                 else:
                     call_recognitions[recorded.ended] = asyncio.create_task(
-                        recognize_call(recorded, self.call or self._lost_call))
-                timeline = TurnTimeline()
+                        recognize_call(recorded, self.call or self._lost_call, timeline))
                 if self._wake_first_request_pending and self._wake_at is not None:
                     timeline.mark("wake", self._wake_at)
                 timeline.mark("speech_end", recorded.speech_end_at)
@@ -2000,14 +2026,12 @@ class VoiceConversation:
             log.info("No words recognized in microphone input; listening again")
             return TurnOutcome.EMPTY
         if self.wake_detector is not None:
+            text, prefix, _ = self._wake_prefix(text, strip_required)
             if strip_required:
-                question = question_after_wake(text, self.wake_detector.phrase)
                 # The wake detector confirms the acoustic trigger, but ASR must identify its boundary.
+                question = text if prefix == "exact" else None
                 log.info("Wake transcription outcome %s", "missing_boundary" if question is None
                          else "request" if question else "wake_only")
-                text = question or ""
-            else:
-                text = strip_wake_prefix(text, self.wake_detector.phrase)
             if not text:
                 self._observe_arbitration(text, held)
                 if not quiet:
@@ -2047,10 +2071,7 @@ class VoiceConversation:
             output = self._has_output()
             observe(Snapshot(str(self._shadow_turn), text, context_epoch=self._shadow_turn,
                              admission="follow_up" if job is not None else "wake",
-                             capabilities=executable(
-                                 wake=self.wake_enabled, output=output,
-                                 face=getattr(self.hardware, "face_tracking_enabled", False) is True,
-                                 volume=callable(getattr(self.hardware, "change_volume", None))),
+                             capabilities=self._executable_commands(),
                              local_chat=self.local_chat, output=output, owns_chat=self.owns_chat,
                              active=active, held=waiting))
         except Exception:
@@ -2398,11 +2419,13 @@ class VoiceConversation:
         await self._plan(plan.RequestHeld())
         return _HeldRequest(endpoint.audio, text, request.wake_epoch, request.timeline)
 
+    def _executable_commands(self) -> frozenset[DeviceCommand]:
+        return executable(wake=self.wake_enabled, output=self._has_output(),
+                          face=getattr(self.hardware, "face_tracking_enabled", False) is True,
+                          volume=callable(getattr(self.hardware, "change_volume", None)))
+
     async def _obey(self, text: str, started: float, timeline: TurnTimeline) -> DeviceCommand | None:
-        allowed = executable(wake=self.wake_enabled, output=self._has_output(),
-                             face=getattr(self.hardware, "face_tracking_enabled", False) is True,
-                             volume=callable(getattr(self.hardware, "change_volume", None)))
-        command = await self.backends.commands.recognize(text, allowed)
+        command = await self.backends.commands.recognize(text, self._executable_commands())
         if command is None:
             return None
         spec = COMMANDS[command]
@@ -2445,19 +2468,36 @@ class VoiceConversation:
         timeline.report()
         return command
 
+    def _log_realtime_command(self, text: str | None, decision: tuple[str, str, bool], *, transcript: str | None = None,
+                              outcome: str = "none", drop: str = "none") -> None:
+        transcript = transcript or ("arrived" if text is not None else "missing")
+        text = text or ""
+        candidate, prefix, unavailable = decision
+        command = whole_command(candidate)
+        if outcome == "none" and drop == "none" and (unavailable or (
+                command is not None and command not in self._executable_commands())):
+            outcome = "unavailable"
+        log.info("Realtime command transcript=%s words=%d wake_prefix=%s outcome=%s drop=%s",
+                 transcript, len(text.split()), prefix, outcome, drop)
+
     async def _realtime_turn(self, endpoint: Endpoint, request: _QueuedTurn) -> TurnOutcome:
         """A turn Muse already heard in a realtime call: Reachy acts only on its own device commands."""
         started = time.monotonic()
         if self._wake_window is WakeWindow.WOKEN:
             self._wake_window = WakeWindow.AWAKE
-        text = endpoint.text or ""
-        if self.wake_detector is not None:
-            text = (question_after_wake(text, self.wake_detector.phrase) or "" if request.wake_strip_required
-                    else strip_wake_prefix(text, self.wake_detector.phrase))
+        decision = self._wake_prefix(endpoint.text or "", request.wake_strip_required)
+        text, _, _ = decision
         if request.heard_over and (not text.strip() or repeats_playback(text, request.heard_over)):
+            if request.timeline.facts.get("command_transcript") != "deadline":
+                self._log_realtime_command(endpoint.text, decision,
+                                           transcript=request.timeline.facts.get("command_transcript"), drop="echo")
             return TurnOutcome.EMPTY
         self._presence.mark("voice", started)
-        if text.strip() and await self._obey(text, started, request.timeline) is not None:
+        command = await self._obey(text, started, request.timeline) if text.strip() else None
+        if request.timeline.facts.get("command_transcript") != "deadline":
+            self._log_realtime_command(endpoint.text, decision, transcript=request.timeline.facts.get("command_transcript"),
+                                       outcome=command.name if command is not None else "none")
+        if command is not None:
             return TurnOutcome.ACCEPTED
         call = request.call
         if call.failed:
