@@ -109,6 +109,7 @@ class Observation:
 
 class Speaker(Protocol):
     name: str
+    enrolling: bool
 
     async def observe(self, pcm: bytes) -> Observation:
         """Judge one finished request's 16 kHz s16le audio against the owner's voice print."""

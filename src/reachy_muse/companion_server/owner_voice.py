@@ -15,6 +15,7 @@ import os
 import stat
 import tempfile
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator, Callable, List, Optional, Protocol, Sequence, Tuple
@@ -22,7 +23,6 @@ from typing import AsyncIterator, Callable, List, Optional, Protocol, Sequence, 
 import numpy as np
 
 from reachy_muse.companion_server.engines import Observation
-from reachy_muse.companion_server.watchdog import EngineExecutor
 from reachy_muse.protocol import MIC_RATE, SpeakerLabel
 from reachy_muse.voice_verify import normalized
 
@@ -37,6 +37,9 @@ MIN_SPEECH = MIC_RATE
 # Averaging up to four windows, 6 s of speech, steadies a request's embedding. At the bench's
 # 52 ms per window on one core, a request costs at most about 0.2 s of CPU, off the hearing thread.
 MAX_WINDOWS = 4
+# One check running and one waiting. A check takes a fraction of a second, so more means the thread
+# is stuck; later requests are then unknown instead of piling up audio behind it.
+MAX_CHECKS = 2
 # Five sentences with at least 2 s of speech each: 10 s or more, in ten or more windows. Averaged,
 # the print's own noise is about a third of one window's, so a score mostly measures the request.
 # Five also let the agreement check single out one take that does not match the rest.
@@ -44,6 +47,10 @@ ENROLL_UTTERANCES = 5
 ENROLL_SPEECH_S = 2.0
 # An enrollment left open would take whoever speaks next.
 ENROLL_WITHIN_S = 180.0
+
+
+class SpeakerBusy(Exception):
+    """The speaker thread is behind; the server labels the request unknown."""
 
 
 class Encoder(Protocol):
@@ -129,15 +136,16 @@ class OwnerVoice:
     """
 
     def __init__(self, encoder: Encoder, print_path: Path, threshold: float, *, name: str = "speaker",
-                 vad: Callable[[], Vad] = _webrtc_vad, thread: Optional[EngineExecutor] = None,
+                 vad: Callable[[], Vad] = _webrtc_vad, thread: Optional[ThreadPoolExecutor] = None,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self.encoder = encoder
         self.print_path = print_path
         self.threshold = threshold
         self.name = name
         self._vad = vad
-        self._thread = thread if thread is not None else EngineExecutor("speaker")
+        self._thread = thread if thread is not None else _speaker_thread()
         self._clock = clock
+        self._checks: List[Future] = []
         self._seen: Tuple[object, Optional[VoicePrint]] = (None, None)
         self._enrollment: Optional[asyncio.Queue] = None
 
@@ -146,7 +154,7 @@ class OwnerVoice:
         """Load the speaker model on the speaker thread. Downloads nothing."""
         from reachy_muse.voice_verify import CALIBRATED_MODEL_SHA256, DEFAULT_THRESHOLD, SpeakerEncoder
 
-        thread = EngineExecutor("speaker")
+        thread = _speaker_thread()
         try:
             encoder = await asyncio.wrap_future(thread.submit(SpeakerEncoder, model))
             if threshold is None and encoder.model_id != CALIBRATED_MODEL_SHA256:
@@ -165,8 +173,13 @@ class OwnerVoice:
         return self._enrollment is not None
 
     async def observe(self, pcm: bytes) -> Observation:
+        self._checks = [check for check in self._checks if not check.done()]
+        if len(self._checks) >= MAX_CHECKS:
+            raise SpeakerBusy()
         enrollment = self._enrollment
-        heard = await asyncio.wrap_future(self._thread.submit(self._observe, pcm, enrollment is not None))
+        check = self._thread.submit(self._observe, pcm, enrollment is not None)
+        self._checks.append(check)
+        heard = await asyncio.wrap_future(check)
         if enrollment is not None and enrollment is self._enrollment:
             enrollment.put_nowait((heard.observation.voiced_s, heard.embedding))
         return heard.observation
@@ -270,6 +283,12 @@ class OwnerVoice:
             log.warning("ignoring the voice print: %s; run reachy-companion enroll-voice again", error)
             return None
         return voice_print
+
+
+def _speaker_thread() -> ThreadPoolExecutor:
+    """Not an EngineExecutor: the watchdog would restart the whole companion for a stuck check,
+    which only labels requests. A stuck check leaves later requests unknown instead."""
+    return ThreadPoolExecutor(1, thread_name_prefix="speaker")
 
 
 def _agreement(embeddings: Sequence[np.ndarray]) -> Tuple[float, int]:

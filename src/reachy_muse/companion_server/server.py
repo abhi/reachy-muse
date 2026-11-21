@@ -296,7 +296,7 @@ class _Session:
         if stuck_s:
             await self._hear_overloaded(message.stream, stuck_s)
             return
-        hear = self.hearing[message.stream] = _Hear(asyncio.Queue(), heard=bytearray() if Op.SPEAKER in self.ops else None)
+        hear = self.hearing[message.stream] = _Hear(asyncio.Queue(), heard=bytearray() if self._labels() else None)
         hear.task = asyncio.create_task(self._guard(self._speech_first(lambda: self._hear(message, hear)), stream=message.stream))
 
     async def _hear_close(self, message: HearClose) -> None:
@@ -367,19 +367,24 @@ class _Session:
             self._end_hearing(stream, hear)
             await session.close()
 
-    async def _hear_endpoint(self, hear: _Hear, endpoint: HearEndpoint) -> None:
-        """End the stream, then send its endpoint, with its speaker label to follow.
+    def _labels(self) -> bool:
+        """Whether a stream's voice needs checking: for a robot granted speaker, or while the owner enrolls."""
+        return Op.SPEAKER in self.ops or (self.engines.speaker is not None and self.engines.speaker.enrolling)
 
-        The label's task exists before the endpoint is sent, so an abort handled meanwhile cancels it.
-        It cannot overtake the endpoint: ``send`` writes a frame before it first awaits.
+    async def _hear_endpoint(self, hear: _Hear, endpoint: HearEndpoint) -> None:
+        """End the stream, then send its endpoint, with its speaker check to follow.
+
+        The check's task exists before the endpoint is sent, so an abort handled meanwhile cancels it.
+        Its label cannot overtake the endpoint: ``send`` writes a frame before it first awaits.
         """
         self._end_hearing(endpoint.stream, hear)
-        if hear.heard is not None:
+        frame = encode(endpoint)
+        if hear.heard is not None and self._labels():
             self.observing[endpoint.stream] = asyncio.create_task(self._observe(endpoint.stream, bytes(hear.heard)))
-        await self._send(endpoint)
+        await self.ws.send(frame)
 
     async def _observe(self, stream: int, pcm: bytes) -> None:
-        """Label one ended stream's voice on the speaker thread. A failed check is unknown; the link stays up."""
+        """Check one ended stream's voice, and label it for a robot granted speaker. A failed check is unknown."""
         assert self.engines.speaker is not None
         try:
             try:
@@ -392,7 +397,8 @@ class _Session:
             else:
                 log.info("speaker stream=%d voiced_s=%.2f score=%s label=%s", stream, observation.voiced_s,
                          "none" if observation.score is None else f"{observation.score:.4f}", observation.label.value)
-            await self.ws.send(frame)
+            if Op.SPEAKER in self.ops:
+                await self.ws.send(frame)
         except ConnectionClosed:
             pass
         finally:

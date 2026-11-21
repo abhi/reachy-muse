@@ -9,6 +9,7 @@ import stat
 import sys
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -276,8 +277,8 @@ def test_hearing_runs_on_while_a_slow_speaker_check_holds_its_own_thread(state, 
         hearing._thread.shutdown()
 
 
-def test_a_slow_speaker_check_never_makes_hearing_look_stuck(state, monkeypatch, capfd):
-    """comp1's fail-fast watches the hearing worker; a speaker check is another worker under the same 30 s limit."""
+def test_a_stuck_speaker_check_neither_stalls_hearing_nor_restarts_the_companion(state, monkeypatch, caplog):
+    """The watchdog's fail-fast and 30 s limits watch hearing and the other engines, never the speaker thread."""
     now, exits = [100.0], []
     monitor = Watchdog(clock=lambda: now[0], loop_s=1000, check_s=.01, exit_process=exits.append)
     monkeypatch.setattr(serving, "watchdog", monitor)
@@ -292,12 +293,14 @@ def test_a_slow_speaker_check_never_makes_hearing_look_stuck(state, monkeypatch,
             await say(ws, 1, voice(OWNER, 2))
             assert (await recv(ws), await recv(ws)) == (HearPartial(1, 0, WORDS), HearEndpoint(1, WORDS, True))
             assert await asyncio.to_thread(encoder.entered.wait, 2)
-            now[0] += 29.9
+            now[0] += 60
+            await asyncio.sleep(.2)
             await say(ws, 3, voice(OTHER, 2))
             assert (await recv(ws), await recv(ws)) == (HearPartial(3, 0, WORDS), HearEndpoint(3, WORDS, True))
+            await say(ws, 5, voice(OTHER, 2))
+            assert [await recv(ws) for _ in range(3)] == [
+                HearPartial(5, 0, WORDS), HearEndpoint(5, WORDS, True), SpeakerObservation(5, 0, 32000, SpeakerLabel.UNKNOWN)]
             assert exits == []
-            now[0] += 1.2
-            await until(lambda: exits)
             gate.set()
             assert [await recv(ws), await recv(ws)] == [SpeakerObservation(1, 0, 32000, SpeakerLabel.OWNER),
                                                         SpeakerObservation(3, 0, 32000, SpeakerLabel.OTHER)]
@@ -305,10 +308,10 @@ def test_a_slow_speaker_check_never_makes_hearing_look_stuck(state, monkeypatch,
             gate.set()
             monitor.stop()
 
-    with EngineExecutor("speaker", monitor=monitor) as thread:
+    with ThreadPoolExecutor(1) as thread:
         serve(script, owner_voice(state, thread, encoder))
-    assert exits == [70]
-    assert "companion watchdog: speaker made no progress for 31.1s (limit 30s)" in capfd.readouterr().err
+    assert exits == []
+    assert "speaker check failed (stream=5): SpeakerBusy" in caplog.messages
 
 
 @pytest.mark.parametrize("finished", [True, False], ids=["after_its_endpoint", "before_its_endpoint"])
@@ -395,6 +398,7 @@ def test_a_failing_check_is_unknown_and_keeps_the_link_without_logging_its_detai
 def test_a_label_the_codec_refuses_goes_out_as_unknown_and_keeps_the_link(caplog):
     class Backwards:
         name = "backwards"
+        enrolling = False
 
         async def observe(self, pcm):
             return Observation(SpeakerLabel.OWNER, len(pcm) // 2, 0, .9, 2.0)
@@ -620,6 +624,28 @@ def test_enroll_voice_takes_five_long_sentences_then_tells_the_owner_from_others
     ]
     assert VoicePrint.load(private_state / PRINT_FILE) == VoicePrint(MODEL, VOICES[OWNER])
     assert "voice print enrolled from 5 utterances with 12.0 s of speech" in caplog.messages
+
+
+def test_an_older_robots_sentences_can_enroll_the_owner_and_it_still_gets_nothing_new(private_state, speaker_thread,
+                                                                                      capsys):
+    engine = owner_voice(private_state, speaker_thread)
+
+    async def script(companion):
+        ws = await robot(companion, ops=(Op.HEAR, Op.NARRATE))
+        enrolling = await enroll_in_background(engine, private_state)
+        for stream in (1, 3, 5, 7, 9):
+            await say(ws, stream, voice(OWNER, 2.4))
+            assert (await recv(ws), await recv(ws)) == (HearPartial(stream, 0, WORDS), HearEndpoint(stream, WORDS, True))
+            await asyncio.sleep(.05)
+            await nothing_else_arrived(ws)
+        assert await enrolling == 0
+        await say(ws, 11, voice(OWNER, 2.4))
+        assert (await recv(ws), await recv(ws)) == (HearPartial(11, 0, WORDS), HearEndpoint(11, WORDS, True))
+        await nothing_else_arrived(ws)
+
+    serve(script, engine, control=private_state)
+    assert capsys.readouterr().out.splitlines()[-1].startswith("Enrolled your voice from 5 sentences, 12.0 s of speech.")
+    assert VoicePrint.load(private_state / PRINT_FILE) == VoicePrint(MODEL, VOICES[OWNER])
 
 
 def test_sentences_that_do_not_sound_alike_change_nothing(private_state, speaker_thread, capsys):
