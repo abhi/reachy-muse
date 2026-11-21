@@ -2725,7 +2725,8 @@ class VoiceConversation:
 
         Muse reports a reply done while its audio still streams, so the closing waits until the
         speaker has been quiet for a moment, every sentence has had its expression, and Muse's
-        work on the turn has settled.
+        work on the turn has settled. A closing would end a gaze held on another person, so that
+        reply closes without one.
         """
         deadline = time.monotonic() + 30
         quiet_since = None
@@ -2738,7 +2739,7 @@ class VoiceConversation:
                 break
             await asyncio.sleep(.05)
         moment = CLOSINGS.get(closing())
-        if moment is None or call.audible or self._playback.user_speaking:
+        if moment is None or call.audible or self._playback.user_speaking or self._gaze.holding:
             return
         for name in CLOSING_CLIPS[moment]:
             result = await asyncio.to_thread(self.hardware.run_command, "reachy.expression",

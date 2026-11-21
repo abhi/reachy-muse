@@ -499,8 +499,11 @@ The person turn fades competing clips and thinking motion, then re-centers the
 follower on the selected direction. It holds through the reply. The next request,
 including a stop command, or the end of the listening window releases it, and
 Reachy turns back to the gaze it replaced, usually toward the speaker. Sleep
-releases it to the sleep pose. Explicit motion commands return busy while this
-gaze is held. Logs contain only outcomes and face counts.
+releases it to the sleep pose. An explicit motion command returns an error only
+while Reachy is still turning toward the person. Once Reachy faces them, the
+command runs and releases this gaze, as commands release the wake gaze. Reachy
+skips its own closing expression for a reply while it holds this gaze. Logs
+contain only outcomes and face counts.
 
 With `--wave-wake`, a wave also turns Reachy toward the person before face
 tracking takes over. The detected person's position takes priority over recent

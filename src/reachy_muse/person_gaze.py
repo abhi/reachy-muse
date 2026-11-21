@@ -27,6 +27,10 @@ class PersonGaze:
         self._admitted_generation = 0
         self._holding = False
 
+    @property
+    def holding(self) -> bool:
+        return self._holding
+
     def begin(self) -> int:
         self._generation += 1
         return self._generation

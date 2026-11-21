@@ -528,6 +528,40 @@ def test_releasing_the_greeting_turns_back_to_the_speaker(people, caplog, releas
         'Reachy gaze request outcome=turned faces=2']
 
 
+def test_muse_motion_commands_run_once_reachy_faces_the_friend(people, caplog):
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    rig.hardware.run_command = controller.run_command
+    reply = voiced(.3)
+
+    async def answer(sdk, emit, script):
+        await rig.wait_until_or_timeout(lambda: controller._person_hold, 3)
+        reply_events(sdk, emit, 'r1', 'Hello, nice to meet you!', reply)
+
+    calls = ScriptedCalls(answer=answer)
+    service = realtime_service(rig, StreamingTranscripts('Say hi to my friend.'), calls)
+    service.wake_timeout_s = 8
+    results = {}
+
+    async def user():
+        await say_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: controller._person_hold)
+        await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events))
+        await rig.wait_until_or_timeout(lambda: not service._voice[1].call.audible, 4)
+        await room(rig, 1.5)
+        results['held'] = round(math.degrees(controller.head_yaw)), controller._person_hold is not None
+        results['expression'] = await asyncio.to_thread(
+            service.run_command, 'reachy.expression', {'name': 'happy', 'duration': .5}, 5000)
+        results['move'] = await asyncio.to_thread(
+            service.run_command, 'reachy.move', {'pitch': -5, 'duration': .3, 'hold': 0}, 5000)
+        results['released'] = controller._person_hold is None
+
+    run(rig, service, user)
+    assert results['held'] == (-25, True)
+    assert (results['expression']['ok'], results['move']['ok']) == (True, True), results
+    assert results['released'] is True
+
+
 @pytest.mark.parametrize("wake", [False, True])
 @pytest.mark.parametrize('silence_s', [.8, 1.2])
 def test_chat_keeps_endpoint_bearing_after_robot_audio_clears_the_ring(people, caplog, wake, silence_s):

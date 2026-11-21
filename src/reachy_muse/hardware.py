@@ -1555,13 +1555,16 @@ class ReachyController:
                         pass
                 if request is not None or commanded:
                     with self._state_lock:
-                        if request is not None and (self._person_hold is not None or self._person_pending is not None):
-                            request.result = {"ok": False, "error": "Person gaze is held until the next request"}
+                        turning_to_person = (self._person_pending is not None
+                                             or self._person_hold is not None and self._speaker_turn is not None)
+                        if request is not None and turning_to_person:
+                            request.result = {"ok": False, "error": "Reachy is still turning toward another person"}
                             request.done.set()
                             request = None
                         if request is not None:
                             self._command_active = True
                         if request is not None or commanded:
+                            self._end_person_hold()
                             self._speaker_pending = self._speaker_look = self._speaker_turn = None
                             self._sentences.cancel()
                             self._sentence_active = False
