@@ -123,7 +123,11 @@ def _request_grammar(phrases: str) -> re.Pattern:
 _GRAMMAR = _request_grammar("|".join(f"(?P<{command.value}>{spec.phrases})"
                                      for command, spec in COMMANDS.items() if spec.phrases))
 _OTHER_PERSON = r"(?:him|her|them|my friend|someone(?: else)?|somebody(?: else)?|the other person|my guest)"
-_GAZE = _request_grammar(rf"(?:say (?:hi|hello) to|greet|look at) {_OTHER_PERSON}")
+_GAZE = _request_grammar(r"(?:say (?:hi|hello) to|greet) (?P<greeted>[a-z0-9']+(?: [a-z0-9']+){0,3})"
+                         rf"|look at {_OTHER_PERSON}")
+_NOT_ANOTHER_PERSON = frozenset((
+    "me", "myself", "us", "ourselves", "you", "yourself", "yourselves", "it", "this", "that",
+    "muse", "reachy", "robot", "nobody", "none"))
 # Quotation marks, not apostrophes inside a word.
 _QUOTED = re.compile(r"[\"“”]|(?<![a-z])['‘’]|['‘’](?![a-z])", re.IGNORECASE)
 # "Say hi to her for me", "when you call her" or "later": the greeting is for someone who is not here.
@@ -203,10 +207,16 @@ def command_after_wake(text: str, phrase: str) -> Optional[str]:
 
 
 def gaze_requested(text: str) -> bool:
-    """A request to face someone other than the speaker. It is never a device command."""
+    """A request to face someone other than the speaker. It is never a device command.
+
+    A greeting may name the person in up to four words; "look at" takes only the short list.
+    """
     spoken = _spoken(text)
-    return (_QUOTED.search(text) is None and _ABSENT.search(spoken) is None
-            and _GAZE.fullmatch(spoken) is not None)
+    if _QUOTED.search(text) or _ABSENT.search(spoken) or not _NEGATIONS.isdisjoint(spoken.split()):
+        return False
+    match = _GAZE.fullmatch(spoken)
+    return match is not None and (match["greeted"] is None
+                                  or match["greeted"].split()[0] not in _NOT_ANOTHER_PERSON)
 
 
 def worth_asking(text: str, asked: FrozenSet[DeviceCommand]) -> bool:

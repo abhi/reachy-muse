@@ -34,7 +34,12 @@ from test_realtime_turns import (RATE, CallHardware, ScriptedCalls, StreamingTra
     ('Say "say hi to him".', False), ('"Say hi to him."', False), ("'Say hi to him.'", False),
     ('“Say hi to my friend.”', False), ('‘Greet my guest.’', False),
     ('For example, say hi to him.', False), ('What does say hello to someone mean?', False),
-    ("Say hi to my friend's dog.", False),
+    ('Say hi to my friend Sarah.', True), ('Say hello to Sarah.', True), ('Say hello to my mom.', True),
+    ('Greet our guests.', True), ('Can you say hi to everyone in the room?', True),
+    ("Say hi to my friend's dog.", True),
+    ('Say hi to me.', False), ('Say hello to yourself.', False), ('Say hi to Reachy.', False),
+    ('Say hello to no one.', False), ('Say hi to my friend Sarah who sits by the window.', False),
+    ('Look at this.', False), ('Look at that dog.', False), ('Look at Sarah.', False),
     ('Say hi to her for me.', False), ('Greet them for us, please.', False), ('Say hello to him from me.', False),
     ('Say hi to her when you call her.', False), ('Say hello to them next time.', False),
     ('Say hi to him later.', False), ('Greet my guest tomorrow.', False), ('Say hi to her if you see her.', False),
@@ -581,7 +586,8 @@ def test_faces_are_not_remembered_from_a_frame_taken_while_the_head_turns(people
             if turned['at'] - .05 <= face.captured_at <= turned['at'] + SPEAKER_TURN_S] == []
 
 
-@pytest.mark.parametrize('text', ['Okay, say hi to him.', 'Can you please say hi to my friend?'])
+@pytest.mark.parametrize('text', ['Okay, say hi to him.', 'Can you please say hi to my friend?',
+                                  'Say hello to Sarah.'])
 def test_natural_phrasings_turn_toward_the_friend(people, caplog, text):
     rig, controller, robot, scene = people
     caplog.set_level('INFO')

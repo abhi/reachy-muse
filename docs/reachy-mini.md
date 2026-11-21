@@ -485,9 +485,13 @@ someone else" or "look at the other person" also turn Reachy toward another
 person's face while Muse answers normally. As with device commands, a request
 may open with words such as "okay" or "Reachy", use a polite form such as "can
 you please", and end with "please", and its commas and final punctuation do not
-matter. "Look at me" still enables face following, and these requests never go
-to the companion's command model, which could take them for face following.
-Negated requests and quoted examples do not trigger this turn.
+matter. A greeting may name the person in up to four words, as in "say hello to
+Sarah" or "greet our guests"; "look at" accepts only "him", "her", "them", "my
+friend", "my guest", "someone else" or "the other person". "Look at me" still
+enables face following, and these requests never go to the companion's command
+model, which could take them for face following. Negated requests, quoted
+examples and greetings for someone absent, with words such as "for me", "when
+you call her" or "later", do not trigger this turn.
 Reachy latches the median speech bearing at the request endpoint, or uses the
 wake gaze from the current window if no request bearing is available. It excludes
 faces within 20 degrees of that bearing, then selects the remaining face that
