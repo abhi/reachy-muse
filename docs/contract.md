@@ -115,10 +115,11 @@ fills defaults. Invalid speech or presence parameters return
 use the notification result format with `status: refused`.
 
 In `reachy.move`, yaw 0 means straight ahead. Reachy turns toward whoever is
-speaking. A local request to greet or look at another person selects a visible
-face away from the speaker and holds that gaze through Muse's reply. It does
-not consume the voice turn. A motion command returns an error only while Reachy is
-still turning toward that person. After that, the command runs and ends the gaze.
+speaking. A local request to greet or look at another person selects a face
+away from the speaker, in view or seen in the last 30 seconds, and holds that
+gaze through Muse's reply. It does not consume the voice turn. A motion command
+returns an error only while Reachy is still turning toward that person. After
+that, the command runs and ends the gaze.
 
 ## Registration size
 

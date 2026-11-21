@@ -482,7 +482,7 @@ Direction logs contain only angles and decisions.
 
 With face following enabled, requests such as "say hi to my friend", "greet
 someone else" or "look at the other person" also turn Reachy toward another
-visible face while Muse answers normally. As with device commands, a request
+person's face while Muse answers normally. As with device commands, a request
 may open with words such as "okay" or "Reachy", use a polite form such as "can
 you please", and end with "please", and its commas and final punctuation do not
 matter. "Look at me" still enables face following, and these requests never go
