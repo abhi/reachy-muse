@@ -242,6 +242,63 @@ def test_releasing_person_gaze_cannot_erase_a_newly_admitted_target(monkeypatch)
     assert math.degrees(controller._robot.body_yaw) == pytest.approx(-5, abs=.1)
 
 
+@pytest.mark.parametrize('gaze_first', [True, False])
+def test_command_and_person_gaze_cannot_both_claim_motion(monkeypatch, gaze_first):
+    from reachy_muse.hardware import _Command
+
+    request = _Command('reachy.move', {'yaw': 10, 'duration': 2, 'hold': 0}, 1020)
+    admitted = []
+
+    def action(controller, follower, tick):
+        if tick == 1:
+            controller._face_follower = None
+            controller.set_state('listening')
+        if tick == 40:
+            lock = controller._state_lock
+
+            class AdmissionLock:
+                pending = False
+
+                def admit(self):
+                    self.pending = False
+                    admitted.append(controller.look_at_person(math.radians(-25), 0))
+
+                def __enter__(self):
+                    if self.pending and gaze_first:
+                        self.admit()
+                    return lock.__enter__()
+
+                def __exit__(self, *args):
+                    lock.__exit__(*args)
+                    if self.pending:
+                        self.admit()
+
+            admission = controller._state_lock = AdmissionLock()
+            take = controller._commands.get_nowait
+
+            def take_command():
+                command = take()
+                admission.pending = True
+                return command
+
+            monkeypatch.setattr(controller._commands, 'get_nowait', take_command)
+            controller._commands.put_nowait(request)
+
+    controller, _, samples = drive(monkeypatch, action, ticks=160, style=MotionStyle(breathing=False))
+    assert request.done.is_set()
+    if gaze_first:
+        assert admitted == [True]
+        assert request.result == {'ok': False, 'error': 'Person gaze is held until the next request'}
+        assert controller._person_hold is True
+        assert samples[90]['yaw'] == pytest.approx(-25, abs=.1)
+    else:
+        assert admitted == [False]
+        assert request.result['ok'] is True
+        assert controller._person_pending is None
+        assert controller._person_hold is False
+        assert samples[120]['yaw'] == pytest.approx(10, abs=.1)
+
+
 @pytest.mark.parametrize('gesture', ['nod', 'shake', 'tilt'])
 def test_recorded_command_keeps_its_pose_when_a_listening_gesture_arrives(monkeypatch, gesture):
     from reachy_muse.hardware import _Command

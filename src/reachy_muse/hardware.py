@@ -1534,18 +1534,18 @@ class ReachyController:
                     except queue.Empty:
                         pass
                 if request is not None or commanded:
-                    if request is not None and (self._person_hold or self._person_pending is not None):
-                        request.result = {"ok": False, "error": "Person gaze is held until the next request"}
-                        request.done.set()
-                        request = None
-                if request is not None or commanded:
                     with self._state_lock:
+                        if request is not None and (self._person_hold or self._person_pending is not None):
+                            request.result = {"ok": False, "error": "Person gaze is held until the next request"}
+                            request.done.set()
+                            request = None
                         if request is not None:
                             self._command_active = True
-                        self._speaker_pending = self._speaker_look = self._speaker_turn = None
-                        self._sentences.cancel()
-                        self._sentence_active = False
-                        self._sentence_terminal = None
+                        if request is not None or commanded:
+                            self._speaker_pending = self._speaker_look = self._speaker_turn = None
+                            self._sentences.cancel()
+                            self._sentence_active = False
+                            self._sentence_terminal = None
                 if request is not None and (self._clip is not None or self._generated is not None):
                     # A command starts from the pose last written, so showing clips fade out first.
                     for clip in (self._clip, self._generated):
