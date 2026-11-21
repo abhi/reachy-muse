@@ -863,6 +863,46 @@ def test_a_reply_after_a_muse_command_ended_the_gaze_gets_its_closing_clip(peopl
     assert commands[:2] == ['reachy.move', 'success1']
 
 
+def test_a_lost_line_turns_back_from_the_friend_to_the_speaker(people, caplog, monkeypatch):
+    from test_device_command_turns import service as make_service, never_asked
+
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    monkeypatch.setattr('reachy_muse.conversation.CALL_PENDING_EXTENSION_S', 1)
+    calls = ScriptedCalls(reply=None)
+    service = make_service(rig, never_asked, StreamingTranscripts('Say hi to my friend.'),
+                           wake_detector=DelayedWake(), wake_timeout_s=2, muse_path='realtime',
+                           voice_link=calls.link, voice_call=calls)
+    lost = 'tts:I lost my line to Muse. Please say that again.'
+    seen = {}
+
+    def facing():
+        return round(math.degrees(controller.head_yaw)), round(math.degrees(robot.body_yaw))
+
+    async def user():
+        for _ in range(30):
+            rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
+            await asyncio.sleep(.02)
+        await rig.wait_until_or_timeout(lambda: facing() == (30, 10))
+        await say_live(rig, paced_silence_s=.6)
+        await rig.wait_until_or_timeout(lambda: facing() == (-25, -5))
+        seen['greeting'] = facing()
+        for _ in range(400):
+            if lost in played(rig.recording.events):
+                break
+            await room(rig, .02)
+        await room(rig, 1)
+        seen['after_loss'] = facing()
+
+    events = run(rig, service, user, rest=('listening', 'idle'))
+    assert [line for line in caplog.messages if line.startswith('Realtime recovery ')] == [
+        'Realtime recovery attempt=1 reason=window_expired']
+    assert played(events) == [lost]
+    assert len(calls.opened) == 2
+    assert seen == {'greeting': (-25, -5), 'after_loss': (30, 10)}
+    assert controller._person_hold is None
+
+
 @pytest.mark.parametrize("wake", [False, True])
 @pytest.mark.parametrize('silence_s', [.8, 1.2])
 def test_chat_keeps_endpoint_bearing_after_robot_audio_clears_the_ring(people, caplog, wake, silence_s):

@@ -2691,6 +2691,7 @@ class VoiceConversation:
         if call.loss_announced:
             return
         call.loss_announced = True
+        self._gaze.release()
         log.info("Reachy's realtime call ended before Muse answered; asking the user to repeat")
         await self._announce(CALL_LOST_CUE, started=None, defer_playback=True)
 
