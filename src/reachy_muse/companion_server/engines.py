@@ -117,6 +117,9 @@ class Speaker(Protocol):
     def enroll(self) -> AsyncIterator[dict]:
         """Replace the print from the next requests observed. Yields one event per step for the owner's CLI."""
 
+    async def forget(self) -> Tuple[bool, bool]:
+        """Stop any enrollment and delete the print. Returns whether one was enrolling and a print was there."""
+
 
 class SpeechFirst:
     """Hearing, speech, narration and classify share the GPU with motion and go first.

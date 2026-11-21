@@ -85,7 +85,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     elif args.command == "forget-voice":
         from reachy_muse.companion_server import voice_control
 
-        print(voice_control.forget(args.state_dir))
+        raise SystemExit(voice_control.forget(args.state_dir))
     elif args.command == "motion-library":
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
         try:

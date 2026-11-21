@@ -9,11 +9,13 @@ server asks for a label only after a request's endpoint has gone out, so hearing
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import stat
 import tempfile
+import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -148,6 +150,8 @@ class OwnerVoice:
         self._checks: List[Future] = []
         self._seen: Tuple[object, Optional[VoicePrint]] = (None, None)
         self._enrollment: Optional[asyncio.Queue] = None
+        self._forgets = 0
+        self._writing = threading.Lock()   # one save or delete of the print at a time
 
     @classmethod
     async def load(cls, model: Path, print_path: Path, threshold: Optional[float]) -> OwnerVoice:
@@ -191,6 +195,7 @@ class OwnerVoice:
             return
         heard: asyncio.Queue = asyncio.Queue()
         self._enrollment = heard
+        forgets = self._forgets
         try:
             deadline = self._clock() + ENROLL_WITHIN_S
             yield {"event": "listening", "utterances": ENROLL_UTTERANCES, "speech_s": ENROLL_SPEECH_S,
@@ -198,12 +203,16 @@ class OwnerVoice:
             taken: List[Tuple[float, np.ndarray]] = []
             while len(taken) < ENROLL_UTTERANCES:
                 try:
-                    voiced_s, embedding = await asyncio.wait_for(heard.get(), deadline - self._clock())
+                    item = await asyncio.wait_for(heard.get(), deadline - self._clock())
                 except asyncio.TimeoutError:
-                    voiced_s = None
-                if voiced_s is None or self._clock() >= deadline:
+                    item = None
+                if self._forgets != forgets:
+                    yield {"event": "failed", "reason": "forgotten"}
+                    return
+                if item is None or self._clock() >= deadline:
                     yield {"event": "failed", "reason": "timeout", "taken": len(taken), "of": ENROLL_UTTERANCES}
                     return
+                voiced_s, embedding = item
                 if embedding is None or voiced_s < ENROLL_SPEECH_S:
                     yield {"event": "skipped", "voiced_s": round(voiced_s, 2), "speech_s": ENROLL_SPEECH_S}
                     continue
@@ -217,10 +226,13 @@ class OwnerVoice:
             voice_print = VoicePrint(self.encoder.model_id,
                                      tuple(float(value) for value in normalized(np.mean(embeddings, axis=0))))
             try:
-                await asyncio.wrap_future(self._thread.submit(voice_print.save, self.print_path))
+                await asyncio.wrap_future(self._thread.submit(self._save, voice_print, forgets))
             except OSError as error:
                 log.warning("saving the voice print failed: %s", type(error).__name__)
                 yield {"event": "failed", "reason": "save"}
+                return
+            if self._forgets != forgets:
+                yield {"event": "failed", "reason": "forgotten"}
                 return
             voiced_s = sum(seconds for seconds, _ in taken)
             log.info("voice print enrolled from %d utterances with %.1f s of speech", len(taken), voiced_s)
@@ -228,6 +240,24 @@ class OwnerVoice:
         finally:
             if self._enrollment is heard:
                 self._enrollment = None
+
+    async def forget(self) -> Tuple[bool, bool]:
+        """Stop any enrollment, then delete the print. Returns whether one was enrolling and a print was there."""
+        self._forgets += 1
+        enrollment = self._enrollment
+        if enrollment is not None:
+            enrollment.put_nowait(None)
+        removed = await asyncio.to_thread(self._delete)
+        return enrollment is not None, removed
+
+    def _save(self, voice_print: VoicePrint, forgets: int) -> None:
+        with self._writing:
+            if self._forgets == forgets:
+                voice_print.save(self.print_path)
+
+    def _delete(self) -> bool:
+        with self._writing:
+            return delete_print(self.print_path)
 
     def _observe(self, pcm: bytes, enrolling: bool) -> _Heard:
         samples = np.frombuffer(pcm, dtype="<i2")
@@ -283,6 +313,16 @@ class OwnerVoice:
             log.warning("ignoring the voice print: %s; run reachy-companion enroll-voice again", error)
             return None
         return voice_print
+
+
+def delete_print(path: Path) -> bool:
+    """Delete the print and any copy an interrupted save left. Returns whether there was anything."""
+    removed = False
+    for copy in (path, *path.parent.glob(".voice-print-*")):
+        with contextlib.suppress(FileNotFoundError):
+            copy.unlink()
+            removed = True
+    return removed
 
 
 def _speaker_thread() -> ThreadPoolExecutor:
