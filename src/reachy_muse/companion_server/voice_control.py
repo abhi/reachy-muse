@@ -164,14 +164,19 @@ def enroll(state_dir: Path, say: Callable[[str], None] = print) -> int:
 
 
 def forget(state_dir: Path, say: Callable[[str], None] = print) -> int:
-    """Delete the voice print. A running companion also stops any enrollment and the print's use at once."""
+    """Delete the voice print. A running companion also stops any enrollment and the print's use at once.
+
+    Unlike enroll, this asks the companion even when the state directory is no longer private: the request
+    carries nothing, the answer is two booleans, and the print is deleted here as well. Its wait is bounded,
+    so neither a stuck companion nor a socket someone else put there can keep the print from being deleted.
+    """
     reply = None
-    if _private(state_dir):
-        with contextlib.suppress(FileNotFoundError, ConnectionRefusedError):
-            with _connected(state_dir, FORGET) as lines:
-                reply = json.loads(next(lines, "null"))
-    stopped, removed = (reply["stopped"], reply["removed"]) if reply else (False, delete_print(state_dir / PRINT_FILE))
-    said = ["Stopped the enrollment that was running."] if stopped else []
+    with contextlib.suppress(OSError, ValueError):
+        with _connected(state_dir, FORGET, REQUEST_TIMEOUT_S) as lines:
+            reply = json.loads(next(lines, "null"))
+    answer = reply if isinstance(reply, dict) else {}
+    removed = delete_print(state_dir / PRINT_FILE) or answer.get("removed") is True
+    said = ["Stopped the enrollment that was running."] if answer.get("stopped") is True else []
     said.append("Deleted the voice print. The companion labels every voice unknown until you enroll again." if removed
                 else "There is no voice print to delete.")
     say(" ".join(said))
@@ -179,8 +184,9 @@ def forget(state_dir: Path, say: Callable[[str], None] = print) -> int:
 
 
 @contextlib.contextmanager
-def _connected(state_dir: Path, request: dict):
+def _connected(state_dir: Path, request: dict, timeout_s: Optional[float] = None):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(timeout_s)
         connection.connect(str(state_dir / SOCKET_FILE))
         connection.sendall(json.dumps(request).encode() + b"\n")
         with connection.makefile("r", encoding="utf-8") as lines:

@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+import socket
 import stat
 import sys
 import tempfile
@@ -714,6 +715,38 @@ def test_an_older_robots_sentences_can_enroll_the_owner_and_it_still_gets_nothin
     serve(script, engine, control=private_state)
     assert capsys.readouterr().out.splitlines()[-1].startswith("Enrolled your voice from 5 requests, 12.0 s of speech.")
     assert VoicePrint.load(private_state / PRINT_FILE) == VoicePrint(MODEL, VOICES[OWNER])
+
+
+def test_forget_voice_stops_an_enrollment_even_once_the_directory_is_no_longer_private(private_state, speaker_thread,
+                                                                                    capsys):
+    engine = owner_voice(private_state, speaker_thread)
+
+    async def script(companion):
+        ws = await robot(companion)
+        enrolling = await enroll_in_background(engine, private_state)
+        await label(ws, 1, voice(OWNER, 2.4))
+        private_state.chmod(0o755)
+        assert await asyncio.to_thread(command, private_state, "forget-voice") == 0
+        assert await enrolling == 1
+        for stream in (3, 5, 7, 9):
+            assert await label(ws, stream, voice(OWNER, 2.4)) is SpeakerLabel.UNKNOWN
+
+    serve(script, engine, control=private_state)
+    assert no_print_in(private_state)
+    assert "Stopped the enrollment that was running. There is no voice print to delete." in (
+        capsys.readouterr().out.splitlines())
+
+
+def test_forget_voice_deletes_the_print_when_the_socket_never_answers(private_state, monkeypatch, capsys):
+    monkeypatch.setattr(voice_control, "REQUEST_TIMEOUT_S", .2)
+    enrolled(private_state)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as silent:
+        silent.bind(str(private_state / voice_control.SOCKET_FILE))
+        silent.listen()
+        assert command(private_state, "forget-voice") == 0
+    assert no_print_in(private_state)
+    assert capsys.readouterr().out.splitlines() == [
+        "Deleted the voice print. The companion labels every voice unknown until you enroll again."]
 
 
 def test_sentences_that_do_not_sound_alike_change_nothing(private_state, speaker_thread, capsys):
