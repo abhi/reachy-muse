@@ -1354,7 +1354,9 @@ class ReachyController:
             log.info("Speaker gaze yaw=%.1f body_yaw=%.1f decision=%s", target.head, target.body, decision)
             if decision == "turn":
                 self.wake_gaze_bearing = bearing
-                self._turn_toward(target, now)
+                with self._state_lock:
+                    self._end_person_hold()
+                    self._turn_toward(target, now)
 
     def _write(self, pose, antennas, body_yaw: float) -> None:
         antennas = self._np.asarray(antennas, dtype=float).copy()

@@ -393,6 +393,40 @@ def test_person_turn_fades_motion_holds_and_releases(monkeypatch, source):
     assert len(robot.writers) == 1
 
 
+def listen_to_speaker_at_30(controller):
+    controller.look_at_speaker(math.pi / 3)
+    controller.set_state('listening')
+
+
+@pytest.mark.parametrize('replacement', ['same_tick', 'after_release'])
+def test_a_second_person_gaze_still_turns_back_to_the_first_speaker(monkeypatch, replacement):
+    def replace_now(controller):
+        controller.release_person_gaze()
+        assert controller.look_at_person(math.radians(-10), 0)
+
+    events = {5: listen_to_speaker_at_30, 60: lambda c: c.look_at_person(math.radians(-30), 0),
+              180: lambda c: c.release_person_gaze()}
+    if replacement == 'same_tick':
+        events[120] = replace_now
+    else:
+        events[120] = lambda c: c.release_person_gaze()
+        events[125] = lambda c: c.look_at_person(math.radians(-10), 0)
+    controller, robot, clock = simulate(monkeypatch, events, ticks=260)
+    assert round(pose_at(controller, robot, clock.times[175])['yaw']) == -10
+    final = pose_at(controller, robot, clock.now)
+    assert (round(final['yaw']), round(final['body_yaw'])) == (30, 10)
+
+
+def test_a_wake_turn_during_a_person_gaze_ends_it(monkeypatch):
+    controller, robot, clock = simulate(monkeypatch, {
+        5: listen_to_speaker_at_30, 60: lambda c: c.look_at_person(math.radians(-30), 0),
+        120: lambda c: c.look_at_speaker(math.radians(110)), 180: lambda c: c.release_person_gaze(),
+    }, ticks=260)
+    assert round(pose_at(controller, robot, clock.times[175])['yaw']) == -20
+    assert controller._person_hold is None
+    assert round(pose_at(controller, robot, clock.now)['yaw']) == -20
+
+
 @pytest.mark.parametrize('source', ['generated', 'clip'])
 def test_commands_wait_only_while_reachy_turns_toward_the_person(monkeypatch, source):
     turning = _Command('reachy.move', {'yaw': 0, 'duration': .2, 'hold': 0}, 1010)
