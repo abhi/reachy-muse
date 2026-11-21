@@ -312,7 +312,7 @@ def test_rejected_short_utterances_do_not_supply_the_next_speakers_bearing(peopl
         await rig.wait_until_or_timeout(lambda: any(line.startswith('Reachy gaze request') for line in caplog.messages))
         assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
             'Reachy gaze request outcome=no_speaker_bearing faces=0']
-        assert controller._person_hold is False
+        assert controller._person_hold is None
         await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events))
         await rig.wait_until_or_timeout(lambda: not service._voice[1].call.audible)
         assert math.degrees(controller.head_yaw) == pytest.approx(0, abs=.2)
@@ -403,7 +403,7 @@ def test_request_negative_outcomes_keep_the_call_reply(people, caplog, case, tex
         await say_live(rig, wake=True)
         await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events), 3)
         await asyncio.sleep(.4)
-        assert controller._person_hold is False
+        assert controller._person_hold is None
 
     events = run(rig, service, user)
     assert set(played(events)) == {'muse'}
@@ -422,7 +422,7 @@ def test_look_at_me_remains_the_local_face_tracking_command(people, caplog):
     async def user():
         await say_live(rig, wake=True)
         await rig.wait_until_or_timeout(lambda: calls.barge_ins == 1)
-        assert controller._person_hold is False
+        assert controller._person_hold is None
 
     run(rig, service, user)
     assert calls.barge_ins == 1
@@ -478,6 +478,54 @@ def test_a_turned_head_picks_the_other_face_needing_the_smallest_turn(people, ca
     run(rig, service, user)
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
         'Reachy gaze request outcome=turned faces=3']
+
+
+@pytest.mark.parametrize('release', ['next_request', 'window_close'])
+def test_releasing_the_greeting_turns_back_to_the_speaker(people, caplog, release):
+    from test_device_command_turns import service as make_service, never_asked
+
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    reply = voiced(.3)
+
+    async def answer(sdk, emit, script):
+        await rig.wait_until_or_timeout(lambda: controller._person_hold, 3)
+        reply_events(sdk, emit, 'r1', 'Hello there!', reply)
+
+    calls = ScriptedCalls(answer=answer)
+    service = make_service(rig, never_asked, StreamingTranscripts('Say hi to my friend.', 'What time is it?'),
+                           wake_detector=DelayedWake(), wake_timeout_s=5 if release == 'next_request' else 2,
+                           muse_path='realtime', voice_link=calls.link, voice_call=calls)
+    service.silence_s = .8
+
+    def facing():
+        return round(math.degrees(controller.head_yaw)), round(math.degrees(robot.body_yaw))
+
+    async def user():
+        for _ in range(30):
+            rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
+            await asyncio.sleep(.02)
+        await rig.wait_until_or_timeout(lambda: facing() == (30, 10))
+        assert facing() == (30, 10)
+        await say_live(rig, paced_silence_s=.9)
+        await rig.wait_until_or_timeout(lambda: facing() == (-25, -5))
+        assert facing() == (-25, -5)
+        await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events))
+        await rig.wait_until_or_timeout(lambda: not service._voice[1].call.audible, 4)
+        if release == 'next_request':
+            await room(rig, .3)
+            await say_live(rig, paced_silence_s=.9)
+        else:
+            await rig.wait_until_or_timeout(lambda: service._voice[1]._wake_deadline is None, 4)
+            assert service._voice[1]._wake_deadline is None
+        await rig.wait_until_or_timeout(lambda: not controller._person_hold)
+        await asyncio.sleep(1)
+        assert facing() == (30, 10)
+        assert (service._voice[1]._wake_deadline is not None) is (release == 'next_request')
+
+    run(rig, service, user)
+    assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+        'Reachy gaze request outcome=turned faces=2']
 
 
 @pytest.mark.parametrize("wake", [False, True])
@@ -607,7 +655,7 @@ def test_delayed_transcript_cannot_reacquire_gaze_during_the_next_utterance(peop
             rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
             await asyncio.sleep(.02)
         assert service._voice[1]._playback.user_speaking
-        assert controller._person_hold is False
+        assert controller._person_hold is None
         assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
             'Reachy gaze request outcome=busy faces=0']
         rig.say(voiced_s=0)
@@ -642,7 +690,7 @@ def test_wake_gaze_is_fallback_only_within_its_window(people, caplog, speaker_ya
             'Reachy gaze request outcome=' + ('turned faces=2' if speaker_yaw == 30 else 'no_other faces=1')]
         if speaker_yaw == 30:
             await rig.wait_until_or_timeout(lambda: controller._person_hold)
-        assert controller._person_hold is (speaker_yaw == 30)
+        assert (controller._person_hold is not None) is (speaker_yaw == 30)
         assert controller._speaker_look.head == pytest.approx(-25 if speaker_yaw == 30 else 35)
         assert controller.wake_gaze_bearing == pytest.approx(math.radians(90 - speaker_yaw))
 

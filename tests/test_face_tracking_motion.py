@@ -237,7 +237,7 @@ def test_releasing_person_gaze_cannot_erase_a_newly_admitted_target(monkeypatch)
 
     controller, _, samples = drive(monkeypatch, action, style=MotionStyle(breathing=False))
     assert admitted == [True]
-    assert controller._person_hold is True
+    assert controller._person_hold is not None
     assert samples[135]['yaw'] == pytest.approx(-25, abs=.1)
     assert math.degrees(controller._robot.body_yaw) == pytest.approx(-5, abs=.1)
 
@@ -289,13 +289,13 @@ def test_command_and_person_gaze_cannot_both_claim_motion(monkeypatch, gaze_firs
     if gaze_first:
         assert admitted == [True]
         assert request.result == {'ok': False, 'error': 'Person gaze is held until the next request'}
-        assert controller._person_hold is True
+        assert controller._person_hold is not None
         assert samples[90]['yaw'] == pytest.approx(-25, abs=.1)
     else:
         assert admitted == [False]
         assert request.result['ok'] is True
         assert controller._person_pending is None
-        assert controller._person_hold is False
+        assert controller._person_hold is None
         assert samples[120]['yaw'] == pytest.approx(10, abs=.1)
 
 

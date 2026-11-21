@@ -496,9 +496,11 @@ The request reuses a snapshot up to two seconds old; otherwise it asks the same
 camera and detector worker for one fresh pass, waiting at most 300 ms. This pass
 may bypass the vision pause. It adds no continuous detection during listening.
 The person turn fades competing clips and thinking motion, then re-centers the
-follower on the selected direction. It holds through the reply until the next
-request, sleep, stop or window closure. Explicit motion commands return busy
-while this gaze is held. Logs contain only outcomes and face counts.
+follower on the selected direction. It holds through the reply. The next request,
+including a stop command, or the end of the listening window releases it, and
+Reachy turns back to the gaze it replaced, usually toward the speaker. Sleep
+releases it to the sleep pose. Explicit motion commands return busy while this
+gaze is held. Logs contain only outcomes and face counts.
 
 With `--wave-wake`, a wave also turns Reachy toward the person before face
 tracking takes over. The detected person's position takes priority over recent

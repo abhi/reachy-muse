@@ -202,6 +202,14 @@ class _SpeakerTurn:
                           self.body_from + (self.target.body - self.body_from) * weight)
 
 
+@dataclass(frozen=True)
+class _PersonHold:
+    """Reachy faces someone other than the speaker; a release turns back to ``restore``."""
+
+    pitch: float                   # head pitch in degrees while no face is followed
+    restore: SpeakerYaw | None     # the speaker gaze this hold replaced
+
+
 class ReachyController:
     """Own the robot for a standalone Muse session.
 
@@ -340,9 +348,8 @@ class ReachyController:
         self._speaker_gaze = 0.0
         self.wake_gaze_bearing: float | None = None
         self._person_pending: tuple[SpeakerYaw, float, float] | None = None
-        self._person_hold = False
+        self._person_hold: _PersonHold | None = None
         self._person_release = False
-        self._person_pitch = 0.0
         self._command_active = False
         self._gesture_name = None
         self._gesture_started = 0.0
@@ -551,8 +558,8 @@ class ReachyController:
         self._speaker_pending = self._speaker_look = self._speaker_turn = None
         self._speaker_gaze = 0.0
         self.wake_gaze_bearing = None
-        self._person_pending = None
-        self._person_hold = self._person_release = False
+        self._person_pending = self._person_hold = None
+        self._person_release = False
         self._command_active = False
         from reachy_muse.motion.layers import MotionLayers, Ramp
         self._layers = MotionLayers(self._style)
@@ -810,7 +817,7 @@ class ReachyController:
         pending = _PendingMotion(_Frames(poses, fps, loop, self._head), frozenset(during),
                                  time.monotonic() + start_within_s)
         with self._state_lock:
-            if self._person_hold or self._person_pending is not None:
+            if self._person_hold is not None or self._person_pending is not None:
                 return
             self._pending_motion = pending
 
@@ -1263,8 +1270,9 @@ class ReachyController:
                 return pose
             coordinates = self._pose_parameters(pose)
             coordinates["yaw"] = self._speaker_gaze
-            if self._person_hold:
-                coordinates["pitch"] = self._person_pitch
+            hold = self._person_hold
+            if hold is not None:
+                coordinates["pitch"] = hold.pitch
             return self._head(**coordinates)
         from reachy_muse.local_face_tracking import PITCH_LIMIT, YAW_LIMIT
         origin = look.head if look is not None else 0.0
@@ -1283,18 +1291,35 @@ class ReachyController:
     def _clear_speaker(self) -> None:
         self._speaker_pending = None
         self._person_pending = None
-        if self._person_hold and self._face_follower is not None:
-            self._face_follower.hold_center(None)
-        self._person_hold = False
+        self._end_person_hold()
         self._speaker_look = self._speaker_turn = None
+
+    def _end_person_hold(self) -> _PersonHold | None:
+        hold, self._person_hold = self._person_hold, None
+        if hold is not None and self._face_follower is not None:
+            self._face_follower.hold_center(None)
+        return hold
+
+    def _turn_toward(self, look: SpeakerYaw | None, now: float) -> None:
+        """Ease head and body to ``look``; without one, the head settles back to its resting yaw."""
+        self._speaker_look = look
+        self._speaker_turn = None
+        if look is not None:
+            self._speaker_gaze = look.head
+            self._speaker_turn = _SpeakerTurn(look, now, self._pose_parameters(self._last_pose)["yaw"],
+                                              math.degrees(self._last_body_yaw))
 
     def _update_person(self, now: float, state: str) -> None:
         with self._state_lock:
-            release = self._person_release or state == "sleeping"
-            self._person_release = False
-            if release:
-                if self._person_hold or self._person_pending is not None:
+            release, self._person_release = self._person_release, False
+            if state == "sleeping":
+                if self._person_hold is not None or self._person_pending is not None:
                     self._clear_speaker()
+                return
+            if release:
+                hold = self._end_person_hold()
+                if hold is not None:
+                    self._turn_toward(hold.restore, now)
                 return
             pending = self._person_pending
             if pending is None:
@@ -1306,13 +1331,11 @@ class ReachyController:
                     clip.timeline.stop(now)
             if self._clip is not None or self._generated is not None:
                 return
-            target, self._person_pitch, yaw = pending
+            target, pitch, yaw = pending
             self._person_pending = None
-            self._person_hold = True
-            self._speaker_look = target
-            self._speaker_gaze = target.head
-            self._speaker_turn = _SpeakerTurn(target, now, self._pose_parameters(self._last_pose)["yaw"],
-                                              math.degrees(self._last_body_yaw))
+            replaced = self._end_person_hold()
+            self._person_hold = _PersonHold(pitch, replaced.restore if replaced is not None else self._speaker_look)
+            self._turn_toward(target, now)
             if self._face_follower is not None:
                 self._face_follower.hold_center(yaw - math.radians(target.head))
 
@@ -1329,10 +1352,7 @@ class ReachyController:
             log.info("Speaker gaze yaw=%.1f body_yaw=%.1f decision=%s", target.head, target.body, decision)
             if decision == "turn":
                 self.wake_gaze_bearing = bearing
-                self._speaker_look = target
-                self._speaker_gaze = target.head
-                self._speaker_turn = _SpeakerTurn(target, now, self._pose_parameters(self._last_pose)["yaw"],
-                                                  math.degrees(self._last_body_yaw))
+                self._turn_toward(target, now)
 
     def _write(self, pose, antennas, body_yaw: float) -> None:
         antennas = self._np.asarray(antennas, dtype=float).copy()
@@ -1365,7 +1385,7 @@ class ReachyController:
         A spoken clip fades out as soon as Reachy stops speaking.
         """
         clip = self._clip
-        if (self._person_pending is not None or self._person_hold
+        if (self._person_pending is not None or self._person_hold is not None
                 or self._speaker_pending is not None or self._speaker_turn is not None
                 or (clip is not None and clip.wake)):
             return
@@ -1401,7 +1421,7 @@ class ReachyController:
                 self._pending_motion = pending = None
             free = (self._clip is None and self._generated is None and self._deferred is None
                     and self._speaker_pending is None and self._speaker_turn is None
-                    and self._person_pending is None and not self._person_hold)
+                    and self._person_pending is None and self._person_hold is None)
             if pending is not None and free and state in pending.states:
                 self._pending_motion = None
             else:
@@ -1535,7 +1555,7 @@ class ReachyController:
                         pass
                 if request is not None or commanded:
                     with self._state_lock:
-                        if request is not None and (self._person_hold or self._person_pending is not None):
+                        if request is not None and (self._person_hold is not None or self._person_pending is not None):
                             request.result = {"ok": False, "error": "Person gaze is held until the next request"}
                             request.done.set()
                             request = None
@@ -1629,7 +1649,7 @@ class ReachyController:
                             else:
                                 from reachy_muse.motion.layers import ClipTimeline
                                 with self._state_lock:
-                                    if (event.epoch == self._sentences.epoch and not self._person_hold
+                                    if (event.epoch == self._sentences.epoch and self._person_hold is None
                                             and self._person_pending is None and self._speaker_pending is None
                                             and self._speaker_turn is None
                                             and (self._clip is None or (self._clip.request is None and not self._clip.wake))):
