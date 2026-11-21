@@ -112,6 +112,7 @@ class HearingTurn(Protocol):
 
     active: bool                   # inside a user turn that has not ended yet
     speech_active: bool
+    utterance_id: int              # changes whenever another user turn starts, even within one feed
     quiet_s: float                 # seconds since the robot's voice detector last heard speech
     supports_partials: bool
     partial: Optional[Partial]     # the open utterance's transcript so far; never sent to Muse

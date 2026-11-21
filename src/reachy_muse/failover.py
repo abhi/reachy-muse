@@ -160,6 +160,10 @@ class FailoverHearingTurn:
         return self._turn.speech_active
 
     @property
+    def utterance_id(self) -> int:
+        return self._turn.utterance_id
+
+    @property
     def quiet_s(self) -> float:
         return self._turn.quiet_s
 

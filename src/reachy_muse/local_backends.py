@@ -86,6 +86,10 @@ class LocalHearingTurn:
         return getattr(self._recorder, "speech_active", self._recorder.active)
 
     @property
+    def utterance_id(self) -> int:
+        return self._recorder.utterance_id
+
+    @property
     def quiet_s(self) -> float:
         return getattr(self._recorder, "quiet_s", 0.0)
 

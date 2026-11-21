@@ -21,6 +21,7 @@ installations that do not use voice keep the base SDK's dependencies.
 from __future__ import annotations
 
 import io
+import itertools
 import math
 import wave
 from collections import deque
@@ -58,6 +59,7 @@ class SpeechEnd:
 # "remind me") ends only after the guard's longer silence, so a hesitation does not
 # send a fragment.
 SHORT_UTTERANCE_S = 0.6
+_UTTERANCE_IDS = itertools.count(1)
 
 
 class TurnRecorder:
@@ -70,6 +72,8 @@ class TurnRecorder:
     ends one that holds under ``SHORT_UTTERANCE_S`` of voiced speech. ``min_s`` counts
     voiced audio, while ``max_s`` caps the whole WAV, including its silence.
     ``last_truncated`` reports whether the last returned turn hit that cap.
+    ``utterance_id`` is unique to the latest turn started, by any recorder. It
+    changes even when one call ends a rejected turn and starts the next.
     ``initial_min_s`` can temporarily lower the threshold for invocation audio;
     call ``finish_initial_capture`` once that initial capture has been admitted.
 
@@ -128,6 +132,7 @@ class TurnRecorder:
         self._stream_audio = stream_audio
         self._audio_events: list[SpeechAudio | SpeechEnd] = []
         self.last_truncated = False
+        self.utterance_id = 0
         self.reset()
 
     @classmethod
@@ -227,6 +232,7 @@ class TurnRecorder:
                 if self._voice_run < 3:
                     continue
                 self._turn = [audio for audio, _ in self._history]
+                self.utterance_id = next(_UTTERANCE_IDS)
                 if self._stream_audio:
                     self._audio_events.append(SpeechAudio(b"".join(self._turn)))
                 self._voiced_frames = sum(speech for _, speech in self._history)
