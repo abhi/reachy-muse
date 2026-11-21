@@ -95,7 +95,7 @@ PHOTO_STILL_S = 0.1
 # Moving less than this per motion period, in millimeters or degrees, keeps a photo sharp; breathing is slower.
 PHOTO_STILL_STEP = 0.1
 PHOTO_FRAME_S = 0.5
-CAMERA_RELEASE_S = 0.3
+PHOTO_RELEASE_S = 0.3
 
 
 class _WatchTurn(NamedTuple):
@@ -1156,7 +1156,7 @@ class ReachyController:
                     or self._person_pending is not None or self._person_release)
 
     def _camera_steady(self) -> bool:
-        """The motion loop has written the same camera pose for PHOTO_STILL_S, or nothing moves the head."""
+        """The camera has moved less than PHOTO_STILL_STEP per motion period for PHOTO_STILL_S, or nothing moves it."""
         thread = self._motion_thread
         since = self._head_still_since
         return (thread is None or not thread.is_alive()
@@ -1593,17 +1593,18 @@ class ReachyController:
                 return source * (1 - release) + pose * release
         return self._crossfade(clip, now, pose)
 
-    def _hold_camera(self, now: float, written, previous):
+    def _hold_camera(self, now: float, written):
         """While a photo is read, keep writing the camera axes' pose from when the read began; then ease back."""
         hold = self._camera_hold
         if self._photo_hold.is_set():
             if hold is None or hold.released_at is not None:
-                hold = self._camera_hold = _CameraHold((written if previous is None else previous)[CAMERA_AXES])
+                last = self._pose_vector(self._last_pose, self._last_antennas, self._last_body_yaw)
+                hold = self._camera_hold = _CameraHold(last[CAMERA_AXES])
         elif hold is not None and hold.released_at is None:
             hold = self._camera_hold = _CameraHold(hold.pose, now)
         if hold is None:
             return written
-        weight = 0.0 if hold.released_at is None else _ease((now - hold.released_at) / CAMERA_RELEASE_S)
+        weight = 0.0 if hold.released_at is None else _ease((now - hold.released_at) / PHOTO_RELEASE_S)
         if weight >= 1:
             self._camera_hold = None
         else:
@@ -1716,7 +1717,7 @@ class ReachyController:
                     # The camera keeps still until the photo's frame is read.
                     request, self._deferred = None, request
                 if request is not None:
-                    self._still_since = self._head_still_since = None
+                    self._still_since = self._head_still_since = self._camera_hold = None
                     self._wave_gaze.invalidate()
                     if self._face_follower is not None:
                         self._update_face_tracking(state, commanded=True)
@@ -1881,7 +1882,7 @@ class ReachyController:
                     # Add gaze once, after crossfades, so a full-strength clip cannot erase it.
                     written = self._hold_camera(now, composed + gaze + gesture_offset
                                                 + self._layers.sway_offset(now, active=state == "speaking")
-                                                + self._np.asarray(self._sentences.offset(now)), previous_written)
+                                                + self._np.asarray(self._sentences.offset(now)))
                     resting_camera = ((state in ("idle", "listening", "sleeping") or (state == "error" and self._watching))
                                       and not gesture_active and not commanded
                                       and self._clip is None and self._generated is None and self._deferred is None)

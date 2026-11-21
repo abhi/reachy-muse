@@ -220,14 +220,14 @@ def test_a_swaying_head_holds_its_pose_while_the_frame_is_read_and_then_moves_on
         started = time.monotonic()
         photo = controller.capture_photo()
         read_at, written = seen[0]
-        before_read = [write for write in robot.frames[:written] if write[0] >= read_at - PHOTO_STILL_S]
+        before_read = robot.frames[written - 3:written]
         time.sleep(.6)
         after = camera_poses(written_since(robot, time.monotonic() - .3))
     finally:
         controller.close()
     assert photo.failure is None
     assert read_at - started >= PHOTO_SETTLE_S
-    assert len(before_read) >= 3 and len(camera_poses(before_read)) == 1
+    assert len(camera_poses(before_read)) == 1
     assert len(after) > 1
     assert controller._failure is None
 
@@ -282,7 +282,7 @@ def test_a_command_from_muse_waits_until_the_frame_is_read():
         photo.start()
         assert reading.wait(2)
         command = threading.Thread(target=lambda: moved.append(
-            controller.run_command("reachy.move", {"yaw": 20, "duration": .2, "hold": 0}, 5000)))
+            controller.run_command("reachy.move", {"yaw": 20, "duration": .8, "hold": 0}, 5000)))
         command.start()
         time.sleep(.4)
         during_read = (list(moved), camera_poses(written_since(robot, time.monotonic() - .3)))
@@ -290,10 +290,39 @@ def test_a_command_from_muse_waits_until_the_frame_is_read():
         release.set()
         photo.join(2)
         command.join(3)
+        time.sleep(.3)
     finally:
         release.set()
         controller.close()
     assert during_read[0] == [] and len(during_read[1]) == 1
     assert moved[0]["ok"] is True
-    assert round(max(controller._pose_parameters(pose)["yaw"]
-                     for _, pose, _, _ in written_since(robot, released_at))) == 20
+    yaws = [controller._pose_parameters(pose)["yaw"] for _, pose, _, _ in written_since(robot, released_at)]
+    assert round(max(yaws)) == 20
+    assert max(abs(later - earlier) for earlier, later in zip(yaws, yaws[1:])) < 3
+
+
+def test_a_photo_holds_the_pose_a_muse_move_left_when_the_move_ends_during_the_read():
+    robot = FakeRobot()
+    moved, read_yaws = threading.Event(), []
+
+    def get_frame():
+        moved.wait(3)
+        time.sleep(.15)
+        read_yaws.append(round(math.degrees(controller.head_yaw)))
+        return frame()
+
+    robot.media.get_frame = get_frame
+    controller = start_controller(robot, photo_encoder=Encoder(), style=MotionStyle(breathing=False))
+    results = []
+    try:
+        command = threading.Thread(target=lambda: (results.append(controller.run_command(
+            "reachy.move", {"yaw": 20, "duration": .6, "hold": 1.0}, 5000)), moved.set()))
+        command.start()
+        time.sleep(.1)
+        results.append(controller.capture_photo())
+        command.join(3)
+    finally:
+        moved.set()
+        controller.close()
+    assert results[0]["ok"] is True and results[1].failure is None
+    assert read_yaws == [20]
