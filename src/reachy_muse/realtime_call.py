@@ -195,10 +195,27 @@ class MicrophoneFeed:
         self._resample = _Resampler(input_rate, SAMPLE_RATE, output="s16")
         self._pending = np.zeros(0, dtype=np.int16)
         self._pending_silent = True
-        self._frames: deque[tuple[bytes, bool]] = deque(maxlen=int(BACKLOG_S * SAMPLE_RATE / FRAME_SAMPLES))
+        self._frames: deque[tuple[bytes, bool, float]] = deque(maxlen=int(BACKLOG_S * SAMPLE_RATE / FRAME_SAMPLES))
         self._arrived = asyncio.Event()
         self._closed = False
         self.sent = 0
+        self.evictions = 0
+        self._max_queue_age_s = 0.0
+
+    @property
+    def backlog_bytes(self) -> int:
+        return len(self._frames) * FRAME_SAMPLES * 2
+
+    @property
+    def max_queue_age_s(self) -> float:
+        if self._frames:
+            self._max_queue_age_s = max(self._max_queue_age_s, time.monotonic() - self._frames[0][2])
+        return self._max_queue_age_s
+
+    def _pop_frame(self) -> bytes:
+        frame, _, queued_at = self._frames.popleft()
+        self._max_queue_age_s = max(self._max_queue_age_s, time.monotonic() - queued_at)
+        return frame
 
     def push(self, samples: np.ndarray, *, silent: bool = False) -> None:
         if self._closed or not len(samples):
@@ -208,7 +225,10 @@ class MicrophoneFeed:
         for start in range(0, whole, FRAME_SAMPLES):
             pcm = data[start:start + FRAME_SAMPLES].astype("<i2").tobytes()
             quiet = pcm == SILENT_FRAME or silent and (start > 0 or self._pending_silent)
-            self._frames.append((pcm, quiet))
+            if len(self._frames) == self._frames.maxlen:
+                self._pop_frame()
+                self.evictions += 1
+            self._frames.append((pcm, quiet, time.monotonic()))
         self._pending = data[whole:]
         self._pending_silent = not len(self._pending) or silent and (whole > 0 or self._pending_silent)
         if whole:
@@ -225,16 +245,15 @@ class MicrophoneFeed:
         while True:
             if not self._closed:
                 quiet = 0
-                for _, silent in self._frames:
+                for _, silent, _ in self._frames:
                     if not silent:
                         break
                     quiet += 1
                 for _ in range(quiet - CATCH_UP_FRAMES):
-                    self._frames.popleft()
+                    self._pop_frame()
             if self._frames:
                 self.sent += 1
-                frame, _ = self._frames.popleft()
-                return frame
+                return self._pop_frame()
             if self._closed:
                 raise StopAsyncIteration
             self._arrived.clear()

@@ -119,6 +119,33 @@ def test_the_microphone_keeps_a_whole_request_while_the_call_is_still_being_admi
     assert asyncio.run(scenario()) == 300
 
 
+def test_microphone_backlog_counts_queued_bytes_evictions_and_oldest_frame_age(monkeypatch):
+    now = [10.0]
+    monkeypatch.setattr("reachy_muse.realtime_call.time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    async def scenario():
+        feed = MicrophoneFeed(24000)
+        feed.push(np.full(480, .3, np.float32))
+        assert feed.backlog_bytes == 0
+        feed.push(np.full(480, .3, np.float32))
+        assert feed.backlog_bytes == 1920
+        now[0] = 13.0
+        feed.push(np.full(480000, .4, np.float32))
+        assert feed.backlog_bytes == 960000
+        assert feed.evictions == 1
+        assert feed.max_queue_age_s == 3.0
+        now[0] = 17.0
+        feed.close()
+        frames = [frame async for frame in feed]
+        assert len(frames) == 500
+        assert {frame for frame in frames} == {np.full(960, 13107, "<i2").tobytes()}
+        assert feed.backlog_bytes == 0
+        assert feed.sent == 500
+        assert feed.max_queue_age_s == 4.0
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("background", [0, -32])
 def test_the_live_microphone_catches_up_through_silence_with_the_paced_sdk(background):
     from musegadget import voice_call as sdk
