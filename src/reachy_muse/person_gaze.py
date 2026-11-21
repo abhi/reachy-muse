@@ -46,10 +46,7 @@ class PersonGaze:
         return True
 
     async def request(self, text: str | None, speaker_bearing: float | None, generation: int) -> None:
-        """Face the person who is not speaking, preferring faces in view to faces seen recently.
-
-        A remembered bearing that the current view covered is dropped: the camera just looked there.
-        """
+        """Face the person who is not speaking when the request asks Reachy to greet or look at them."""
         current = self.admit(generation)
         if not text or not text.strip():
             self._log("no_transcript")
@@ -59,16 +56,22 @@ class PersonGaze:
         if not current:
             self._log("busy")
             return
+        self._log(*await self._look_at_other(speaker_bearing, generation))
+
+    async def _look_at_other(self, speaker_bearing: float | None, generation: int) -> tuple[str, str, int]:
+        """Face the person who is not speaking, preferring faces in view to faces seen recently.
+
+        Returns the outcome, the source of the faces used and how many were in view. A remembered
+        bearing that the current view covered is dropped: the camera just looked there.
+        """
         if speaker_bearing is None:
-            self._log("no_speaker_bearing")
-            return
+            return "no_speaker_bearing", "none", 0
         cached = self.hardware.face_snapshot()
         view, source = cached, "snapshot"
         if not _recent(view):
             view, source = await self._fresh_pass(), "fresh"
         if generation != self._admitted_generation:
-            self._log("busy")
-            return
+            return "busy", "none", 0
         if not _recent(view):
             view = None
         faces = view.faces if view is not None else ()
@@ -83,15 +86,13 @@ class PersonGaze:
                 others, source = remembered, "memory"
         if not others:
             if view is not None:
-                self._log("no_other" if faces else "no_faces", source, len(faces))
-            else:
-                self._log("stale" if cached is not None else "no_faces")
-            return
+                return "no_other" if faces else "no_faces", source, len(faces)
+            return "stale" if cached is not None else "no_faces", "none", 0
         target = min(others, key=lambda face: abs(face.yaw - self.hardware.head_yaw))
         turned = self.hardware.look_at_person(target.yaw, target.pitch)
         if turned:
             self._holding = True
-        self._log("turned" if turned else "busy", source, len(faces))
+        return "turned" if turned else "busy", source, len(faces)
 
     async def _fresh_pass(self):
         try:
