@@ -77,7 +77,7 @@ class PersonGaze:
         if not others:
             remembered = self.hardware.recent_faces(time.monotonic() - _REMEMBERED_S)
             if view is not None:
-                remembered = [face for face in remembered if not view.covers(face.yaw)]
+                remembered = [face for face in remembered if not view.covers(face)]
             remembered = _away_from(speaker, remembered)
             if remembered:
                 others, source = remembered, "memory"

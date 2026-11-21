@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # Licensed under the Apache License, Version 2.0 (the "License").
 
+from dataclasses import replace
 import math
 import threading
 import time
@@ -109,7 +110,7 @@ def captures(read_frame, clock=time.monotonic):
     """A camera owner's captures of ``read_frame`` with the head level and facing forward."""
     def capture(*, background=True):
         frame = read_frame()
-        return FaceCapture(frame, (0.0, 0.0), LEVEL, clock(), 0.0) if frame is not None else None
+        return FaceCapture(frame, (0.0, 0.0), LEVEL, clock(), (0.0, 0.0)) if frame is not None else None
     return capture
 
 
@@ -395,9 +396,11 @@ def test_all_faces_keep_capture_pose_and_time_while_budget_pauses(monkeypatch):
         assert (math.degrees(first.yaw), math.degrees(first.pitch)) == pytest.approx((30, 10))
         assert (math.degrees(second.yaw), math.degrees(second.pitch)) == pytest.approx((1.460177, 23.468076), abs=.00001)
         assert (first.box, first.score, first.captured_at) == ((.4, .3, .2, .3), .95, 100.0)
-        assert math.degrees(snapshot.heading) == pytest.approx(30)
-        assert math.degrees(snapshot.half_view) == pytest.approx(35.417, abs=.001)
-        assert snapshot.covers(math.radians(64)) and not snapshot.covers(math.radians(-6))
+        assert (math.degrees(snapshot.heading), math.degrees(snapshot.elevation)) == pytest.approx((30, 10))
+        assert [math.degrees(angle) for angle in snapshot.half_view] == pytest.approx([35.417, 21.801], abs=.001)
+        assert snapshot.covers(replace(first, yaw=math.radians(64), pitch=math.radians(-11)))
+        assert not snapshot.covers(replace(first, yaw=math.radians(-6)))
+        assert not snapshot.covers(replace(first, pitch=math.radians(-12)))
         clock[0] = 103.0
         wait_for(lambda: follower.target() is None)
         assert controller.face_snapshot() == snapshot

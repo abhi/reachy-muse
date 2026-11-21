@@ -48,10 +48,13 @@ class FaceSnapshot:
     faces: tuple[ObservedFace, ...]
     captured_at: float
     heading: float                 # world yaw of the camera axis at capture
-    half_view: float               # half the camera's horizontal field of view
+    elevation: float               # world pitch of the camera axis at capture
+    half_view: tuple[float, float]  # half the camera's horizontal and vertical fields of view
 
-    def covers(self, yaw: float) -> bool:
-        return abs(math.remainder(yaw - self.heading, math.tau)) <= self.half_view
+    def covers(self, face: ObservedFace) -> bool:
+        half_width, half_height = self.half_view
+        return (abs(math.remainder(face.yaw - self.heading, math.tau)) <= half_width
+                and abs(face.pitch - self.elevation) <= half_height)
 
 
 @dataclass(frozen=True)
@@ -60,7 +63,7 @@ class FaceCapture:
     angles: tuple[float, float]
     rotation: object
     captured_at: float
-    half_view: float
+    half_view: tuple[float, float]
 
 
 @dataclass
@@ -78,9 +81,9 @@ def _snapshot(faces, capture: FaceCapture) -> FaceSnapshot:
         x, y, z = [sum(a * b for a, b in zip(row, ray)) for row in capture.rotation]
         result.append(ObservedFace(math.atan2(y, x), math.atan2(-z, math.hypot(x, y)),
                                    face.box, face.score, capture.captured_at))
-    rotation = capture.rotation
-    heading = math.atan2(rotation[1][0], rotation[0][0])
-    return FaceSnapshot(tuple(result), capture.captured_at, heading, capture.half_view)
+    forward_x, forward_y, forward_z = (row[0] for row in capture.rotation)
+    return FaceSnapshot(tuple(result), capture.captured_at, math.atan2(forward_y, forward_x),
+                        math.atan2(-forward_z, math.hypot(forward_x, forward_y)), capture.half_view)
 
 
 @dataclass(frozen=True)

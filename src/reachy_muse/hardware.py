@@ -258,7 +258,7 @@ class ReachyController:
         self._face_tracking_on = True
         self._face_tracking_status = None
         self._head_angles = (0.0, 0.0)
-        self._face_half_view = 0.0
+        self._face_half_view = (0.0, 0.0)
         self._arrival_model = arrival_model
         self._arrival_watcher_factory = arrival_watcher_factory
         self._arrival_watcher = None
@@ -1204,8 +1204,8 @@ class ReachyController:
             from reachy_muse.local_face_tracking import FaceFollower
             factory = FaceFollower
         matrix = self._robot.media.camera.K
-        # The principal point over the focal length is half the horizontal view.
-        self._face_half_view = math.atan2(matrix[0][2], matrix[0][0])
+        # Each principal point coordinate over its focal length is half that axis's view.
+        self._face_half_view = (math.atan2(matrix[0][2], matrix[0][0]), math.atan2(matrix[1][2], matrix[1][1]))
         self._face_follower = factory(
             self._capture_faces, self._face_follow_model,
             camera_matrix=matrix,

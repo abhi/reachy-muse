@@ -120,9 +120,10 @@ def people(monkeypatch):
         def detect(self, frame):
             scene.passes += 1
             faces = []
-            for yaw, width in scene.faces:
-                angle = math.radians(yaw)
-                x, y, z = frame[:3, :3].T @ [math.cos(angle), math.sin(angle), 0]
+            for yaw, width, *above in scene.faces:
+                angle, lift = math.radians(yaw), math.radians(above[0] if above else 0)
+                x, y, z = frame[:3, :3].T @ [math.cos(lift) * math.cos(angle), math.cos(lift) * math.sin(angle),
+                                             math.sin(lift)]
                 faces.append(_Face((.1 if yaw == 30 else .7, .3, width, .3), math.atan2(y, x),
                                    math.atan2(-z, math.hypot(x, y)), .95))
             return faces
@@ -595,6 +596,31 @@ def test_no_face_frame_is_read_or_remembered_while_the_head_turns(people):
     turning = turned['at'], turned['at'] + SPEAKER_TURN_S - .05
     assert [at for at in scene.frame_reads if turning[0] <= at <= turning[1]] == []
     assert [face.captured_at for face in controller.recent_faces(0) if turning[0] <= face.captured_at <= turning[1]] == []
+
+
+def test_a_remembered_friend_standing_above_the_view_is_still_found(people, caplog):
+    """Ten seconds ago Reachy saw the friend standing 35 degrees above level at -20; the camera's view now covers
+    that yaw but not that height."""
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    scene.faces, scene.age = [(30, .35), (-20, .12, 35)], 10
+    assert len(controller.refresh_faces().faces) == 2
+    scene.faces, scene.age = [(30, .35)], 0.0
+    calls = ScriptedCalls(reply='Hello!', reply_s=.1)
+    service = realtime_service(rig, StreamingTranscripts('Say hi to my friend.'), calls)
+
+    def turned():
+        return round(math.degrees(controller.head_yaw)), round(math.degrees(robot.body_yaw))
+
+    async def user():
+        await say_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: turned() == (-20, 0))
+        assert turned() == (-20, 0)
+
+    events = run(rig, service, user)
+    assert set(played(events)) == {'muse'}
+    assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+        'Reachy gaze request outcome=turned source=memory faces=1']
 
 
 @pytest.mark.parametrize('text', ['Say hi to the camera.', 'Say hi to Bob in the email.',
