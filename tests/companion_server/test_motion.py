@@ -1,5 +1,7 @@
 import os
+import sys
 import threading
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -253,8 +255,20 @@ def test_the_real_engine_nods_for_nodding_yes():
     assert np.all(np.abs(pitch) <= 20.0)
 
 
+@pytest.fixture
+def mlx_memory(monkeypatch):
+    mx = SimpleNamespace(
+        device_info=lambda: {"max_recommended_working_set_size": 8 * 1024**3},
+        clear_cache=lambda: None,
+        set_wired_limit=lambda size: None,
+        set_cache_limit=lambda size: None,
+    )
+    monkeypatch.setitem(sys.modules, "mlx", SimpleNamespace(core=mx))
+    monkeypatch.setitem(sys.modules, "mlx.core", mx)
+
+
 @pytest.mark.parametrize("loaded", [False, True])
-def test_serve_loads_motion_only_with_the_flag(monkeypatch, tmp_path, loaded):
+def test_serve_loads_motion_only_with_the_flag(monkeypatch, tmp_path, loaded, mlx_memory):
     import argparse
     import asyncio
 
@@ -286,7 +300,7 @@ def test_serve_loads_motion_only_with_the_flag(monkeypatch, tmp_path, loaded):
 
 
 @pytest.mark.parametrize("preset, expected", [(None, "16"), ("4", "4")])
-def test_serve_caps_gpu_command_buffers_unless_the_operator_set_them(monkeypatch, tmp_path, preset, expected):
+def test_serve_caps_gpu_command_buffers_unless_the_operator_set_them(monkeypatch, tmp_path, preset, expected, mlx_memory):
     import argparse
     import asyncio
 
