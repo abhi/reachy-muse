@@ -50,6 +50,7 @@ from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlaybac
 from reachy_muse.local_speech import PreparedSpeech, SpeechRestart
 from reachy_muse.turn_timeline import TurnTimeline
 from reachy_muse.startup import StartupTimeline
+from reachy_muse.voice_audio import PRE_ROLL_S
 from reachy_muse.speaker_direction import DirectionDecision, DirectionSnapshot, WakeDirection, speaker_yaw
 from reachy_muse.presence import PresenceFusion
 from reachy_muse.person_gaze import PersonGaze
@@ -1120,11 +1121,14 @@ class VoiceConversation:
         heard_over: set[str] = set()
         admitted_turns = deque()
         turns_awaiting_transcript = set()
+        # The latest audio the call was not sent while it heard only the room, sent first when speech resumes it.
+        call_pre_roll = None
 
         def make_recorder(*, reset_admission=True, **options):
-            nonlocal gap_quiet_samples, turn_open, recorder_for_call, utterance
+            nonlocal gap_quiet_samples, turn_open, recorder_for_call, utterance, call_pre_roll
             turn_open = False
             utterance = None
+            call_pre_roll = None
             heard_over.clear()
             if reset_admission:
                 if voice_gate is not None:
@@ -1150,7 +1154,7 @@ class VoiceConversation:
         recorder_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reachy-recorder")
         last_slow_feed = 0.0
         async def record_admitted(sample, *, captured_at, send_to_call=True):
-            nonlocal last_slow_feed, gap_quiet_samples, turn_open, utterance
+            nonlocal last_slow_feed, gap_quiet_samples, turn_open, utterance, call_pre_roll
             # Keep VAD ahead of transcription/TTS work in the shared executor.
             started = time.monotonic()
             feed = asyncio.get_running_loop().run_in_executor(recorder_worker, recorder.feed, sample)
@@ -1195,16 +1199,27 @@ class VoiceConversation:
             if self.call is not None:
                 call = self.call
                 playback = call.audible or endpoint_at < self._echo_until or bool(heard_over)
-                if (send_to_call and self._wake_window not in (WakeWindow.DISMISSED, WakeWindow.ASLEEP)
-                        and self._wake_deadline is not None and (
-                        endpoint_at < self._wake_deadline or recorder.active or speaking or heard.ended is not None)):
+                streaming = (send_to_call and self._wake_window not in (WakeWindow.DISMISSED, WakeWindow.ASLEEP)
+                             and self._wake_deadline is not None)
+                if streaming and (endpoint_at < self._wake_deadline or recorder.active or speaking
+                                  or heard.ended is not None):
                     confirmed_before = call.input.confirmed
+                    if call_pre_roll is not None:
+                        call.input.push(call_pre_roll, speaking=False, text="", playback=playback,
+                                        heard_over=tuple(heard_over))
+                        call_pre_roll = None
                     call.input.push(sample, speaking=speaking and quiet_s == 0,
                                     text=partial.text if partial else "", playback=playback,
                                     heard_over=tuple(heard_over), quiet_s=quiet_s)
                     speaking = speaking and (not playback or call.input.confirmed)
                     if call.audible and call.input.confirmed and not confirmed_before:
                         self._barge_in_call()
+                elif streaming and len(sample):
+                    import numpy as np
+                    kept = sample if call_pre_roll is None else np.concatenate((call_pre_roll, sample))
+                    call_pre_roll = kept[-round(PRE_ROLL_S * self.hardware.sample_rate):].copy()
+                elif not streaming:
+                    call_pre_roll = None
                 if heard.ended is not None or heard.transcript_lost:
                     from reachy_muse.realtime_call import CallInput
                     call_input = call.input if playback else None
@@ -1757,6 +1772,7 @@ class VoiceConversation:
                 if self.wake_enabled:
                     now = time.monotonic()
                     if wake_required:
+                        call_pre_roll = None
                         if wake is None:
                             continue
                         pre_roll.append(replace(captured, samples=sample.copy()))

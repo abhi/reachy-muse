@@ -292,6 +292,12 @@ def voiced(seconds, amp=4000):
     return (amp * np.sin(2 * np.pi * 150 * t)).astype("<i2").tobytes()
 
 
+def voiced_ms(frames):
+    """Milliseconds of the user's voice, at ``VOICE_SAMPLE``, in the microphone frames a call received."""
+    pcm = np.abs(np.frombuffer(b"".join(frames), "<i2").astype(int))
+    return round(np.count_nonzero(pcm >= VOICE_SAMPLE * 32767 / 2) * 1000 / RATE)
+
+
 class CallHardware(SpeakerHardware):
     """Muse's realtime voice has no text label; it is recorded as ``muse``, with its sentence motion."""
 
@@ -1233,18 +1239,18 @@ def test_while_muse_talks_past_the_wake_deadline_only_confirmed_speech_reaches_i
         await room(rig, voice._wake_deadline - time.monotonic() + .5)
         assert call.audible
         caplog.clear()
-        before = calls.loud_after_reply
+        before = len(calls.frames)
         audio = echo_of(rig, seconds) if sound == "echo" else np.full(round(seconds * 16000), VOICE_SAMPLE, np.float32)
         for start in range(0, len(audio), CHUNK):
             rig.hardware.samples.put(audio[start:start + CHUNK])
             await asyncio.sleep(CHUNK / 16000)
         await room(rig, .5)
-        heard.append((calls.loud_after_reply > before, calls.barge_ins, voice.call is call and not call.done))
+        heard.append((voiced_ms(calls.frames[before:]), calls.barge_ins, voice.call is call and not call.done))
         await rig.wait_until_or_timeout(lambda: not call.audible, 8)
         heard.append(sum(len(chunk) for chunk in rig.hardware.played) / rig.hardware.output_sample_rate)
 
     events = run(rig, conversation, user, rest=("listening", "idle", "thinking"))
-    assert heard[0] == (reached, int(reached), True)
+    assert heard[0] == (500 if reached else 0, int(reached), True)
     assert (heard[1] < 7) if reached else (heard[1] == pytest.approx(7.5, abs=.003))
     assert [line for line in caplog.messages if line.startswith("Realtime command ")] == diagnostics
     assert set(played(events)) == {"muse"}
@@ -1281,14 +1287,14 @@ def test_new_speech_after_the_wake_deadline_reaches_muse_without_a_wake_while_mu
         voice = conversation._voice[1]
         call = voice.call
         assert time.monotonic() > voice._wake_deadline
-        before = calls.loud_after_reply
+        before = len(calls.frames)
         await speak_live(rig)
         await rig.wait_until_or_timeout(lambda: len(call.pending) == 2)
-        heard.append((calls.loud_after_reply - before >= 10, transcripts.texts, [turn.ordinal for turn in call.pending],
+        heard.append((voiced_ms(calls.frames[before:]), transcripts.texts, [turn.ordinal for turn in call.pending],
                       voice.call is call and not call.done))
 
     events = run(rig, conversation, user, rest=("thinking",))
-    assert heard == [(True, [], [1, 2], True)]
+    assert heard == [(500, [], [1, 2], True)]
     assert sent_to_muse(events) == []
     assert len(calls.opened) == 1
 

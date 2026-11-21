@@ -59,6 +59,8 @@ class SpeechEnd:
 # "remind me") ends only after the guard's longer silence, so a hesitation does not
 # send a fragment.
 SHORT_UTTERANCE_S = 0.6
+# The audio a turn keeps from before its speech was detected, so its first word is whole.
+PRE_ROLL_S = 0.2
 _UTTERANCE_IDS = itertools.count(1)
 
 
@@ -131,7 +133,7 @@ class TurnRecorder:
             1, math.ceil(math.nextafter(initial_min_s / self.FRAME_SECONDS, -math.inf))))
         self._initial_capture = initial_min_s is not None
         self._max_frames = math.floor(math.nextafter(max_s / self.FRAME_SECONDS, math.inf))
-        self._history = deque(maxlen=min(10, self._max_frames))
+        self._history = deque(maxlen=min(round(PRE_ROLL_S / self.FRAME_SECONDS), self._max_frames))
         self._stream_audio = stream_audio
         self._audio_events: list[SpeechAudio | SpeechEnd] = []
         self.last_truncated = False
