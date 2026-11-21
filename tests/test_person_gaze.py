@@ -104,15 +104,14 @@ def people(monkeypatch):
     rig = Rig(monkeypatch)
     robot = FakeRobot()
     scene = SimpleNamespace(faces=[(30, .35), (-25, .12)], camera=True, busy=True, passes=0, doa=math.pi / 3,
-                            age=0.0, on_frame=None)
+                            age=0.0, before_capture=None, frame_reads=[])
     robot.media.camera = SimpleNamespace(K=np.array([[900., 0, 640], [0, 900, 360], [0, 0, 1]]), D=np.zeros(5))
     camera_threads = []
 
     def frame():
         assert controller._camera_lock.locked()
         camera_threads.append(threading.get_ident())
-        if scene.on_frame is not None:
-            scene.on_frame()
+        scene.frame_reads.append(time.monotonic())
         return robot.pose.copy() if scene.camera else None
 
     robot.media.get_frame = frame
@@ -130,6 +129,8 @@ def people(monkeypatch):
 
     def factory(capture_frame, *args, **kwargs):
         def capture(**options):
+            if scene.before_capture is not None:
+                scene.before_capture()
             captured = capture_frame(**options)
             return replace(captured, captured_at=captured.captured_at - scene.age) if captured is not None else None
         return FaceFollower(capture, *args, **kwargs, detector_factory=lambda *args: Detect())
@@ -567,15 +568,15 @@ def test_memory_does_not_send_reachy_to_where_the_speaker_stood_earlier(people, 
     assert seen['greeting'] == (-35, -15)
 
 
-def test_faces_are_not_remembered_from_a_frame_taken_while_the_head_turns(people):
+def test_no_face_frame_is_read_or_remembered_while_the_head_turns(people):
     from reachy_muse.hardware import SPEAKER_TURN_S
 
     rig, controller, robot, scene = people
     scene.faces, scene.busy = [], False
     turned = {}
 
-    def turn_while_capturing():
-        scene.on_frame = None
+    def turn_before_capturing():
+        scene.before_capture = None
         scene.faces = [(-40, .12)]
         assert controller.look_at_speaker(math.pi / 3)
         deadline = time.monotonic() + 1
@@ -588,11 +589,12 @@ def test_faces_are_not_remembered_from_a_frame_taken_while_the_head_turns(people
     while controller.face_snapshot() is None and time.monotonic() < deadline:
         time.sleep(.01)
     assert controller.face_snapshot() is not None
-    scene.on_frame = turn_while_capturing
+    scene.before_capture = turn_before_capturing
     time.sleep(SPEAKER_TURN_S + .5)
     assert 'at' in turned
-    assert [face.captured_at for face in controller.recent_faces(0)
-            if turned['at'] - .05 <= face.captured_at <= turned['at'] + SPEAKER_TURN_S] == []
+    turning = turned['at'], turned['at'] + SPEAKER_TURN_S - .05
+    assert [at for at in scene.frame_reads if turning[0] <= at <= turning[1]] == []
+    assert [face.captured_at for face in controller.recent_faces(0) if turning[0] <= face.captured_at <= turning[1]] == []
 
 
 @pytest.mark.parametrize('text', ['Say hi to the camera.', 'Say hi to Bob in the email.',

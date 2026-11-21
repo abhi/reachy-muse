@@ -1038,13 +1038,12 @@ class ReachyController:
         """All local vision consumers share this reader; no frame cache survives it."""
         with self._camera_lock:
             if (self._robot is None or self._stop.is_set()
-                    or background and not math.isfinite(self.vision_budget.delay())):
+                    or background and not math.isfinite(self.vision_budget.delay())
+                    or background and with_pose and self._speaker_turn is not None):
                 return None
             frame = self._robot.media.get_frame()
             if not with_pose or frame is None:
                 return frame
-            if background and self._speaker_turn is not None:
-                return None
             from reachy_muse.local_face_tracking import FaceCapture
             captured_at = time.monotonic()
             try:
