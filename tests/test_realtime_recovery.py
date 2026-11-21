@@ -1,12 +1,15 @@
 """Unanswered calls exercised through microphone capture, admission and playback."""
 
 import asyncio
+import base64
 import contextlib
+import json
 import time
 from types import SimpleNamespace
 
 import pytest
 
+from reachy_muse.realtime_call import VoiceLink
 from test_device_command_turns import played, run, sent_to_muse
 from test_realtime_turns import (CHUNK, VOICE_SAMPLE, REPLY, ScriptedCalls, StreamingTranscripts,
                                  answers, keeps_working, np, pytestmark, realtime_service,
@@ -454,6 +457,127 @@ def test_a_silent_call_whose_replies_the_sdk_holds_still_recovers(monkeypatch, c
     assert stall_cues(caplog) == ["Realtime turn ordinal=2 cue=still_waiting", "Realtime turn ordinal=3 cue=still_waiting"]
     assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=retry"]
     assert played(events).count(LOST) == 1
+
+
+class MuseThatNeverStartsTurns:
+    """Muse's end of a voice link, under the SDK's real ``VoiceCall`` and its reply gate. As on 2026-11-20, Muse
+    admits each call and answers each request with a whole spoken reply, but never starts the caller's turn."""
+
+    def __init__(self):
+        self.links = 0
+        self.replies = 0
+
+    async def link(self, vm):
+        self.links += 1
+
+        async def close():
+            pass
+        return VoiceLink(_VoiceSession(self), lambda: True, close)
+
+    def __call__(self, session, **options):
+        from musegadget.voice_call import VoiceCall
+        return VoiceCall(session, **options)
+
+
+class _VoiceSession:
+    """The two ``LinkSession`` calls a ``VoiceCall`` makes."""
+
+    def __init__(self, muse):
+        self._muse = muse
+
+    async def stream_request(self, method, path, *, headers=None):
+        return _CallStream(self._muse)
+
+    async def request(self, method, path, body=b"", *, headers=None, timeout=None):
+        return {"ok": True, "response": {"ok": True, "result": {"ok": True}}}
+
+
+class _CallStream:
+    """A call's NDJSON media stream: Reachy's microphone in, Muse's records out."""
+
+    def __init__(self, muse):
+        self._muse = muse
+        self._records = asyncio.Queue()
+        self._loud = self._quiet = 0
+
+    async def wait_response(self):
+        return 200
+
+    async def send_body(self, data, *, end_body=False, check=None):
+        if check is not None:
+            check()
+        event = json.loads(data)
+        if event["type"] == "hatch.voice.call.start":
+            self._send({"type": "hatch.voice.session", "call_id": event["call_id"], "session_id": "voice-session",
+                        "thread_id": event.get("thread_id")})
+        elif event["type"] == "input_audio_buffer.append":
+            pcm = np.frombuffer(base64.b64decode(event["audio"]), "<i2").astype(float)
+            if np.sqrt(np.mean(pcm ** 2)) >= 300:
+                if not self._loud:
+                    self._muse.replies += 1
+                    self._send({"type": "input_audio_buffer.speech_started", "item_id": f"item-{self._muse.replies}"})
+                self._loud += 1
+                self._quiet = 0
+            elif self._loud >= 10:
+                self._quiet += 1
+                if self._quiet == 5:
+                    self._reply(self._muse.replies)
+                    self._loud = self._quiet = 0
+
+    def _reply(self, number):
+        pcm = voiced(1.0)
+        for record in (
+                {"type": "response.created", "response": {"id": f"r{number}"}},
+                {"type": "response.output_audio_transcript.delta", "delta": "It will be sunny."},
+                {"type": "continuous_audio_video.delta", "response_id": f"p{number}", "audio_delta": {
+                    "audio_frames": base64.b64encode(pcm).decode(), "format": {"type": "audio/pcm", "rate": 24000},
+                    "num_channels": 1, "num_frames": len(pcm) // 2}},
+                {"type": "response.output_audio_transcript.done", "transcript": "It will be sunny."},
+                {"type": "response.done", "response": {"id": f"r{number}", "status": "completed"}}):
+            self._send(record)
+
+    def _send(self, record):
+        self._records.put_nowait(json.dumps(record).encode() + b"\n")
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        chunk = await self._records.get()
+        if chunk is None:
+            raise StopAsyncIteration
+        return chunk
+
+    async def half_close(self):
+        self._records.put_nowait(None)
+
+    async def aclose(self):
+        self._records.put_nowait(None)
+
+
+def test_a_reply_the_sdk_holds_for_a_turn_muse_never_starts_is_not_an_answer(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    muse = MuseThatNeverStartsTurns()
+    conversation = realtime_service(rig, StreamingTranscripts("What's the weather?", "Hello?"), muse,
+                                    wake_timeout_s=10)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        await wait_for(rig, lambda: bool(stall_cues(caplog)), 7)
+        await speak_live(rig)
+        await wait_for(rig, lambda: LOST in played(rig.recording.events), 8)
+
+    events = run(rig, conversation, user, rest=("listening", "idle"), timeout=40)
+    assert muse.replies == 2
+    assert [line for line in caplog.messages if line.startswith("Realtime event=")] == [
+        "Realtime event=ResponseStarted ordinal=1", "Realtime event=ResponseDone ordinal=1 status=completed audio_bytes=0",
+        "Realtime event=ResponseStarted ordinal=2", "Realtime event=ResponseDone ordinal=2 status=completed audio_bytes=0"]
+    assert [(row["ordinal"], row["outcome"]) for row in turn_outcomes(caplog)] == [("1", "recovered"), ("2", "recovered")]
+    assert stall_cues(caplog) == ["Realtime turn ordinal=1 cue=still_waiting", "Realtime turn ordinal=2 cue=still_waiting"]
+    assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=retry"]
+    assert played(events) == [LOST]
+    assert muse.links == 2
 
 
 def test_a_reply_the_sdk_drops_after_a_device_command_is_not_a_silent_answer(monkeypatch, caplog):
