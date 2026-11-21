@@ -2,6 +2,7 @@
 
 import pytest
 
+from reachy_muse.voice_verify import DEFAULT_THRESHOLD
 from tools import speaker_scores as tool
 
 BEFORE = """\
@@ -54,10 +55,25 @@ def test_owner_and_other_spans_give_each_thresholds_false_others_and_false_owner
         "  p90   0.810  0.810   0.760",
         "  max   0.810  0.810   0.760",
     ]
-    table = {row.split()[0]: row.split(None, 1)[1] for row in rows[10:]}
-    assert (table["threshold"], table["0.30"], table["0.70"], table["0.75"], table["0.80"], table["0.90"]) == (
-        "false other  false owner", "0/2 0%      2/3 67%", "0/2 0%      1/3 33%", "1/2 50%      1/3 33%",
-        "1/2 50%       0/3 0%", "2/2 100%       0/3 0%")
+    table = {row.split()[0]: " ".join(row.split()[1:]) for row in rows[10:]}
+    assert (table["threshold"], table["0.30"], table["0.70"], table["0.74"], table["0.75"], table["0.80"],
+            table["0.90"]) == (
+        "false other false owner", "0/2 0% 2/3 67%", "0/2 0% 1/3 33%", "(default) 1/2 50% 1/3 33%", "1/2 50% 1/3 33%",
+        "1/2 50% 0/3 0%", "2/2 100% 0/3 0%")
+
+
+def test_the_table_has_a_row_for_the_threshold_the_companion_started_with(tmp_path, capsys):
+    started = ("2026-11-21 08:00:00,000 INFO speaker recognition ready: model wespeaker_en_voxceleb_resnet34, "
+               "threshold 0.62, a voice print is enrolled\n")
+    status, said = run(tmp_path, capsys, started + LOG, "--owner", "2026-11-21T08:00", "2026-11-21T10:00",
+                       "--other", "2026-11-21 18:00", "2026-11-21 19:00")
+    rows = [row.split() for row in said.out.splitlines()[11:]]
+    assert [row for row in rows if "(in" in row or "(default)" in row] == [
+        ["0.62", "(in", "use)", "0/2", "0%", "1/3", "33%"]]
+
+
+def test_the_default_threshold_here_is_the_packages():
+    assert tool.DEFAULT_THRESHOLD == DEFAULT_THRESHOLD
 
 
 def test_min_speech_leaves_out_shorter_requests(tmp_path, capsys):
