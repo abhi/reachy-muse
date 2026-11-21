@@ -287,6 +287,90 @@ def test_buffered_greeting_excludes_its_speaker_after_wake_verification(people, 
     assert 'Say hi' not in caplog.text and 'Hello there' not in caplog.text
 
 
+def test_rejected_short_utterances_do_not_supply_the_next_speakers_bearing(people, caplog):
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    reply = voiced(.2)
+
+    async def answer(sdk, emit, script):
+        await rig.wait_until_or_timeout(lambda: any(line.startswith('Reachy gaze request') for line in caplog.messages), 5)
+        reply_events(sdk, emit, 'r1', 'Hello there!', reply)
+
+    calls = ScriptedCalls(answer=answer)
+    service = realtime_service(rig, StreamingTranscripts('', '', 'Say hi to my friend.'), calls)
+    service.silence_s = .8
+    service.wake_timeout_s = 5
+
+    async def user():
+        await say_live(rig, wake=True, voiced_s=.22, paced_silence_s=.9)
+        await say_live(rig, voiced_s=.22, paced_silence_s=.9)
+        assert controller.wake_gaze_bearing is None
+        assert not service._voice[1]._playback.user_speaking
+        assert not any(line.startswith('Reachy gaze request') for line in caplog.messages)
+        scene.doa = None
+        await say_live(rig, paced_silence_s=.9)
+        await rig.wait_until_or_timeout(lambda: any(line.startswith('Reachy gaze request') for line in caplog.messages))
+        assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+            'Reachy gaze request outcome=no_speaker_bearing faces=0']
+        assert controller._person_hold is False
+        await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events))
+        await rig.wait_until_or_timeout(lambda: not service._voice[1].call.audible)
+        assert math.degrees(controller.head_yaw) == pytest.approx(0, abs=.2)
+        assert math.degrees(robot.body_yaw) == pytest.approx(0, abs=.2)
+        np.testing.assert_array_equal(np.concatenate(rig.hardware.played),
+                                      np.frombuffer(reply, '<i2').astype(np.float32) / 32768)
+
+    events = run(rig, service, user)
+    assert calls.barge_ins == 0
+    assert sent_to_muse(events) == []
+    assert played(events) == ['muse']
+    assert 'Say hi' not in caplog.text and 'Hello there' not in caplog.text
+
+
+@pytest.mark.parametrize('end', ['rejected_in_the_next_chunk', 'capture_gap'])
+def test_an_ended_utterance_never_supplies_the_next_speakers_bearing(people, caplog, end):
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    reply = voiced(.2)
+
+    async def answer(sdk, emit, script):
+        await rig.wait_until_or_timeout(lambda: any(line.startswith('Reachy gaze request') for line in caplog.messages), 5)
+        reply_events(sdk, emit, 'r1', 'Hello there!', reply)
+
+    calls = ScriptedCalls(answer=answer)
+    service = realtime_service(rig, StreamingTranscripts('', 'Say hi to my friend.'), calls)
+    service.silence_s = .8
+    service.wake_timeout_s = 5
+
+    async def user():
+        if end == 'rejected_in_the_next_chunk':
+            await say_live(rig, wake=True, voiced_s=.22, paced_silence_s=.02)
+            scene.doa = None
+            await room(rig, .58)
+            rig.hardware.samples.put(np.concatenate([np.zeros(15 * CHUNK, np.float32),
+                                                     np.full(10 * CHUNK, VOICE_SAMPLE, np.float32)]))
+            await say_live(rig, voiced_s=.5, paced_silence_s=None)
+        else:
+            await say_live(rig, wake=True, voiced_s=.3, paced_silence_s=.1)
+            await asyncio.sleep(.4)
+            scene.doa = None
+            await say_live(rig, voiced_s=.7, paced_silence_s=None)
+        await room(rig, .9)
+        await rig.wait_until_or_timeout(lambda: any(line.startswith('Reachy gaze request') for line in caplog.messages))
+        assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+            'Reachy gaze request outcome=no_speaker_bearing faces=0']
+        await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events))
+        await rig.wait_until_or_timeout(lambda: not service._voice[1].call.audible)
+        assert math.degrees(controller.head_yaw) == pytest.approx(0, abs=.2)
+        assert math.degrees(robot.body_yaw) == pytest.approx(0, abs=.2)
+
+    events = run(rig, service, user)
+    assert calls.barge_ins == 0
+    assert played(events) == ['muse']
+    if end == 'capture_gap':
+        assert any('capture lost continuity' in line for line in caplog.messages)
+
+
 @pytest.mark.parametrize('case, text, expected', [
     ('single', 'Say hi to my friend.', 'no_other faces=1'),
     ('empty', 'Greet my guest.', 'no_faces faces=0'),

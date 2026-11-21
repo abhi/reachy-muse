@@ -163,9 +163,9 @@ def test_changing_speakers_require_a_verified_keyword_boundary(handoff, trusted,
         await feed((.25, 14), (.5, 20), (0, 7))
         assert [angle for angle, _ in hw.directions] == expected
         assert conversation._wake_deadline > time.monotonic()
-        assert history.bearing_between(now - 1.5, now - .5) is None
-        assert history.bearing_between(now - .5, now) == (
-            pytest.approx(2.0943951024) if trusted and invalid is None and rate == 16000 else None)
+        assert history.samples_between(now - 1.5, now - .5) == ()
+        assert [angle for _, angle in history.samples_between(now - .5, now)] == (
+            [pytest.approx(2.0943951024)] * 3 if trusted and invalid is None and rate == 16000 else [])
 
     asyncio.run(bounded(handoff(run, trusted=trusted, invalid=invalid,
                                recognized="Hey Muse, find flights.", hardware=hardware)))

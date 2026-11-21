@@ -43,9 +43,7 @@ class PersonGaze:
             self.hardware.release_person_gaze()
         return True
 
-    async def request(self, text: str | None, speaker_bearing: float | None,
-                      generation: int | None = None) -> None:
-        generation = self.begin() if generation is None else generation
+    async def request(self, text: str | None, speaker_bearing: float | None, generation: int) -> None:
         if not self.admit(generation):
             self._log("busy", 0)
             return

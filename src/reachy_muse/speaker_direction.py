@@ -121,9 +121,8 @@ class WakeDirection:
         while self._samples and self._samples[0][0] <= at:
             self._samples.popleft()
 
-    def bearing_between(self, start: float, end: float) -> float | None:
-        angles = [angle for at, angle in self._samples if start <= at <= end]
-        return median(angles) if angles else None
+    def samples_between(self, start: float, end: float) -> tuple[tuple[float, float], ...]:
+        return tuple((at, angle) for at, angle in self._samples if start <= at <= end)
 
     def estimate(self, phrase_end: float) -> float | None:
         """Median of the last speech segment within 1.5 seconds of the keyword end."""
