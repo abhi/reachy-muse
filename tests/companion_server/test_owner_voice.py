@@ -11,7 +11,6 @@ import stat
 import sys
 import tempfile
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,9 +20,9 @@ from websockets.asyncio.client import connect
 
 from reachy_muse.companion_server import cli, hearing_voxtral, server as serving, voice_control
 from reachy_muse.companion_server.engines import EchoNarrator, Observation, ScriptedHearing, SpeechEnded
-from reachy_muse.companion_server.owner_voice import PRINT_FILE, OwnerVoice, VoicePrint
+from reachy_muse.companion_server.owner_voice import PRINT_FILE, OwnerVoice, VoicePrint, _speaker_thread
 from reachy_muse.companion_server.server import CompanionServer, Engines
-from reachy_muse.companion_server.watchdog import EngineExecutor, Watchdog
+from reachy_muse.companion_server.watchdog import Watchdog
 from reachy_muse.protocol import (
     AudioKind, CloseHow, Error, ErrorCode, HearClose, HearEndpoint, HearOpen, HearPartial, Hello, Narrate,
     NarratedLine, NarrateOp, NarrateResult, Op, Sender, SpeakerLabel, SpeakerObservation, Welcome, decode, encode,
@@ -87,7 +86,7 @@ def enrolled(state, embedding=VOICES[OWNER]):
 
 @pytest.fixture
 def speaker_thread():
-    with EngineExecutor("speaker") as thread:
+    with _speaker_thread() as thread:
         yield thread
 
 
@@ -353,7 +352,7 @@ def test_a_stuck_speaker_check_neither_stalls_hearing_nor_restarts_the_companion
             gate.set()
             monitor.stop()
 
-    with ThreadPoolExecutor(1) as thread:
+    with _speaker_thread() as thread:
         serve(script, owner_voice(state, thread, encoder))
     assert exits == []
     assert "speaker check failed (stream=5): SpeakerBusy" in caplog.messages

@@ -14,9 +14,8 @@ from fake_companion import TOKEN, FakeCompanion
 from reachy_muse.companion_client import CompanionHearing, CompanionLink
 from reachy_muse.companion_server import hearing_voxtral
 from reachy_muse.companion_server.engines import EchoNarrator, ScriptedHearing, ToneVoice
-from reachy_muse.companion_server.owner_voice import PRINT_FILE, OwnerVoice, VoicePrint
+from reachy_muse.companion_server.owner_voice import PRINT_FILE, OwnerVoice, VoicePrint, _speaker_thread
 from reachy_muse.companion_server.server import CompanionServer, Engines
-from reachy_muse.companion_server.watchdog import EngineExecutor
 from reachy_muse.protocol import (
     VERSION, Error, Narrate, NarrateOp, NarrateResult, Op, Sender, SpeakerLabel, SpeakerObservation, Welcome, decode,
     encode,
@@ -68,7 +67,7 @@ def enrolled(state):
 
 @contextlib.asynccontextmanager
 async def companion_engines(state, encoder=None, **engines):
-    with EngineExecutor("speaker") as thread:
+    with _speaker_thread() as thread:
         speaker = OwnerVoice(encoder or Encoder(), state / PRINT_FILE, .74, name="fake-speaker", vad=Vad, thread=thread)
         async with CompanionServer(Engines(speaker=speaker, narrator=EchoNarrator(), **engines), TOKEN) as server:
             yield server.url.removesuffix("/v1")
