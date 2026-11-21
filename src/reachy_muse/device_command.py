@@ -115,15 +115,15 @@ _POLITE = r"(?:please|(?:can|could|would|will) you(?: please)?|i (?:want|need) y
 _TAIL = r"(?:please|now|right now|then|thanks|thank you|for now|for a (?:bit|while)|for me|a (?:little )?bit|a little|muse|reachy)"
 
 
-def _request(phrases: str) -> re.Pattern:
+def _request_grammar(phrases: str) -> re.Pattern:
     """A spoken request: lead words, a polite form, one of ``phrases``, then tail words."""
     return re.compile(rf"(?:{_LEAD} )*(?:{_POLITE} )?(?:{phrases})(?: {_TAIL})*")
 
 
-_GRAMMAR = _request("|".join(f"(?P<{command.value}>{spec.phrases})"
-                             for command, spec in COMMANDS.items() if spec.phrases))
+_GRAMMAR = _request_grammar("|".join(f"(?P<{command.value}>{spec.phrases})"
+                                     for command, spec in COMMANDS.items() if spec.phrases))
 _OTHER_PERSON = r"(?:him|her|them|my friend|someone(?: else)?|somebody(?: else)?|the other person|my guest)"
-_GAZE = _request(rf"(?:say (?:hi|hello) to|greet|look at) {_OTHER_PERSON}")
+_GAZE = _request_grammar(rf"(?:say (?:hi|hello) to|greet|look at) {_OTHER_PERSON}")
 # Quotation marks, not apostrophes inside a word.
 _QUOTED = re.compile(r"[\"“”]|(?<![a-z])['‘’]|['‘’](?![a-z])", re.IGNORECASE)
 _QUESTION_OPENERS = frozenset((
