@@ -2516,7 +2516,7 @@ class VoiceConversation:
         pending = call.accept_turn(endpoint_at=request.timeline.marks["endpoint"],
                                    speech_end_at=request.timeline.marks["speech_end"], words=len(text.split()))
         if call.failed:
-            await self._call_lost()
+            await self._call_lost(call)
             return TurnOutcome.EMPTY
         if pending and not self._has_output():
             self._moments.cue(Moment.THINKING)
@@ -2549,7 +2549,7 @@ class VoiceConversation:
         self._call_recoveries += 1
         log.info("Realtime recovery attempt=%d reason=%s", self._call_recoveries, reason)
         call.finish_pending("recovered")
-        await self._call_lost()
+        await self._call_lost(call)
         await self._close_call()
         if self._call_recoveries >= 2:
             await self.realtime.call_failed()
@@ -2580,12 +2580,15 @@ class VoiceConversation:
             log.warning("Reachy's realtime call to Muse failed; its next request goes by chat")
             await self.realtime.call_failed()
             if call.outcomes["unanswered"]:
-                await self._call_lost()
+                await self._call_lost(call)
         elif call.reason == "remote_stop" and self._wake_deadline is not None:
             log.info("Muse ended the realtime call; Reachy's wake window closes")
             self._wake_deadline = time.monotonic()
 
-    async def _call_lost(self) -> None:
+    async def _call_lost(self, call) -> None:
+        if call.loss_announced:
+            return
+        call.loss_announced = True
         log.info("Reachy's realtime call ended before Muse answered; asking the user to repeat")
         await self._announce(CALL_LOST_CUE, started=None, defer_playback=True)
 

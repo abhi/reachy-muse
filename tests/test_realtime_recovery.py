@@ -112,6 +112,57 @@ def test_answered_turns_have_no_waiting_or_spoken_recovery_cue(monkeypatch, capl
     assert len(calls.opened) == 1
 
 
+@pytest.mark.parametrize("close_first", [False, True])
+@pytest.mark.parametrize("earlier_pending, outcomes", [
+    (False, [("1", "unanswered")]),
+    (True, [("1", "unanswered"), ("2", "unanswered")]),
+])
+def test_call_failure_during_command_classification_announces_loss_once(
+        monkeypatch, caplog, close_first, earlier_pending, outcomes):
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(reply=None)
+    classified = []
+    announced = []
+
+    class Model:
+        available = True
+
+        async def classify(self, text, allowed):
+            classified.append(text)
+            call = conversation._voice[1].call
+            calls.hang_up(ConnectionError("media reset"))
+            while not call.done:
+                await asyncio.sleep(0)
+            if close_first:
+                await rig.wait_until_or_timeout(lambda: calls.closed_links == 1, 1)
+                if earlier_pending:
+                    await rig.wait_until_or_timeout(lambda: LOST in played(rig.recording.events), 1)
+            announced.append(LOST in played(rig.recording.events))
+            return None
+
+    texts = ["First question."] if earlier_pending else []
+    conversation = realtime_service(rig, StreamingTranscripts(*texts, "Tell me about your voice."), calls,
+                                    model=Model(), wake_timeout_s=10)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        if earlier_pending:
+            await speak_live(rig)
+        await wait_for(rig, lambda: conversation._voice[1].call is None)
+        await room(rig, .5)
+
+    events = run(rig, conversation, user, rest=("listening", "idle"))
+    assert classified == ["Tell me about your voice."]
+    assert announced == [close_first and earlier_pending]
+    assert played(events) == [LOST]
+    assert sent_to_muse(events) == []
+    assert calls.closed_calls == 1
+    assert calls.closed_links == 1
+    assert len(calls.opened) == 1
+    assert [(row["ordinal"], row["outcome"]) for row in turn_outcomes(caplog)] == outcomes
+
+
 def test_twenty_seconds_of_work_with_events_is_not_a_stall(monkeypatch, caplog):
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)

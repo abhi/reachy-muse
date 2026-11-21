@@ -544,6 +544,7 @@ class RealtimeCall:
         self.muse_moved = False
         self.reason: Optional[str] = None
         self.failure: Optional[BaseException] = None
+        self.loss_announced = False
         self.opened_at = time.monotonic()
         self.ready_at: Optional[float] = None
         self.link_reused = False
