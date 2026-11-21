@@ -15,6 +15,8 @@ from typing import Optional
 
 LOOP_STALL_S = 10.0
 ENGINE_STALL_S = 30.0
+# A cold hearing call that pages its weights back in can outlast 30 s while the robot hears on its
+# own, and a restart reloads every model, which took about 42 s after the November 20 stall.
 HEARING_STALL_S = 120.0
 CHECK_S = 0.5
 EXIT_STATUS = 70
