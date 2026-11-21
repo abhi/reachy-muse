@@ -21,6 +21,195 @@ from reachy_muse.voice_audio import SpeechAudio, SpeechEnd
 np = pytest.importorskip("numpy")
 
 
+@pytest.mark.parametrize("endpoint_first", [True, False])
+def test_partial_command_overloads_rest_hearing_in_either_endpoint_order(monkeypatch, endpoint_first):
+    import threading
+    from types import SimpleNamespace
+    from reachy_muse.companion_server import server as serving
+    from reachy_muse.companion_server.engines import Partial, ToneVoice
+    from reachy_muse.companion_server.watchdog import EngineExecutor, Watchdog
+    from test_pins import Vad
+
+    now = [100.0]
+    entered, release = threading.Event(), threading.Event()
+    exits = []
+    monitor = Watchdog(clock=lambda: now[0], loop_s=1000, exit_process=exits.append)
+    monkeypatch.setattr(reachy_muse.failover, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(serving, "watchdog", monitor)
+
+    def blocked():
+        entered.set()
+        assert release.wait(5)
+        return []
+
+    class Session:
+        first = True
+
+        async def feed(self, pcm):
+            if self.first:
+                self.first = False
+                return [Partial("volume down")]
+            return await asyncio.wrap_future(worker.submit(blocked))
+
+        def cancel(self):
+            pass
+
+        async def close(self):
+            pass
+
+    class Hearing:
+        name = "fake"
+
+        def open(self, pre_roll_frames):
+            return Session()
+
+    async def scenario():
+        pending, received = asyncio.Queue(), asyncio.Queue()
+        deliver = asyncio.Event()
+        overloaded = serving._Session._hear_overloaded
+
+        async def delayed_overload(session, stream):
+            pending.put_nowait(stream)
+            await deliver.wait()
+            await overloaded(session, stream)
+
+        monkeypatch.setattr(serving._Session, "_hear_overloaded", delayed_overload)
+
+        class Link(CompanionLink):
+            def _error(self, connection, error):
+                super()._error(connection, error)
+                received.put_nowait((error.code.value, error.stream))
+
+        monitor.start()
+        try:
+            async with serving.CompanionServer(serving.Engines(hearing=Hearing(), voice=ToneVoice()), "test") as server:
+                link = Link(server.url.removesuffix("/v1"), token="test", out_rate=16000, insecure=True)
+                running = asyncio.create_task(link.run())
+                try:
+                    await asyncio.wait_for(link.settled(), 2)
+                    rest = CompanionRoute(link).hearing
+                    hearing = FailoverHearing(CompanionHearing(link), LocalHearing(), rest)
+                    options = dict(silence_s=.1, vad=Vad(), commands_only=True)
+                    strikes = []
+                    for stream_id in (1, 3, 5):
+                        entered.clear()
+                        release.clear()
+                        deliver.clear()
+                        turn = hearing.open_turn(16000, **options)
+                        turn.feed(np.full(8000, .25, np.float32))
+                        assert turn.take().ended is None
+                        assert await asyncio.to_thread(entered.wait, 2)
+                        async with asyncio.timeout(2):
+                            while turn.partial is None:
+                                await asyncio.sleep(.01)
+                                assert turn.take().ended is None
+                        assert turn.partial.text == "volume down"
+                        now[0] += 3.0
+                        assert await asyncio.wait_for(pending.get(), 2) == stream_id
+                        turn.feed(np.zeros(1600, np.float32))
+                        ended = turn.take().ended
+                        assert ended is not None
+                        if endpoint_first:
+                            assert (await ended.endpoint()).text == "volume down"
+                        deliver.set()
+                        assert await asyncio.wait_for(received.get(), 2) == ("overloaded", stream_id)
+                        assert turn.take().ended is None
+                        if not endpoint_first:
+                            assert (await ended.endpoint()).text == "volume down"
+                        strikes.append(rest._strikes)
+                        turn.abort()
+                        release.set()
+                        await asyncio.wrap_future(worker.submit(lambda: None))
+                    assert strikes == [1, 2, 0]
+                    assert rest.resting is True
+                    assert link.state is LinkState.UP
+                    assert link.can(Op.SPEAK)
+
+                    now[0] = 168.9
+                    local = hearing.open_turn(16000, **options)
+                    local.feed(np.full(8000, .25, np.float32))
+                    assert local.take().ended is None
+                    local.feed(np.zeros(1600, np.float32))
+                    endpoint = await local.take().ended.endpoint()
+                    assert endpoint.text is None
+                    with wave.open(io.BytesIO(endpoint.audio), "rb") as wav:
+                        assert wav.readframes(8000) == b"\0\x20" * 8000
+                    assert link._connection._next_hear == 5
+                    local.abort()
+
+                    now[0] = 169.0
+                    retry = hearing.open_turn(16000, **options)
+                    retry.feed(np.full(8000, .25, np.float32))
+                    assert retry.take().ended is None
+                    async with asyncio.timeout(2):
+                        while retry.partial is None:
+                            await asyncio.sleep(.01)
+                            retry.take()
+                    assert retry.partial.text == "volume down"
+                    assert link._connection._next_hear == 7
+                    retry.abort()
+                finally:
+                    release.set()
+                    deliver.set()
+                    running.cancel()
+                    await asyncio.gather(running, return_exceptions=True)
+        finally:
+            monitor.stop()
+
+    with EngineExecutor("hearing", monitor=monitor) as worker:
+        asyncio.run(scenario())
+    assert exits == []
+
+
+@pytest.mark.parametrize("end_from", ["engine", "vad", "commands"])
+def test_completed_companion_transcripts_reset_hearing_strikes(monkeypatch, end_from):
+    from types import SimpleNamespace
+    from reachy_muse.companion_server import server as serving
+    from reachy_muse.companion_server.engines import ScriptedHearing
+    from test_pins import Vad
+
+    stuck = [True]
+    monkeypatch.setattr(serving, "watchdog", SimpleNamespace(stalled=lambda *args: stuck[0]))
+
+    async def scenario():
+        engine = ScriptedHearing(frames_per_partial=1, endpoint_after=None if end_from == "vad" else 1)
+        async with serving.CompanionServer(serving.Engines(hearing=engine), "test") as server:
+            link = CompanionLink(server.url.removesuffix("/v1"), token="test", out_rate=16000, insecure=True)
+            running = asyncio.create_task(link.run())
+            try:
+                await asyncio.wait_for(link.settled(), 2)
+                rest = CompanionRoute(link).hearing
+                hearing = FailoverHearing(CompanionHearing(link), LocalHearing(), rest)
+                strikes = []
+                for failing in (True, False, True):
+                    stuck[0] = failing
+                    turn = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=end_from == "commands")
+                    turn.feed(np.full(8000, .25, np.float32))
+                    assert turn.take().ended is None
+                    stream, = link._connection.hearing.values()
+                    if stuck[0]:
+                        await asyncio.wait_for(stream.settled.wait(), 2)
+                        assert turn.take().ended is None
+                    else:
+                        if end_from != "vad":
+                            async with asyncio.timeout(2):
+                                while not any(isinstance(message, HearEndpoint) for message in stream.inbox):
+                                    await asyncio.sleep(.01)
+                        if end_from != "engine":
+                            turn.feed(np.zeros(1600, np.float32))
+                        ended = turn.take().ended
+                        assert (await ended.endpoint()).text == "hello"
+                    strikes.append(rest._strikes)
+                    turn.abort()
+                assert strikes == [1, 0, 1]
+                assert rest.resting is False
+            finally:
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("replacement", [None, "commands", "full"])
 def test_late_overloads_after_command_speech_end_rest_hearing(monkeypatch, replacement):
     from types import SimpleNamespace

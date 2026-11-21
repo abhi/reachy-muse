@@ -601,12 +601,13 @@ def _wav(pcm: bytes) -> bytes:
 
 
 class _HeardTurn:
-    """A turn the companion already ended and transcribed; its audio ends at ``end_sample``."""
+    """A turn with available words; its audio ends at ``end_sample``."""
 
-    def __init__(self, endpoint: Endpoint, truncated: bool, end_sample: int):
+    def __init__(self, endpoint: Endpoint, truncated: bool, end_sample: int, *, provisional: bool = False):
         self._endpoint = endpoint
         self.truncated = truncated
         self.end_sample = end_sample
+        self.provisional = provisional
 
     def start(self) -> None:
         pass
@@ -624,6 +625,8 @@ class _FinishedTurn:
     The words must arrive within ``ENDPOINT_WAIT_S`` of the robot's endpoint. A companion that
     is alive but busy fails only this turn, so the robot can transcribe the same audio.
     """
+
+    provisional = False
 
     def __init__(self, stream: _HearStream, truncated: bool, end_sample: int):
         self._stream = stream
@@ -727,7 +730,8 @@ class CompanionHearingTurn:
                     end_sample = self._vad_ends.popleft() if self._vad_ends else self._fed
                     if event.accepted:
                         self._ended.append(_HeardTurn(Endpoint(_wav(bytes(stream.audio)), text),
-                                                      self._recorder.last_truncated, end_sample))
+                                                      self._recorder.last_truncated, end_sample,
+                                                      provisional=stream.id in stream.connection.hearing))
                     stream.close(CloseHow.ABORT, remember_failure=True)
                 elif event.accepted:
                     stream.finish()
