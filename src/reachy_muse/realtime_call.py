@@ -815,11 +815,15 @@ class RealtimeCall:
                 await self.voice_call.barge_in()
         await flushed
 
-    async def close(self) -> None:
-        """End the call. The SDK's cleanup still hangs up with Muse when this task is cancelled again."""
+    def detach(self) -> None:
+        """From now on, ignore the call's events and stop feeding it the microphone; ``close`` ends it."""
         if not self.done:
             self._closing = True
         self.feed.close()
+
+    async def close(self) -> None:
+        """End the call. The SDK's cleanup still hangs up with Muse when this task is cancelled again."""
+        self.detach()
         speaker = asyncio.create_task(self.speaker.close())
         if self._task is not None and not self._task.done():
             self._task.cancel()
@@ -917,7 +921,7 @@ class RealtimeVoice:
 
     async def _ready_link(self) -> VoiceLink:
         if self._link is not None and not self._link.alive():
-            await self.drop_link()
+            await self._drop_link()
         if self._link is None:
             if self._connecting is None or self._connecting.done():
                 self._connecting = asyncio.ensure_future(self._connect_link())
@@ -931,7 +935,7 @@ class RealtimeVoice:
     async def call_failed(self) -> None:
         """Drop the connection; the next request goes to Muse by chat."""
         self._failed = True
-        await self.drop_link()
+        await self._drop_link()
 
     def chat_turn(self) -> None:
         """A request went to Muse by chat: calls open again, on a link reconnected ahead of the next one."""
@@ -944,12 +948,16 @@ class RealtimeVoice:
             if task is not None and not task.done():
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
-        await self.drop_link()
+        await self._drop_link()
 
-    async def drop_link(self) -> None:
-        """Discard this transport without replaying anything on its replacement."""
+    def detach_link(self) -> Optional[VoiceLink]:
+        """Stop offering the current link, so the next call connects a new one; the caller closes this one."""
         self._link_used = False
         link, self._link = self._link, None
+        return link
+
+    async def _drop_link(self) -> None:
+        link = self.detach_link()
         if link is not None:
             with contextlib.suppress(Exception):
                 await link.close()

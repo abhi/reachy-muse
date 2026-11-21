@@ -1,6 +1,7 @@
 """Unanswered calls exercised through microphone capture, admission and playback."""
 
 import asyncio
+import contextlib
 import time
 from types import SimpleNamespace
 
@@ -80,6 +81,75 @@ def test_silent_call_acknowledges_retries_then_recovers_without_replaying(monkey
     assert [(row["voice_to_reply_ms"], row["endpoint_to_reply_ms"]) for row in turn_outcomes(caplog)[1:]] == [
         ("none", "none"), ("none", "none")]
     assert not any(text in line for text in (REPLY, "What about tomorrow?", "Are you there?") for line in caplog.messages)
+
+
+class SlowHangUpCalls(ScriptedCalls):
+    """The first call hangs up like the SDK with a wedged server: its shielded end-call request and stream
+    drain take ``hang_up_s``. ``hang_ups`` records how many links were closed when each hang-up finished."""
+
+    def __init__(self, *, hang_up_s, **options):
+        super().__init__(**options)
+        self.hang_up_s = hang_up_s
+        self.opened_at = []
+        self.hang_ups = []
+
+    def __call__(self, session, **options):
+        call = super().__call__(session, **options)
+        self.opened_at.append(time.monotonic())
+        slow = len(self.opened) == 1
+        run_call = call.run
+
+        async def run(source, output, *, realtime_input=False):
+            try:
+                return await run_call(source, output, realtime_input=realtime_input)
+            finally:
+                if slow:
+                    cleanup = asyncio.ensure_future(asyncio.sleep(self.hang_up_s))
+                    while not cleanup.done():
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await asyncio.shield(cleanup)
+                    self.hang_ups.append(self.closed_links)
+
+        call.run = run
+        return call
+
+
+def test_a_slow_hang_up_neither_delays_the_fresh_call_nor_loses_the_repeat(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    calls = SlowHangUpCalls(hang_up_s=12, reply_s=.1)
+    transcripts = StreamingTranscripts("Tell me the weather.", "What about tomorrow?", "Are you there?",
+                                       "What about tomorrow?")
+    conversation = realtime_service(rig, transcripts, calls, wake_timeout_s=10)
+    during_hang_up = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await wait_for(rig, lambda: not call.audible)
+        await room(rig, .5)
+        await speak_live(rig)
+        await wait_for(rig, lambda: bool(stall_cues(caplog)))
+        await speak_live(rig)
+        await wait_for(rig, lambda: bool(recoveries(caplog)), 8)
+        escalated = time.monotonic()
+        await wait_for(rig, lambda: LOST in played(rig.recording.events), 2)
+        await room(rig, .6)
+        await speak_live(rig)
+        await wait_for(rig, lambda: len(turn_outcomes(caplog)) == 4, 5)
+        during_hang_up.append((calls.opened_at[1] - escalated < .1, list(calls.hang_ups), calls.closed_links))
+        await wait_for(rig, lambda: calls.closed_links == 1, 12)
+
+    events = run(rig, conversation, user, rest=("listening", "idle"), timeout=50)
+    assert during_hang_up == [(True, [], 0)]
+    assert calls.hang_ups == [0]
+    assert calls.links == 2
+    assert played(events).count(LOST) == 1
+    assert set(played(events)[played(events).index(LOST) + 1:]) == {"muse"}
+    assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=retry"]
+    assert [(row["ordinal"], row["outcome"]) for row in turn_outcomes(caplog)] == [
+        ("1", "answered"), ("2", "recovered"), ("3", "recovered"), ("1", "answered")]
+    assert any(np.any(np.frombuffer(frame, "<i2")) for frame in calls.call_frames[1])
 
 
 def test_answered_turns_have_no_waiting_or_spoken_recovery_cue(monkeypatch, caplog):

@@ -2549,14 +2549,22 @@ class VoiceConversation:
         log.info("Realtime recovery attempt=%d reason=%s", self._call_recoveries, reason)
         call.finish_pending("recovered")
         await self._call_lost(call)
-        await self._close_call()
+        call.detach()
+        self.call = None
+        self._background(self._hang_up(call, self.realtime.detach_link()))
         if self._call_recoveries >= 2:
             await self.realtime.call_failed()
         else:
-            await self.realtime.drop_link()
             self._open_call()
         self._wake_deadline = time.monotonic() + (self.wake_timeout_s or 10.0)
         return True
+
+    async def _hang_up(self, call, link) -> None:
+        """End a replaced call, then close its link: the SDK's end-call request still needs that link."""
+        await call.close()
+        if link is not None:
+            with contextlib.suppress(Exception):
+                await link.close()
 
     def _open_call(self) -> None:
         if self.realtime is None or self.call is not None or not self.realtime.usable:
