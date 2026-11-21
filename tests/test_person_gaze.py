@@ -714,10 +714,13 @@ def test_releasing_the_greeting_turns_back_to_the_speaker(people, caplog, releas
     rig, controller, robot, scene = people
     caplog.set_level('INFO')
     reply = voiced(.3)
+    asked_again = asyncio.Event()
 
     async def answer(sdk, emit, script):
         await rig.wait_until_or_timeout(lambda: controller._person_hold, 3)
         reply_events(sdk, emit, 'r1', 'Hello there!', reply)
+        await asked_again.wait()
+        reply_events(sdk, emit, 'r2', 'It is noon.', reply)
 
     calls = ScriptedCalls(answer=answer)
     service = make_service(rig, never_asked, StreamingTranscripts('Say hi to my friend.', 'What time is it?'),
@@ -742,6 +745,7 @@ def test_releasing_the_greeting_turns_back_to_the_speaker(people, caplog, releas
         if release == 'next_request':
             await room(rig, .3)
             await say_live(rig, paced_silence_s=.9)
+            asked_again.set()
         else:
             await rig.wait_until_or_timeout(lambda: service._voice[1]._wake_deadline is None, 4)
             assert service._voice[1]._wake_deadline is None
@@ -1016,11 +1020,17 @@ def test_delayed_transcript_cannot_reacquire_gaze_during_the_next_utterance(peop
     async def muse(session, request):
         await session.answer(request, 'Hello there.')
 
+    finished = asyncio.Event()
+
+    async def answer(sdk, emit, script):
+        await finished.wait()
+        reply_events(sdk, emit, 'r1', 'Here you go.', voiced(.2))
+
     service = chat_service(rig, muse, Transcribe(text, 'What time is it?'),
                            wake_detector=TimedWake(), wake_timeout_s=5)
     if path == 'realtime':
         monkeypatch.setattr('reachy_muse.conversation.CALL_COMMAND_DEADLINE_S', 2)
-        service = realtime_service(rig, Streaming(text, 'What time is it?'), ScriptedCalls(reply=None))
+        service = realtime_service(rig, Streaming(text, 'What time is it?'), ScriptedCalls(answer=answer))
 
     async def user():
         await say_live(rig, wake=True)
@@ -1037,6 +1047,7 @@ def test_delayed_transcript_cannot_reacquire_gaze_during_the_next_utterance(peop
         assert controller._person_hold is None
         assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == logged
         rig.say(voiced_s=0)
+        finished.set()
 
     run(rig, service, user)
 
