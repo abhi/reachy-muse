@@ -166,7 +166,7 @@ class _Hear:
     task: Optional[asyncio.Task] = None
     audio_arrived: bool = False                # since the last stall check
     session: Optional[HearingSession] = None
-    heard: Optional[bytearray] = None          # the audio fed so far, kept only for a robot granted speaker
+    heard: Optional[bytearray] = None          # the audio fed so far, for a robot granted speaker or an enrollment
 
 
 @dataclass

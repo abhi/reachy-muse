@@ -193,15 +193,16 @@ To keep the print out of them, run `tmutil addexclusion ~/.reachy-companion`.
 A robot that asks for the protocol's `speaker` op gets one `speaker_observation` for each request: `owner`, `other` or `unknown`.
 The companion starts on the label when the request's speech ends, by its own end-of-speech detection or by the robot's, and sends it as soon as it is ready, often before the transcript.
 During a realtime call, Reachy ends each request about 2 seconds after you stop talking and drops the companion's stream.
-The companion's own detection usually ends the request after about 1.2 seconds, so the label comes first.
-A request that Reachy drops before the companion hears its end, usually a very short one, gets no label.
+After 0.5 seconds of silence, the companion asks Smart Turn whether the request is finished. If it is, the request ends there, and the label usually reaches the robot before Reachy drops the stream.
+If Smart Turn calls the request unfinished, the companion waits for 3 seconds of silence instead. Reachy drops the stream first, so that request gets no label.
+Neither does any other request that Reachy drops before the companion hears its end. Such a request does not count toward an enrollment either, and `enroll-voice` does not report it.
 `unknown` means there is no print, the request held less than 1 second of speech, or the check could not run in time.
 The robot logs `Reachy speaker=owner` and adds `speaker=owner` to the turn's timeline line, in chat and in calls.
 An older robot never asks for the op and receives nothing new. A newer robot works with an older companion as before.
 
 ### Cost
 
-The check runs after the robot has the request's endpoint, on a thread of its own, so it never delays hearing.
+The check starts when the request's speech ends, beside the final pass, on a thread of its own, so it never delays hearing.
 sherpa-onnx releases Python's global interpreter lock while it computes.
 Each request costs at most four windows, 6 seconds of speech. The benchmark measured 52 ms for a 1.5-second window on one M3 Ultra core.
 The voice detection and windowing around the model take under 3 ms for a 30-second request.

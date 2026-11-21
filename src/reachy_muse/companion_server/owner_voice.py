@@ -3,7 +3,7 @@
 The print lives in the companion's state directory, readable only by its user. It never goes to
 the robot or Muse, and no log holds it, the audio or any words. The encoder is the robot's own
 sherpa-onnx speaker model, ``voice_verify.SpeakerEncoder``, on one CPU thread of its own. The
-server asks for a label only after a request's endpoint has gone out, so hearing never waits.
+server asks for a label when a request's speech ends, beside the final pass, so hearing never waits.
 """
 
 from __future__ import annotations
