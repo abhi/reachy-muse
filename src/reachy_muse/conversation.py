@@ -2512,7 +2512,6 @@ class VoiceConversation:
         if command is not None:
             return TurnOutcome.ACCEPTED
         call = request.call
-        self._call_last_voice_at = max(self._call_last_voice_at, request.timeline.marks["speech_end"])
         pending = call.accept_turn(endpoint_at=request.timeline.marks["endpoint"],
                                    speech_end_at=request.timeline.marks["speech_end"], words=len(text.split()))
         if call.failed:
