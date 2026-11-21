@@ -65,7 +65,7 @@ from reachy_muse.protocol import (
 
 from reachy_muse.companion_server.engines import (
     Narrated,
-    Animator, Classifier, Endpoint, Hearing, HearingSession, Narrator, Partial, Speaker, SpeechFirst, Voice,
+    Animator, Classifier, Hearing, HearingSession, Narrator, Partial, Speaker, SpeechEnded, SpeechFirst, Voice,
 )
 from reachy_muse.companion_server.motion_activity import ActivityStatus
 from reachy_muse.companion_server.motion_library import LibraryAnimator
@@ -350,19 +350,21 @@ class _Session:
         try:
             while True:
                 item = await hear.queue.get()
-                if item is CloseHow.FINISH:
+                forced = ended = item is CloseHow.FINISH
+                if not ended:
+                    if hear.heard is not None:
+                        hear.heard += item[:SPEAKER_AUDIO_BYTES - len(hear.heard)]
+                    for event in await session.feed(item):
+                        if isinstance(event, Partial):
+                            await self._send(HearPartial(stream, rev, event.text))
+                            rev += 1
+                        ended = ended or isinstance(event, SpeechEnded)
+                if ended:
+                    self._check_speaker(stream, hear)
                     text = await session.finish()
-                    await self._hear_endpoint(hear, HearEndpoint(stream, text, True))
+                    self._end_hearing(stream, hear)
+                    await self._send(HearEndpoint(stream, text, forced))
                     return
-                if hear.heard is not None:
-                    hear.heard += item[:SPEAKER_AUDIO_BYTES - len(hear.heard)]
-                for event in await session.feed(item):
-                    if isinstance(event, Partial):
-                        await self._send(HearPartial(stream, rev, event.text))
-                        rev += 1
-                    elif isinstance(event, Endpoint):
-                        await self._hear_endpoint(hear, HearEndpoint(stream, event.text, False))
-                        return
         finally:
             self._end_hearing(stream, hear)
             await session.close()
@@ -371,17 +373,14 @@ class _Session:
         """Whether a stream's voice needs checking: for a robot granted speaker, or while the owner enrolls."""
         return Op.SPEAKER in self.ops or (self.engines.speaker is not None and self.engines.speaker.enrolling)
 
-    async def _hear_endpoint(self, hear: _Hear, endpoint: HearEndpoint) -> None:
-        """End the stream, then send its endpoint, with its speaker check to follow.
+    def _check_speaker(self, stream: int, hear: _Hear) -> None:
+        """At the stream's end of speech, check its voice beside the final pass; the label goes out when ready.
 
-        The check's task exists before the endpoint is sent, so an abort handled meanwhile cancels it.
-        Its label cannot overtake the endpoint: ``send`` writes a frame before it first awaits.
+        In a realtime call the robot aborts each stream at its own, later end of speech, so a label that
+        waited for the final pass would lose that race. An abort still cancels a check that is running.
         """
-        self._end_hearing(endpoint.stream, hear)
-        frame = encode(endpoint)
         if hear.heard is not None and self._labels():
-            self.observing[endpoint.stream] = asyncio.create_task(self._observe(endpoint.stream, bytes(hear.heard)))
-        await self.ws.send(frame)
+            self.observing[stream] = asyncio.create_task(self._observe(stream, bytes(hear.heard)))
 
     async def _observe(self, stream: int, pcm: bytes) -> None:
         """Check one ended stream's voice, and label it for a robot granted speaker. A failed check is unknown."""

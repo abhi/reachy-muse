@@ -20,13 +20,11 @@ class Partial:
 
 
 @dataclass(frozen=True)
-class Endpoint:
-    """The engine decided the turn is over before the robot closed the stream."""
-
-    text: str
+class SpeechEnded:
+    """The engine decided the turn is over before the robot closed the stream. ``finish`` gives its words."""
 
 
-HearEvent = Union[Partial, Endpoint]
+HearEvent = Union[Partial, SpeechEnded]
 
 
 class HearingSession(Protocol):
@@ -34,7 +32,7 @@ class HearingSession(Protocol):
         """Take one 16 kHz s16le microphone frame. Return what it changed."""
 
     async def finish(self) -> str:
-        """The robot ended the turn. Return the final transcript."""
+        """The turn is over, by the robot's close or the engine's SpeechEnded. Return the final transcript."""
 
     def cancel(self) -> None:
         """Signal abandonment before the worker can start another model stage."""
@@ -177,7 +175,7 @@ class _ScriptedSession:
             self.said = self.script.partials[index - 1]
             events.append(Partial(self.said))
         if self.frames == self.script.endpoint_after:
-            events.append(Endpoint(self.said))
+            events.append(SpeechEnded())
         return events
 
     async def finish(self) -> str:

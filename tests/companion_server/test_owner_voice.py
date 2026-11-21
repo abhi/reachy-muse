@@ -19,7 +19,7 @@ import pytest
 from websockets.asyncio.client import connect
 
 from reachy_muse.companion_server import cli, hearing_voxtral, server as serving, voice_control
-from reachy_muse.companion_server.engines import EchoNarrator, Observation, ScriptedHearing
+from reachy_muse.companion_server.engines import EchoNarrator, Observation, ScriptedHearing, SpeechEnded
 from reachy_muse.companion_server.owner_voice import PRINT_FILE, OwnerVoice, VoicePrint
 from reachy_muse.companion_server.server import CompanionServer, Engines
 from reachy_muse.companion_server.watchdog import EngineExecutor, Watchdog
@@ -121,16 +121,18 @@ async def recv(ws, timeout=2):
 
 
 async def say(ws, stream, frames, how=CloseHow.FINISH):
+    """Open ``stream``, send its audio, then close it ``how``; None leaves ending it to the companion."""
     await ws.send(encode(HearOpen(stream, 0)))
     for seq, pcm in enumerate(frames):
         await ws.send(encode_audio(AudioKind.MIC, stream, seq, pcm))
-    await ws.send(encode(HearClose(stream, how)))
+    if how is not None:
+        await ws.send(encode(HearClose(stream, how)))
 
 
 async def heard(ws, stream):
-    """Every message under ``stream``, through its endpoint and the one message after it."""
+    """Every message under ``stream`` until both its endpoint and its label have come, in either order."""
     messages = []
-    while HearEndpoint not in map(type, messages[:-1]):
+    while not {HearEndpoint, SpeakerObservation} <= set(map(type, messages)):
         message = await recv(ws)
         if getattr(message, "stream", None) == stream:
             messages.append(message)
@@ -164,6 +166,46 @@ def test_an_owner_like_voice_is_owner_and_an_other_like_voice_is_other(state, sp
     assert speaker_lines(caplog) == ["speaker stream=1 voiced_s=2.00 score=0.9000 label=owner",
                                      "speaker stream=3 voiced_s=1.20 score=0.2000 label=other"]
     assert encoder.windows == [16000, 16000, 19200]
+
+
+@pytest.mark.parametrize("ended_by", ["companion", "robot"])
+def test_the_label_goes_out_at_the_end_of_speech_without_waiting_for_the_final_pass(state, speaker_thread, ended_by):
+    """The check starts when speech ends, by the hearing engine or the robot's finish, beside the final pass."""
+    enrolled(state)
+    release = asyncio.Event()
+
+    class HeldFinalPass:
+        name = "held"
+
+        def open(self, pre_roll_frames):
+            class Session:
+                frames = 0
+
+                async def feed(self, pcm):
+                    self.frames += 1
+                    return [SpeechEnded()] if ended_by == "companion" and self.frames == 100 else []
+
+                async def finish(self):
+                    await release.wait()
+                    return "held words"
+
+                def cancel(self):
+                    pass
+
+                async def close(self):
+                    pass
+
+            return Session()
+
+    async def script(companion):
+        ws = await robot(companion)
+        await say(ws, 1, voice(OWNER, 2), how=CloseHow.FINISH if ended_by == "robot" else None)
+        assert await recv(ws) == SpeakerObservation(1, 0, 32000, SpeakerLabel.OWNER)
+        release.set()
+        assert await recv(ws) == HearEndpoint(1, "held words", ended_by == "robot")
+        await nothing_else_arrived(ws)
+
+    serve(script, owner_voice(state, speaker_thread), hearing=HeldFinalPass())
 
 
 @pytest.mark.parametrize("seconds, windows", [(1.0, [16000]), (1.6, [24000]), (2.5, [20000, 20000]),

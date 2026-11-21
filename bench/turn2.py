@@ -33,6 +33,9 @@ async def engine_replay(stall_s=.3):
             work["feed_start"] = time.monotonic()
             time.sleep(stall_s)
             work["feed_end"] = time.monotonic()
+            return True
+
+        def final(self):
             return self.text
 
     hearing = hearing_voxtral.VoxtralHearing()
