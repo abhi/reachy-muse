@@ -130,9 +130,9 @@ class FailoverHearingTurn:
 
     While the companion hears, fed audio is kept from the end of its last ended turn. If it
     fails mid-turn, a local turn opens and the kept audio replays into it at the next feed,
-    which runs off the event loop. The local turn hands back to the companion between user
-    turns once the link is up. The companion tells the rest how each of its streams ended, so
-    this window only routes.
+    which runs off the event loop. Between user turns, the local turn hands back to the
+    companion once the link is up, and a resting companion hands over to the robot. The
+    companion tells the rest how each of its streams ended, so this window only routes.
     """
 
     def __init__(self, hearing: FailoverHearing, sample_rate: int, options: dict):
@@ -223,6 +223,9 @@ class FailoverHearingTurn:
             return HeardAudio(_CompanionEnded(heard.ended), heard.failures, heard.transcript_lost)
         elif not self._turn.active:
             self._trim(IDLE_KEEP_S)
+            if self._hearing.rest.resting:
+                self._replay = tuple(self._kept)
+                self._switch(on_companion=False)
         return heard
 
     def _switch(self, *, on_companion: bool) -> None:

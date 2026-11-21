@@ -246,30 +246,37 @@ def test_three_failures_in_a_row_rest_companion_hearing_until_the_cooldown(monke
     assert caplog.text.count("Reachy rests its companion's hearing for 60 s") == 1
 
 
-def test_refusals_that_land_long_before_the_next_poll_still_rest_hearing(monkeypatch, caplog):
-    """Three call commands whose refusals land after their speech ends, each 21 s before the robot polls again."""
+def test_late_refusals_rest_an_open_call_window_however_late_the_robot_polls(monkeypatch, caplog):
+    """In one call window, three refusals land after their commands' speech ends, each 21 s before the next poll."""
     from reachy_muse import companion_client
     from reachy_muse.companion_server.engines import ScriptedHearing
+    from test_pins import Vad
 
     now, stuck = clock(monkeypatch, reachy_muse.failover, companion_client), [True]
     stalls(monkeypatch, stuck)
 
     async def scenario():
         async with companion_hearing(ScriptedHearing(frames_per_partial=1), link_type=SlowLink) as (link, hearing):
-            for _ in range(3):
-                link.held = []
-                command, ended = refused_command(hearing)
-                assert (await ended.endpoint()).text is None
-                await link.in_flight(Error)
-                link.land()
-                now[0] += 21.0
-                assert command.take().ended is None
-                command.abort()
-            stuck[0] = False
-            words = [await heard(hearing)]
-            now[0] = 202.0
-            words.append(await heard(hearing))
-            return words
+            window = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=True)
+            try:
+                for _ in range(3):
+                    link.held = []
+                    window.feed(SPEECH)
+                    window.feed(SILENCE)
+                    assert (await window.take().ended.endpoint()).text is None
+                    await link.in_flight(Error)
+                    link.land()
+                    now[0] += 21.0
+                    assert window.take().ended is None
+                stuck[0] = False
+                words = [await speak(window)]
+                now[0] = 202.0
+                window.feed(SILENCE)
+                assert window.take().ended is None
+                words.append(await speak(window))
+                return words
+            finally:
+                window.abort()
 
     assert asyncio.run(scenario()) == ["robot words", "hello"]
     assert STRIKES.findall(caplog.text) == ["1", "2", "3"]
