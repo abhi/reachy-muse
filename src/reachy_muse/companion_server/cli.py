@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import os
 import signal
@@ -11,10 +12,13 @@ from typing import Optional, Sequence
 
 from reachy_muse.companion_server import pair as pairing
 from reachy_muse.companion_server.watchdog import watchdog
-from reachy_muse.companion_server.engines import EchoNarrator, NodAnimator, ScriptedHearing, SpeechFirst, ToneVoice
+from reachy_muse.companion_server.engines import (
+    EchoNarrator, NodAnimator, ScriptedHearing, Speaker, SpeechFirst, ToneVoice,
+)
 from reachy_muse.companion_server.narrator_mlx import DEFAULT_REPO
 from reachy_muse.companion_server.server import CompanionServer, Engines
 from reachy_muse.companion_server.voices import DEFAULT as DEFAULT_VOICE, build_voice, parse_voice
+from reachy_muse.voice_verify import DEFAULT_THRESHOLD
 
 # With hearing, the narrator and Chatterbox evaluating on their own threads at once, Metal reported
 # GPU hangs and aborted the process in 4 of 6 three-minute runs of bench/gpu_hang.py; with at most
@@ -50,6 +54,17 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     motion_mode.add_argument("--motion-library", action="store_true", help="serve prebuilt motion from the state directory without loading the planner")
     serve_command.add_argument("--motion-dir", type=Path, help="where the motion planner and generator live "
                                "(default: ~/Library/Application Support/reachy-companion/motion)")
+    serve_command.add_argument("--speaker-model", type=Path, metavar="ONNX",
+                               help="a local sherpa-onnx speaker model; labels each request's voice owner, other or "
+                                    "unknown against the voice print enroll-voice makes (needs the voice-verify extra)")
+    serve_command.add_argument("--speaker-threshold", type=_cosine, metavar="SCORE",
+                               help=f"the score from which a voice counts as the owner's (default {DEFAULT_THRESHOLD}, "
+                                    "calibrated for wespeaker_en_voxceleb_resnet34; any other model needs its own)")
+
+    commands.add_parser("enroll-voice", help="learn your voice from your next five requests to Reachy, which Muse "
+                                             "answers as usual: say them yourself, with nobody else speaking "
+                                             "meanwhile (serve must be running with --speaker-model)")
+    commands.add_parser("forget-voice", help="delete the owner's voice print")
 
     library_command = commands.add_parser("motion-library", help="build motion offline, separately from the companion")
     library_commands = library_command.add_subparsers(dest="library_command", required=True)
@@ -66,6 +81,14 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         result = pairing.pair(args.state_dir, hosts=[args.host], force=args.force)
         print(result.line(args.host, args.port))
         print(f"{'kept' if existed and not args.force else 'created'} the pairing in {args.state_dir}", file=sys.stderr)
+    elif args.command == "enroll-voice":
+        from reachy_muse.companion_server import voice_control
+
+        raise SystemExit(voice_control.enroll(args.state_dir))
+    elif args.command == "forget-voice":
+        from reachy_muse.companion_server import voice_control
+
+        raise SystemExit(voice_control.forget(args.state_dir))
     elif args.command == "motion-library":
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
         try:
@@ -92,6 +115,13 @@ def _positive_int(value: str) -> int:
     number = int(value)
     if number <= 0:
         raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
+
+
+def _cosine(value: str) -> float:
+    number = float(value)
+    if not -1 < number < 1:
+        raise argparse.ArgumentTypeError("must be between -1 and 1")
     return number
 
 
@@ -131,6 +161,7 @@ def _build_library(args: argparse.Namespace) -> None:
 
 
 async def _serve(args: argparse.Namespace) -> None:
+    from reachy_muse.companion_server import voice_control
     from reachy_muse.companion_server.motion_activity import ActivityStatus
 
     paired = pairing.load(args.state_dir)
@@ -152,13 +183,16 @@ async def _serve(args: argparse.Namespace) -> None:
     stop = asyncio.get_running_loop().create_future()
     for sig in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(sig, lambda: stop.done() or stop.set_result(None))
-    async with CompanionServer(engines, paired.token, ssl_context=tls, host=args.bind or ("127.0.0.1" if args.insecure else "0.0.0.0"), port=args.port, activity=activity) as server:
+    enrollment = (voice_control.serving(engines.speaker, args.state_dir) if engines.speaker is not None
+                  else contextlib.nullcontext())
+    async with CompanionServer(engines, paired.token, ssl_context=tls, host=args.bind or ("127.0.0.1" if args.insecure else "0.0.0.0"), port=args.port, activity=activity) as server, enrollment:
         logging.info("serving %s (%s engines)%s", server.url, args.engines, "  INSECURE: no TLS" if args.insecure else "")
         await stop
     logging.info("stopped")
 
 
 async def _engines(args: argparse.Namespace) -> Engines:
+    speaker = await _speaker(args)
     library = None
     if getattr(args, "motion_library", False):
         from reachy_muse.companion_server.motion_library import LibraryAnimator
@@ -168,7 +202,7 @@ async def _engines(args: argparse.Namespace) -> Engines:
     if args.engines == "stub":
         narrator = EchoNarrator()
         return Engines(hearing=ScriptedHearing(), voice=ToneVoice(), narrator=narrator, classifier=narrator,
-                       motion=library or (NodAnimator() if args.motion else None))
+                       motion=library or (NodAnimator() if args.motion else None), speaker=speaker)
     for name, value in GPU_COMMAND_BUFFER.items():
         os.environ.setdefault(name, value)  # MLX reads it when the GPU is first used
     from reachy_muse.companion_server.hearing_voxtral import HearingConfig, VoxtralHearing
@@ -198,4 +232,17 @@ async def _engines(args: argparse.Namespace) -> Engines:
     mx.set_cache_limit(cache)
     logging.info("MLX memory limits: wired=%d cache=%d bytes", wired, cache)
     return Engines(hearing=hearing, voice=voice, narrator=narrator, motion=library or motion, classifier=narrator,
-                   speech_first=speech_first)
+                   speaker=speaker, speech_first=speech_first)
+
+
+async def _speaker(args: argparse.Namespace) -> Optional[Speaker]:
+    """The owner-voice engine, or None. It is optional, so a model that will not load leaves the rest serving."""
+    if getattr(args, "speaker_model", None) is None:
+        return None
+    from reachy_muse.companion_server.owner_voice import PRINT_FILE, OwnerVoice
+
+    try:
+        return await OwnerVoice.load(args.speaker_model, args.state_dir / PRINT_FILE, args.speaker_threshold)
+    except Exception as error:
+        logging.warning("speaker recognition is off: %s: %s", type(error).__name__, error)
+        return None

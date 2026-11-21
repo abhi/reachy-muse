@@ -134,6 +134,105 @@ muse-reachy companion add wss://studio.local:8765 --pin sha256:4f… --token rc1
 
 The robot then trusts only this certificate and sends the token when it connects. 
 
+## Recognize the owner's voice
+
+The companion can label each request's voice as the owner's, someone else's or unknown.
+The label is only an observation. The robot logs it, and nothing depends on it yet. Muse is not told.
+The voice print and its enrollment stay on this Mac.
+
+The companion uses the robot's speaker model, `wespeaker_en_voxceleb_resnet34.onnx`, on one CPU core.
+[The voice verification benchmark](../bench/voice_verify.md) explains where to download it and its license.
+Install the `voice-verify` extra into the companion's environment, then pass the model to `serve`:
+
+```sh
+uv pip install -e '.[companion-server,voice-verify]'
+reachy-companion serve --speaker-model models/speaker.onnx
+```
+
+If the model does not load, the companion logs why and serves without the label.
+
+### Enroll your voice
+
+With `serve` running, run this command on the Mac:
+
+```sh
+reachy-companion enroll-voice
+```
+
+Enrolling means talking to Reachy as you normally do, in chat or in a call.
+The companion takes the next five requests Reachy hears, each with at least 2 seconds of speech, within 3 minutes.
+They are ordinary requests, and Muse answers them.
+Say them yourself, and make sure nobody else speaks until the command finishes: a voice heard meanwhile can become part of the print.
+The robot needs no update for this: the companion hears its requests either way.
+The command reports each request it takes, skips or could not check.
+Five requests give at least 10 seconds of speech in ten or more windows of 1 to 1.5 seconds, so the print is steadier than any single request.
+Each request must score at least 0.5 against the print the other four make. If one does not, the print does not change. Run the command again, saying every request yourself.
+The companion's log records the five scores. They show how alike your own voice sounds to the model, which helps when you tune the threshold.
+
+Only the Mac user who runs the companion can start an enrollment.
+The command talks to the companion through `voice.sock` in the state directory, which only that user can open.
+Nothing the robot sends, and nothing anyone says to it, can start an enrollment.
+
+The print is `voice-print.json` in the state directory, mode 600.
+It holds the average speaker embedding of your sentences and the model's SHA-256, and no audio.
+It never goes to the robot or Muse, and no log contains it.
+To delete it:
+
+```sh
+reachy-companion forget-voice
+```
+
+The companion stops using the print at the next request. It does not need a restart.
+If an enrollment is running, `forget-voice` stops it, and it keeps nothing.
+If the companion is not running, the command deletes the print itself.
+Backups are out of its reach: Time Machine and APFS snapshots of your home folder can keep copies of the state directory.
+To keep the print out of them, run `tmutil addexclusion ~/.reachy-companion`.
+
+### What the robot receives
+
+A robot that asks for the protocol's `speaker` op gets one `speaker_observation` for each request: `owner`, `other` or `unknown`.
+The companion starts on the label when the request's speech ends, by its own end-of-speech detection or by the robot's, and sends it as soon as it is ready, often before the transcript.
+During a realtime call, Reachy ends each request about 2 seconds after you stop talking and drops the companion's stream.
+After 0.5 seconds of silence, the companion asks Smart Turn whether the request is finished. If it is, the request ends there, and the label usually reaches the robot before Reachy drops the stream.
+If Smart Turn calls the request unfinished, the companion waits for 3 seconds of silence instead. Reachy drops the stream first, so that request gets no label.
+Neither does any other request that Reachy drops before the companion hears its end. Such a request does not count toward an enrollment either, and `enroll-voice` does not report it.
+`unknown` means there is no print, the request held less than 1 second of speech, or the check could not run in time.
+The robot logs `Reachy speaker=owner` and adds `speaker=owner` to the turn's timeline line, in chat and in calls.
+An older robot never asks for the op and receives nothing new. A newer robot works with an older companion as before.
+
+### Cost
+
+The check starts when the request's speech ends, beside the final pass, on a thread of its own, so it never delays hearing.
+sherpa-onnx releases Python's global interpreter lock while it computes.
+Each request costs at most four windows, 6 seconds of speech. The benchmark measured 52 ms for a 1.5-second window on one M3 Ultra core.
+The voice detection and windowing around the model take under 3 ms for a 30-second request.
+The watchdog does not watch the check, because a restart would cost hearing far more than a missing label.
+If a check gets stuck, later requests are `unknown` until the companion restarts.
+The model file is 26.5 MB. Its memory in use is not measured yet: compare the companion's resident memory with and without `--speaker-model`.
+
+### Measure accuracy
+
+The companion logs one line for each labeled request. The line holds no words, audio or embeddings:
+
+```
+speaker stream=7 voiced_s=2.14 score=0.8123 label=owner
+```
+
+`score` is the cosine similarity between the request and the print, from -1 to 1.
+A score at or above the threshold is `owner`.
+The default threshold, 0.74, is the benchmark's calibration for this model, on synthetic voices and single 1.5-second windows.
+At 0.74, the benchmark rejected half of the synthetic owner's wake phrases and most of their requests.
+Expect many false `other` labels for you until you tune it. The companion averages several windows, which should help, but that is not measured.
+Before anything relies on the label, measure it with real voices:
+
+1. Use Reachy as usual. Note the times when only you talked to it, and the times when only other people did.
+2. Run `python3 tools/speaker_scores.py LOG --owner FROM TO --other FROM TO`, with one `--owner` or `--other` for each span. It reads the companion's log and needs no audio.
+3. Pick the lowest threshold whose false-owner rate you accept, for example none in 100 requests from other people. Read its false-other rate from the same row.
+4. Set it with `serve --speaker-threshold`.
+
+Enrolling again changes every score, so the script reports only the requests since the log's last enrollment.
+Short requests score less reliably: add `--min-speech 2` to see how the longer ones do on their own.
+
 ## Test
 
 ```sh

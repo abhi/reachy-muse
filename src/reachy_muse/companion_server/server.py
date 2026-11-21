@@ -25,6 +25,7 @@ from reachy_muse.protocol import (
     MAX_OUTSTANDING_ANIMATIONS,
     MAX_OUTSTANDING_NARRATIONS,
     MAX_TEXT_FRAME_BYTES,
+    MIC_RATE,
     VERSION,
     Animate,
     AnimateResult,
@@ -51,6 +52,8 @@ from reachy_muse.protocol import (
     SequenceCheck,
     SpeakCancel,
     SpeakDone,
+    SpeakerLabel,
+    SpeakerObservation,
     SpeakStart,
     VoiceRole,
     Welcome,
@@ -62,7 +65,7 @@ from reachy_muse.protocol import (
 
 from reachy_muse.companion_server.engines import (
     Narrated,
-    Animator, Classifier, Endpoint, Hearing, HearingSession, Narrator, Partial, SpeechFirst, Voice,
+    Animator, Classifier, Hearing, HearingSession, Narrator, Partial, Speaker, SpeechEnded, SpeechFirst, Voice,
 )
 from reachy_muse.companion_server.motion_activity import ActivityStatus
 from reachy_muse.companion_server.motion_library import LibraryAnimator
@@ -81,6 +84,8 @@ REMEMBERED_EXPRESSIONS = 64
 # nothing for 3 s is stuck. Parakeet's final pass gets a longer budget (hearing_voxtral.FINAL_PASS_RTF).
 HEARING_SOFT_S = 3.0
 HEARING_CHECK_S = 0.1
+# A speaker label needs only a request's first few seconds of speech; this bounds a long stream's copy.
+SPEAKER_AUDIO_BYTES = 30 * MIC_RATE * 2
 
 
 @dataclass(frozen=True)
@@ -92,11 +97,12 @@ class Engines:
     narrator: Optional[Narrator] = None
     motion: Optional[Animator] = None
     classifier: Optional[Classifier] = None
+    speaker: Optional[Speaker] = None
     speech_first: SpeechFirst = field(default_factory=SpeechFirst)
 
     def offered(self) -> Dict[Op, str]:
         engines = {Op.HEAR: self.hearing, Op.SPEAK: self.voice, Op.NARRATE: self.narrator, Op.CLASSIFY: self.classifier,
-                   Op.ANIMATE: self.motion}
+                   Op.ANIMATE: self.motion, Op.SPEAKER: self.speaker}
         return {op: engine.name for op, engine in engines.items() if engine is not None}
 
 
@@ -160,6 +166,7 @@ class _Hear:
     task: Optional[asyncio.Task] = None
     audio_arrived: bool = False                # since the last stall check
     session: Optional[HearingSession] = None
+    heard: Optional[bytearray] = None          # the audio fed so far, for a robot granted speaker or an enrollment
 
 
 @dataclass
@@ -206,6 +213,7 @@ class _Session:
         self.speaking: Dict[int, _Speech] = {}
         self.narrating: Dict[int, asyncio.Task] = {}
         self.animating: Dict[int, asyncio.Task] = {}
+        self.observing: Dict[int, asyncio.Task] = {}
         self.warm: Dict[str, _Warm] = {}
         self.warming: set[asyncio.Task] = set()
         self.expressions: OrderedDict[str, Optional[Expression]] = OrderedDict()
@@ -283,14 +291,17 @@ class _Session:
         if message.stream in self.hearing:
             await self._send(_error(ErrorCode.BAD_REQUEST, f"hear stream {message.stream} is already open", stream=message.stream))
             return
+        self._unobserve(message.stream)
         stuck_s = watchdog.stalled("hearing", HEARING_SOFT_S)
         if stuck_s:
             await self._hear_overloaded(message.stream, stuck_s)
             return
-        hear = self.hearing[message.stream] = _Hear(asyncio.Queue())
+        hear = self.hearing[message.stream] = _Hear(asyncio.Queue(), heard=bytearray() if self._labels() else None)
         hear.task = asyncio.create_task(self._guard(self._speech_first(lambda: self._hear(message, hear)), stream=message.stream))
 
     async def _hear_close(self, message: HearClose) -> None:
+        if message.how is CloseHow.ABORT:
+            self._unobserve(message.stream)
         hear = self.hearing.get(message.stream)
         if hear is None:
             return
@@ -339,22 +350,65 @@ class _Session:
         try:
             while True:
                 item = await hear.queue.get()
-                if item is CloseHow.FINISH:
+                forced = ended = item is CloseHow.FINISH
+                if not ended:
+                    if hear.heard is not None:
+                        hear.heard += item[:SPEAKER_AUDIO_BYTES - len(hear.heard)]
+                    for event in await session.feed(item):
+                        if isinstance(event, Partial):
+                            await self._send(HearPartial(stream, rev, event.text))
+                            rev += 1
+                        ended = ended or isinstance(event, SpeechEnded)
+                if ended:
+                    self._check_speaker(stream, hear)
                     text = await session.finish()
                     self._end_hearing(stream, hear)
-                    await self._send(HearEndpoint(stream, text, True))
+                    await self._send(HearEndpoint(stream, text, forced))
                     return
-                for event in await session.feed(item):
-                    if isinstance(event, Partial):
-                        await self._send(HearPartial(stream, rev, event.text))
-                        rev += 1
-                    elif isinstance(event, Endpoint):
-                        self._end_hearing(stream, hear)
-                        await self._send(HearEndpoint(stream, event.text, False))
-                        return
         finally:
             self._end_hearing(stream, hear)
             await session.close()
+
+    def _labels(self) -> bool:
+        """Whether a stream's voice needs checking: for a robot granted speaker, or while the owner enrolls."""
+        return Op.SPEAKER in self.ops or (self.engines.speaker is not None and self.engines.speaker.enrolling)
+
+    def _check_speaker(self, stream: int, hear: _Hear) -> None:
+        """At the stream's end of speech, check its voice beside the final pass; the label goes out when ready.
+
+        In a realtime call the robot aborts each stream at its own, later end of speech, so a label that
+        waited for the final pass would lose that race. An abort still cancels a check that is running.
+        """
+        if hear.heard is not None and self._labels():
+            self.observing[stream] = asyncio.create_task(self._observe(stream, bytes(hear.heard)))
+
+    async def _observe(self, stream: int, pcm: bytes) -> None:
+        """Check one ended stream's voice, and label it for a robot granted speaker. A failed check is unknown."""
+        assert self.engines.speaker is not None
+        try:
+            try:
+                observation = await self.engines.speaker.observe(pcm)
+                frame = encode(SpeakerObservation(stream, observation.start_sample, observation.end_sample,
+                                                  observation.label))
+            except Exception as error:
+                log.warning("speaker check failed (stream=%s): %s", stream, type(error).__name__)
+                frame = encode(SpeakerObservation(stream, 0, len(pcm) // 2, SpeakerLabel.UNKNOWN))
+            else:
+                log.info("speaker stream=%d voiced_s=%.2f score=%s label=%s", stream, observation.voiced_s,
+                         "none" if observation.score is None else f"{observation.score:.4f}", observation.label.value)
+            if Op.SPEAKER in self.ops:
+                await self.ws.send(frame)
+        except ConnectionClosed:
+            pass
+        finally:
+            if self.observing.get(stream) is asyncio.current_task():
+                del self.observing[stream]
+
+    def _unobserve(self, stream: int) -> None:
+        """Send no label under ``stream``: the robot aborted it, or is opening its id again."""
+        task = self.observing.pop(stream, None)
+        if task is not None:
+            task.cancel()
 
     def _end_hearing(self, stream: int, hear: _Hear) -> None:
         """Free the stream id at once; a cancelled task sends nothing more under it."""
@@ -554,7 +608,8 @@ class _Session:
 
     async def _stop_everything(self) -> None:
         tasks = ([h.task for h in self.hearing.values()] + [s.task for s in self.speaking.values()]
-                 + list(self.narrating.values()) + list(self.animating.values()) + list(self.warming))
+                 + list(self.narrating.values()) + list(self.animating.values()) + list(self.warming)
+                 + list(self.observing.values()))
         for stream, hear in list(self.hearing.items()):
             self._end_hearing(stream, hear)
         for warm in self.warm.values():

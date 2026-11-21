@@ -11,7 +11,7 @@ from typing import AsyncIterator, Iterator, Optional, Protocol, Sequence, Tuple,
 from reachy_muse.contract.expressions import Expression
 from reachy_muse.contract.intent import Intent
 from reachy_muse.device_command import DeviceCommand, parse_command
-from reachy_muse.protocol import ANIMATION_CHANNELS, MAX_LINE_BYTES, Frames, NarratedLine, VoiceRole
+from reachy_muse.protocol import ANIMATION_CHANNELS, MAX_LINE_BYTES, Frames, NarratedLine, SpeakerLabel, VoiceRole
 
 
 @dataclass(frozen=True)
@@ -20,13 +20,11 @@ class Partial:
 
 
 @dataclass(frozen=True)
-class Endpoint:
-    """The engine decided the turn is over before the robot closed the stream."""
-
-    text: str
+class SpeechEnded:
+    """The engine decided the turn is over before the robot closed the stream. ``finish`` gives its words."""
 
 
-HearEvent = Union[Partial, Endpoint]
+HearEvent = Union[Partial, SpeechEnded]
 
 
 class HearingSession(Protocol):
@@ -34,7 +32,7 @@ class HearingSession(Protocol):
         """Take one 16 kHz s16le microphone frame. Return what it changed."""
 
     async def finish(self) -> str:
-        """The robot ended the turn. Return the final transcript."""
+        """The turn is over, by the robot's close or the engine's SpeechEnded. Return the final transcript."""
 
     def cancel(self) -> None:
         """Signal abandonment before the worker can start another model stage."""
@@ -96,6 +94,31 @@ class Animator(Protocol):
     async def animate(self, intent: str, duration_s: float) -> Animation: ...
 
 
+@dataclass(frozen=True)
+class Observation:
+    """Whose voice one request carried. The score and voiced seconds stay in the companion's log."""
+
+    label: SpeakerLabel
+    start_sample: int
+    end_sample: int
+    score: Optional[float]
+    voiced_s: float
+
+
+class Speaker(Protocol):
+    name: str
+    enrolling: bool
+
+    async def observe(self, pcm: bytes) -> Observation:
+        """Judge one finished request's 16 kHz s16le audio against the owner's voice print."""
+
+    def enroll(self) -> AsyncIterator[dict]:
+        """Replace the print from the next requests observed. Yields one event per step for the owner's CLI."""
+
+    async def forget(self) -> Tuple[bool, bool]:
+        """Stop any enrollment and delete the print. Returns whether one was enrolling and a print was there."""
+
+
 class SpeechFirst:
     """Hearing, speech, narration and classify share the GPU with motion and go first.
 
@@ -152,7 +175,7 @@ class _ScriptedSession:
             self.said = self.script.partials[index - 1]
             events.append(Partial(self.said))
         if self.frames == self.script.endpoint_after:
-            events.append(Endpoint(self.said))
+            events.append(SpeechEnded())
         return events
 
     async def finish(self) -> str:

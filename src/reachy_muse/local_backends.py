@@ -42,6 +42,9 @@ class _LocalEndedTurn:
         if self._recognition is not None:
             self._recognition.cancel()
 
+    def note_speaker(self, facts: dict[str, str]) -> None:
+        pass  # only a companion labels the speaker
+
     async def endpoint(self) -> Optional[Endpoint]:
         """The turn as Muse receives it; None when its transcription was lost."""
         from reachy_muse.streaming_transcription import StreamingTranscriptionError, StreamingWorkerError

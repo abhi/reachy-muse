@@ -118,6 +118,7 @@ uv pip install -e ../muse-gadget-sdk/linux
 
 `pair` prints the address, certificate pin and token. Add them on the robot with `muse-reachy companion add`.
 The [companion server guide](docs/companion-server.md) explains each step and the models it loads.
+It also explains how the companion can [recognize the owner's voice](docs/companion-server.md#recognize-the-owners-voice) on the Mac, which only labels requests and gates nothing.
 
 ## How it uses the Muse Gadget SDK
 

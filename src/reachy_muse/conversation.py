@@ -1347,6 +1347,7 @@ class VoiceConversation:
                 log.info("voice turn reached the 60-second recording limit; continuing capture")
             if len(pending_turns) < PENDING_TURN_LIMIT:
                 timeline = TurnTimeline()
+                recorded.ended.note_speaker(timeline.facts)
                 if self.call is None and self._lost_call is None:
                     recorded.ended.start()
                 else:

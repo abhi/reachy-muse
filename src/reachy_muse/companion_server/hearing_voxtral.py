@@ -11,6 +11,7 @@ import asyncio
 import logging
 import threading
 import time
+from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Sequence, TypeVar
@@ -18,7 +19,7 @@ from typing import Any, Callable, List, Optional, Sequence, TypeVar
 import numpy as np
 
 from reachy_muse.companion_server.watchdog import EngineExecutor, watchdog
-from reachy_muse.companion_server.engines import Endpoint, HearEvent, Partial
+from reachy_muse.companion_server.engines import HearEvent, Partial, SpeechEnded
 
 log = logging.getLogger("reachy_muse.companion_server")
 
@@ -83,6 +84,10 @@ class VoxtralHearing:
         self._models = await asyncio.wrap_future(self._thread.submit(self._load))
 
     async def run(self, work: Callable[..., T], *args: Any) -> T:
+        return await asyncio.wrap_future(self.submit(work, *args))
+
+    def submit(self, work: Callable[..., T], *args: Any) -> "Future[T]":
+        """Queue one call on the hearing worker, from any thread, logging its stages if it is slow."""
         queued = time.perf_counter()
 
         def timed():
@@ -98,7 +103,7 @@ class VoxtralHearing:
                     log.warning("hearing call=%s total=%.3fs queue=%.3fs stages=%s", work.__name__.lstrip("_"),
                                 elapsed, started - queued, " ".join(f"{name}:{seconds:.3f}s" for name, seconds in stages.items()))
 
-        return await asyncio.wrap_future(self._thread.submit(timed))
+        return self._thread.submit(timed)
 
     def open(self, pre_roll_frames: int) -> _Session:
         # The pre-roll is transcribed like any other audio: it can hold the start of the request.
@@ -138,6 +143,7 @@ class _Session:
         self.utterance: Optional[_Utterance] = None
         self.said = ""
         self._closed = threading.Event()
+        self._final: Optional[Future] = None
 
     async def feed(self, pcm: bytes) -> Sequence[HearEvent]:
         return await self.hearing.run(self._feed, pcm)
@@ -151,19 +157,22 @@ class _Session:
                 self.utterance = _Utterance(self.hearing._models, self.hearing.config, cancelled=self._closed)
             _check_open(self._closed)
             samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
-            final = self.utterance.feed(samples)
+            ended = self.utterance.feed(samples)
             events: List[HearEvent] = []
             if self.utterance.text != self.said:
                 self.said = self.utterance.text
                 events.append(Partial(self.said))
-            if final is not None:
-                events.append(Endpoint(final))
+            if ended:
+                # Queued here rather than by the server on SpeechEnded, the final pass starts without waiting for
+                # the event loop. Work that another stream queued during this feed still runs first.
+                self._final = self.hearing.submit(self._finish)
+                events.append(SpeechEnded())
             return events
         except _Abandoned:
             return []
 
     async def finish(self) -> str:
-        return await self.hearing.run(self._finish)
+        return await asyncio.wrap_future(self._final or self.hearing.submit(self._finish))
 
     def _finish(self) -> str:
         try:
@@ -206,8 +215,8 @@ class _Utterance:
     def text(self) -> str:
         return self.raw.strip()
 
-    def feed(self, samples: np.ndarray) -> Optional[str]:
-        """Return the final transcript when this audio ends the turn."""
+    def feed(self, samples: np.ndarray) -> bool:
+        """Whether this audio ends the turn."""
         _check_open(self.cancelled)
         self.audio.append(samples)
         with _stage("voxtral_feed"):
@@ -217,7 +226,7 @@ class _Utterance:
             with _stage("voxtral_step"):
                 self.raw += "".join(self.stream.step(max_decode_tokens=1))
         _check_open(self.cancelled)
-        return self.final() if self._turn_over(samples) else None
+        return self._turn_over(samples)
 
     def final(self) -> str:
         _check_open(self.cancelled)
