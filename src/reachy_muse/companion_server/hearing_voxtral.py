@@ -208,12 +208,10 @@ class _Utterance:
         self.audio.append(samples)
         with _stage("voxtral_feed"):
             self.stream.feed(samples)
-        _check_open(self.cancelled)
-        with _stage("voxtral_step"):
-            for delta in self.stream.step(max_decode_tokens=16):
-                watchdog.progress()
-                _check_open(self.cancelled)
-                self.raw += delta
+        for _ in range(16):
+            _check_open(self.cancelled)
+            with _stage("voxtral_step"):
+                self.raw += "".join(self.stream.step(max_decode_tokens=1))
         _check_open(self.cancelled)
         return self.final() if self._turn_over(samples) else None
 
@@ -234,10 +232,7 @@ class _Utterance:
         while not self.stream.done:
             _check_open(self.cancelled)
             with _stage("voxtral_final"):
-                for delta in self.stream.step(max_decode_tokens=64):
-                    watchdog.progress()
-                    _check_open(self.cancelled)
-                    self.raw += delta
+                self.raw += "".join(self.stream.step(max_decode_tokens=1))
         return self.text
 
     def _turn_over(self, samples: np.ndarray) -> bool:

@@ -26,12 +26,18 @@ def test_abandoned_hearing_skips_remaining_model_work(monkeypatch, kind, blocked
             assert release.wait(5)
 
     class Stream:
+        pending = False
+
         def feed(self, samples):
+            self.pending = True
             stage("feed")
 
         def step(self, **kwargs):
+            if not self.pending:
+                return []
+            self.pending = False
             stage("step")
-            yield "private transcript"
+            return ["private transcript"]
 
     def open_stream(**kwargs):
         stage("open")

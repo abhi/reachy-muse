@@ -17,12 +17,18 @@ def test_hearing_calls_log_only_slow_stage_timings(monkeypatch, caplog, decode_s
     monkeypatch.setattr(hearing_module, "watchdog", SimpleNamespace(progress=lambda: progress.append(round(now[0], 3))))
 
     class Stream:
+        pending = False
+
         def feed(self, samples):
             now[0] += .4
+            self.pending = True
 
         def step(self, **kwargs):
+            if not self.pending:
+                return []
+            self.pending = False
             now[0] += decode_s
-            yield "private-hearing-words"
+            return ["private-hearing-words"]
 
     def create_stream(**kwargs):
         now[0] += .2
