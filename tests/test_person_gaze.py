@@ -35,6 +35,9 @@ from test_realtime_turns import (RATE, CallHardware, ScriptedCalls, StreamingTra
     ('“Say hi to my friend.”', False), ('‘Greet my guest.’', False),
     ('For example, say hi to him.', False), ('What does say hello to someone mean?', False),
     ("Say hi to my friend's dog.", False),
+    ('Say hi to her for me.', False), ('Greet them for us, please.', False), ('Say hello to him from me.', False),
+    ('Say hi to her when you call her.', False), ('Say hello to them next time.', False),
+    ('Say hi to him later.', False), ('Greet my guest tomorrow.', False), ('Say hi to her if you see her.', False),
 ])
 def test_small_imperative_grammar(text, expected):
     assert gaze_requested(text) is expected

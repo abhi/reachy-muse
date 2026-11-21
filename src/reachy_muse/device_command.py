@@ -126,6 +126,8 @@ _OTHER_PERSON = r"(?:him|her|them|my friend|someone(?: else)?|somebody(?: else)?
 _GAZE = _request_grammar(rf"(?:say (?:hi|hello) to|greet|look at) {_OTHER_PERSON}")
 # Quotation marks, not apostrophes inside a word.
 _QUOTED = re.compile(r"[\"“”]|(?<![a-z])['‘’]|['‘’](?![a-z])", re.IGNORECASE)
+# "Say hi to her for me", "when you call her" or "later": the greeting is for someone who is not here.
+_ABSENT = re.compile(r"\b(?:for (?:me|us)|from (?:me|us)|when(?:ever)?|if|next time|later|tomorrow|tonight)\b")
 _QUESTION_OPENERS = frozenset((
     "what", "what's", "whats", "when", "where", "who", "why", "how", "which", "is", "are", "was", "were",
     "does", "did", "do", "should"))
@@ -202,7 +204,9 @@ def command_after_wake(text: str, phrase: str) -> Optional[str]:
 
 def gaze_requested(text: str) -> bool:
     """A request to face someone other than the speaker. It is never a device command."""
-    return _QUOTED.search(text) is None and _GAZE.fullmatch(_spoken(text)) is not None
+    spoken = _spoken(text)
+    return (_QUOTED.search(text) is None and _ABSENT.search(spoken) is None
+            and _GAZE.fullmatch(spoken) is not None)
 
 
 def worth_asking(text: str, asked: FrozenSet[DeviceCommand]) -> bool:
