@@ -42,6 +42,15 @@ def test_silent_call_acknowledges_retries_then_recovers_without_replaying(monkey
     calls = ScriptedCalls(reply_s=.1)
     transcripts = StreamingTranscripts("Tell me the weather.", "What about tomorrow?", "Are you there?")
     conversation = realtime_service(rig, transcripts, calls, wake_timeout_s=10)
+    gestures = []
+    gesture = rig.hardware.gesture
+
+    def timed_gesture(name):
+        gestures.append((name, time.monotonic()))
+        gesture(name)
+
+    monkeypatch.setattr(rig.hardware, "gesture", timed_gesture)
+    endpoints = []
 
     async def user():
         await speak_live(rig, wake=True)
@@ -54,6 +63,7 @@ def test_silent_call_acknowledges_retries_then_recovers_without_replaying(monkey
             await speak_live(rig)
             assert len([state for state in rig.states() if state == "thinking"]) == before + 1
             assert [turn.ordinal for turn in call.pending] == list(range(2, ordinal + 1))
+            endpoints.append(call.pending[-1].endpoint_at)
             if ordinal == 2:
                 await wait_for(rig, lambda: bool(stall_cues(caplog)))
                 assert stall_cues(caplog) == ["Realtime turn ordinal=2 cue=still_waiting"]
@@ -74,6 +84,8 @@ def test_silent_call_acknowledges_retries_then_recovers_without_replaying(monkey
     events = run(rig, conversation, user, rest=("listening", "idle"), timeout=30)
     assert played(events).count(LOST) == 1
     assert sent_to_muse(events) == []
+    assert [name for name, _ in gestures] == ["nod", "nod"]
+    assert [4 <= at - endpoint < 4.3 for (_, at), endpoint in zip(gestures, endpoints)] == [True, True]
     assert stall_cues(caplog) == ["Realtime turn ordinal=2 cue=still_waiting", "Realtime turn ordinal=3 cue=still_waiting"]
     assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=retry"]
     assert [(row["ordinal"], row["outcome"]) for row in turn_outcomes(caplog)] == [
@@ -233,33 +245,6 @@ def test_call_failure_during_command_classification_announces_loss_once(
     assert [(row["ordinal"], row["outcome"]) for row in turn_outcomes(caplog)] == outcomes
 
 
-def test_twenty_seconds_of_work_with_events_is_not_a_stall(monkeypatch, caplog):
-    caplog.set_level("INFO")
-    rig = rig_for(monkeypatch)
-
-    async def answer(sdk, emit, script):
-        for _ in range(20):
-            await keeps_working(sdk, emit, script)
-            await asyncio.sleep(1)
-        reply_events(sdk, emit, "r1", REPLY, voiced(.3))
-        emit(sdk.Working(False))
-
-    calls = ScriptedCalls(answer=answer)
-    conversation = realtime_service(rig, StreamingTranscripts("Find a table for dinner."), calls)
-
-    async def user():
-        await speak_live(rig, wake=True)
-        await wait_for(rig, lambda: "muse" in played(rig.recording.events), 23)
-
-    events = run(rig, conversation, user, timeout=30)
-    assert stall_cues(caplog) == []
-    assert recoveries(caplog) == []
-    assert set(played(events)) == {"muse"}
-    assert [row["outcome"] for row in turn_outcomes(caplog)] == ["answered"]
-    assert [line for line in caplog.messages if "event=Working" in line] == [
-        "Realtime event=Working working=on", "Realtime event=Working working=off"]
-
-
 def tool_calls_then_reply(*tool_calls_at, reply_at):
     """Muse works on the request: each tool call is a response that completes at once without audio."""
     async def answer(sdk, emit, script):
@@ -273,6 +258,28 @@ def tool_calls_then_reply(*tool_calls_at, reply_at):
         reply_events(sdk, emit, "r1", REPLY, voiced(.3))
         emit(sdk.Working(False))
     return answer
+
+
+def test_twenty_seconds_of_work_with_events_is_not_a_stall(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(answer=tool_calls_then_reply(0, 5, 10, 15, reply_at=20))
+    conversation = realtime_service(rig, StreamingTranscripts("Find a table for dinner."), calls)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        await wait_for(rig, lambda: "muse" in played(rig.recording.events), 23)
+
+    events = run(rig, conversation, user, timeout=30)
+    assert stall_cues(caplog) == []
+    assert recoveries(caplog) == []
+    assert set(played(events)) == {"muse"}
+    assert [row["outcome"] for row in turn_outcomes(caplog)] == ["answered"]
+    assert [line for line in caplog.messages if "event=Working" in line] == [
+        "Realtime event=Working working=on", "Realtime event=Working working=off"]
+    assert [line for line in caplog.messages if line.startswith("Realtime event=ResponseDone")] == [
+        f"Realtime event=ResponseDone ordinal={ordinal} status=completed audio_bytes=0" for ordinal in range(1, 5)] + [
+        "Realtime event=ResponseDone ordinal=5 status=completed audio_bytes=14400"]
 
 
 @pytest.mark.parametrize("tool_calls_at", [(0,), (0, 12)], ids=["one tool call", "two tool calls"])
