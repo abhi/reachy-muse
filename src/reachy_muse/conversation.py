@@ -2159,11 +2159,11 @@ class VoiceConversation:
         if capture.failure is not None:
             report.outcome = capture.failure
             return None
-        self._shutter()
+        await self._shutter()
         try:
             job = await self._dispatch(wav, request.words, started=started, defer_playback=defer_playback,
                                        timeline=timeline, photo=capture.jpeg)
-        except RequestRejected:
+        except (RequestRejected, ValueError):
             report.outcome = "rejected"
             return None
         except asyncio.TimeoutError:
@@ -2176,13 +2176,11 @@ class VoiceConversation:
         timeline.facts["photo"] = report.outcome = "sent"
         return job
 
-    def _shutter(self) -> None:
+    async def _shutter(self) -> None:
         """Let everyone in the room hear that a photo was taken."""
-        if self._output_queue.full():
-            return
         async def audio():
             yield shutter_cue(self.hardware.output_sample_rate)
-        self._output_queue.put_nowait(_SpeechJob(None, "", prepared_stream=audio(), state="thinking", role="cue"))
+        await self._output_queue.put(_SpeechJob(None, "", prepared_stream=audio(), state="thinking", role="cue"))
 
     async def _announce(self, text: str, *, started: float | None, defer_playback: bool) -> None:
         if defer_playback:
@@ -2744,6 +2742,7 @@ class VoiceConversation:
         await request.call.barge_in()
         request.timeline.facts["path"] = "realtime"
         if follow_up:
+            self._gaze.admit(request.gaze_generation)
             PhotoLog("realtime", "busy").write()
             await self._announce(BUSY_CUE, started=None, defer_playback=True)
             return TurnOutcome.ACCEPTED

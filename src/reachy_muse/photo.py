@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
@@ -53,8 +53,8 @@ class PhotoRequest:
     One capture attempt uses it up, whatever its outcome, and it lapses PHOTO_REQUEST_TTL_S after the turn ended.
     """
 
-    words: str        # sent to Muse with the photo
-    heard_at: float   # the turn's endpoint, on the monotonic clock
+    words: str = field(repr=False)   # sent to Muse with the photo
+    heard_at: float                  # the turn's endpoint, on the monotonic clock
 
     def expired(self, now: float) -> bool:
         return now - self.heard_at > PHOTO_REQUEST_TTL_S
@@ -74,7 +74,7 @@ class PhotoCapture:
     """One capture attempt: a JPEG and how it was made, or why there is none."""
 
     failure: str | None = None     # camera_busy, no_frame, camera_failed or too_large
-    jpeg: bytes | None = None
+    jpeg: bytes | None = field(default=None, repr=False)
     width: int | None = None
     height: int | None = None
     quality: int | None = None
@@ -144,9 +144,9 @@ def opencv_jpeg(frame, width: int, height: int, quality: int) -> bytes:
 
 
 def shutter_cue(rate: int):
-    """A soft camera shutter, two clicks over 120 ms, generated locally."""
+    """A camera shutter, two clicks over 120 ms, generated locally."""
     import numpy as np
 
     t = np.arange(round(rate * 0.12)) / rate
-    clicks = np.exp(-t / .004) + .6 * np.where(t >= .07, np.exp(-(t - .07) / .006), 0.0)
-    return (0.05 * np.random.default_rng(1).uniform(-1, 1, len(t)) * clicks).astype(np.float32)
+    clicks = np.exp(-t / .004) + .6 * np.exp(-np.maximum(t - .07, 0) / .006) * (t >= .07)
+    return (0.12 * np.random.default_rng(1).uniform(-1, 1, len(t)) * clicks).astype(np.float32)

@@ -994,11 +994,13 @@ they go to Muse as ordinary requests.
 
 - Only Reachy's own recognition of a turn it admitted can grant a photo, after
   its echo filters, and only one: a single capture attempt uses the request up,
-  whatever happens. A request that waits more than 30 seconds after you stopped
-  speaking lapses. Muse has no camera command and cannot ask Reachy for a photo.
+  whatever happens. A request lapses 30 seconds after Reachy decided your turn
+  had ended. Muse has no camera command and cannot ask Reachy for a photo.
   Only with the flag does Reachy's registration tell Muse how photos arrive.
-- A photo request heard while Muse works on another request, a briefing or
-  another photo gets "One at a time, please." and no photo.
+- A photo request heard while Muse is still answering another request, such as
+  the morning briefing's or another photo, gets "One at a time, please." and no
+  photo. So does one heard in a call while Reachy still handles your previous
+  turn.
 - The camera is in the head, so Reachy waits up to a second for its head to come
   to rest, then holds the camera still until it has the frame. A gaze held on
   another person ends first, as it does for any next request, so the photo shows
@@ -1025,8 +1027,8 @@ the Muse chat that Reachy talks in. The photo stays in that chat's history and
 may appear in the Muse app. Nothing from the camera goes to the companion. The
 frame, the JPEG and the request stay in memory and are never written to disk.
 Any voice that Reachy admits can ask for a photo, including a guest's or a
-television's while the microphone is open, and people in view are not asked. The
-shutter sound is the only notice.
+television's while the microphone is open, and without a wake word it is always
+open. People in view are not asked. The shutter sound is the only notice.
 
 Each request logs one line, such as `Reachy photo outcome=sent path=chat
 width=1280 height=720 quality=80 bytes=98304 capture_ms=120 encode_ms=18

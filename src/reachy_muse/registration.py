@@ -10,7 +10,7 @@ import dataclasses
 from musegadget.link_client import DeviceDescription
 
 from reachy_muse import __version__
-from reachy_muse.contract.commands import COMMAND_SPECS, PHOTO_REQUESTS
+from reachy_muse.contract.commands import COMMAND_SPECS, HOW_PHOTOS_ARRIVE
 from reachy_muse.contract.guide import MODEL_ID, MODEL_NAME, owner_place, reachy_guide
 
 
@@ -26,6 +26,6 @@ def reachy_description(node_id: str, description=DeviceDescription, *, place: st
             **presence, "description": presence["description"] + " " + owner_place(place)}}
     if photos:
         say = COMMAND_SPECS["reachy.say"]
-        commands = {**commands, "reachy.say": {**say, "description": say["description"] + " " + PHOTO_REQUESTS}}
+        commands = {**commands, "reachy.say": {**say, "description": say["description"] + " " + HOW_PHOTOS_ARRIVE}}
     return description(node_id, "Reachy Mini", __version__, commands,
                        **{key: value for key, value in extra.items() if key in fields})

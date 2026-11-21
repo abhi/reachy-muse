@@ -30,8 +30,9 @@ POSE_LIMITS = {
 }
 
 # Muse learns how photos arrive only when the owner lets spoken requests send them.
-PHOTO_REQUESTS = ("When the user asks Reachy itself to take a photo or what it sees, Reachy sends you one photo "
-                  "with their words as a chat message and speaks your reply. You cannot ask Reachy for a photo.")
+HOW_PHOTOS_ARRIVE = ("When the user asks Reachy itself to take a photo or what it sees, Reachy sends you one "
+                     "photo with their words as a chat message and speaks your reply. "
+                     "You cannot ask Reachy for a photo.")
 
 COMMAND_SPECS = {
     "reachy.say": {

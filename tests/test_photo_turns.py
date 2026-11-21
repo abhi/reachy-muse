@@ -1,8 +1,11 @@
 """A spoken photo request through Reachy's whole conversation: capture, send, answer, and every failure."""
 
 import asyncio
+import contextlib
 import functools
 import logging
+import os
+import sys
 import time
 from types import SimpleNamespace
 
@@ -218,6 +221,12 @@ class RejectsPhotos(PinSession):
         return {"ok": False, "status": 413}
 
 
+class PhotosUnacknowledged(PinSession):
+    async def send_image(self, image, mime_type, session_id=None, **options):
+        self.recording.add({"muse": "send_image", "bytes": len(image)})
+        return {"ok": True, "status": 200, "response": None}
+
+
 class PhotosNeverArrive(PinSession):
     async def send_image(self, image, mime_type, session_id=None, **options):
         self.recording.add({"muse": "send_image", "bytes": len(image)})
@@ -236,6 +245,7 @@ def slowly():
     ("too_large", [PhotoCapture("too_large", capture_ms=40, encode_ms=90)], "That photo was too large to send.", False),
     ("slow_camera", [slowly], "I couldn't take a photo.", False),
     ("rejected", [PHOTO], "Muse didn't get the photo.", True),
+    ("unacknowledged", [PHOTO], "Muse didn't get the photo.", True),
     ("send_timeout", [PHOTO], "Muse didn't get the photo.", True),
     ("no_answer", [PHOTO], "Muse didn't answer about the photo.", True),
     ("expired", [PHOTO], "Please ask me again for the photo.", False),
@@ -258,8 +268,9 @@ def test_each_failure_gets_one_line_and_the_conversation_goes_on(monkeypatch, ca
             await session.answer(request, "It's noon.")
 
     conversation = service(rig, muse, Transcripts("What do you see?", "What time is it?"), photo_requests=True)
-    if case in ("rejected", "send_timeout"):
-        rig.session = (RejectsPhotos if case == "rejected" else PhotosNeverArrive)(rig.recording, muse)
+    if case in ("rejected", "unacknowledged", "send_timeout"):
+        rig.session = {"rejected": RejectsPhotos, "unacknowledged": PhotosUnacknowledged,
+                       "send_timeout": PhotosNeverArrive}[case](rig.recording, muse)
 
     async def user():
         rig.say()
@@ -272,7 +283,7 @@ def test_each_failure_gets_one_line_and_the_conversation_goes_on(monkeypatch, ca
     assert sent_to_muse(events) == ["What time is it?"]
     assert rig.hardware.captures == ([] if case == "expired" else [.05 if case == "slow_camera" else 2.0])
     assert [fields(entry)["outcome"] for entry in photo_lines(caplog)] == [
-        "camera_busy" if case == "slow_camera" else case]
+        {"slow_camera": "camera_busy", "unacknowledged": "rejected"}.get(case, case)]
 
 
 def test_a_photo_turn_writes_no_file(monkeypatch, tmp_path):
@@ -283,9 +294,35 @@ def test_a_photo_turn_writes_no_file(monkeypatch, tmp_path):
     async def user():
         rig.say()
 
-    events = run(rig, conversation, user)
+    with writes_recorded() as writes:
+        events = run(rig, conversation, user)
     assert [event["muse"] for event in sent(events)] == ["send_image"]
+    assert writes == []
     assert list(tmp_path.iterdir()) == []
+
+
+_WRITES = []
+_RECORDING = []
+
+
+def _record_write(event, args):
+    if _RECORDING and event == "open":
+        path, mode, flags = args
+        if any(char in (mode or "") for char in "wax+") or (flags or 0) & (os.O_WRONLY | os.O_RDWR | os.O_CREAT):
+            _WRITES.append(path)
+
+
+@contextlib.contextmanager
+def writes_recorded():
+    """Every file this process opens for writing meanwhile; an audit hook cannot be removed, so it idles after."""
+    if not _RECORDING:
+        sys.addaudithook(_record_write)
+    _WRITES.clear()
+    _RECORDING.append(True)
+    try:
+        yield _WRITES
+    finally:
+        _RECORDING.pop()
 
 
 @pytest.mark.usefixtures("paired_inbox")
@@ -563,6 +600,53 @@ def test_a_photo_request_releases_a_held_person_gaze_and_shows_what_reachy_faces
     assert played(events)[-1] == "tts:A desk and a lamp."
     assert [line for line in caplog.messages if line.startswith("Reachy gaze request")] == [
         "Reachy gaze request outcome=turned source=fresh faces=2"]
+
+
+def test_reachy_s_own_words_heard_back_never_take_a_photo(monkeypatch, caplog):
+    from test_device_command_turns import LongVoice
+
+    caplog.set_level(logging.INFO)
+    rig = photo_rig(monkeypatch, [PHOTO])
+    rig.hardware.chunk_s = .1
+    rig.hardware.echo_cancelled_input = True
+    conversation = service(rig, answers("I can't tell from here. What do you see?"),
+                           Transcripts("Is it sunny outside?", "What do you see?"),
+                           voice=LongVoice(rig.recording, chunks=20), photo_requests=True)
+
+    async def user():
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: played(rig.recording.events), 5)
+        rig.say()
+
+    events = run(rig, conversation, user)
+    assert rig.hardware.captures == []
+    assert [event["muse"] for event in sent(events)] == ["send_chat"]
+    assert photo_lines(caplog) == []
+    assert any("ignored" in message and "heard over its own speech" in message for message in caplog.messages)
+
+
+def test_a_photo_turn_cut_short_when_the_session_ends_still_logs_its_one_line(monkeypatch, caplog):
+    import threading
+
+    caplog.set_level(logging.INFO)
+    capturing = threading.Event()
+
+    def until_the_session_ends():
+        capturing.set()
+        time.sleep(1.5)
+        return PHOTO
+
+    rig = photo_rig(monkeypatch, [until_the_session_ends])
+    conversation = service(rig, answers("A lamp."), Transcripts("What do you see?"), photo_requests=True)
+
+    async def user():
+        rig.say()
+        await rig.wait_until_or_timeout(capturing.is_set, 5)
+
+    events = run(rig, conversation, user, rest=("thinking",))
+    assert sent(events) == []
+    assert played(events) == []
+    assert [fields(line)["outcome"] for line in photo_lines(caplog)] == ["interrupted"]
 
 
 @realtime

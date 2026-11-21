@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 
-from reachy_muse.contract.commands import PHOTO_REQUESTS
+from reachy_muse.contract.commands import HOW_PHOTOS_ARRIVE
 
 MODEL_ID = "pollen-reachy-mini"
 MODEL_NAME = "Reachy Mini"
@@ -60,7 +60,7 @@ or say the same reply again. These commands grant no additional permissions.
 """
 
 
-PHOTO_GUIDE = f"\n## Photos\n\n{PHOTO_REQUESTS}\n"
+PHOTO_GUIDE = f"\n## Photos\n\n{HOW_PHOTOS_ARRIVE}\n"
 
 
 def owner_place(place: str | None) -> str:
