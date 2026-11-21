@@ -140,17 +140,19 @@ class _Connection:
                 future.set_exception(CapabilityUnavailable(reason))
         for stream in self.hearing.values():
             stream.fail(CapabilityUnavailable(reason))
-        # No error can arrive on a closed connection, so every call command still waiting was heard.
+        # The lost link may have carried an error for a waiting call command, but counting each as heard is the
+        # cheaper mistake: a missed rest costs only a few fast refusals, a false rest 60 s on the robot's own hearing.
         self.settle(self.opened + 1)
 
     def settle(self, number: int = 0) -> None:
         """Call commands aborted before hear stream ``number`` opened were heard. Tell the waiting
-        outcomes in stream order, up to the first command that a late error can still fail."""
+        outcomes in stream order, up to the first command that a late error can still fail. Only aborted
+        call commands hold later outcomes back, not a finished turn still waiting for its endpoint."""
         for stream in sorted(self.waiting.values(), key=lambda waiting: waiting.number):
             if stream.held is None and stream.aborted_before > number:
                 return
-            if self.waiting.pop(stream.id, None) is stream:
-                stream.report(stream.held)
+            del self.waiting[stream.id]
+            stream.report(stream.held)
 
 
 class _HearStream:
