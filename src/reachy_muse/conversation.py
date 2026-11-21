@@ -2548,10 +2548,10 @@ class VoiceConversation:
         self._call_recoveries += 1
         log.info("Realtime recovery attempt=%d reason=%s", self._call_recoveries, reason)
         call.finish_pending("recovered")
-        await self._call_lost(call)
         call.detach()
         self.call = None
         self._background(self._hang_up(call, self.realtime.detach_link()))
+        await self._call_lost(call)
         if self._call_recoveries >= 2:
             await self.realtime.call_failed()
         else:
