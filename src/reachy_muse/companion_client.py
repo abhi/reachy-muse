@@ -462,11 +462,12 @@ class CompanionLink:
         if error.stream is not None and error.stream in connection.hearing:
             connection.hearing.pop(error.stream).fail(failure)
         elif error.stream is not None and error.stream in connection.aborted_hearing:
-            closed_at, _ = connection.aborted_hearing[error.stream]
-            if time.monotonic() - closed_at < PING_TIMEOUT_S:
-                connection.aborted_hearing[error.stream] = (closed_at, failure)
-            else:
-                del connection.aborted_hearing[error.stream]
+            closed_at, received = connection.aborted_hearing[error.stream]
+            if received is None:
+                if time.monotonic() - closed_at < PING_TIMEOUT_S:
+                    connection.aborted_hearing[error.stream] = (closed_at, failure)
+                else:
+                    del connection.aborted_hearing[error.stream]
         elif error.stream is not None and error.stream in connection.speaking:
             connection.speaking.pop(error.stream).put_nowait(failure)
             connection.sequence.forget(error.stream)
@@ -496,11 +497,11 @@ class CompanionLink:
         remembered = self._connection.aborted_hearing
         now = time.monotonic()
         for stream, (closed_at, failure) in list(remembered.items()):
-            if now - closed_at >= PING_TIMEOUT_S:
-                del remembered[stream]
-            elif failure is not None:
+            if failure is not None:
                 del remembered[stream]
                 return failure
+            if now - closed_at >= PING_TIMEOUT_S:
+                del remembered[stream]
         return None
 
     async def transcribe_wake(self, pcm: bytes) -> str:

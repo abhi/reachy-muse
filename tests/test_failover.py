@@ -211,18 +211,32 @@ def test_completed_companion_transcripts_reset_hearing_strikes(monkeypatch, end_
 
 
 @pytest.mark.parametrize("replacement", [None, "commands", "full"])
-def test_late_overloads_after_command_speech_end_rest_hearing(monkeypatch, replacement):
+@pytest.mark.parametrize("poll_delay", [0.0, 21.0])
+@pytest.mark.parametrize("late_duplicate", [False, True])
+def test_late_overloads_after_command_speech_end_rest_hearing(monkeypatch, replacement, poll_delay, late_duplicate):
     from types import SimpleNamespace
+    from reachy_muse import companion_client as client
     from reachy_muse.companion_server import server as serving
     from reachy_muse.companion_server.engines import EchoNarrator, ScriptedHearing, ToneVoice
     from test_pins import Vad
 
     now, stuck = [100.0], [True]
     monkeypatch.setattr(reachy_muse.failover, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(client, "time", SimpleNamespace(monotonic=lambda: now[0]))
     monkeypatch.setattr(serving, "watchdog", SimpleNamespace(stalled=lambda *args: stuck[0]))
 
     async def scenario():
         refused = asyncio.Queue()
+        repeat = asyncio.Event()
+        overloaded = serving._Session._hear_overloaded
+
+        async def repeated_overload(session, stream):
+            await overloaded(session, stream)
+            if late_duplicate:
+                await repeat.wait()
+                await overloaded(session, stream)
+
+        monkeypatch.setattr(serving._Session, "_hear_overloaded", repeated_overload)
 
         class Link(CompanionLink):
             def _error(self, connection, error):
@@ -251,6 +265,11 @@ def test_late_overloads_after_command_speech_end_rest_hearing(monkeypatch, repla
                         turn.abort()
                         turn = hearing.open_turn(16000, **dict(options, commands_only=replacement == "commands"))
                     assert await asyncio.wait_for(refused.get(), 2) == ("overloaded", stream_id)
+                    now[0] += poll_delay
+                    if late_duplicate:
+                        repeat.set()
+                        assert await asyncio.wait_for(refused.get(), 2) == ("overloaded", stream_id)
+                        repeat.clear()
                     assert turn.take().ended is None
                     strikes.append(rest._strikes)
                     turn.abort()
@@ -258,7 +277,8 @@ def test_late_overloads_after_command_speech_end_rest_hearing(monkeypatch, repla
                 assert rest.resting is True
                 assert link.up and link.can(Op.SPEAK)
 
-                now[0] = 159.9
+                rested_at = now[0]
+                now[0] = rested_at + 59.9
                 local = hearing.open_turn(16000, **options)
                 local.feed(np.full(8000, .25, np.float32))
                 assert local.take().ended is None
@@ -270,7 +290,7 @@ def test_late_overloads_after_command_speech_end_rest_hearing(monkeypatch, repla
                 assert link._connection._next_hear == 5
                 local.abort()
 
-                now[0] = 160.0
+                now[0] = rested_at + 60.0
                 stuck[0] = False
                 retry = hearing.open_turn(16000, **options)
                 retry.feed(np.full(8000, .25, np.float32))
@@ -283,6 +303,7 @@ def test_late_overloads_after_command_speech_end_rest_hearing(monkeypatch, repla
                 assert link._connection._next_hear == 7
                 retry.abort()
             finally:
+                repeat.set()
                 running.cancel()
                 await asyncio.gather(running, return_exceptions=True)
 
