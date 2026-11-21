@@ -2700,7 +2700,7 @@ class VoiceConversation:
         """Muse started (+1) or finished (-1) moving Reachy itself; local reply motion waits meanwhile."""
         self.muse_moving = max(0, self.muse_moving + change)
         if change > 0 and self.call is not None:
-            self.call.muse_moved = True
+            self.call.moved_by_muse()
             if self.call.audible:
                 log.info("Muse moved Reachy during its realtime reply; Reachy's own expressions wait")
 

@@ -356,8 +356,11 @@ def test_an_eventless_pending_turn_recovers_at_its_limit(monkeypatch, caplog, wo
     assert stall_cues(caplog) == ([] if working else ["Realtime turn ordinal=1 cue=still_waiting"])
 
 
-@pytest.mark.parametrize("working", [True, False], ids=["Working around it", "no Working"])
-def test_a_request_muse_answers_by_acting_is_answered_without_a_lost_line(monkeypatch, caplog, working):
+NOD_COMMAND = {"robot": "command", "name": "reachy.expression", "params": {"name": "nod"}}
+
+
+@pytest.mark.parametrize("working, nods", [(True, False), (False, True)], ids=["Working around it", "Muse nods Reachy"])
+def test_a_request_muse_answers_by_acting_is_answered_without_a_lost_line(monkeypatch, caplog, working, nods):
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
 
@@ -368,6 +371,8 @@ def test_a_request_muse_answers_by_acting_is_answered_without_a_lost_line(monkey
         emit(sdk.ResponseDone("nod", "completed"))
         if working:
             emit(sdk.Working(False))
+        if nods:
+            await asyncio.to_thread(conversation.run_command, "reachy.expression", {"name": "nod"}, 5000)
 
     calls = ScriptedCalls(answer=answer)
     conversation = realtime_service(rig, StreamingTranscripts("Nod your head."), calls, wake_timeout_s=10)
@@ -379,39 +384,181 @@ def test_a_request_muse_answers_by_acting_is_answered_without_a_lost_line(monkey
     events = run(rig, conversation, user, rest=("listening",), timeout=30)
     assert [(row["ordinal"], row["outcome"], row["voice_to_reply_ms"]) for row in turn_outcomes(caplog)] == [
         ("1", "silent", "none")]
-    assert 1000 <= int(turn_outcomes(caplog)[0]["last_event_age_ms"]) < 1300
+    age = int(turn_outcomes(caplog)[0]["last_event_age_ms"])
+    assert 1000 <= age < 1300 if working else age < 1000
     assert recoveries(caplog) == []
     assert stall_cues(caplog) == []
     assert played(events) == []
-    assert rig.states()[-2:] == ["thinking", "listening"]
+    assert (NOD_COMMAND in events) == nods
+    assert rig.states()[-1] == "listening"
     assert len(calls.opened) == 1
 
 
-@pytest.mark.parametrize("working_first", [True, False], ids=["Working first", "Working just after"])
-def test_a_hung_tool_call_stays_pending_until_its_work_goes_stale(monkeypatch, caplog, working_first):
+def test_a_silent_response_with_no_sign_that_muse_acted_is_not_an_answer(monkeypatch, caplog):
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
 
     async def answer(sdk, emit, script):
-        if working_first:
-            emit(sdk.Working(True))
-        emit(sdk.ResponseStarted("tool-call"))
-        emit(sdk.ResponseDone("tool-call", "completed"))
-        if not working_first:
-            await asyncio.sleep(.3)
-            emit(sdk.Working(True))
+        emit(sdk.ResponseStarted("r1"))
+        emit(sdk.ResponseDone("r1", "completed"))
 
     calls = ScriptedCalls(answer=answer)
-    conversation = realtime_service(rig, StreamingTranscripts("Book a table for two."), calls, wake_timeout_s=10)
+    conversation = realtime_service(rig, StreamingTranscripts("Nod your head."), calls, wake_timeout_s=10)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        await wait_for(rig, lambda: LOST in played(rig.recording.events), 18)
+
+    events = run(rig, conversation, user, rest=("listening", "idle"), timeout=30)
+    assert [(row["ordinal"], row["outcome"]) for row in turn_outcomes(caplog)] == [("1", "recovered")]
+    assert stall_cues(caplog) == ["Realtime turn ordinal=1 cue=still_waiting"]
+    assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=no_events"]
+    assert played(events) == [LOST]
+
+
+def test_a_silent_call_whose_replies_the_sdk_holds_still_recovers(monkeypatch, caplog):
+    """Muse stops starting caller turns, so the SDK holds each reply's words and audio, and Reachy sees only
+    the reply's ResponseStarted and ResponseDone."""
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+
+    async def answer(sdk, emit, script):
+        emit(sdk.Working(True))
+        reply_events(sdk, emit, "r1", REPLY, voiced(.3))
+        emit(sdk.Working(False))
+        call = conversation._voice[1].call
+        for ordinal in (2, 3):
+            while call.turns < ordinal:
+                await asyncio.sleep(.05)
+            await asyncio.sleep(.3)
+            emit(sdk.ResponseStarted(f"held-{ordinal}"))
+            emit(sdk.ResponseDone(f"held-{ordinal}", "completed"))
+
+    calls = ScriptedCalls(answer=answer)
+    transcripts = StreamingTranscripts("Tell me the weather.", "What about tomorrow?", "Are you there?")
+    conversation = realtime_service(rig, transcripts, calls, wake_timeout_s=10)
 
     async def user():
         await speak_live(rig, wake=True)
         call = conversation._voice[1].call
+        await wait_for(rig, lambda: "muse" in played(rig.recording.events) and not call.audible)
+        await room(rig, .5)
+        await speak_live(rig)
+        await wait_for(rig, lambda: bool(stall_cues(caplog)), 7)
+        await speak_live(rig)
+        await wait_for(rig, lambda: LOST in played(rig.recording.events), 8)
+
+    events = run(rig, conversation, user, rest=("listening", "idle"), timeout=40)
+    assert [(row["ordinal"], row["outcome"]) for row in turn_outcomes(caplog)] == [
+        ("1", "answered"), ("2", "recovered"), ("3", "recovered")]
+    assert stall_cues(caplog) == ["Realtime turn ordinal=2 cue=still_waiting", "Realtime turn ordinal=3 cue=still_waiting"]
+    assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=retry"]
+    assert played(events).count(LOST) == 1
+
+
+def test_a_reply_the_sdk_drops_after_a_device_command_is_not_a_silent_answer(monkeypatch, caplog):
+    """A device command during Muse's work makes Reachy barge in, so the SDK drops Muse's next reply's words
+    and audio, and Reachy sees only its ResponseStarted and ResponseDone."""
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+
+    async def answer(sdk, emit, script):
+        emit(sdk.Working(True))
+        while script.barge_ins == 0:
+            await asyncio.sleep(.05)
+        await asyncio.sleep(1)
+        emit(sdk.Working(False))
+        emit(sdk.ResponseStarted("r1"))
+        emit(sdk.ResponseDone("r1", "completed"))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, StreamingTranscripts("What's the weather?", "Volume up."), calls,
+                                    wake_timeout_s=10)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        await room(rig, 1)
+        await speak_live(rig)
+        await wait_for(rig, lambda: calls.barge_ins == 1, 3)
+        await wait_for(rig, lambda: LOST in played(rig.recording.events), 20)
+
+    events = run(rig, conversation, user, rest=("listening", "idle"), timeout=40)
+    assert rig.hardware.volume_steps == [10]
+    assert [(row["ordinal"], row["outcome"]) for row in turn_outcomes(caplog)] == [("1", "recovered")]
+    assert stall_cues(caplog) == ["Realtime turn ordinal=1 cue=still_waiting"]
+    assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=no_events"]
+    assert played(events) == [LOST]
+
+
+def test_muse_moving_reachy_answers_a_request_while_working_stays_on(monkeypatch, caplog):
+    """On SDK 734263d Working stays on when Muse never settles a turn by name."""
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    acts = []
+
+    async def answer(sdk, emit, script):
+        emit(sdk.Working(True))
+        reply_events(sdk, emit, "r1", REPLY, voiced(.3))
+
+        async def act():
+            emit(sdk.ResponseStarted("nod"))
+            emit(sdk.ResponseDone("nod", "completed"))
+            await asyncio.to_thread(conversation.run_command, "reachy.expression", {"name": "nod"}, 5000)
+        acts.append(act)
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, StreamingTranscripts("What's the weather?", "Nod your head."), calls,
+                                    wake_timeout_s=10)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await wait_for(rig, lambda: "muse" in played(rig.recording.events) and not call.audible)
+        await room(rig, .5)
+        await speak_live(rig)
+        await wait_for(rig, lambda: len(call.pending) == 1, 2)
+        await acts[0]()
+        await wait_for(rig, lambda: len(turn_outcomes(caplog)) == 2, 2)
+        assert call.working
+
+    events = run(rig, conversation, user, rest=("thinking",), timeout=30)
+    assert [(row["ordinal"], row["outcome"]) for row in turn_outcomes(caplog)] == [("1", "answered"), ("2", "silent")]
+    assert recoveries(caplog) == []
+    assert LOST not in played(events)
+    assert NOD_COMMAND in events
+
+
+@pytest.mark.parametrize("working_after", [None, .3, 1.2],
+                         ids=["Working first", "Working just after", "Working after a quiet second"])
+def test_a_hung_tool_call_stays_pending_until_its_work_goes_stale(monkeypatch, caplog, working_after):
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+
+    async def answer(sdk, emit, script):
+        if working_after is None:
+            emit(sdk.Working(True))
+        emit(sdk.ResponseStarted("tool-call"))
+        emit(sdk.ResponseDone("tool-call", "completed"))
+        if working_after is not None:
+            await asyncio.sleep(working_after)
+            emit(sdk.Working(True))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, StreamingTranscripts("Book a table for two."), calls, wake_timeout_s=10)
+    poses = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await wait_for(rig, lambda: call.working, 3)
+        await room(rig, .5)
+        poses.append(rig.states()[-1])
         await wait_for(rig, lambda: len(calls.opened) == 2, 33)
         assert 30 <= time.monotonic() - call.last_event_at < 31
         await wait_for(rig, lambda: LOST in played(rig.recording.events))
 
     events = run(rig, conversation, user, rest=("listening", "idle"), timeout=45)
+    assert poses == ["thinking"]
     assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=working_stale"]
     assert [row["outcome"] for row in turn_outcomes(caplog)] == ["recovered"]
     assert stall_cues(caplog) == []

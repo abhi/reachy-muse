@@ -53,7 +53,7 @@ WAITING_CUE_S = 4.0
 NO_EVENT_S = 15.0
 WORKING_STALE_S = 30.0
 RESPONSE_AUDIO_S = 8.0
-# Working can come on just after a tool call's silent response, so a silent answer must stay quiet this long.
+# A tool call's silent response answers its turn once Muse stays quiet this long: Working can come back on just after.
 QUIET_SETTLE_S = 1.0
 
 
@@ -518,6 +518,7 @@ class PendingTurn:
 class _Response:
     ordinal: int
     started_at: float
+    during_work: bool
     audio_bytes: int = 0
     done: bool = False
     completed: bool = False
@@ -553,6 +554,7 @@ class RealtimeCall:
         self.link_reused = False
         self.last_event_at: Optional[float] = None
         self._quiet_since: Optional[float] = None
+        self._moved_at: Optional[float] = None
         self._responses: dict[Optional[str], _Response] = {}
         self._response_count = 0
         self._audio_bytes = 0
@@ -591,12 +593,24 @@ class RealtimeCall:
             self._outcome(turn, "silent")
         return bool(answered)
 
+    def moved_by_muse(self) -> None:
+        """Muse began moving Reachy itself: its reply's closing gives way, and the move shows Muse acted."""
+        self.muse_moved = True
+        self._moved_at = time.monotonic()
+
     def _answered_silently(self, turn: PendingTurn, now: float) -> bool:
-        """Whether a response begun after the turn's last voiced sample completed without audio, and
-        Muse has been quiet, neither working nor in a response, for the last ``QUIET_SETTLE_S``."""
-        return (self._quiet_since is not None and now - self._quiet_since >= QUIET_SETTLE_S
-                and any(response.completed and not response.audio_bytes and response.started_at >= turn.speech_end_at
-                        for response in self._responses.values()))
+        """Whether Muse answered the turn by acting: a response begun after its last voiced sample completed
+        without audio, and Muse either moved Reachy since that sample, or began the response while working
+        and has since been quiet, neither working nor in a response, for ``QUIET_SETTLE_S``.
+
+        Without either sign, the response looks just like a spoken reply the SDK held or dropped.
+        """
+        silent = [response for response in self._responses.values()
+                  if response.completed and not response.audio_bytes and response.started_at >= turn.speech_end_at]
+        if silent and self._moved_at is not None and self._moved_at >= turn.speech_end_at:
+            return True
+        return (any(response.during_work for response in silent)
+                and self._quiet_since is not None and now - self._quiet_since >= QUIET_SETTLE_S)
 
     def _outcome(self, turn: PendingTurn, outcome: str, replied_at: Optional[float] = None) -> None:
         self.outcomes[outcome] += 1
@@ -681,7 +695,7 @@ class RealtimeCall:
             self._working_seen = True
         elif kind == "ResponseStarted" and event.response_id not in self._responses:
             self._response_count += 1
-            self._responses[event.response_id] = _Response(self._response_count, self.last_event_at)
+            self._responses[event.response_id] = _Response(self._response_count, self.last_event_at, self.working)
             log.info("Realtime event=ResponseStarted ordinal=%d", self._response_count)
         elif kind == "AudioChunk":
             self._audio_bytes += len(event.pcm)
