@@ -26,7 +26,8 @@ class PersonGaze:
 
     @property
     def holding(self) -> bool:
-        return self._holding
+        """A gaze this conversation started is still shown; a command or wake turn can end it first."""
+        return self._holding and self.hardware.person_gaze_held
 
     def begin(self) -> int:
         self._generation += 1

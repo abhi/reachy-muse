@@ -66,6 +66,10 @@ class PeopleHardware(CallHardware):
     def wake_gaze_bearing(self):
         return self.controller.wake_gaze_bearing
 
+    @property
+    def person_gaze_held(self):
+        return self.controller.person_gaze_held
+
 
 class DelayedWake(TimedWake):
     """Fires after 0.6 s of wake audio, once DoA has had time to place the speaker."""
@@ -740,6 +744,44 @@ def test_muse_motion_commands_run_once_reachy_faces_the_friend(people, caplog):
     assert results['held'] == (-25, True)
     assert (results['expression']['ok'], results['move']['ok']) == (True, True), results
     assert results['released'] is True
+
+
+def test_a_reply_after_a_muse_command_ended_the_gaze_gets_its_closing_clip(people, caplog):
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    commands = []
+
+    def run_command(name, params, timeout_ms):
+        commands.append(params.get('name', name))
+        return controller.run_command(name, params, timeout_ms)
+
+    rig.hardware.run_command = run_command
+    moved = asyncio.Event()
+
+    async def answer(sdk, emit, script):
+        await rig.wait_until_or_timeout(lambda: controller._person_hold, 3)
+        reply_events(sdk, emit, 'r1', 'Hello, nice to meet you!', voiced(.3))
+        await moved.wait()
+        reply_events(sdk, emit, 'r2', 'Hello, nice to meet you!', voiced(.3))
+
+    calls = ScriptedCalls(answer=answer)
+    service = realtime_service(rig, StreamingTranscripts('Say hi to my friend.'), calls)
+    service.wake_timeout_s = 8
+
+    async def user():
+        await say_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events))
+        await rig.wait_until_or_timeout(lambda: not service._voice[1].call.audible, 4)
+        await room(rig, 1)
+        assert commands == []
+        moving = await asyncio.to_thread(service.run_command, 'reachy.move', {'pitch': -5, 'duration': .3, 'hold': 0}, 5000)
+        assert moving['ok'] is True
+        assert controller._person_hold is None
+        moved.set()
+        await rig.wait_until_or_timeout(lambda: len(commands) > 1, 4)
+
+    run(rig, service, user)
+    assert commands[:2] == ['reachy.move', 'success1']
 
 
 @pytest.mark.parametrize("wake", [False, True])

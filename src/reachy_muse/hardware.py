@@ -507,6 +507,10 @@ class ReachyController:
             self._person_release = True
 
     @property
+    def person_gaze_held(self) -> bool:
+        return self._person_hold is not None or self._person_pending is not None
+
+    @property
     def head_yaw(self) -> float:
         return self._head_angles[0]
 
