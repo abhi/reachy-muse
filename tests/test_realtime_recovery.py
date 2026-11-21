@@ -296,7 +296,7 @@ def test_second_recovery_in_one_wake_sends_only_the_next_request_by_chat(monkeyp
         for attempt in (1, 2):
             voice = conversation._voice[1]
             call = voice.call
-            await wait_for(rig, lambda: any(turn.cued for turn in call.pending))
+            await wait_for(rig, lambda: any(turn.cued_at is not None for turn in call.pending))
             await speak_live(rig)
             await wait_for(rig, lambda: len(recoveries(caplog)) == attempt)
             await wait_for(rig, lambda: played(rig.recording.events).count(LOST) == attempt)
@@ -428,23 +428,29 @@ def test_pending_turn_reaches_a_decision_within_ten_seconds_of_window_expiry(mon
     assert played(events) == [LOST]
 
 
+class SlowlyReadyCalls(ScriptedCalls):
+    """Each call becomes ready ``ready_after_s`` after it starts, as over a slow connection."""
+
+    def __init__(self, *, ready_after_s, **options):
+        super().__init__(**options)
+        self.ready_after_s = ready_after_s
+
+    def __call__(self, session, **options):
+        call = super().__call__(session, **options)
+        run_call = call.run
+
+        async def run(source, output, *, realtime_input=False):
+            await asyncio.sleep(self.ready_after_s)
+            return await run_call(source, output, realtime_input=realtime_input)
+
+        call.run = run
+        return call
+
+
 def test_first_turn_wait_clock_starts_when_the_call_is_ready(monkeypatch, caplog):
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
-
-    class DelayedCalls(ScriptedCalls):
-        def __call__(self, session, **options):
-            call = super().__call__(session, **options)
-            run_call = call.run
-
-            async def run(source, output, *, realtime_input=False):
-                await asyncio.sleep(5)
-                return await run_call(source, output, realtime_input=realtime_input)
-
-            call.run = run
-            return call
-
-    calls = DelayedCalls(reply=None)
+    calls = SlowlyReadyCalls(ready_after_s=5, reply=None)
     conversation = realtime_service(rig, StreamingTranscripts("Please answer this."), calls, wake_timeout_s=10)
 
     async def user():
@@ -461,6 +467,81 @@ def test_first_turn_wait_clock_starts_when_the_call_is_ready(monkeypatch, caplog
     assert stall_cues(caplog) == ["Realtime turn ordinal=1 cue=still_waiting"]
     assert played(events) == []
     assert recoveries(caplog) == []
+
+
+def test_turns_spoken_while_the_call_connects_wait_from_its_readiness(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    calls = SlowlyReadyCalls(ready_after_s=15, reply=None)
+    conversation = realtime_service(rig, StreamingTranscripts("What's the weather?", "In Paris tomorrow."), calls)
+    at_readiness = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        await speak_live(rig)
+        call = conversation._voice[1].call
+        await wait_for(rig, lambda: call.ready_at is not None, 16)
+        at_readiness.append((stall_cues(caplog), recoveries(caplog)))
+        await wait_for(rig, lambda: bool(recoveries(caplog)), 5)
+        assert 4 <= time.monotonic() - call.ready_at < 4.5
+        await wait_for(rig, lambda: LOST in played(rig.recording.events))
+
+    events = run(rig, conversation, user, rest=("listening", "idle"), timeout=40)
+    assert at_readiness == [([], [])]
+    assert stall_cues(caplog) == ["Realtime turn ordinal=1 cue=still_waiting", "Realtime turn ordinal=2 cue=still_waiting"]
+    assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=window_expired"]
+    assert played(events) == [LOST]
+
+
+def test_a_two_part_request_answered_by_one_slow_reply_is_not_a_retry(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    emitters = []
+
+    async def answer(sdk, emit, script):
+        emitters.append(lambda: reply_events(sdk, emit, "r1", REPLY, voiced(.3)))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, StreamingTranscripts("What's the weather?", "In Paris tomorrow."), calls,
+                                    wake_timeout_s=10)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        await speak_live(rig)
+        call = conversation._voice[1].call
+        await wait_for(rig, lambda: len(call.pending) == 2, 2)
+        second = call.pending[1].endpoint_at
+        await wait_for(rig, lambda: time.monotonic() >= second + 4.6, 6)
+        assert recoveries(caplog) == []
+        emitters[0]()
+        await wait_for(rig, lambda: "muse" in played(rig.recording.events), 3)
+
+    events = run(rig, conversation, user, rest=("listening", "idle"), timeout=30)
+    assert recoveries(caplog) == []
+    assert stall_cues(caplog) == ["Realtime turn ordinal=1 cue=still_waiting", "Realtime turn ordinal=2 cue=still_waiting"]
+    assert set(played(events)) == {"muse"}
+    assert [row["outcome"] for row in turn_outcomes(caplog)] == ["answered", "answered"]
+
+
+def test_asking_again_before_the_waiting_nod_leaves_recovery_to_the_event_limit(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(reply=None)
+    conversation = realtime_service(rig, StreamingTranscripts("What's the weather?", "Hello?"), calls, wake_timeout_s=10)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        first = conversation._voice[1].call.pending[0].endpoint_at
+        await speak_live(rig)
+        await wait_for(rig, lambda: len(calls.opened) == 2, 17)
+        assert 15 <= time.monotonic() - first < 16.5
+        await wait_for(rig, lambda: LOST in played(rig.recording.events))
+
+    events = run(rig, conversation, user, rest=("listening", "idle"), timeout=30)
+    assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=no_events"]
+    assert stall_cues(caplog) == ["Realtime turn ordinal=1 cue=still_waiting", "Realtime turn ordinal=2 cue=still_waiting"]
+    assert played(events) == [LOST]
+    assert sent_to_muse(events) == []
 
 
 def test_retry_clock_pauses_for_speech_and_recovery_waits_for_a_seven_tenths_pause(monkeypatch, caplog):

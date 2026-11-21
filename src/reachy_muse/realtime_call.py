@@ -509,7 +509,7 @@ class PendingTurn:
     checked_at: float
     waiting_s: float = 0.0
     event_silence_s: float = 0.0
-    cued: bool = False
+    cued_at: Optional[float] = None
 
 
 @dataclass
@@ -590,7 +590,7 @@ class RealtimeCall:
             log.info("Muse's realtime reply started %.2f s after turn %d's last voiced sample",
                      replied_at - turn.speech_end_at, turn.ordinal)
 
-    def progress_suspended(self, now: float) -> bool:
+    def _progress_suspended(self, now: float) -> bool:
         if self.last_event_at is None or now - self.last_event_at >= WORKING_STALE_S:
             return False
         opened = [response for response in self._responses.values() if not response.done]
@@ -601,12 +601,18 @@ class RealtimeCall:
             return False
         return self.working or bool(opened)
 
-    def check_pending(self, *, paused: bool) -> tuple[list[int], Optional[str]]:
+    def check_pending(self, *, paused: bool, window_expired: bool) -> tuple[list[int], Optional[str]]:
+        """Advance the pending turns' clocks: the turns now due a waiting cue, and why to recover the call, if so.
+
+        A turn's clock runs from its endpoint, but not before the call is ready, while ``paused``, or
+        while Muse shows progress. A later turn is a retry only if it ended after the earlier one's
+        cue. ``window_expired`` recovers the call only while the clock runs, once a turn had its cue.
+        """
         now = time.monotonic()
+        running = self.ready_at is not None and not paused and not self._progress_suspended(now)
         cues = []
-        suspended = self.progress_suspended(now)
         for turn in self.pending:
-            start = max(turn.checked_at, self.ready_at or now) if turn.ordinal == 1 else turn.checked_at
+            start = max(turn.checked_at, self.ready_at or now)
             elapsed = max(0.0, now - start)
             turn.checked_at = now
             if self.last_event_at is not None and self.last_event_at >= start:
@@ -617,17 +623,22 @@ class RealtimeCall:
             if paused:
                 continue
             turn.event_silence_s += event_elapsed
-            if not suspended:
+            if running:
                 turn.waiting_s += elapsed
-                if turn.waiting_s >= WAITING_CUE_S and not turn.cued:
-                    turn.cued = True
+                if turn.waiting_s >= WAITING_CUE_S and turn.cued_at is None:
+                    turn.cued_at = now
                     cues.append(turn.ordinal)
-        if not paused:
-            if any(turn.event_silence_s >= (WORKING_STALE_S if self.working else NO_EVENT_S)
-                   for turn in self.pending):
-                return cues, "working_stale" if self.working else "no_events"
-            if not suspended and any(first.cued and second.cued for first, second in zip(self.pending, self.pending[1:])):
-                return cues, "retry"
+        if paused:
+            return cues, None
+        if any(turn.event_silence_s >= (WORKING_STALE_S if self.working else NO_EVENT_S) for turn in self.pending):
+            return cues, "working_stale" if self.working else "no_events"
+        if not running:
+            return cues, None
+        if any(first.cued_at is not None and second.cued_at is not None and second.speech_end_at >= first.cued_at
+               for first, second in zip(self.pending, self.pending[1:])):
+            return cues, "retry"
+        if window_expired and any(turn.cued_at is not None for turn in self.pending):
+            return cues, "window_expired"
         return cues, None
 
     def audible_transcripts(self, tail_s: float) -> tuple[str, ...]:

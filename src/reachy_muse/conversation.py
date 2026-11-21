@@ -2532,18 +2532,13 @@ class VoiceConversation:
         if call is None or not call.pending:
             return False
         speaking = self._playback.user_speaking and quiet_s < CALL_RECOVERY_PAUSE_S
-        paused = speaking or self._has_output()
-        cues, reason = call.check_pending(paused=paused)
+        expired = (self._wake_deadline is not None
+                   and time.monotonic() >= self._wake_deadline + CALL_PENDING_EXTENSION_S)
+        cues, reason = call.check_pending(paused=speaking or self._has_output(), window_expired=expired)
         for ordinal in cues:
             log.info("Realtime turn ordinal=%d cue=still_waiting", ordinal)
             await self._apply_cue(plan.Gesture(plan.NOD))
-        if cues:
-            return False
-        if (reason is None and not paused and not call.progress_suspended(time.monotonic())
-                and self._wake_deadline is not None
-                and time.monotonic() >= self._wake_deadline + CALL_PENDING_EXTENSION_S):
-            reason = "window_expired"
-        if reason is None or time.monotonic() - self._call_last_voice_at < CALL_RECOVERY_PAUSE_S:
+        if cues or reason is None or time.monotonic() - self._call_last_voice_at < CALL_RECOVERY_PAUSE_S:
             return False
         self._call_recoveries += 1
         log.info("Realtime recovery attempt=%d reason=%s", self._call_recoveries, reason)
