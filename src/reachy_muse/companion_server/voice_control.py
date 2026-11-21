@@ -204,6 +204,8 @@ def _described(event: dict, state_dir: Path) -> str:
         return f"Heard request {event['taken']} of {event['of']}: {event['voiced_s']:.1f} s of speech."
     if kind == "skipped":
         return f"Skipped a request with {event['voiced_s']:.1f} s of speech; each needs {event['speech_s']:g} s."
+    if kind == "unchecked":
+        return "A request could not be checked, so it does not count. Make another."
     if kind == "enrolled":
         return (f"Enrolled your voice from {event['taken']} requests, {event['voiced_s']:.1f} s of speech. "
                 f"The voice print stays on this Mac in {state_dir / PRINT_FILE}.")

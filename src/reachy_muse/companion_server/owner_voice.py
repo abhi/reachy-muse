@@ -53,6 +53,7 @@ ENROLL_SPEECH_S = 2.0
 ENROLL_AGREEMENT = 0.5
 # An enrollment left open would take whoever speaks next.
 ENROLL_WITHIN_S = 180.0
+_UNCHECKED = object()   # what an enrollment hears of a request whose check could not run
 
 
 class SpeakerBusy(Exception):
@@ -184,16 +185,29 @@ class OwnerVoice:
         return self._enrollment is not None
 
     async def observe(self, pcm: bytes) -> Observation:
+        enrollment = self._enrollment
         self._checks = [check for check in self._checks if not check.done()]
         if len(self._checks) >= MAX_CHECKS:
+            if enrollment is not None:
+                enrollment.put_nowait(_UNCHECKED)
             raise SpeakerBusy()
-        enrollment = self._enrollment
         check = self._thread.submit(self._observe, pcm, enrollment is not None)
         self._checks.append(check)
-        heard = await asyncio.wrap_future(check)
-        if enrollment is not None and enrollment is self._enrollment:
-            enrollment.put_nowait((heard.observation.voiced_s, heard.embedding))
-        return heard.observation
+        if enrollment is not None:
+            loop = asyncio.get_running_loop()
+
+            def offer(done: Future) -> None:
+                with contextlib.suppress(RuntimeError):
+                    loop.call_soon_threadsafe(self._offer, enrollment, done)
+
+            check.add_done_callback(offer)
+        return (await asyncio.wrap_future(check)).observation
+
+    def _offer(self, enrollment: asyncio.Queue, check: Future) -> None:
+        """Give an enrollment its request once the check is done, even if the robot aborted the stream meanwhile."""
+        if enrollment is self._enrollment:
+            heard = None if check.cancelled() or check.exception() is not None else check.result()
+            enrollment.put_nowait(_UNCHECKED if heard is None else (heard.observation.voiced_s, heard.embedding))
 
     async def enroll(self) -> AsyncIterator[dict]:
         """Replace the print from the next utterances any robot sends. Yields one event per step for the CLI."""
@@ -219,9 +233,12 @@ class OwnerVoice:
                 if item is None or self._clock() >= deadline:
                     yield {"event": "failed", "reason": "timeout", "taken": len(taken), "of": ENROLL_UTTERANCES}
                     return
-                voiced_s, embedding = item
-                if embedding is None or voiced_s < ENROLL_SPEECH_S:
+                voiced_s, embedding = item if item is not _UNCHECKED else (None, None)
+                if voiced_s is not None and voiced_s < ENROLL_SPEECH_S:
                     yield {"event": "skipped", "voiced_s": round(voiced_s, 2), "speech_s": ENROLL_SPEECH_S}
+                    continue
+                if embedding is None:
+                    yield {"event": "unchecked"}
                     continue
                 taken.append((voiced_s, embedding))
                 yield {"event": "taken", "taken": len(taken), "of": ENROLL_UTTERANCES, "voiced_s": round(voiced_s, 2)}

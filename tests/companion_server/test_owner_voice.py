@@ -50,13 +50,14 @@ class Encoder:
         self.gate = gate
         self.failure = failure
         self.windows = []
-        self.entered = threading.Event()
+        self.entered, self.done = threading.Event(), threading.Event()
 
     def embed(self, samples, rate):
         self.windows.append(len(samples))
         self.entered.set()
         if self.gate is not None:
             assert self.gate.wait(5)
+        self.done.set()
         if self.failure is not None:
             raise self.failure
         return np.array(VOICES[round(float(np.mean(np.abs(samples))) * 32768)])
@@ -715,6 +716,88 @@ def test_an_older_robots_sentences_can_enroll_the_owner_and_it_still_gets_nothin
     serve(script, engine, control=private_state)
     assert capsys.readouterr().out.splitlines()[-1].startswith("Enrolled your voice from 5 requests, 12.0 s of speech.")
     assert VoicePrint.load(private_state / PRINT_FILE) == VoicePrint(MODEL, VOICES[OWNER])
+
+
+UNCHECKED = "A request could not be checked, so it does not count. Make another."
+
+
+def test_a_request_too_many_to_check_at_once_says_so_and_does_not_count(private_state, speaker_thread, capsys):
+    gate = threading.Event()
+    encoder = Encoder(gate)
+    engine = owner_voice(private_state, speaker_thread, encoder)
+
+    async def script(companion):
+        ws = await robot(companion)
+        enrolling = await enroll_in_background(engine, private_state)
+        await say(ws, 1, voice(OWNER, 2.4))
+        assert await asyncio.to_thread(encoder.entered.wait, 2)
+        await say(ws, 3, voice(OWNER, 2.4))
+        assert await label(ws, 5, voice(OWNER, 2.4)) is SpeakerLabel.UNKNOWN
+        gate.set()
+        for stream in (7, 9, 11):
+            await label(ws, stream, voice(OWNER, 2.4))
+        assert await enrolling == 0
+
+    try:
+        serve(script, engine, control=private_state)
+    finally:
+        gate.set()
+    assert capsys.readouterr().out.splitlines()[:4] == [
+        LISTENING, UNCHECKED, "Heard request 1 of 5: 2.4 s of speech.", "Heard request 2 of 5: 2.4 s of speech."]
+
+
+@pytest.mark.parametrize("failure", [ValueError("no usable vector"), RuntimeError("the model failed")])
+def test_a_request_whose_check_fails_says_so_instead_of_calling_it_short(private_state, speaker_thread, capsys,
+                                                                         failure):
+    """embed's ValueError leaves the request without an embedding; any other error fails its check."""
+    class FailsOnOther(Encoder):
+        def embed(self, samples, rate):
+            if round(float(np.mean(np.abs(samples))) * 32768) == OTHER:
+                raise failure
+            return super().embed(samples, rate)
+
+    engine = owner_voice(private_state, speaker_thread, FailsOnOther())
+
+    async def script(companion):
+        ws = await robot(companion)
+        enrolling = await enroll_in_background(engine, private_state)
+        for stream, level in zip((1, 3, 5, 7, 9, 11), (OTHER, OWNER, OWNER, OWNER, OWNER, OWNER)):
+            await label(ws, stream, voice(level, 2.4))
+        assert await enrolling == 0
+
+    serve(script, engine, control=private_state)
+    assert capsys.readouterr().out.splitlines()[:3] == [LISTENING, UNCHECKED, "Heard request 1 of 5: 2.4 s of speech."]
+
+
+def test_a_request_the_robot_aborts_while_its_check_runs_still_counts(private_state, speaker_thread, capsys):
+    """In a call the robot aborts each stream at its own end of speech, often while the check still runs."""
+    gate = threading.Event()
+    encoder = Encoder(gate)
+    engine = owner_voice(private_state, speaker_thread, encoder)
+
+    async def script(companion):
+        ws = await robot(companion)
+        enrolling = await enroll_in_background(engine, private_state)
+        await say(ws, 1, voice(OWNER, 2.4), how=None)
+        assert (await recv(ws), await recv(ws)) == (HearPartial(1, 0, WORDS), HearEndpoint(1, WORDS, False))
+        assert await asyncio.to_thread(encoder.entered.wait, 2)
+        await ws.send(encode(HearClose(1, CloseHow.ABORT)))
+        await nothing_else_arrived(ws)
+        gate.set()
+        assert await asyncio.to_thread(encoder.done.wait, 2)
+        await asyncio.sleep(.1)
+        await nothing_else_arrived(ws)
+        for stream in (3, 5, 7, 9):
+            await label(ws, stream, voice(OWNER, 2.4))
+        assert await enrolling == 0
+
+    try:
+        serve(script, engine, hearing=ScriptedHearing((WORDS,), endpoint_after=120), control=private_state)
+    finally:
+        gate.set()
+    said = capsys.readouterr().out.splitlines()
+    assert said[1:3] == ["Heard request 1 of 5: 2.4 s of speech.", "Heard request 2 of 5: 2.4 s of speech."]
+    assert said[-1].startswith("Enrolled your voice from 5 requests, 12.0 s of speech.")
 
 
 def test_forget_voice_stops_an_enrollment_even_once_the_directory_is_no_longer_private(private_state, speaker_thread,
