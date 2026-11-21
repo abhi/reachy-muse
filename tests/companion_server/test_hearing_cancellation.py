@@ -13,11 +13,16 @@ from reachy_muse.companion_server.server import CompanionServer, Engines
 from reachy_muse.protocol import CloseHow
 
 
-@pytest.mark.parametrize("kind", ["wake", "stream", "disconnect"])
+@pytest.mark.parametrize("kind", ["wake", "stream", "disconnect", "overloaded"])
 @pytest.mark.parametrize("blocked_at", ["queued", "open", "feed", "step", "vad", "mel"])
-def test_abandoned_hearing_skips_remaining_model_work(monkeypatch, kind, blocked_at):
+@pytest.mark.parametrize("before_cleanup", [False, True])
+def test_abandoned_hearing_skips_remaining_model_work(monkeypatch, kind, blocked_at, before_cleanup):
+    from reachy_muse.companion_server import server as serving
+
     entered, release = threading.Event(), threading.Event()
     calls = []
+    overloaded = [False]
+    monkeypatch.setattr(serving, "watchdog", SimpleNamespace(stalled=lambda *args: overloaded[0]))
 
     def stage(name):
         calls.append(name)
@@ -79,6 +84,17 @@ def test_abandoned_hearing_skips_remaining_model_work(monkeypatch, kind, blocked
             parakeet=SimpleNamespace(generate=final, preprocessor_config=None),
             vad=SimpleNamespace(run=vad),
         )
+        end_hearing = serving._Session._end_hearing
+
+        def observed_end(session, stream, hear):
+            end_hearing(session, stream, hear)
+            if before_cleanup and entered.is_set() and not release.is_set():
+                drained = threading.Event()
+                hearing._thread.submit(drained.set)
+                release.set()
+                assert drained.wait(2)
+
+        monkeypatch.setattr(serving._Session, "_end_hearing", observed_end)
         occupying = None
         if blocked_at == "queued":
             occupying = hearing._thread.submit(stage, "queued")
@@ -102,6 +118,8 @@ def test_abandoned_hearing_skips_remaining_model_work(monkeypatch, kind, blocked
                         await asyncio.gather(wake, return_exceptions=True)
                     elif kind == "stream":
                         stream.close(CloseHow.ABORT)
+                    elif kind == "overloaded":
+                        overloaded[0] = True
                     else:
                         running.cancel()
                     await asyncio.wait_for(closed.wait(), 2)

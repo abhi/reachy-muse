@@ -171,8 +171,11 @@ class _Session:
         except _Abandoned:
             return ""
 
-    async def close(self) -> None:
+    def cancel(self) -> None:
         self._closed.set()
+
+    async def close(self) -> None:
+        self.cancel()
         # Native work cannot be interrupted; release its arrays on the worker when it returns.
         self.hearing._submit(self._release)
 

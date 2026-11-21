@@ -99,6 +99,9 @@ def test_stuck_hearing_fails_streams_and_refuses_opens_until_worker_progress(mon
         async def feed(self, pcm):
             return await asyncio.wrap_future(worker.submit(blocked))
 
+        def cancel(self):
+            pass
+
         async def close(self):
             pass
 

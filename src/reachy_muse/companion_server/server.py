@@ -62,7 +62,7 @@ from reachy_muse.protocol import (
 
 from reachy_muse.companion_server.engines import (
     Narrated,
-    Animator, Classifier, Endpoint, Hearing, Narrator, Partial, SpeechFirst, Voice,
+    Animator, Classifier, Endpoint, Hearing, HearingSession, Narrator, Partial, SpeechFirst, Voice,
 )
 from reachy_muse.companion_server.motion_activity import ActivityStatus
 from reachy_muse.companion_server.motion_library import LibraryAnimator
@@ -156,6 +156,7 @@ class _Hear:
     queue: "asyncio.Queue[Union[bytes, CloseHow]]"
     task: Optional[asyncio.Task] = None
     has_audio: bool = False
+    session: Optional[HearingSession] = None
 
 
 @dataclass
@@ -330,7 +331,7 @@ class _Session:
     async def _hear(self, message: HearOpen, hear: _Hear) -> None:
         assert self.engines.hearing is not None
         stream, rev = message.stream, 0
-        session = self.engines.hearing.open(message.pre_roll_frames)
+        session = hear.session = self.engines.hearing.open(message.pre_roll_frames)
         try:
             while True:
                 item = await hear.queue.get()
@@ -354,6 +355,8 @@ class _Session:
     def _end_hearing(self, stream: int, hear: _Hear) -> None:
         """Free the stream id at once; a cancelled task sends nothing more under it."""
         if self.hearing.get(stream) is hear:
+            if hear.session is not None:
+                hear.session.cancel()
             del self.hearing[stream]
             self.sequence.forget(stream)
             assert hear.task is not None
@@ -548,6 +551,8 @@ class _Session:
     async def _stop_everything(self) -> None:
         tasks = ([h.task for h in self.hearing.values()] + [s.task for s in self.speaking.values()]
                  + list(self.narrating.values()) + list(self.animating.values()) + list(self.warming))
+        for stream, hear in list(self.hearing.items()):
+            self._end_hearing(stream, hear)
         for warm in self.warm.values():
             warm.cancel()
         self.warm.clear()
