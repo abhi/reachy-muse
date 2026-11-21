@@ -20,6 +20,7 @@ REQUESTS = [
     "what do you see here", "what do you see on the whiteboard", "Hey Reachy, what do you see?",
     "Muse, can you take a photo of this?", "Can you take a photo of this for me?",
     "take a photo of what's on my desk", "take a picture of my screen and tell me what the error says",
+    "take a photo of this text message and read it to me", "What am I pointing at?",
 ]
 
 NOT_REQUESTS = [
@@ -31,6 +32,15 @@ NOT_REQUESTS = [
     "take a photo and tell me what it is and text it to mom", "take a photo of this for my wife",
     "take a photo and tell me what it is, then save it", "take a photo of my cat when she comes in",
     "take a photo every morning", "take a photo tomorrow",
+    "take a photo of me in five minutes", "take a photo of me at 5 pm", "take a photo of me at five",
+    "take a photo of me next week", "take a photo of me this evening", "take a photo of me soon",
+    "take a picture of the door in a bit", "take a photo of the stars at night",
+    "take a photo and tell me what you think before sending it to my mom",
+    "take a photo and tell me if it is worth sharing", "take a photo and tell me is it worth posting",
+    "take a photo and could you forward it to dad", "take a photo then could you whatsapp it to her",
+    "take a photo and can you put it on instagram", "take a photo and could you e-mail it to me",
+    "take a photo and could you add it to the family album", "take a photo and can you remember it",
+    "take a photo and tell me what it is, then keep it",
     # Quoted, hypothetical, reported or about the capability
     "if I say take a photo what happens", "how do I make you take a photo", "she said take a photo",
     "remind me to take a photo", "say take a photo", "Say 'take a photo' and I'll look.", '"Take a photo."',

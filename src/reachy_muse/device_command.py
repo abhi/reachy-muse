@@ -164,10 +164,23 @@ _PHOTO = re.compile(
     r"|what i am holding)|(?:tell me|describe) what you (?:can )?see"
     r"|(?:look|have a look|take a look) at (?:this|that|it) and (?P<look>(?:tell me|describe|read|identify)\b.*)"
     r")(?: (?:please|now|right now|for me|thanks|thank you|reachy|muse))*")
-# A question after the photo may not send, keep or schedule it, or take the request back.
-_NOT_FOR_A_PHOTO = frozenset((
-    "send", "sent", "upload", "share", "post", "save", "email", "text", "message", "store", "keep", "delete",
-    "later", "tomorrow", "tonight", "every", "don't", "dont", "never"))
+# Anywhere in the request, these put the photo off until later.
+_PHOTO_LATER = frozenset((
+    "later", "tomorrow", "tonight", "soon", "every", "minute", "minutes", "hour", "hours", "seconds", "o'clock",
+    "pm", "noon", "midnight", "morning", "afternoon", "evening", "week", "weeks", "weekend", "month", "months",
+    "year", "years", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"))
+_PHOTO_AT_A_TIME = re.compile(r"\b(?:at (?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve"
+                              r"|night|dawn|dusk|sunrise|sunset)|in a (?:bit|moment|while|sec|second))\b")
+# A question after the photo may not share, keep or delete it, or take the request back.
+_PHOTO_SHARED = frozenset((
+    "send", "sends", "sending", "sent", "share", "shares", "sharing", "shared", "post", "posts", "posting", "posted",
+    "upload", "uploads", "uploading", "uploaded", "save", "saves", "saving", "saved", "store", "stores", "storing",
+    "stored", "keep", "keeps", "keeping", "kept", "delete", "deletes", "deleting", "deleted", "mail", "mails",
+    "mailing", "mailed", "email", "emails", "emailing", "emailed", "text", "texts", "texting", "texted", "message",
+    "messages", "messaging", "messaged", "forward", "forwards", "forwarding", "forwarded", "whatsapp", "tweet",
+    "tweets", "tweeting", "tweeted", "instagram", "facebook", "dm", "airdrop", "print", "prints", "printing",
+    "printed", "publish", "publishes", "publishing", "published", "album", "remember", "remembers", "remembering",
+    "don't", "dont", "never"))
 
 
 def _words(text: str) -> list[str]:
@@ -261,11 +274,13 @@ def photo_requested(text: str) -> bool:
     """A spoken request for one photo now, or to say what Reachy sees. It is never a device command.
 
     The request must open the utterance, so negated, quoted, reported and conditional forms never match.
+    One that puts the photo off, or asks to share or keep it, is refused.
     """
-    if _QUOTED.search(text):
+    spoken = _spoken(text)
+    if _QUOTED.search(text) or not _PHOTO_LATER.isdisjoint(spoken.split()) or _PHOTO_AT_A_TIME.search(spoken):
         return False
-    match = _PHOTO.fullmatch(_spoken(text))
-    return match is not None and _NOT_FOR_A_PHOTO.isdisjoint((match["question"] or match["look"] or "").split())
+    match = _PHOTO.fullmatch(spoken)
+    return match is not None and _PHOTO_SHARED.isdisjoint((match["question"] or match["look"] or "").split())
 
 
 def worth_asking(text: str, asked: FrozenSet[DeviceCommand]) -> bool:

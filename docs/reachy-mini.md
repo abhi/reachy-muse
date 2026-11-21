@@ -982,12 +982,14 @@ says". As with device commands, a request may open with words such as "okay" or
 "Reachy", use a polite form such as "can you", and end with "please" or "now".
 The request must come first in what you say, so negated, quoted and reported
 forms, such as "don't take a photo" or "she said take a photo", and questions
-about photos, such as "can you take photos?", never take one. Neither does a
-request to share, keep or schedule the photo, such as "take a photo and send it
-to my wife", "take a photo for my wife" or "take a photo tomorrow". These
-phrases never go to the companion's command model, which could take "look at
-this" for face following. Without `--photo-requests`, they go to Muse as
-ordinary requests.
+about photos, such as "can you take photos?", never take one. Reachy also
+refuses a request that would share, keep or delay the photo, such as "take a
+photo and send it to my wife", "take a photo for my wife" or "take a photo of me
+in five minutes". It checks a fixed list of words, such as "send", "share",
+"save", "forward", "tomorrow" and "minutes", so a rephrasing outside that list
+can still take a photo. These phrases never go to the companion's command model,
+which could take "look at this" for face following. Without `--photo-requests`,
+they go to Muse as ordinary requests.
 
 - Only Reachy's own recognition of a turn it admitted can grant a photo, after
   its echo filters, and only one: a single capture attempt uses the request up,
