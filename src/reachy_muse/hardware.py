@@ -258,6 +258,7 @@ class ReachyController:
         self._face_tracking_on = True
         self._face_tracking_status = None
         self._head_angles = (0.0, 0.0)
+        self._face_half_view = 0.0
         self._arrival_model = arrival_model
         self._arrival_watcher_factory = arrival_watcher_factory
         self._arrival_watcher = None
@@ -1054,9 +1055,7 @@ class ReachyController:
             look = self._speaker_look
             origin = look.head if look is not None else 0.0
             angles = (math.radians(coordinates["yaw"] - origin), math.radians(coordinates["pitch"]))
-            matrix = self._robot.media.camera.K
-            # The principal point over the focal length is half the horizontal view.
-            return FaceCapture(frame, angles, pose[:3, :3], captured_at, math.atan2(matrix[0][2], matrix[0][0]))
+            return FaceCapture(frame, angles, pose[:3, :3], captured_at, self._face_half_view)
 
     def _capture_faces(self, *, background=True):
         return self._read_camera_frame(background=background, with_pose=True)
@@ -1204,9 +1203,12 @@ class ReachyController:
         if factory is None:
             from reachy_muse.local_face_tracking import FaceFollower
             factory = FaceFollower
+        matrix = self._robot.media.camera.K
+        # The principal point over the focal length is half the horizontal view.
+        self._face_half_view = math.atan2(matrix[0][2], matrix[0][0])
         self._face_follower = factory(
             self._capture_faces, self._face_follow_model,
-            camera_matrix=self._robot.media.camera.K,
+            camera_matrix=matrix,
             distortion=self._robot.media.camera.D,
             budget=self.vision_budget,
         )
