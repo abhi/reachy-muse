@@ -54,6 +54,7 @@ def test_silent_call_acknowledges_retries_then_recovers_without_replaying(monkey
 
     monkeypatch.setattr(rig.hardware, "gesture", timed_gesture)
     endpoints = []
+    thinking_cues = []
 
     async def user():
         await speak_live(rig, wake=True)
@@ -64,7 +65,8 @@ def test_silent_call_acknowledges_retries_then_recovers_without_replaying(monkey
         for ordinal in (2, 3):
             before = len([state for state in rig.states() if state == "thinking"])
             await speak_live(rig)
-            assert len([state for state in rig.states() if state == "thinking"]) == before + 1
+            assert rig.states()[-1] == "thinking"
+            thinking_cues.append(len([state for state in rig.states() if state == "thinking"]) - before)
             assert [turn.ordinal for turn in call.pending] == list(range(2, ordinal + 1))
             endpoints.append(call.pending[-1].endpoint_at)
             if ordinal == 2:
@@ -87,6 +89,7 @@ def test_silent_call_acknowledges_retries_then_recovers_without_replaying(monkey
     events = run(rig, conversation, user, rest=("listening", "idle"), timeout=30)
     assert played(events).count(LOST) == 1
     assert sent_to_muse(events) == []
+    assert thinking_cues == [1, 0]
     assert [name for name, _ in gestures] == ["nod", "nod"]
     assert [4 <= at - endpoint < 4.3 for (_, at), endpoint in zip(gestures, endpoints)] == [True, True]
     assert stall_cues(caplog) == ["Realtime turn ordinal=2 cue=still_waiting", "Realtime turn ordinal=3 cue=still_waiting"]
