@@ -580,20 +580,27 @@ def test_a_reply_the_sdk_holds_for_a_turn_muse_never_starts_is_not_an_answer(mon
     assert muse.links == 2
 
 
-def test_a_reply_the_sdk_drops_after_a_device_command_is_not_a_silent_answer(monkeypatch, caplog):
-    """A device command during Muse's work makes Reachy barge in, so the SDK drops Muse's next reply's words
-    and audio, and Reachy sees only its ResponseStarted and ResponseDone."""
+@pytest.mark.parametrize("muse_meanwhile", ["works", "calls a tool", "acknowledges the command while working"])
+def test_a_reply_the_sdk_drops_after_a_device_command_is_not_a_silent_answer(monkeypatch, caplog, muse_meanwhile):
+    """A device command during Muse's work makes Reachy barge in, so the SDK drops the words and audio of
+    every reply until the user speaks again, and Reachy sees only each reply's ResponseStarted and ResponseDone."""
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
 
     async def answer(sdk, emit, script):
         emit(sdk.Working(True))
+        if muse_meanwhile == "calls a tool":
+            emit(sdk.ResponseStarted("tool-call"))
+            emit(sdk.ResponseDone("tool-call", "completed"))
         while script.barge_ins == 0:
             await asyncio.sleep(.05)
+        if muse_meanwhile == "acknowledges the command while working":
+            emit(sdk.ResponseStarted("acknowledgement"))
+            emit(sdk.ResponseDone("acknowledgement", "completed"))
         await asyncio.sleep(1)
         emit(sdk.Working(False))
-        emit(sdk.ResponseStarted("r1"))
-        emit(sdk.ResponseDone("r1", "completed"))
+        emit(sdk.ResponseStarted("answer"))
+        emit(sdk.ResponseDone("answer", "completed"))
 
     calls = ScriptedCalls(answer=answer)
     conversation = realtime_service(rig, StreamingTranscripts("What's the weather?", "Volume up."), calls,
