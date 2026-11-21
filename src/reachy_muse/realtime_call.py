@@ -49,6 +49,10 @@ BARGE_IN_SPEECH_S = 0.3
 DISTINCT_WORDS_S = 0.12
 INTERRUPTION_BUFFER_S = 2.0
 INTERRUPTION_RECOGNITION_S = 0.75
+WAITING_CUE_S = 4.0
+NO_EVENT_S = 15.0
+WORKING_STALE_S = 30.0
+RESPONSE_AUDIO_S = 8.0
 
 
 class CallInput:
@@ -272,7 +276,7 @@ class RealtimeSpeaker:
 
     Each chunk is split at the motion marks inside it, so a sentence's expression or a prosody
     accent rides on the first sample it belongs to. ``on_start`` runs before the first push of a
-    stretch of speech, ``on_audible`` hears every push with the sentence it belongs to and when
+    reply, ``on_audible`` hears every push with the sentence it belongs to and when
     its sound ends, and ``on_idle`` runs once the queue has drained and the last push has played.
     ``reply_started`` is when the latest reply's first chunk began to play.
     """
@@ -416,10 +420,10 @@ class RealtimeSpeaker:
                 owner = self._own_speaker(self._cursor)
                 await owner.__aenter__()
                 self._owner = owner
-                await self._on_start()
             if item.response_id not in self._replies:
                 self._replies.append(item.response_id)
                 self.reply_started = time.monotonic()
+                await self._on_start()
             self._response_id = item.response_id
             count = len(item.pcm) // 2
             marks = self._motion.marks(item.response_id, item.offset, count)
@@ -495,6 +499,27 @@ class RealtimeSpeaker:
             await self._release()
 
 
+@dataclass
+class PendingTurn:
+    ordinal: int
+    endpoint_at: float
+    speech_end_at: float
+    words: int
+    feed_sent: int
+    checked_at: float
+    waiting_s: float = 0.0
+    event_silence_s: float = 0.0
+    cued: bool = False
+
+
+@dataclass
+class _Response:
+    ordinal: int
+    started_at: float
+    audio_bytes: int = 0
+    done: bool = False
+
+
 class RealtimeCall:
     """One call: the SDK ``VoiceCall`` plus Reachy's microphone feed, speaker and reply motion.
 
@@ -512,15 +537,96 @@ class RealtimeCall:
         self._on_working = on_working
         self._on_reply_done = on_reply_done
         self.working = False
-        self.awaiting_answer = False
+        self.pending: list[PendingTurn] = []
+        self.turns = 0
+        self.outcomes = {"answered": 0, "unanswered": 0, "recovered": 0}
         self.latest_response: Optional[str] = None
         self.muse_moved = False
         self.reason: Optional[str] = None
         self.failure: Optional[BaseException] = None
         self.opened_at = time.monotonic()
+        self.ready_at: Optional[float] = None
+        self.link_reused = False
+        self.last_event_at: Optional[float] = None
+        self._responses: dict[Optional[str], _Response] = {}
+        self._response_count = 0
+        self._audio_bytes = 0
+        self._working_seen = False
         self._task: Optional[asyncio.Task] = None
         self._closing = False
         self._transcripts: dict[Optional[str], str] = {}
+
+    def accept_turn(self, *, endpoint_at: float, speech_end_at: float, words: int) -> bool:
+        self.turns += 1
+        turn = PendingTurn(self.turns, endpoint_at, speech_end_at, words, self.feed.sent, endpoint_at)
+        replied_at = self.speaker.reply_started
+        if replied_at is not None and replied_at >= speech_end_at:
+            self._outcome(turn, "answered", replied_at)
+            return False
+        if self.done:
+            self._outcome(turn, "unanswered")
+            return False
+        self.pending.append(turn)
+        return True
+
+    def finish_pending(self, outcome: str, replied_at: Optional[float] = None) -> None:
+        pending, self.pending = self.pending, []
+        for turn in pending:
+            self._outcome(turn, outcome, replied_at)
+
+    def _outcome(self, turn: PendingTurn, outcome: str, replied_at: Optional[float] = None) -> None:
+        self.outcomes[outcome] += 1
+        now = time.monotonic()
+        held = getattr(self.voice_call, "held", None)
+        log.info("Realtime turn ordinal=%d outcome=%s words=%d voice_to_reply_ms=%s endpoint_to_reply_ms=%s "
+                 "held=%s feed_sent_delta=%d last_event_age_ms=%s",
+                 turn.ordinal, outcome, turn.words,
+                 round((replied_at - turn.speech_end_at) * 1000) if replied_at is not None else "none",
+                 round((replied_at - turn.endpoint_at) * 1000) if replied_at is not None else "none",
+                 "unknown" if held is None else "yes" if held else "no", self.feed.sent - turn.feed_sent,
+                 round((now - self.last_event_at) * 1000) if self.last_event_at is not None else "none")
+        if replied_at is not None:
+            log.info("Muse's realtime reply started %.2f s after turn %d's last voiced sample",
+                     replied_at - turn.speech_end_at, turn.ordinal)
+
+    def progress_suspended(self, now: float) -> bool:
+        if self.last_event_at is None or now - self.last_event_at >= WORKING_STALE_S:
+            return False
+        opened = [response for response in self._responses.values() if not response.done]
+        latest = self._responses.get(self.latest_response)
+        if (latest is not None and latest.audio_bytes == 0 and now - latest.started_at >= RESPONSE_AUDIO_S
+                and any(latest.started_at >= turn.speech_end_at for turn in self.pending)):
+            return False
+        return self.working or bool(opened)
+
+    def check_pending(self, *, paused: bool) -> tuple[list[int], Optional[str]]:
+        now = time.monotonic()
+        cues = []
+        suspended = self.progress_suspended(now)
+        for turn in self.pending:
+            start = max(turn.checked_at, self.ready_at or now) if turn.ordinal == 1 else turn.checked_at
+            elapsed = max(0.0, now - start)
+            turn.checked_at = now
+            if self.last_event_at is not None and self.last_event_at >= start:
+                turn.event_silence_s = 0.0
+                event_elapsed = now - self.last_event_at
+            else:
+                event_elapsed = elapsed
+            if paused:
+                continue
+            turn.event_silence_s += event_elapsed
+            if not suspended:
+                turn.waiting_s += elapsed
+                if turn.waiting_s >= WAITING_CUE_S and not turn.cued:
+                    turn.cued = True
+                    cues.append(turn.ordinal)
+        if not paused:
+            if any(turn.event_silence_s >= (WORKING_STALE_S if self.working else NO_EVENT_S)
+                   for turn in self.pending):
+                return cues, "working_stale" if self.working else "no_events"
+            if not suspended and any(first.cued and second.cued for first, second in zip(self.pending, self.pending[1:])):
+                return cues, "retry"
+        return cues, None
 
     def audible_transcripts(self, tail_s: float) -> tuple[str, ...]:
         return tuple(self._transcripts[reply] for reply in self.speaker.audible_responses(tail_s)
@@ -529,6 +635,31 @@ class RealtimeCall:
     def on_event(self, event) -> None:
         """The SDK's event callback: it runs on the event loop and an exception here would end the call."""
         kind = type(event).__name__
+        self.last_event_at = time.monotonic()
+        if self._closing or self.done:
+            return
+        if kind == "Working":
+            if not self._working_seen or self.working != event.working:
+                log.info("Realtime event=Working working=%s", "on" if event.working else "off")
+            self._working_seen = True
+        elif kind == "ResponseStarted" and event.response_id not in self._responses:
+            self._response_count += 1
+            self._responses[event.response_id] = _Response(self._response_count, self.last_event_at)
+            log.info("Realtime event=ResponseStarted ordinal=%d", self._response_count)
+        elif kind == "AudioChunk":
+            self._audio_bytes += len(event.pcm)
+            response = self._responses.get(event.response_id)
+            if response is not None:
+                response.audio_bytes += len(event.pcm)
+        elif kind == "ResponseDone":
+            response = self._responses.get(event.response_id)
+            if response is not None and not response.done:
+                response.done = True
+                status = event.status if event.status in ("completed", "cancelled", "failed", "incomplete") else "unknown"
+                log.info("Realtime event=ResponseDone ordinal=%d status=%s audio_bytes=%d",
+                         response.ordinal, status, response.audio_bytes)
+        elif kind == "PlaybackFlushed":
+            log.info("Realtime event=PlaybackFlushed")
         if kind == "PlaybackFlushed" and self.draining:
             return
         if kind in ("TranscriptDelta", "TranscriptDone"):
@@ -561,8 +692,8 @@ class RealtimeCall:
                 self._on_working(event.working)
             elif kind == "PlaybackFlushed":
                 self.motion.flushed(event.response_ids)
-        except Exception:
-            log.exception("Reachy's realtime motion failed on a %s event", kind)
+        except Exception as exc:
+            log.warning("Reachy's realtime motion failed on a %s event (%s)", kind, type(exc).__name__)
 
     def start(self, build: Callable[["RealtimeCall"], Awaitable[object]]) -> None:
         """Run the call that ``build`` makes; the microphone feed buffers until it is ready."""
@@ -570,9 +701,12 @@ class RealtimeCall:
 
     async def _run(self, build) -> None:
         running = None
+        readiness = None
         try:
             self.voice_call = await build(self)
             running = asyncio.create_task(self.voice_call.run(self.feed, _SilentOutput(self), realtime_input=True))
+            if getattr(self.voice_call, "ready", None) is not None:
+                readiness = asyncio.create_task(self._ready())
             await asyncio.wait((running, self.speaker.failed), return_when=asyncio.FIRST_COMPLETED)
             if self.speaker.failed.done():
                 raise self.speaker.failed.result()
@@ -591,9 +725,24 @@ class RealtimeCall:
             log.warning("Muse realtime call failed (%s) after %.1f s", _failure_details(exc),
                         time.monotonic() - self.opened_at)
         finally:
-            if running is not None:
-                running.cancel()
-                await asyncio.gather(running, return_exceptions=True)
+            tasks = [task for task in (running, readiness) if task is not None]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self.finish_pending("unanswered")
+            log.info("Realtime call_summary duration_ms=%d turns=%d answered=%d unanswered=%d recovered=%d "
+                     "responses=%d audio_bytes=%d feed_sent=%d feed_evictions=%d max_queue_age_ms=%d",
+                     round((time.monotonic() - self.opened_at) * 1000), self.turns,
+                     self.outcomes["answered"], self.outcomes["unanswered"], self.outcomes["recovered"],
+                     self._response_count, self._audio_bytes, self.feed.sent, self.feed.evictions,
+                     round(self.feed.max_queue_age_s * 1000))
+
+    async def _ready(self) -> None:
+        await self.voice_call.ready.wait()
+        self.ready_at = time.monotonic()
+        log.info("Realtime call_ready elapsed_ms=%d link=%s queued_feed_frames=%d",
+                 round((self.ready_at - self.opened_at) * 1000), "reused" if self.link_reused else "new",
+                 self.feed.backlog_bytes // (FRAME_SAMPLES * 2))
 
     @property
     def done(self) -> bool:
@@ -687,6 +836,7 @@ class RealtimeVoice:
         self._connecting: Optional[asyncio.Task] = None
         self._warming: Optional[asyncio.Task] = None
         self._failed = False
+        self._link_used = False
 
     @property
     def usable(self) -> bool:
@@ -716,13 +866,15 @@ class RealtimeVoice:
         if factory is None:
             from musegadget.voice_call import VoiceCall as factory
         link = await self._ready_link()
+        call.link_reused = self._link_used
+        self._link_used = True
         return factory(link.session, device_id=self.device_id, thread_id=self.thread_id,
                        half_duplex=self.half_duplex, ready_timeout=READY_TIMEOUT_S,
                        idle_timeout=CALL_LIMIT_S, overall_timeout=CALL_LIMIT_S, on_event=call.on_event)
 
     async def _ready_link(self) -> VoiceLink:
         if self._link is not None and not self._link.alive():
-            await self._drop_link()
+            await self.drop_link()
         if self._link is None:
             if self._connecting is None or self._connecting.done():
                 self._connecting = asyncio.ensure_future(self._connect_link())
@@ -736,7 +888,7 @@ class RealtimeVoice:
     async def call_failed(self) -> None:
         """Drop the connection; the next request goes to Muse by chat."""
         self._failed = True
-        await self._drop_link()
+        await self.drop_link()
 
     def chat_turn(self) -> None:
         """A request went to Muse by chat: calls open again, on a link reconnected ahead of the next one."""
@@ -749,9 +901,11 @@ class RealtimeVoice:
             if task is not None and not task.done():
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
-        await self._drop_link()
+        await self.drop_link()
 
-    async def _drop_link(self) -> None:
+    async def drop_link(self) -> None:
+        """Discard this transport without replaying anything on its replacement."""
+        self._link_used = False
         link, self._link = self._link, None
         if link is not None:
             with contextlib.suppress(Exception):

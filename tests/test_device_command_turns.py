@@ -76,7 +76,7 @@ def service(rig, muse, transcripts, *, model=None, voice=None, stream_replies=Fa
         backends=backends, prepare_chat=prepare_chat, owns_chat=True, **fields)
 
 
-def run(rig, service, user, *, rest=("idle",)):
+def run(rig, service, user, *, rest=("idle",), timeout=20):
     async def converse():
         stop = asyncio.Event()
         camera = asyncio.create_task(service.morning.watch_camera()) if service.morning is not None else None
@@ -92,7 +92,7 @@ def run(rig, service, user, *, rest=("idle",)):
             if camera is not None:
                 camera.cancel()
                 await asyncio.gather(camera, return_exceptions=True)
-    asyncio.run(asyncio.wait_for(converse(), 20))
+    asyncio.run(asyncio.wait_for(converse(), timeout))
     return rig.recording.events
 
 

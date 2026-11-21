@@ -73,7 +73,8 @@ CANCEL_ACKNOWLEDGEMENT = "Okay, I'll drop that."
 STOP_REPLY_WINDOW_S = 5.0
 BUSY_CUE = "One at a time, please."
 CALL_LOST_CUE = "I lost my line to Muse. Please say that again."
-THINKING_AFTER_S = 0.3
+CALL_RECOVERY_PAUSE_S = 0.7
+CALL_PENDING_EXTENSION_S = 10.0
 CALL_COMMAND_DEADLINE_S = 0.25
 CLOSING_CLIPS = {Moment.CELEBRATION: ("success1", "happy"), Moment.APOLOGY: ("sad",)}
 CLOSING_QUIET_S = 0.3
@@ -666,7 +667,8 @@ class VoiceConversation:
         self._lost_call = None
         self._call_tasks: set[asyncio.Task] = set()
         self._barging: asyncio.Task | None = None
-        self._user_quiet_at: float | None = None
+        self._call_recoveries = 0
+        self._call_last_voice_at = 0.0
         self.muse_moving = 0
         self.notifications: Notifications | None = None
 
@@ -1159,12 +1161,12 @@ class VoiceConversation:
                 wave_greeting.cancel()
             if speaking:
                 gap_quiet_samples = 0
+                if quiet_s == 0:
+                    self._call_last_voice_at = endpoint_at
             else:
                 gap_quiet_samples = max(0, gap_quiet_samples - len(sample))
             was_speaking = self._playback.user_speaking
             self._playback.set_user_speaking(speaking or gap_quiet_samples > 0)
-            if was_speaking and not self._playback.user_speaking:
-                self._user_quiet_at = time.monotonic()
             if self._playback.user_speaking != was_speaking:
                 await self._plan(plan.UserSpeech(speaking=self._playback.user_speaking,
                                                  output=self._has_output(),
@@ -1431,7 +1433,8 @@ class VoiceConversation:
                             self._wake_deadline = time.monotonic() + window
                         elif (self._wake_deadline is not None
                               and time.monotonic() >= self._wake_deadline and not recording_active()
-                              and not self._has_output() and not (self.call is not None and self.call.working)):
+                              and not self._has_output() and not (self.call is not None and self.call.working)
+                              and not self._pending_call_decision()):
                             # False speech must not keep authorizing new audio forever.
                             # Already admitted WAVs retain their own wake boundary.
                             self._wake_deadline = None
@@ -1448,7 +1451,8 @@ class VoiceConversation:
                                 wake_resampler = av.AudioResampler(format="flt", layout="mono", rate=16000)
                             log.info("Reachy's wake window closed after empty recognition and inactivity")
                     await self._plan(plan.TurnDone(
-                        turns_waiting=bool(pending_turns) or held is not None, output=self._has_output(),
+                        turns_waiting=bool(pending_turns) or held is not None or bool(self.call and self.call.pending),
+                        output=self._has_output(),
                         recording=recorder.active, wake_open=self.wake_enabled and self._wake_deadline is not None))
                 if follow_up_task is not None and follow_up_task.done():
                     held = follow_up_task.result()
@@ -1516,6 +1520,12 @@ class VoiceConversation:
                     self._startup.mark("microphone_ready")
                     self._ready.set()
                     ready = True
+                if await self._check_call_progress(quiet_s=recorder.quiet_s):
+                    await capture.discard_pending()
+                    self._playback.set_user_speaking(False)
+                    recorder = make_recorder()
+                    pre_roll.clear()
+                    pre_roll_samples = 0
                 if (self.wake_enabled and not self._input_blocked() and turn_task is None
                         and follow_up_task is None and held is None
                         and not pending_turns and not self._has_output()):
@@ -1531,7 +1541,8 @@ class VoiceConversation:
                     if self._wake_deadline is not None and (
                             self._wake_window in (WakeWindow.DISMISSED, WakeWindow.ASLEEP) or (
                             time.monotonic() >= self._wake_deadline and not recording_active()
-                            and not (self.call is not None and self.call.working))):
+                            and not (self.call is not None and self.call.working)
+                            and not self._pending_call_decision())):
                         if self._wake_window is not WakeWindow.ASLEEP:
                             self._wake_window = WakeWindow.AWAKE
                         self._wake_deadline = None
@@ -2501,15 +2512,52 @@ class VoiceConversation:
         if command is not None:
             return TurnOutcome.ACCEPTED
         call = request.call
+        self._call_last_voice_at = max(self._call_last_voice_at, request.timeline.marks["speech_end"])
+        pending = call.accept_turn(endpoint_at=request.timeline.marks["endpoint"],
+                                   speech_end_at=request.timeline.marks["speech_end"], words=len(text.split()))
         if call.failed:
             await self._call_lost()
             return TurnOutcome.EMPTY
-        replied_at = call.speaker.reply_started
-        if not call.audible and (replied_at is None or replied_at < request.timeline.marks["speech_end"]):
-            call.awaiting_answer = True
+        if pending and not self._has_output():
+            self._moments.cue(Moment.THINKING)
+            await self._plan(plan.Working(output=False, user_speaking=self._playback.user_speaking))
         request.timeline.facts["path"] = "realtime"
         request.timeline.report()
         return TurnOutcome.ACCEPTED
+
+    def _pending_call_decision(self) -> bool:
+        return bool(self.call is not None and self.call.pending)
+
+    async def _check_call_progress(self, *, quiet_s: float) -> bool:
+        call = self.call
+        if call is None or not call.pending:
+            return False
+        speaking = self._playback.user_speaking and quiet_s < CALL_RECOVERY_PAUSE_S
+        paused = speaking or self._has_output()
+        cues, reason = call.check_pending(paused=paused)
+        for ordinal in cues:
+            log.info("Realtime turn ordinal=%d cue=still_waiting", ordinal)
+            await self._apply_cue(plan.Gesture(plan.NOD))
+        if cues:
+            return False
+        if (reason is None and not paused and not call.progress_suspended(time.monotonic())
+                and self._wake_deadline is not None
+                and time.monotonic() >= self._wake_deadline + CALL_PENDING_EXTENSION_S):
+            reason = "window_expired"
+        if reason is None or time.monotonic() - self._call_last_voice_at < CALL_RECOVERY_PAUSE_S:
+            return False
+        self._call_recoveries += 1
+        log.info("Realtime recovery attempt=%d reason=%s", self._call_recoveries, reason)
+        call.finish_pending("recovered")
+        await self._call_lost()
+        await self._close_call()
+        if self._call_recoveries >= 2:
+            await self.realtime.call_failed()
+        else:
+            await self.realtime.drop_link()
+            self._open_call()
+        self._wake_deadline = time.monotonic() + (self.wake_timeout_s or 10.0)
+        return True
 
     def _open_call(self) -> None:
         if self.realtime is None or self.call is not None or not self.realtime.usable:
@@ -2531,7 +2579,7 @@ class VoiceConversation:
         if call.failed:
             log.warning("Reachy's realtime call to Muse failed; its next request goes by chat")
             await self.realtime.call_failed()
-            if call.awaiting_answer:
+            if call.outcomes["unanswered"]:
                 await self._call_lost()
         elif call.reason == "remote_stop" and self._wake_deadline is not None:
             log.info("Muse ended the realtime call; Reachy's wake window closes")
@@ -2575,16 +2623,12 @@ class VoiceConversation:
 
     async def _muse_speaks(self) -> None:
         if self.call is not None:
-            self.call.awaiting_answer = False
+            self.call.finish_pending("answered", self.call.speaker.reply_started)
         self._moments.stop_cue()
-        if self._user_quiet_at is not None:
-            log.info("Muse's realtime reply started %.2f s after the user stopped speaking",
-                     time.monotonic() - self._user_quiet_at)
-            self._user_quiet_at = None
         await asyncio.to_thread(self.hardware.set_state, "speaking")
 
     async def _muse_quiet(self) -> None:
-        working = self.call is not None and self.call.working
+        working = self.call is not None and (self.call.working or bool(self.call.pending))
         if self._wake_deadline is not None:
             self._wake_deadline = time.monotonic() + (self.wake_timeout_s or 10.0)
         await self._plan(plan.OutputIdle(user_speaking=self._playback.user_speaking, turn_open=working,
@@ -2593,18 +2637,8 @@ class VoiceConversation:
             self._moments.cue(Moment.THINKING)
 
     def _muse_working(self, working: bool) -> None:
-        if working:
-            self._background(self._think_unless_answered())
-        elif self.call is not None and not self.call.audible:
+        if not working and self.call is not None and not self.call.audible:
             self._background(self._muse_quiet())
-
-    async def _think_unless_answered(self) -> None:
-        await asyncio.sleep(THINKING_AFTER_S)
-        call = self.call
-        if call is None or not call.working or call.audible or self._playback.user_speaking:
-            return
-        self._moments.cue(Moment.THINKING)
-        await self._plan(plan.Working(output=False, user_speaking=False))
 
     def _muse_replied(self, response_id: str | None) -> None:
         call = self.call
@@ -2673,6 +2707,7 @@ class VoiceConversation:
     async def _admit_wake(self, now: float, *, strip_required: bool, source: str = "voice") -> None:
         """Shared acoustic/visual wake state and greeting motion."""
         self._say_hushed = False
+        self._call_recoveries = 0
         self._observe_presence(source)
         self._wake_at = now
         self._wake_deadline = now + (self.wake_timeout_s or 10.0)
