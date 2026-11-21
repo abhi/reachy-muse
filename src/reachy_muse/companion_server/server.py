@@ -158,7 +158,7 @@ class _Hear:
 
     queue: "asyncio.Queue[Union[bytes, CloseHow]]"
     task: Optional[asyncio.Task] = None
-    has_audio: bool = False
+    audio_arrived: bool = False                # since the last stall check
     session: Optional[HearingSession] = None
 
 
@@ -312,18 +312,18 @@ class _Session:
             await self._send(_error(ErrorCode.GAP, str(error), stream=frame.stream))
             return
         hear.queue.put_nowait(frame.pcm)
-        hear.has_audio = True
+        hear.audio_arrived = True
 
     async def _watch_hearing(self) -> None:
         try:
             while True:
                 await asyncio.sleep(HEARING_CHECK_S)
-                if watchdog.stalled("hearing", HEARING_SOFT_S):
-                    for stream, hear in list(self.hearing.items()):
-                        if (self.hearing.get(stream) is hear and hear.has_audio
-                                and watchdog.stalled("hearing", HEARING_SOFT_S)):
-                            self._end_hearing(stream, hear)
-                            await self._hear_overloaded(stream)
+                for stream, hear in list(self.hearing.items()):
+                    arrived, hear.audio_arrived = hear.audio_arrived, False
+                    if (arrived and self.hearing.get(stream) is hear
+                            and watchdog.stalled("hearing", HEARING_SOFT_S)):
+                        self._end_hearing(stream, hear)
+                        await self._hear_overloaded(stream)
         except ConnectionClosed:
             pass
 

@@ -13,8 +13,14 @@ from reachy_muse.companion_server.server import CompanionServer, Engines
 from reachy_muse.protocol import CloseHow
 
 
-@pytest.mark.parametrize("kind", ["wake", "stream", "disconnect", "overloaded"])
-@pytest.mark.parametrize("blocked_at", ["queued", "open", "feed", "step", "vad", "mel"])
+STAGES = ("queued", "open", "feed", "step", "vad", "mel")
+
+
+@pytest.mark.parametrize("kind, blocked_at", [
+    *((kind, stage) for kind in ("wake", "stream", "disconnect") for stage in STAGES),
+    # Only a stream whose audio is still arriving is overloaded, so never one in its final pass.
+    *(("overloaded", stage) for stage in STAGES if stage != "mel"),
+])
 @pytest.mark.parametrize("before_cleanup", [False, True])
 def test_abandoned_hearing_skips_remaining_model_work(monkeypatch, kind, blocked_at, before_cleanup):
     from reachy_muse.companion_server import server as serving
@@ -110,7 +116,8 @@ def test_abandoned_hearing_skips_remaining_model_work(monkeypatch, kind, blocked
                     else:
                         stream = link.open_hear()
                         stream.send(b"\1\0" * 512)
-                        stream.finish()
+                        if kind != "overloaded":
+                            stream.finish()
                     await asyncio.wait_for(opened.wait(), 2)
                     assert await asyncio.to_thread(entered.wait, 2)
                     if kind == "wake":
@@ -120,6 +127,7 @@ def test_abandoned_hearing_skips_remaining_model_work(monkeypatch, kind, blocked
                         stream.close(CloseHow.ABORT)
                     elif kind == "overloaded":
                         overloaded[0] = True
+                        stream.send(b"\1\0" * 512)
                     else:
                         running.cancel()
                     await asyncio.wait_for(closed.wait(), 2)

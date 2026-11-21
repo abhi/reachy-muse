@@ -168,9 +168,12 @@ def test_stuck_hearing_fails_streams_and_refuses_opens_until_worker_progress(mon
         asyncio.run(scenario())
 
 
-def test_a_long_final_pass_is_progress_within_its_budget(monkeypatch):
+@pytest.mark.parametrize("final_pass_s, refused", [
+    (3.5, []),  # past the 3 s streaming deadline and the measured 2.77 s p95
+    (8.3, [("overloaded", 3), ("overloaded", 5)]),  # the finishing stream sends no audio, so only it waits
+])
+def test_a_final_pass_is_progress_until_its_budget_runs_out(monkeypatch, final_pass_s, refused):
     """Parakeet's final pass is one native call without progress; over 8.2 s of audio it may take 8.2 s."""
-    final_pass_s = 3.5  # past the 3 s streaming deadline and the measured 2.77 s p95
     now, exits = [100.0], []
     entered, release = threading.Event(), threading.Event()
     monitor = Watchdog(clock=lambda: now[0], loop_s=1000, exit_process=exits.append)
@@ -228,7 +231,7 @@ def test_a_long_final_pass_is_progress_within_its_budget(monkeypatch):
                     except asyncio.TimeoutError:
                         pass
                     release.set()
-                    assert errors == []
+                    assert errors == refused
                     async with asyncio.timeout(2):
                         while not isinstance(message := decode(await ws.recv(), sender=Sender.COMPANION), HearEndpoint):
                             pass
