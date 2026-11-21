@@ -192,13 +192,13 @@ class WakePolicy:
             self._last_accept = self._samples - self.cooldown_samples
 
     async def feed(self, detector, samples, *, context: WakeContext = WakeContext(),
-                   valid=lambda: True) -> bool:
+                   valid=lambda: True, on_candidate=lambda: None) -> bool:
         try:
-            return await self._feed(detector, samples, context=context, valid=valid)
+            return await self._feed(detector, samples, context=context, valid=valid, on_candidate=on_candidate)
         finally:
             self.verifying = False
 
-    async def _feed(self, detector, samples, *, context, valid) -> bool:
+    async def _feed(self, detector, samples, *, context, valid, on_candidate) -> bool:
         import numpy as np
 
         audio = np.asarray(samples, dtype=np.float32)
@@ -232,6 +232,7 @@ class WakePolicy:
             self._audio_samples -= taken
         if not found:
             return False
+        on_candidate()
         self.verifying = True
         self._sequence += 1
         reason, source, floor = "accepted", "none", None

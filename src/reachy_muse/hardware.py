@@ -462,12 +462,12 @@ class ReachyController:
         """Queue wake attention for the motion owner. An occupied motion is never interrupted."""
         target = speaker_yaw(angle)
         if not self._enable_motion:
-            log.info("Wake direction angle=%.3f decision=still", angle)
+            log.info("Speaker gaze angle=%.3f decision=still", angle)
             return
         with self._state_lock:
             if (self._command_active or self._clip is not None or self._generated is not None
                     or self._pending_motion is not None or self._deferred is not None):
-                log.info("Wake direction yaw=%.1f body_yaw=%.1f decision=busy", target.head, target.body)
+                log.info("Speaker gaze yaw=%.1f body_yaw=%.1f decision=busy", target.head, target.body)
                 return
             self._speaker_pending = (target, time.monotonic() + 1.0)
 
@@ -1231,7 +1231,7 @@ class ReachyController:
         if pending is not None:
             target, deadline = pending
             decision = "busy" if occupied else "stale" if now > deadline else "turn"
-            log.info("Wake direction yaw=%.1f body_yaw=%.1f decision=%s", target.head, target.body, decision)
+            log.info("Speaker gaze yaw=%.1f body_yaw=%.1f decision=%s", target.head, target.body, decision)
             if decision == "turn":
                 self._speaker_look = target
                 self._speaker_gaze = target.head

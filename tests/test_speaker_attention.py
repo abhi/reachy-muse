@@ -234,9 +234,9 @@ def test_existing_clip_wins_and_another_wake_can_turn_afterwards(monkeypatch, cl
     assert (rested["yaw"], rested["body_yaw"]) == pytest.approx((0, 0), abs=.1)
     turned = pose_at(controller, robot, clock.now)
     assert (turned["yaw"], turned["body_yaw"]) == pytest.approx((30, 10), abs=.01)
-    assert [record.message for record in caplog.records if record.message.startswith("Wake direction")] == [
-        "Wake direction yaw=30.0 body_yaw=10.0 decision=busy",
-        "Wake direction yaw=30.0 body_yaw=10.0 decision=turn",
+    assert [record.message for record in caplog.records if record.message.startswith("Speaker gaze")] == [
+        "Speaker gaze yaw=30.0 body_yaw=10.0 decision=busy",
+        "Speaker gaze yaw=30.0 body_yaw=10.0 decision=turn",
     ]
 
 
@@ -345,8 +345,8 @@ def test_a_direction_request_does_not_wake_a_sleeping_robot_by_itself(monkeypatc
     assert (sleeping["yaw"], sleeping["body_yaw"], sleeping["pitch"]) == pytest.approx((0, 0, 15), abs=.1)
     awake = pose_at(controller, robot, clock.now)
     assert (awake["yaw"], awake["body_yaw"], awake["pitch"]) == pytest.approx((0, 0, -3), abs=.1)
-    assert [record.message for record in caplog.records if record.message.startswith("Wake direction")] == [
-        "Wake direction yaw=30.0 body_yaw=10.0 decision=stale",
+    assert [record.message for record in caplog.records if record.message.startswith("Speaker gaze")] == [
+        "Speaker gaze yaw=30.0 body_yaw=10.0 decision=stale",
     ]
 
 
@@ -357,4 +357,4 @@ def test_still_mode_keeps_wake_state_and_refuses_direction_motion(caplog):
     controller.look_at_speaker(math.pi / 3)
     controller.set_state("listening", expression="happy")
     assert (controller.motion_enabled, controller._state, controller._speaker_pending) == (False, "listening", None)
-    assert [record.message for record in caplog.records] == ["Wake direction angle=1.047 decision=still"]
+    assert [record.message for record in caplog.records] == ["Speaker gaze angle=1.047 decision=still"]

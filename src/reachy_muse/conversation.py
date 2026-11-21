@@ -49,7 +49,7 @@ from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlaybac
 from reachy_muse.local_speech import PreparedSpeech, SpeechRestart
 from reachy_muse.turn_timeline import TurnTimeline
 from reachy_muse.startup import StartupTimeline
-from reachy_muse.speaker_direction import WakeDirection
+from reachy_muse.speaker_direction import DirectionDecision, DirectionSnapshot, WakeDirection, speaker_yaw
 from reachy_muse.presence import PresenceFusion
 from reachy_muse.inbox import Inbox, outcome, owner_binding
 from reachy_muse.notifications import Notifications
@@ -819,21 +819,27 @@ class VoiceConversation:
                 and (now < self._direction_audio_until
                      or self._wake_deadline is not None and now < self._wake_deadline))
 
-    def _attend_wake(self, phrase_end: float | None, *, angle: float | None = None) -> None:
+    def _attend_wake(self, phrase_end: float | None, *, angle: float | None = None,
+                     snapshot: DirectionSnapshot | None = None) -> None:
         """Prefer the waver's position, or freeze DoA at the invocation boundary."""
         direction = self._wake_direction
-        if direction is None and angle is None:
-            return
         if not self._direction_eligible():
-            angle = None
-        elif angle is None and direction is not None and phrase_end is not None:
-            angle = direction.estimate(phrase_end)
+            decision = DirectionDecision("ineligible")
+        elif angle is not None:
+            decision = DirectionDecision("ok", angle=angle)
+        elif snapshot is not None or direction is not None:
+            decision = (snapshot or direction.snapshot()).decide(phrase_end)
+        else:
+            decision = DirectionDecision("unavailable")
         if direction is not None:
             direction.clear()
-        if angle is None:
-            log.info("Wake direction decision=no_confidence")
-        else:
-            self.hardware.look_at_speaker(angle)
+        yaw = f" yaw={speaker_yaw(decision.angle).head:.1f}" if decision.angle is not None else ""
+        log.info("Wake direction decision=%s samples=%d span_ms=%.1f boundary_age_ms=%.1f "
+                 "last_age_ms=%.1f mad_deg=%.1f inlier=%.2f%s", decision.reason, decision.samples,
+                 decision.span_ms, decision.boundary_age_ms, decision.last_age_ms,
+                 decision.mad_deg, decision.inlier, yaw)
+        if decision.angle is not None:
+            self.hardware.look_at_speaker(decision.angle)
 
     def _wake_capture_context(self, now):
         return WakeContext(blocked=self._input_blocked() or now < self._wake_unknown_output_until,
@@ -1235,15 +1241,27 @@ class VoiceConversation:
             import av
             wake_resampler = av.AudioResampler(format="flt", layout="mono", rate=16000)
 
+        wake_direction_snapshot = None
+
+        def freeze_direction():
+            nonlocal wake_direction_snapshot
+            wake_direction_snapshot = self._wake_direction.snapshot() if self._wake_direction is not None else None
+
         async def detects_wake(sample, context=None) -> tuple[bool, int | None]:
+            nonlocal wake_direction_snapshot
+            wake_direction_snapshot = None
             async def feed(audio):
                 budget = getattr(self.hardware, "vision_budget", None)
                 if budget is not None:
                     budget.observe("wake", len(audio) / 16000)
                 if context is not None:
                     return await self._wake_policy.feed(wake, audio, context=context,
-                                                        valid=lambda: not capture.gap)
-                return await asyncio.to_thread(wake.feed, audio)
+                                                        valid=lambda: not capture.gap,
+                                                        on_candidate=freeze_direction)
+                detected = await asyncio.to_thread(wake.feed, audio)
+                if detected:
+                    freeze_direction()
+                return detected
             if wake_resampler is None:
                 detected = await feed(sample)
                 event = getattr(wake, "last_detection", None) if detected else None
@@ -1622,6 +1640,10 @@ class VoiceConversation:
                 observed_wake = None
                 now = time.monotonic()
                 wake_required = self._wake_deadline is None or (now >= self._wake_deadline and not recording_active())
+                if self._wake_direction is not None and len(sample) and not input_blocked:
+                    import numpy as np
+                    if float(np.mean(np.square(sample))) >= .0001:
+                        self._direction_audio_until = now + .5
                 if wake is not None and self._wake_policy is not None:
                     if blocked_episode and not input_blocked:
                         await asyncio.to_thread(wake.reset)
@@ -1652,10 +1674,6 @@ class VoiceConversation:
                         blocked_episode = True
                     continue
                 blocked_episode = False
-                if self._wake_direction is not None and len(sample):
-                    import numpy as np
-                    if float(np.mean(np.square(sample))) >= .0001:
-                        self._direction_audio_until = time.monotonic() + .5
                 if self.wake_enabled:
                     now = time.monotonic()
                     if wake_required:
@@ -1669,7 +1687,7 @@ class VoiceConversation:
                             continue
                         await watch_wave(False)
                         self._attend_wake(captured.captured_at - wake_tail / self.hardware.sample_rate
-                                          if wake_tail is not None else None)
+                                          if wake_tail is not None else None, snapshot=wake_direction_snapshot)
                         if self.voice_verifier is not None:
                             import numpy as np
                             self.voice_verifier.realtime = (self.call is not None or

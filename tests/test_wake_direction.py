@@ -205,3 +205,77 @@ def test_capture_batches_keep_the_latest_capture_end_through_backlog():
         assert batch.samples.tolist() == [.3] * 320
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("delay", [.5, .9])
+@pytest.mark.parametrize("dispersed", [False, True])
+def test_candidate_geometry_survives_verification_replay_and_alignment(handoff, monkeypatch, caplog, delay, dispersed):
+    from reachy_muse.wake_policy import Verification, WakePolicy
+
+    now = [100.0]
+    sleeping, resume = asyncio.Queue(), asyncio.Queue()
+
+    async def sleep(seconds):
+        await sleeping.put(now[0] + seconds)
+        await resume.get()
+
+    monkeypatch.setattr("reachy_muse.conversation.time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr("reachy_muse.conversation.WakeDirection",
+                        lambda read: WakeDirection(read, clock=lambda: now[0], sleep=sleep))
+    hardware = DirectionalHardware()
+    read = hardware.read_doa
+
+    def direction():
+        reading = read()
+        return DoAReading((0 if hardware.reads % 2 else math.pi) if dispersed else reading.angle,
+                          hardware.speech)
+
+    hardware.read_doa = direction
+    caplog.set_level("INFO")
+
+    async def run(conversation, session, hw, wake, recognition, recordings, accepted, feed):
+        class Verify:
+            async def verify(self, pcm, phrase):
+                now[0] += delay - .2
+                await resume.put(None)
+                await sleeping.get()
+                return Verification("timeout", "none")
+
+        detect = wake.feed
+        wake.candidate_replay = True
+        wake.feed = lambda audio, align: detect(audio)
+        stages = []
+
+        def replay(threshold):
+            stages.append("replay")
+            now[0] += .1
+            return True
+
+        def align():
+            stages.append("alignment")
+            now[0] += .1
+
+        wake.replay_candidate, wake.align_candidate = replay, align
+        conversation._wake_policy = WakePolicy(Verify())
+        next_poll = await sleeping.get()
+        for frame in range(34):
+            now[0] = 100 + (frame + 1) * .02
+            await feed((.25, 1))
+            if now[0] >= next_poll:
+                await resume.put(None)
+                next_poll = await sleeping.get()
+        hw.speech = False
+        now[0] = 101.0
+        await feed((0, 16))
+        assert stages == ["replay", "alignment"]
+        assert hw.directions == ([] if dispersed else [(pytest.approx(math.pi / 3), "idle")])
+        assert session.setup_messages == []
+        lines = [record.message for record in caplog.records if record.message.startswith("Wake direction")]
+        assert lines == [
+            "Wake direction decision=dispersed samples=4 span_ms=620.0 boundary_age_ms=320.0 "
+            "last_age_ms=0.0 mad_deg=90.0 inlier=0.00" if dispersed else
+            "Wake direction decision=ok samples=4 span_ms=620.0 boundary_age_ms=320.0 "
+            "last_age_ms=0.0 mad_deg=0.0 inlier=1.00 yaw=30.0"
+        ]
+
+    asyncio.run(bounded(handoff(run, delayed=True, hardware=hardware)))
