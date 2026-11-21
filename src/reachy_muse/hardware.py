@@ -780,6 +780,8 @@ class ReachyController:
         if name not in HEAD_GESTURES and name != "wave":
             raise ValueError(f"Unknown head gesture: {name}")
         with self._state_lock:
+            if name in HEAD_GESTURES and self.person_gaze_held:
+                return
             now = time.monotonic()
             if name == "wave":
                 if (not self._enable_motion or self._state not in ("idle", "listening", "sleeping")
@@ -1684,6 +1686,9 @@ class ReachyController:
                     if not commanded and self._deferred is None:
                         self._cue_clip(now, state, expression, state_started)
                     pose, antennas = self._state_pose(state, elapsed, expression, progress_age=progress_age)
+                    if state == "thinking" and self.person_gaze_held:
+                        # Facing the other person acknowledges the request; only the antennas think.
+                        pose, _ = self._state_pose("listening", elapsed)
                     followed = self._face_pose(pose)
                     tracking = followed is not pose
                     gaze_target = self._np.zeros(9)

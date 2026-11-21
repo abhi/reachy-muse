@@ -66,6 +66,10 @@ class PeopleHardware(CallHardware):
         super().set_state(state, **kwargs)
         self.controller.set_state(state, **kwargs)
 
+    def gesture(self, name):
+        super().gesture(name)
+        self.controller.gesture(name)
+
     @property
     def head_yaw(self):
         return self.controller.head_yaw
@@ -749,6 +753,42 @@ def test_releasing_the_greeting_turns_back_to_the_speaker(people, caplog, releas
     run(rig, service, user)
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
         'Reachy gaze request outcome=turned source=fresh faces=2']
+
+
+def test_waiting_cues_leave_the_head_on_the_friend(people, caplog):
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    held = []
+
+    def waited():
+        return any('cue=still_waiting' in line for line in caplog.messages)
+
+    async def answer(sdk, emit, script):
+        await rig.wait_until_or_timeout(waited, 8)
+        await asyncio.sleep(1.8)
+        reply_events(sdk, emit, 'r1', 'Hello there!', voiced(.2))
+
+    calls = ScriptedCalls(answer=answer)
+    service = realtime_service(rig, StreamingTranscripts('Say hi to my friend.'), calls)
+
+    async def user():
+        await say_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: round(math.degrees(controller.head_yaw)) == -25)
+        await room(rig, .8)
+        while 'muse' not in played(rig.recording.events) and len(held) < 500:
+            held.append({**controller._pose_parameters(robot.pose), 'antenna': math.degrees(robot.antennas[0])})
+            await room(rig, .02)
+
+    events = run(rig, service, user)
+    assert 'thinking' in rig.states()
+    assert [line for line in caplog.messages if 'cue=still_waiting' in line] == [
+        'Realtime turn ordinal=1 cue=still_waiting']
+    assert {'robot': 'gesture', 'name': 'nod'} in events
+    assert len(held) > 100
+    assert {axis: (round(min(pose[axis] for pose in held), 1), round(max(pose[axis] for pose in held), 1))
+            for axis in ('yaw', 'roll', 'z')} == {'yaw': (-25.0, -25.0), 'roll': (0.0, 0.0), 'z': (3.0, 3.0)}
+    assert round(max(pose['pitch'] for pose in held) - min(pose['pitch'] for pose in held), 1) == 0.0
+    assert max(pose['antenna'] for pose in held) - min(pose['antenna'] for pose in held) > 20
 
 
 def test_muse_motion_commands_run_once_reachy_faces_the_friend(people, caplog):
