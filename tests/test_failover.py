@@ -588,6 +588,34 @@ def test_a_failed_companion_endpoint_keeps_its_audio_and_logs_no_user_words(capl
                                "Reachy transcribes the turn itself: CapabilityUnavailable"]
 
 
+def test_a_companion_failure_mid_utterance_keeps_the_utterance_id_through_the_replay():
+    from test_pins import Vad
+
+    link = CompanionLink("ws://localhost:9", token="test", out_rate=16000, insecure=True)
+    link._connection = _Connection(None, (Op.HEAR,))
+    link._set(LinkState.UP)
+    turn = FailoverHearing(CompanionHearing(link), LocalHearing(), CompanionRoute(link).hearing).open_turn(
+        16000, silence_s=.1, vad=Vad())
+    try:
+        turn.feed(np.full(8000, .5, np.float32))
+        assert turn.take().ended is None
+        spoken = turn.utterance_id
+        link._connection.fail("disconnected")
+        link._set(LinkState.DOWN)
+        assert turn.take().ended is None
+        assert (turn.utterance_id, turn.active) == (spoken, True)
+        turn.feed(np.full(1600, .5, np.float32))
+        assert turn.take().ended is None
+        assert (turn.utterance_id, turn.speech_active) == (spoken, True)
+        turn.feed(np.zeros(3200, np.float32))
+        assert turn.take().ended is not None
+        turn.feed(np.full(1600, .5, np.float32))
+        turn.take()
+        assert turn.utterance_id not in (0, spoken)
+    finally:
+        turn.abort()
+
+
 class EndedLate:
     truncated = False
 
@@ -603,6 +631,7 @@ class ScriptedTurn:
 
     active = True
     speech_active = True
+    utterance_id = 0
     partial = None
     outcomes = None
 

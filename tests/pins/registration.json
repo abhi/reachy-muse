@@ -77,7 +77,7 @@
         "timeout_ms": 20000
       },
       "reachy.move": {
-        "description": "Move Reachy Mini's head, antennas or body smoothly, also during a voice call while you speak, for example to look at the user (pitch -5, yaw 0) or toward something. Head translation uses millimeters; rotation and antenna positions use degrees. Commands are bounded and serialized with expressions. Omitted coordinates keep their current position. Reachy's own speech motion resumes afterwards.",
+        "description": "Move Reachy Mini's head, antennas or body smoothly, also during a voice call while you speak. Yaw 0 is straight ahead. Reachy turns toward whoever is speaking. Head translation uses millimeters; rotation and antenna positions use degrees. Commands are bounded and serialized with expressions. Omitted coordinates keep their current position. Reachy's own speech motion resumes afterwards.",
         "required": {},
         "optional": {
           "x": {

@@ -234,9 +234,9 @@ def test_existing_clip_wins_and_another_wake_can_turn_afterwards(monkeypatch, cl
     assert (rested["yaw"], rested["body_yaw"]) == pytest.approx((0, 0), abs=.1)
     turned = pose_at(controller, robot, clock.now)
     assert (turned["yaw"], turned["body_yaw"]) == pytest.approx((30, 10), abs=.01)
-    assert [record.message for record in caplog.records if record.message.startswith("Wake direction")] == [
-        "Wake direction yaw=30.0 body_yaw=10.0 decision=busy",
-        "Wake direction yaw=30.0 body_yaw=10.0 decision=turn",
+    assert [record.message for record in caplog.records if record.message.startswith("Speaker gaze")] == [
+        "Speaker gaze yaw=30.0 body_yaw=10.0 decision=busy",
+        "Speaker gaze yaw=30.0 body_yaw=10.0 decision=turn",
     ]
 
 
@@ -345,8 +345,8 @@ def test_a_direction_request_does_not_wake_a_sleeping_robot_by_itself(monkeypatc
     assert (sleeping["yaw"], sleeping["body_yaw"], sleeping["pitch"]) == pytest.approx((0, 0, 15), abs=.1)
     awake = pose_at(controller, robot, clock.now)
     assert (awake["yaw"], awake["body_yaw"], awake["pitch"]) == pytest.approx((0, 0, -3), abs=.1)
-    assert [record.message for record in caplog.records if record.message.startswith("Wake direction")] == [
-        "Wake direction yaw=30.0 body_yaw=10.0 decision=stale",
+    assert [record.message for record in caplog.records if record.message.startswith("Speaker gaze")] == [
+        "Speaker gaze yaw=30.0 body_yaw=10.0 decision=stale",
     ]
 
 
@@ -357,4 +357,101 @@ def test_still_mode_keeps_wake_state_and_refuses_direction_motion(caplog):
     controller.look_at_speaker(math.pi / 3)
     controller.set_state("listening", expression="happy")
     assert (controller.motion_enabled, controller._state, controller._speaker_pending) == (False, "listening", None)
-    assert [record.message for record in caplog.records] == ["Wake direction angle=1.047 decision=still"]
+    assert [record.message for record in caplog.records] == ["Speaker gaze angle=1.047 decision=still"]
+
+
+def play_thinking(source):
+    def play(controller):
+        controller.set_state('thinking')
+        if source == 'generated':
+            controller.play_motion(generated(8, yaw=12), 25, during={'thinking'}, loop=True)
+        else:
+            from reachy_muse.hardware import _Clip, _Frames
+            from reachy_muse.motion.layers import ClipTimeline
+            controller._clip = _Clip(_Frames(np.asarray(generated(8, yaw=12)), 25, False, pose_factory),
+                                     ClipTimeline(1001.5, 8), 1)
+    return play
+
+
+def look_at_friend(controller):
+    assert controller.look_at_person(math.radians(-30), math.radians(6)) is True
+
+
+@pytest.mark.parametrize('source', ['generated', 'clip'])
+def test_person_turn_fades_motion_holds_and_releases(monkeypatch, source):
+    controller, robot, clock = simulate(monkeypatch, {
+        2: play_thinking(source), 25: look_at_friend, 130: lambda c: c.release_person_gaze(),
+    }, ticks=230)
+    turned = pose_at(controller, robot, clock.times[100])
+    assert (turned['yaw'], turned['body_yaw'], turned['pitch']) == pytest.approx((-30, -10, 6), abs=.2)
+    released = pose_at(controller, robot, clock.now)
+    assert (released['yaw'], released['body_yaw']) == pytest.approx((0, 0), abs=.1)
+    assert controller._person_hold is None
+    assert controller._generated is controller._clip is None
+    yaws = [controller._pose_parameters(frame[1])['yaw'] for frame in robot.frames]
+    assert max(abs(b - a) for a, b in zip(yaws, yaws[1:])) < 4
+    assert len(robot.writers) == 1
+
+
+def listen_to_speaker_at_30(controller):
+    controller.look_at_speaker(math.pi / 3)
+    controller.set_state('listening')
+
+
+@pytest.mark.parametrize('replacement', ['same_tick', 'after_release'])
+def test_a_second_person_gaze_still_turns_back_to_the_first_speaker(monkeypatch, replacement):
+    def replace_now(controller):
+        controller.release_person_gaze()
+        assert controller.look_at_person(math.radians(-10), 0)
+
+    events = {5: listen_to_speaker_at_30, 60: lambda c: c.look_at_person(math.radians(-30), 0),
+              180: lambda c: c.release_person_gaze()}
+    if replacement == 'same_tick':
+        events[120] = replace_now
+    else:
+        events[120] = lambda c: c.release_person_gaze()
+        events[125] = lambda c: c.look_at_person(math.radians(-10), 0)
+    controller, robot, clock = simulate(monkeypatch, events, ticks=260)
+    assert round(pose_at(controller, robot, clock.times[175])['yaw']) == -10
+    final = pose_at(controller, robot, clock.now)
+    assert (round(final['yaw']), round(final['body_yaw'])) == (30, 10)
+
+
+def test_a_wake_turn_during_a_person_gaze_ends_it(monkeypatch):
+    controller, robot, clock = simulate(monkeypatch, {
+        5: listen_to_speaker_at_30, 60: lambda c: c.look_at_person(math.radians(-30), 0),
+        120: lambda c: c.look_at_speaker(math.radians(110)), 180: lambda c: c.release_person_gaze(),
+    }, ticks=260)
+    assert round(pose_at(controller, robot, clock.times[175])['yaw']) == -20
+    assert controller._person_hold is None
+    assert round(pose_at(controller, robot, clock.now)['yaw']) == -20
+
+
+@pytest.mark.parametrize('source', ['generated', 'clip'])
+def test_commands_wait_only_while_reachy_turns_toward_the_person(monkeypatch, source):
+    turning = _Command('reachy.move', {'yaw': 0, 'duration': .2, 'hold': 0}, 1010)
+    facing = _Command('reachy.move', {'yaw': 10, 'duration': .2, 'hold': .5}, 1010)
+    controller, robot, clock = simulate(monkeypatch, {
+        2: play_thinking(source), 25: look_at_friend, 30: lambda c: c._commands.put_nowait(turning),
+        100: lambda c: c._commands.put_nowait(facing),
+    }, ticks=200)
+    assert turning.result == {'ok': False, 'error': 'Reachy is still turning toward another person'}
+    turned = pose_at(controller, robot, clock.times[99])
+    assert (turned['yaw'], turned['body_yaw'], turned['pitch']) == pytest.approx((-30, -10, 6), abs=.2)
+    assert facing.result['ok'] is True
+    assert pose_at(controller, robot, clock.times[100] + .4)['yaw'] == pytest.approx(10, abs=.2)
+    rested = pose_at(controller, robot, clock.now)
+    assert (rested['yaw'], rested['body_yaw']) == pytest.approx((0, 0), abs=.2)
+    assert controller._person_hold is None
+    assert len(robot.writers) == 1
+
+
+def test_sleep_releases_person_gaze(monkeypatch):
+    controller, robot, clock = simulate(monkeypatch, {
+        5: lambda c: c.look_at_person(math.radians(80), math.radians(-80)),
+        90: lambda c: c.set_state('sleeping'),
+    }, ticks=200)
+    turned = pose_at(controller, robot, clock.times[70])
+    assert (turned['yaw'], turned['body_yaw'], turned['pitch']) == pytest.approx((35, 15, -20), abs=.1)
+    assert not controller._person_hold
+    assert pose_at(controller, robot, clock.now)['yaw'] == pytest.approx(0, abs=.1)

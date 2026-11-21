@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -17,6 +18,7 @@ YAW_LIMIT = math.radians(20)
 PITCH_LIMIT = math.radians(12)
 FACE_LOSS_SECONDS = 0.8
 IDLE_SAMPLE_PERIOD = 0.5
+SEEN_FACES = 256
 
 
 def default_face_model() -> Path:
@@ -30,6 +32,58 @@ class FaceTarget:
     yaw: float
     pitch: float
     observed_at: float
+
+
+@dataclass(frozen=True)
+class ObservedFace:
+    yaw: float
+    pitch: float
+    box: tuple[float, float, float, float]
+    score: float
+    captured_at: float
+
+
+@dataclass(frozen=True)
+class FaceSnapshot:
+    faces: tuple[ObservedFace, ...]
+    captured_at: float
+    heading: float                 # world yaw of the camera axis at capture
+    elevation: float               # world pitch of the camera axis at capture
+    half_view: tuple[float, float]  # half the camera's horizontal and vertical fields of view
+
+    def covers(self, face: ObservedFace) -> bool:
+        half_width, half_height = self.half_view
+        return (abs(math.remainder(face.yaw - self.heading, math.tau)) <= half_width
+                and abs(face.pitch - self.elevation) <= half_height)
+
+
+@dataclass(frozen=True)
+class FaceCapture:
+    frame: object
+    angles: tuple[float, float]
+    rotation: object
+    captured_at: float
+    half_view: tuple[float, float]
+
+
+@dataclass
+class _FaceRequest:
+    deadline: float
+    done: threading.Event
+    snapshot: FaceSnapshot | None = None
+
+
+def _snapshot(faces, capture: FaceCapture) -> FaceSnapshot:
+    result = []
+    for face in faces:
+        yaw, pitch = face.yaw_error, face.pitch_error
+        ray = (math.cos(pitch) * math.cos(yaw), math.cos(pitch) * math.sin(yaw), -math.sin(pitch))
+        x, y, z = [sum(a * b for a, b in zip(row, ray)) for row in capture.rotation]
+        result.append(ObservedFace(math.atan2(y, x), math.atan2(-z, math.hypot(x, y)),
+                                   face.box, face.score, capture.captured_at))
+    forward_x, forward_y, forward_z = (row[0] for row in capture.rotation)
+    return FaceSnapshot(tuple(result), capture.captured_at, math.atan2(forward_y, forward_x),
+                        math.atan2(-forward_z, math.hypot(forward_x, forward_y)), capture.half_view)
 
 
 @dataclass(frozen=True)
@@ -118,17 +172,20 @@ class _YuNetDetector:
 
 
 class _FaceTracker:
-    def __init__(self, sample_period: float):
+    def __init__(self, sample_period: float, *, hold_center: float | None = None):
         self._period = sample_period
         self.loss_seconds = FACE_LOSS_SECONDS
         self._face: _Face | None = None
         self._target: FaceTarget | None = None
+        self._hold_center = hold_center
 
     def update(self, faces: Sequence[_Face], angles: tuple[float, float],
                now: float) -> FaceTarget | None:
         faces = [face for face in faces if face.score >= 0.7 and face.area > 0
                  and all(math.isfinite(value) for value in (*face.box, face.yaw_error,
                                                             face.pitch_error, face.score))]
+        if self._hold_center is not None:
+            faces = [face for face in faces if abs(angles[0] + face.yaw_error - self._hold_center) <= YAW_LIMIT]
         if self._target is not None and now - self._target.observed_at >= self.loss_seconds:
             self._face = self._target = None
         chosen = None
@@ -140,7 +197,9 @@ class _FaceTracker:
             if nearby:
                 chosen = min(nearby, key=lambda face: math.dist(face.center, (cx, cy)))
         elif faces:
-            chosen = max(faces, key=lambda face: face.area)
+            chosen = (min(faces, key=lambda face: abs(angles[0] + face.yaw_error - self._hold_center))
+                      if self._hold_center is not None
+                      else max(faces, key=lambda face: face.area))
         if chosen is None:
             return self._target
         yaw, pitch = angles
@@ -170,20 +229,19 @@ class _FaceTracker:
 class FaceFollower:
     """A gated detector worker; the caller remains the sole motion writer.
 
-    ``read_head_angles`` supplies current yaw/pitch in radians. ``camera_matrix``
-    and ``distortion`` must describe the original frame returned by ``read_frame``.
-    Frames and detector inputs exist only during one worker iteration.
+    ``capture_frame(background=...)`` returns a ``FaceCapture`` with the head
+    angles and rotation at capture, or None. ``camera_matrix`` and ``distortion``
+    must describe its original frame. Frames and detector inputs exist only
+    during one worker iteration.
     """
 
-    def __init__(self, read_frame: Callable, model_path: Path | None = None, *,
-                 read_head_angles: Callable[[], tuple[float, float]], camera_matrix,
-                 distortion=None, sample_hz: float = 5.0, clock: Callable = time.monotonic,
+    def __init__(self, capture_frame: Callable[..., FaceCapture | None], model_path: Path | None = None, *,
+                 camera_matrix, distortion=None, sample_hz: float = 5.0, clock: Callable = time.monotonic,
                  detector_factory: Callable | None = None, budget=None):
         if not math.isfinite(sample_hz) or not 1 <= sample_hz <= 15:
             raise ValueError("Face tracking sample rate must be between 1 and 15 Hz")
         self._budget = budget
-        self._read_frame = read_frame
-        self._read_angles = read_head_angles
+        self._capture_frame = capture_frame
         self._model = Path(model_path) if model_path is not None else default_face_model()
         self._matrix = camera_matrix
         self._distortion = distortion
@@ -197,6 +255,10 @@ class FaceFollower:
         self._closed = False
         self._generation = 0
         self._target: FaceTarget | None = None
+        self._snapshot: FaceSnapshot | None = None
+        self._seen: deque[ObservedFace] = deque(maxlen=SEEN_FACES)
+        self._request: _FaceRequest | None = None
+        self._hold_center: float | None = None
         self.last_seen_at: float | None = None
         self._failure: Exception | None = None
         self._thread: threading.Thread | None = None
@@ -237,6 +299,32 @@ class FaceFollower:
                 return None
             return target
 
+    def snapshot(self) -> FaceSnapshot | None:
+        with self._condition:
+            return self._snapshot
+
+    def seen_since(self, since: float) -> tuple[ObservedFace, ...]:
+        """Faces from snapshots captured at or after ``since``, among the last ``SEEN_FACES`` seen."""
+        with self._condition:
+            return tuple(face for face in self._seen if face.captured_at >= since)
+
+    def hold_center(self, yaw: float | None) -> None:
+        with self._condition:
+            self._hold_center = yaw
+            self._generation += 1
+            self._target = None
+            self._condition.notify_all()
+
+    def refresh(self, timeout: float = .3) -> FaceSnapshot | None:
+        with self._condition:
+            if self._closed or self._failure is not None or self._thread is None or self._request is not None:
+                return None
+            request = self._request = _FaceRequest(self._clock() + timeout, threading.Event())
+            self._condition.notify_all()
+        if request.done.wait(timeout):
+            return request.snapshot
+        return None
+
     def close(self, timeout: float = 2.0) -> None:
         with self._condition:
             self._closed = True
@@ -255,45 +343,67 @@ class FaceFollower:
         try:
             while True:
                 with self._condition:
-                    self._condition.wait_for(lambda: self._active or self._closed)
+                    self._condition.wait_for(lambda: self._active or self._request is not None or self._closed)
                     if self._closed:
                         return
                     current_generation = self._generation
+                    request = self._request
+                    if request is not None and self._clock() >= request.deadline:
+                        self._request = None
+                        request.done.set()
+                        continue
                 if generation != current_generation:
-                    tracker = _FaceTracker(self._period)
+                    tracker = _FaceTracker(self._period, hold_center=self._hold_center)
                     generation = current_generation
                 started = self._clock()
                 scale = self._budget.delay() if self._budget is not None else 1.0
-                if not math.isfinite(scale):
+                if request is None and not math.isfinite(scale):
                     with self._condition:
                         self._target = None
                         self._condition.wait(.1)
                     continue
-                frame = self._read_frame()
-                observed_at = self._clock()
-                if frame is not None and self._budget is not None and not math.isfinite(self._budget.delay()):
-                    frame = None
-                if frame is not None:
-                    try:
-                        angles = self._read_angles()
-                        faces = detector.detect(frame)
-                    finally:
-                        del frame
-                    target = tracker.update(faces, angles, observed_at)
-                    with self._condition:
-                        if self._active and self._generation == generation and not self._closed:
-                            self._target = target
-                            if target is not None:
-                                self.last_seen_at = target.observed_at
+                try:
+                    capture = self._capture_frame(background=request is None)
+                    if request is not None and self._clock() >= request.deadline:
+                        capture = None
+                    if (request is None and self._budget is not None
+                            and not math.isfinite(self._budget.delay())):
+                        capture = None
+                    if capture is not None:
+                        try:
+                            faces = detector.detect(capture.frame)
+                            snapshot = _snapshot(faces, capture)
+                            target = tracker.update(faces, capture.angles, capture.captured_at)
+                        finally:
+                            del capture
+                        with self._condition:
+                            if not self._closed:
+                                self._snapshot = snapshot
+                                self._seen.extend(snapshot.faces)
+                                if request is not None:
+                                    request.snapshot = snapshot
+                                if self._active and self._generation == generation:
+                                    self._target = target
+                                    if target is not None:
+                                        self.last_seen_at = target.observed_at
+                except Exception:
+                    if request is None:
+                        raise
+                finally:
+                    if request is not None:
+                        with self._condition:
+                            self._request = None
+                            request.done.set()
                 with self._condition:
                     if self._closed:
                         return
                     if self._active and self._generation == generation:
                         cost = self._clock() - started
-                        period = max(self._sample_period * scale, cost * 5)
+                        period = max(self._sample_period * scale, cost * 5) if math.isfinite(scale) else .1
                         tracker.loss_seconds = self._loss_seconds = max(FACE_LOSS_SECONDS, period + cost + self._period)
                         self._condition.wait_for(
-                            lambda: self._closed or not self._active or self._generation != generation,
+                            lambda: self._closed or self._request is not None or not self._active
+                            or self._generation != generation,
                             timeout=max(.001, period - cost))
         except Exception as exc:
             # A traceback could otherwise retain its camera frame indefinitely.

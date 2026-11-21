@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # Licensed under the Apache License, Version 2.0 (the "License").
 
+from dataclasses import replace
 import math
 import threading
 import time
@@ -8,9 +9,11 @@ import time
 import pytest
 
 from reachy_muse.local_face_tracking import (
-    FACE_LOSS_SECONDS, PITCH_LIMIT, YAW_LIMIT, FaceFollower, _Face, _FaceTracker,
+    FACE_LOSS_SECONDS, PITCH_LIMIT, YAW_LIMIT, FaceCapture, FaceFollower, _Face, _FaceTracker,
     default_face_model,
 )
+
+LEVEL = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
 
 
 def face(x=0.4, y=0.3, width=0.2, height=0.3, yaw=0, pitch=0):
@@ -103,8 +106,16 @@ class Detector:
         return [face(yaw=10)]
 
 
+def captures(read_frame, clock=time.monotonic):
+    """A camera owner's captures of ``read_frame`` with the head level and facing forward."""
+    def capture(*, background=True):
+        frame = read_frame()
+        return FaceCapture(frame, (0.0, 0.0), LEVEL, clock(), (0.0, 0.0)) if frame is not None else None
+    return capture
+
+
 def follower(read_frame, **kwargs):
-    return FaceFollower(read_frame, read_head_angles=lambda: (0, 0),
+    return FaceFollower(captures(read_frame, kwargs.get('clock', time.monotonic)),
                         camera_matrix=None, sample_hz=15, detector_factory=Detector, **kwargs)
 
 
@@ -221,8 +232,7 @@ def test_detector_failure_does_not_retain_camera_frame_in_traceback():
         references.append(weakref.ref(frame))
         return frame
 
-    item = FaceFollower(read, read_head_angles=lambda: (0, 0), camera_matrix=None,
-                        detector_factory=FailedDetector)
+    item = FaceFollower(captures(read), camera_matrix=None, detector_factory=FailedDetector)
     item.start()
     item.set_active(True)
     wait_for(lambda: item.failure is not None)
@@ -236,7 +246,7 @@ def test_detector_failure_does_not_retain_camera_frame_in_traceback():
 def test_missing_camera_calibration_fails_before_worker_starts(tmp_path):
     np = pytest.importorskip('numpy')
     pytest.importorskip('cv2')
-    item = FaceFollower(lambda: None, read_head_angles=lambda: (0, 0), camera_matrix=None)
+    item = FaceFollower(captures(lambda: None), camera_matrix=None)
     with pytest.raises(ValueError, match='calibrated camera matrix'):
         item.start()
     assert item._thread is None
@@ -245,8 +255,7 @@ def test_missing_camera_calibration_fails_before_worker_starts(tmp_path):
 @pytest.mark.parametrize('rate', [0, 0.5, 16, float('inf'), float('nan')])
 def test_unbounded_detector_rate_is_rejected(rate):
     with pytest.raises(ValueError, match='sample rate'):
-        FaceFollower(lambda: None, read_head_angles=lambda: (0, 0), camera_matrix=None,
-                     sample_hz=rate)
+        FaceFollower(captures(lambda: None), camera_matrix=None, sample_hz=rate)
 
 
 def test_idle_sampling_uses_less_camera_work_and_wake_preserves_the_target():
@@ -286,9 +295,8 @@ def test_throttled_idle_gaze_keeps_the_same_face_between_samples():
         def detect(self, frame):
             return [first] if len(reads) == 1 else [other, first]
 
-    item = FaceFollower(lambda: reads.append(now[0]) or object(),
-                        read_head_angles=lambda: (0, 0), camera_matrix=None,
-                        detector_factory=People, clock=lambda: now[0],
+    item = FaceFollower(captures(lambda: reads.append(now[0]) or object(), lambda: now[0]),
+                        camera_matrix=None, detector_factory=People, clock=lambda: now[0],
                         budget=SimpleNamespace(delay=lambda: 3))
     try:
         item.start()
@@ -320,7 +328,7 @@ def test_slow_detection_keeps_target_while_next_inference_runs():
             now[0] = observed_at + .32
             return super().detect(frame)
 
-    item = FaceFollower(lambda: object(), read_head_angles=lambda: (0, 0),
+    item = FaceFollower(captures(lambda: object(), lambda: now[0]),
                         camera_matrix=None, detector_factory=SlowDetector,
                         clock=lambda: now[0])
     try:
@@ -339,4 +347,119 @@ def test_slow_detection_keeps_target_while_next_inference_runs():
         assert item.target() is None
     finally:
         release.set()
+        item.close()
+
+
+def test_all_faces_keep_capture_pose_and_time_while_budget_pauses(monkeypatch):
+    from types import SimpleNamespace
+    import numpy as np
+    from reachy_muse.hardware import ReachyController
+    from test_hardware import FakeRobot, pose_factory
+
+    clock = [100.0]
+    robot = FakeRobot()
+    robot.pose = pose_factory(yaw=30, pitch=10, roll=20)
+    robot.media.camera = SimpleNamespace(K=np.array([[900., 0, 640], [0, 900, 360], [0, 0, 1]]), D=np.zeros(5))
+    paused = [False]
+    budget = SimpleNamespace(delay=lambda: math.inf if paused[0] else 1.0)
+    captures, calls = [], []
+
+    def frame():
+        assert controller._camera_lock.locked()
+        captures.append(threading.get_ident())
+        return np.zeros((10, 10, 3), dtype=np.uint8)
+
+    robot.media.get_frame = frame
+
+    class Detect:
+        def detect(self, frame):
+            calls.append(threading.get_ident())
+            robot.pose = pose_factory(yaw=-30)
+            paused[0] = True
+            return [face(yaw=0, pitch=0), face(x=.7, width=.1, yaw=-30, pitch=5)]
+
+    def factory(*args, **kwargs):
+        return FaceFollower(*args, **kwargs, detector_factory=lambda *args: Detect(), clock=lambda: clock[0])
+
+    controller = ReachyController(face_follow_model='fake', face_follower_factory=factory)
+    controller._robot, controller._np, controller.vision_budget = robot, np, budget
+    monkeypatch.setattr('reachy_muse.hardware.time', SimpleNamespace(monotonic=lambda: clock[0]))
+    controller._start_face_follow()
+    follower = controller._face_follower
+    try:
+        controller._update_face_tracking('listening')
+        wait_for(lambda: controller.face_snapshot() is not None)
+        snapshot = controller.face_snapshot()
+        assert snapshot.captured_at == 100.0
+        assert len(snapshot.faces) == 2
+        first, second = snapshot.faces
+        assert (math.degrees(first.yaw), math.degrees(first.pitch)) == pytest.approx((30, 10))
+        assert (math.degrees(second.yaw), math.degrees(second.pitch)) == pytest.approx((1.460177, 23.468076), abs=.00001)
+        assert (first.box, first.score, first.captured_at) == ((.4, .3, .2, .3), .95, 100.0)
+        assert (math.degrees(snapshot.heading), math.degrees(snapshot.elevation)) == pytest.approx((30, 10))
+        assert [math.degrees(angle) for angle in snapshot.half_view] == pytest.approx([35.417, 21.801], abs=.001)
+        assert snapshot.covers(replace(first, yaw=math.radians(64), pitch=math.radians(-11)))
+        assert not snapshot.covers(replace(first, yaw=math.radians(-6)))
+        assert not snapshot.covers(replace(first, pitch=math.radians(-12)))
+        clock[0] = 103.0
+        wait_for(lambda: follower.target() is None)
+        assert controller.face_snapshot() == snapshot
+        refreshed = controller.refresh_faces()
+        assert refreshed.captured_at == 103.0
+        assert math.degrees(refreshed.faces[0].yaw) == pytest.approx(-30)
+        assert len(calls) == len(captures) == 2
+        assert set(calls) == set(captures)
+        assert calls[0] != threading.get_ident()
+    finally:
+        follower.close()
+
+
+def test_refresh_deadline_does_not_queue_more_inference_or_drop_old_snapshot():
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    class Detect:
+        def detect(self, frame):
+            calls.append(frame)
+            if len(calls) > 1:
+                entered.set()
+                assert release.wait(2)
+            return [face()]
+
+    item = FaceFollower(captures(lambda: object()), camera_matrix=None, detector_factory=lambda *args: Detect())
+    item.start()
+    try:
+        first = item.refresh()
+        assert len(first.faces) == 1
+        started = time.monotonic()
+        assert item.refresh(.03) is None
+        assert time.monotonic() - started < .2
+        assert entered.is_set()
+        assert item.snapshot() == first
+        assert item.refresh(.03) is None
+        assert len(calls) == 2
+    finally:
+        release.set()
+        item.close()
+
+
+def test_seen_faces_keep_their_capture_times_within_a_bound(monkeypatch):
+    monkeypatch.setattr('reachy_muse.local_face_tracking.SEEN_FACES', 3)
+    now = [10.0]
+
+    class Two:
+        def detect(self, frame):
+            return [face(yaw=-10), face(x=.7, yaw=20)]
+
+    item = FaceFollower(captures(lambda: object(), lambda: now[0]), camera_matrix=None,
+                        detector_factory=lambda *args: Two(), clock=lambda: now[0])
+    item.start()
+    try:
+        assert item.refresh() is not None
+        now[0] = 20.0
+        assert item.refresh() is not None
+        assert [(face.captured_at, round(math.degrees(face.yaw))) for face in item.seen_since(0)] == [
+            (10.0, 20), (20.0, -10), (20.0, 20)]
+        assert [face.captured_at for face in item.seen_since(15)] == [20.0, 20.0]
+    finally:
         item.close()

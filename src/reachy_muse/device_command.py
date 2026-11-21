@@ -113,10 +113,27 @@ COMMANDS: Mapping[DeviceCommand, Spec] = MappingProxyType({
 _LEAD = r"(?:oh|okay|ok|alright|hey|um|uh|so|now|well|muse|reachy|robot)"
 _POLITE = r"(?:please|(?:can|could|would|will) you(?: please)?|i (?:want|need) you to|you (?:can|should|may)|(?:it's )?time to|go ahead and)"
 _TAIL = r"(?:please|now|right now|then|thanks|thank you|for now|for a (?:bit|while)|for me|a (?:little )?bit|a little|muse|reachy)"
-_GRAMMAR = re.compile(
-    rf"(?:{_LEAD} )*(?:{_POLITE} )?(?:"
-    + "|".join(f"(?P<{command.value}>{spec.phrases})" for command, spec in COMMANDS.items() if spec.phrases)
-    + rf")(?: {_TAIL})*")
+
+
+def _request_grammar(phrases: str) -> re.Pattern:
+    """A spoken request: lead words, a polite form, one of ``phrases``, then tail words."""
+    return re.compile(rf"(?:{_LEAD} )*(?:{_POLITE} )?(?:{phrases})(?: {_TAIL})*")
+
+
+_GRAMMAR = _request_grammar("|".join(f"(?P<{command.value}>{spec.phrases})"
+                                     for command, spec in COMMANDS.items() if spec.phrases))
+_OTHER_PERSON = r"(?:him|her|them|my friend|someone(?: else)?|somebody(?: else)?|the other person|my guest)"
+_GAZE = _request_grammar(r"(?:say (?:hi|hello) to|greet) (?P<greeted>[a-z0-9']+(?: [a-z0-9']+){0,3})"
+                         rf"|look at {_OTHER_PERSON}")
+_NOT_ANOTHER_PERSON = frozenset((
+    "me", "myself", "us", "ourselves", "you", "yourself", "yourselves", "it", "this", "that",
+    "muse", "reachy", "robot", "alexa", "siri", "google", "nobody", "none"))
+_PEOPLE = frozenset(("kids", "children", "guests", "visitors", "family", "boys", "girls"))
+_TRAILING_TAIL = re.compile(rf"(?: (?:{_TAIL}))+$")
+# Quotation marks, not apostrophes inside a word.
+_QUOTED = re.compile(r"[\"“”]|(?<![a-z])['‘’]|['‘’](?![a-z])", re.IGNORECASE)
+# "Say hi to her for me", "when you call her" or "later": the greeting is for someone who is not here.
+_ABSENT = re.compile(r"\b(?:for (?:me|us)|from (?:me|us)|when(?:ever)?|if|next time|later|tomorrow|tonight)\b")
 _QUESTION_OPENERS = frozenset((
     "what", "what's", "whats", "when", "where", "who", "why", "how", "which", "is", "are", "was", "were",
     "does", "did", "do", "should"))
@@ -131,6 +148,10 @@ def _words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9']+", text.replace("’", "'").casefold())
 
 
+def _spoken(text: str) -> str:
+    return " ".join(_words(text))
+
+
 def parse_command(text: str) -> Optional[DeviceCommand]:
     command = whole_command(text)
     if command is not None:
@@ -142,7 +163,7 @@ def parse_command(text: str) -> Optional[DeviceCommand]:
 
 def whole_command(text: str) -> Optional[DeviceCommand]:
     """A hardware command, without converting work cancellation into playback control."""
-    match = _GRAMMAR.fullmatch(" ".join(_words(text)))
+    match = _GRAMMAR.fullmatch(_spoken(text))
     if match is not None:
         return DeviceCommand(match.lastgroup)
     if classify_follow_up(text) is FollowUp.SILENCE:
@@ -187,7 +208,32 @@ def command_after_wake(text: str, phrase: str) -> Optional[str]:
     return command
 
 
+def gaze_requested(text: str) -> bool:
+    """A request to face someone other than the speaker. It is never a device command.
+
+    A greeting may name the person in up to four words; "look at" takes only the short list.
+    """
+    spoken = _spoken(text)
+    if _QUOTED.search(text) or _ABSENT.search(spoken) or not _NEGATIONS.isdisjoint(spoken.split()):
+        return False
+    match = _GAZE.fullmatch(spoken)
+    return match is not None and (match["greeted"] is None or _greets_someone_here(match["greeted"]))
+
+
+def _greets_someone_here(greeted: str) -> bool:
+    """Names and "my mom" are people in the room; "the camera" or "Bob in the email" are not."""
+    greeted = _TRAILING_TAIL.sub("", greeted)
+    if re.fullmatch(_OTHER_PERSON, greeted):
+        return True
+    words = greeted.split()
+    if words[0] in _NOT_ANOTHER_PERSON or "in" in words or "on" in words:
+        return False
+    return words[0] != "the" or (len(words) == 2 and words[1] in _PEOPLE)
+
+
 def worth_asking(text: str, asked: FrozenSet[DeviceCommand]) -> bool:
+    if gaze_requested(text):
+        return False
     words = _words(text)
     if not words or len(words) > MODEL_MAX_WORDS or words[0] in _QUESTION_OPENERS:
         return False

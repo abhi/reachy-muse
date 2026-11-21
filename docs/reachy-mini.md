@@ -465,9 +465,10 @@ capture and the motion thread. Each reading is transformed
 through the current head rotation into a world bearing. A short ring stores only
 speech bearings and monotonic times. Reachy's own output and echo tail invalidate
 the ring, including with echo-cancelled input. Capture gaps also clear it.
-At wake, capture timing bounds the estimate to the most recent speech segment
+At the wake candidate, Reachy freezes the ring and its observation time before
+verification, replay and alignment. Capture timing bounds the estimate to the most recent speech segment
 within 1.5 seconds before the keyword boundary. A confident estimate needs at
-least three recent, consistent speech samples; its direction is their median.
+least two recent, consistent speech samples; its direction is their median.
 Missing or uncertain direction, including unverified keyword timing, keeps the
 usual wake behavior. Direction HTTP requests have a 0.1-second deadline and a
 4096-byte body limit. Microphone cleanup does not wait for an unfinished read.
@@ -480,6 +481,48 @@ to the side. An existing clip or motion command takes priority. After the turn,
 face tracking can take over; without a face, Reachy holds the gaze. Sleep and
 explicit motion commands release it. With `--no-motion`, Reachy neither samples nor turns.
 Direction logs contain only angles and decisions.
+
+With face following enabled, requests such as "say hi to my friend", "greet
+someone else" or "look at the other person" also turn Reachy toward another
+person's face while Muse answers normally. As with device commands, a request
+may open with words such as "okay" or "Reachy", use a polite form such as "can
+you please", and end with "please", and its commas and final punctuation do not
+matter. A greeting may name the person in up to four words, as in "say hello to
+Sarah", "greet our guests" or "say hi to the kids". It does not turn Reachy for
+targets that are not in the room, such as "the camera", "Bob in the email",
+"Mom on the phone" or "Alexa". "Look at" accepts only "him", "her", "them", "my
+friend", "my guest", "someone else" or "the other person". "Look at me" still
+enables face following, and these requests never go to the companion's command
+model, which could take them for face following. Negated requests, quoted
+examples and greetings for someone absent, with words such as "for me", "when
+you call her" or "later", do not trigger this turn.
+Reachy latches the median speech bearing at the request endpoint, or uses the
+wake gaze from the current window if no request bearing is available. It excludes
+faces within 20 degrees of that bearing, then selects the remaining face that
+requires the smallest head turn. Without a speaker bearing or another face, it
+stays put.
+
+Face snapshots contain only geometry, confidence and capture time, transformed
+through the head pose captured with the image. They survive vision pauses.
+The request reuses a snapshot up to two seconds old; otherwise it asks the same
+camera and detector worker for one fresh pass, waiting at most 300 ms. This pass
+may bypass the vision pause. It adds no continuous detection during listening.
+After Reachy turns toward the speaker, that view may show only the speaker. When
+it shows no other face, Reachy uses the world bearings of faces seen in the last
+30 seconds, kept in a list of the last 256 detections without identity. It skips
+a remembered face whose yaw and pitch both fall inside the field of view the
+camera just covered, since it saw no one else there. A friend standing above the
+frame is still found. Faces in view take priority over remembered ones.
+The person turn fades competing clips and thinking motion, then re-centers the
+follower on the selected direction. It holds through the reply. The next request,
+including a stop command, or the end of the listening window releases it, and
+Reachy turns back to the gaze it replaced, usually toward the speaker. Sleep
+releases it to the sleep pose. An explicit motion command returns an error only
+while Reachy is still turning toward the person. Once Reachy faces them, the
+command runs and releases this gaze, as commands release the wake gaze. Reachy
+skips its own closing expression for a reply while it holds this gaze. Logs
+contain only the outcome, the source of the faces it used (`snapshot`, `fresh`,
+`memory` or `none`) and the number of faces in view.
 
 With `--wave-wake`, a wave also turns Reachy toward the person before face
 tracking takes over. The detected person's position takes priority over recent

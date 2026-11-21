@@ -159,6 +159,10 @@ class FailoverHearingTurn:
         return self._turn.speech_active
 
     @property
+    def utterance_id(self) -> int:
+        return self._turn.utterance_id
+
+    @property
     def quiet_s(self) -> float:
         return self._turn.quiet_s
 
@@ -233,6 +237,8 @@ class FailoverHearingTurn:
 
     def _switch(self, *, on_companion: bool) -> None:
         options = dict(self._options, recorder=self._turn.recorder) if on_companion else self._options
+        if not on_companion and self._turn.active:
+            options = dict(options, utterance_id=self._turn.utterance_id)
         self._turn.abort()
         if not on_companion:
             self._kept.clear()

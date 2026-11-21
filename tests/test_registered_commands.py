@@ -419,7 +419,7 @@ def test_hush_invalidates_say_before_its_loop_callback(monkeypatch, queue, reope
                 else:
                     timeline = TurnTimeline()
                     timeline.mark("endpoint")
-                    request = _QueuedTurn(None, False, 0, timeline, ())
+                    request = _QueuedTurn(None, False, 0, timeline, (), None, None, voice._gaze.begin())
                     voice.job = reply_job()
                     accepted = await voice._follow_up(Endpoint(b"wav", "Find tomorrow's weather."), request, None)
                     assert accepted.text == "Find tomorrow's weather."
@@ -542,7 +542,7 @@ def test_ignored_follow_up_keeps_later_room_commands_hushed(text, waiting):
         service, voice, speech = command_device()
         timeline = TurnTimeline()
         timeline.mark("endpoint")
-        request = _QueuedTurn(None, False, 0, timeline, ())
+        request = _QueuedTurn(None, False, 0, timeline, (), None, None, voice._gaze.begin())
         held = _HeldRequest(b"wav", "Find lunch options.", 0, timeline) if waiting else None
         voice.job = reply_job()
         voice._hush()
@@ -563,7 +563,7 @@ def test_accepted_follow_up_allows_later_room_commands(text, waiting, expected):
         service, voice, _ = command_device()
         timeline = TurnTimeline()
         timeline.mark("endpoint")
-        request = _QueuedTurn(None, False, 0, timeline, ())
+        request = _QueuedTurn(None, False, 0, timeline, (), None, None, voice._gaze.begin())
         held = _HeldRequest(b"wav", "Find lunch options.", 0, timeline) if waiting else None
         voice.job = reply_job()
         voice._hush()

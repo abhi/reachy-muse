@@ -32,6 +32,55 @@ class SpeakerYaw:
     body: float
 
 
+@dataclass(frozen=True)
+class DirectionDecision:
+    reason: str
+    samples: int = 0
+    span_ms: float = 0.0
+    boundary_age_ms: float = math.nan
+    last_age_ms: float = math.nan
+    mad_deg: float = math.nan
+    inlier: float = 0.0
+    angle: float | None = None
+
+
+@dataclass(frozen=True)
+class DirectionSnapshot:
+    samples: tuple[tuple[float, float], ...]
+    captured_at: float
+    empty_reason: str
+
+    def decide(self, phrase_end: float | None) -> DirectionDecision:
+        if phrase_end is None:
+            return DirectionDecision("untimed")
+        samples = [(at, angle) for at, angle in self.samples
+                   if phrase_end - 1.5 <= at <= phrase_end]
+        for index in range(len(samples) - 1, 0, -1):
+            if samples[index][0] - samples[index - 1][0] > .35:
+                samples = samples[index:]
+                break
+        age = self.captured_at - phrase_end
+        span = samples[-1][0] - samples[0][0] if samples else 0.0
+        last_age = phrase_end - samples[-1][0] if samples else math.nan
+        direction = median(angle for _, angle in samples) if samples else None
+        deviations = [abs(angle - direction) for _, angle in samples]
+        mad = median(deviations) if deviations else math.nan
+        inlier = sum(delta <= math.radians(20) for delta in deviations) / len(samples) if samples else 0.0
+        if not samples:
+            reason = self.empty_reason
+        elif not 0 <= age <= 1.0 or last_age > .45:
+            reason = "stale"
+        elif len(samples) < 2 or span < .1:
+            reason = "too_few"
+        elif mad > math.radians(12) or median(deviations[-3:]) > math.radians(20) or inlier < .75:
+            reason = "dispersed"
+        else:
+            reason = "ok"
+        return DirectionDecision(reason, len(samples), span * 1000, age * 1000,
+                                 last_age * 1000, math.degrees(mad), inlier,
+                                 direction if reason == "ok" else None)
+
+
 def speaker_yaw(angle: float) -> SpeakerYaw:
     """Map a world bearing into the app's safe absolute yaw range."""
     if (isinstance(angle, bool) or not isinstance(angle, (int, float))
@@ -58,38 +107,28 @@ class WakeDirection:
         self._sleep = sleep
         self._samples: deque[tuple[float, float]] = deque(maxlen=80)
         self._generation = 0
+        self._empty_reason = "too_few"
 
-    def clear(self) -> None:
+    def clear(self, reason: str = "too_few") -> None:
         self._generation += 1
         self._samples.clear()
+        self._empty_reason = reason
 
-    def estimate(self, phrase_end: float) -> float | None:
-        """Median of the last speech segment within 1.5 seconds of the keyword end."""
-        samples = [(at, angle) for at, angle in self._samples
-                   if phrase_end - 1.5 <= at <= phrase_end]
-        if not samples or not 0 <= self._clock() - phrase_end <= 1.0:
-            return None
-        # A different utterance before a pause is not part of this invocation.
-        for index in range(len(samples) - 1, 0, -1):
-            if samples[index][0] - samples[index - 1][0] > .35:
-                samples = samples[index:]
-                break
-        if (len(samples) < 2 or samples[-1][0] - samples[0][0] < .1
-                or phrase_end - samples[-1][0] > .45):
-            return None
-        direction = median(angle for _, angle in samples)
-        deviations = [abs(angle - direction) for _, angle in samples]
-        if (median(deviations) > math.radians(12)
-                or median(deviations[-3:]) > math.radians(20)
-                or sum(delta <= math.radians(20) for delta in deviations) < .75 * len(samples)):
-            return None
-        return direction
+    def snapshot(self) -> DirectionSnapshot:
+        return DirectionSnapshot(tuple(self._samples), self._clock(), self._empty_reason)
+
+    def discard_through(self, at: float) -> None:
+        while self._samples and self._samples[0][0] <= at:
+            self._samples.popleft()
+
+    def samples_between(self, start: float, end: float) -> tuple[tuple[float, float], ...]:
+        return tuple((at, angle) for at, angle in self._samples if start <= at <= end)
 
     async def sample_while(self, eligible: Callable[[], bool]) -> None:
         try:
             while True:
                 if not eligible():
-                    self.clear()
+                    self.clear("ineligible")
                     await self._sleep(.05)
                     continue
                 generation = self._generation
@@ -99,10 +138,12 @@ class WakeDirection:
                 except Exception:
                     reading = None
                 delay = .2
-                if generation != self._generation or not eligible() or self._clock() - started > .15:
-                    self.clear()
+                if generation != self._generation or not eligible():
+                    self.clear("ineligible")
+                elif self._clock() - started > .15:
+                    self.clear("timeout")
                 elif reading is None:
-                    self.clear()
+                    self.clear("unavailable")
                     delay = 1.0
                 elif reading.speech_detected:
                     self._samples.append((started, reading.angle))

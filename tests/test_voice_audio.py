@@ -106,6 +106,29 @@ def test_short_rejected_speech_closes_stream_without_committing_a_turn():
     assert not recorder.active
 
 
+def test_a_turn_starting_in_the_feed_that_rejects_the_last_one_gets_a_new_id():
+    recorder = TurnRecorder(16000, vad=ScriptVad([True] * 5 + [False] * 5 + [True] * 3), silence_s=.1)
+    other = TurnRecorder(16000, vad=ScriptVad([True] * 3))
+    assert recorder.utterance_id == other.utterance_id == 0
+    recorder.feed(np.full(3 * 320, .25, np.float32))
+    first = recorder.utterance_id
+    assert recorder.active and first > 0
+    assert recorder.feed(np.full(10 * 320, .25, np.float32)) is None
+    assert recorder.active and recorder.utterance_id > first
+    other.feed(np.full(3 * 320, .25, np.float32))
+    assert other.utterance_id not in (0, first, recorder.utterance_id)
+
+
+def test_a_replaying_recorder_keeps_the_given_utterance_id_for_its_first_turn_only():
+    recorder = TurnRecorder(16000, vad=ScriptVad([True] * 3 + [False] * 5 + [True] * 3), silence_s=.1,
+                            utterance_id=41)
+    assert recorder.utterance_id == 41
+    recorder.feed(np.full(3 * 320, .25, np.float32))
+    assert recorder.active and recorder.utterance_id == 41
+    recorder.feed(np.full(8 * 320, .25, np.float32))
+    assert recorder.active and recorder.utterance_id not in (0, 41)
+
+
 def test_streaming_recorder_reset_discards_pending_audio_and_short_turns():
     recorder = TurnRecorder(16000, vad=ScriptVad([True] * 3), stream_audio=True)
     recorder.feed(np.full(3 * 320, .25, np.float32))

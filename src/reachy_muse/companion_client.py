@@ -766,6 +766,10 @@ class CompanionHearingTurn:
         return self._recorder.speech_active
 
     @property
+    def utterance_id(self) -> int:
+        return self._recorder.utterance_id
+
+    @property
     def quiet_s(self) -> float:
         return self._recorder.quiet_s
 
