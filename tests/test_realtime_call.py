@@ -119,6 +119,33 @@ def test_the_microphone_keeps_a_whole_request_while_the_call_is_still_being_admi
     assert asyncio.run(scenario()) == 300
 
 
+def test_microphone_backlog_counts_queued_bytes_evictions_and_oldest_frame_age(monkeypatch):
+    now = [10.0]
+    monkeypatch.setattr("reachy_muse.realtime_call.time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    async def scenario():
+        feed = MicrophoneFeed(24000)
+        feed.push(np.full(480, .3, np.float32))
+        assert feed.backlog_bytes == 0
+        feed.push(np.full(480, .3, np.float32))
+        assert feed.backlog_bytes == 1920
+        now[0] = 13.0
+        feed.push(np.full(480000, .4, np.float32))
+        assert feed.backlog_bytes == 960000
+        assert feed.evictions == 1
+        assert feed.max_queue_age_s == 3.0
+        now[0] = 17.0
+        feed.close()
+        frames = [frame async for frame in feed]
+        assert len(frames) == 500
+        assert {frame for frame in frames} == {np.full(960, 13107, "<i2").tobytes()}
+        assert feed.backlog_bytes == 0
+        assert feed.sent == 500
+        assert feed.max_queue_age_s == 4.0
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("background", [0, -32])
 def test_the_live_microphone_catches_up_through_silence_with_the_paced_sdk(background):
     from musegadget import voice_call as sdk
@@ -944,7 +971,9 @@ def test_a_muse_called_expression_holds_reachy_s_own_reply_motion_while_it_runs(
     assert asyncio.run(scenario()) == (1, 0, {"ok": True, "payload": {"name": "nod"}})
 
 
-def test_calls_open_with_reachy_s_identity_thread_and_duplex_and_reuse_one_voice_link():
+def test_calls_open_with_reachy_s_identity_thread_and_duplex_and_reuse_one_voice_link(monkeypatch, caplog):
+    caplog.set_level("INFO", logger="reachy_muse.realtime_call")
+    monkeypatch.setattr("reachy_muse.realtime_call.time", SimpleNamespace(monotonic=lambda: 10.0))
     if not realtime_supported():
         pytest.skip("the Muse SDK has no voice call events")
     opened = []
@@ -985,6 +1014,12 @@ def test_calls_open_with_reachy_s_identity_thread_and_duplex_and_reuse_one_voice
 
     assert asyncio.run(scenario()) == [("remote_stop", False)] * 2
     assert opened == [(links[0], "homelink-abcdef", "robot-chat", False)] * 2
+    assert [line for line in caplog.messages if line.startswith("Realtime call_ready ")] == [
+        "Realtime call_ready elapsed_ms=0 link=new queued_feed_frames=0",
+        "Realtime call_ready elapsed_ms=0 link=reused queued_feed_frames=0"]
+    assert [line for line in caplog.messages if line.startswith("Realtime call_summary ")] == [
+        "Realtime call_summary duration_ms=0 turns=0 answered=0 silent=0 unanswered=0 recovered=0 "
+        "responses=0 audio_bytes=0 feed_sent=0 feed_evictions=0 max_queue_age_ms=0"] * 2
 
 
 def test_after_a_failed_call_the_chat_turn_that_follows_reconnects_the_voice_link_for_the_next_call():
@@ -1206,3 +1241,54 @@ def test_response_done_before_the_remaining_pcm_does_not_end_a_question_at_its_i
             await call.close()
 
     assert asyncio.run(asyncio.wait_for(scenario(), 6)) == [2.0]
+
+
+def test_event_diagnostics_count_response_audio_and_exclude_content(monkeypatch, caplog):
+    from musegadget import voice_call as sdk
+
+    caplog.set_level("INFO", logger="reachy_muse.realtime_call")
+    now = [10.0]
+    monkeypatch.setattr("reachy_muse.realtime_call.time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    async def scenario():
+        async def nothing():
+            pass
+
+        def bad_motion(reply):
+            raise ValueError("private tool arguments and error message")
+
+        motion = ReplyMotion()
+        speaker = RealtimeSpeaker(Speaker(), motion, on_audible=lambda *args: None, on_start=nothing, on_idle=nothing)
+        call = RealtimeCall(MicrophoneFeed(24000), speaker, motion, on_working=lambda working: None,
+                            on_reply_done=bad_motion)
+        try:
+            call.on_event(sdk.Working(True))
+            call.on_event(sdk.Working(True))
+            call.on_event(sdk.ResponseStarted("private-response-id"))
+            call.on_event(sdk.ResponseStarted("private-response-id"))
+            call.on_event(sdk.TranscriptDelta("private-response-id", "private reply words"))
+            call.on_event(sdk.AudioChunk("private-response-id", 0, bytes(1920)))
+            call.on_event(sdk.AudioChunk("private-response-id", 960, bytes(1920)))
+            call.on_event(sdk.ResponseDone("private-response-id", "private status words"))
+            call.on_event(sdk.ResponseDone("private-response-id", "private status words"))
+            call.on_event(sdk.ResponseStarted("another-private-id"))
+            call.on_event(sdk.AudioChunk("another-private-id", 0, bytes(1920)))
+            call.on_event(sdk.ResponseDone("another-private-id", "completed"))
+            call.on_event(sdk.Working(False))
+            call.on_event(sdk.Working(False))
+            now[0] = 12.0
+            call.on_event(sdk.PlaybackFlushed(("private-response-id", "another-private-id")))
+            assert call.last_event_at == 12.0
+        finally:
+            await call.close()
+
+    asyncio.run(scenario())
+    assert caplog.messages == [
+        "Realtime event=Working working=on",
+        "Realtime event=ResponseStarted ordinal=1",
+        "Realtime event=ResponseDone ordinal=1 status=unknown audio_bytes=3840",
+        "Realtime event=ResponseStarted ordinal=2",
+        "Realtime event=ResponseDone ordinal=2 status=completed audio_bytes=1920",
+        "Reachy's realtime motion failed on a ResponseDone event (ValueError)",
+        "Realtime event=Working working=off",
+        "Realtime event=PlaybackFlushed"]

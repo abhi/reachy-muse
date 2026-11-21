@@ -600,7 +600,7 @@ def test_speech_during_wave_reaches_realtime_from_its_first_sample(monkeypatch):
             await asyncio.sleep(.02)
 
     try:
-        events = run(rig, conversation, user, rest=("idle", "listening"))
+        events = run(rig, conversation, user, rest=("thinking",))
     finally:
         release.set()
     pcm = np.frombuffer(b"".join(calls.frames), "<i2")

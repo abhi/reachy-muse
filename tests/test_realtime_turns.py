@@ -329,6 +329,9 @@ class ScriptedCalls:
         self.frame_times = []
         self.barge_ins = 0
         self.links = 0
+        self.closed_links = 0
+        self.closed_calls = 0
+        self.call_frames = []
         self.hung_up = None
         self.answering = []
 
@@ -339,7 +342,7 @@ class ScriptedCalls:
         self.links += 1
 
         async def close():
-            pass
+            self.closed_links += 1
         return VoiceLink(object(), lambda: True, close)
 
     def __call__(self, session, **options):
@@ -370,6 +373,9 @@ class _Call:
         self.script = script
         self.on_event = on_event
         self.ready = asyncio.Event()
+        self.held = False
+        self.frames = []
+        script.call_frames.append(self.frames)
 
     async def run(self, source, output, *, realtime_input=False):
         self.ready.set()
@@ -385,6 +391,7 @@ class _Call:
         finally:
             listening.cancel()
             await asyncio.gather(listening, return_exceptions=True)
+            self.script.closed_calls += 1
 
     async def _listen(self, source):
         from musegadget import voice_call as sdk
@@ -392,6 +399,7 @@ class _Call:
         loud = paused = 0
         answered = False
         async for frame in source:
+            self.frames.append(frame)
             self.script.frames.append(frame)
             self.script.frame_times.append(time.monotonic())
             if np.sqrt(np.mean(np.frombuffer(frame, "<i2").astype(float) ** 2)) >= 300:
@@ -413,7 +421,8 @@ class _Call:
 
 
 def realtime_service(rig, transcripts, calls, muse=never_asked, **fields):
-    return service(rig, muse, transcripts, wake_detector=TimedWake(), wake_timeout_s=2, muse_path="realtime",
+    return service(rig, muse, transcripts, wake_detector=TimedWake(),
+                   wake_timeout_s=fields.pop("wake_timeout_s", 2), muse_path="realtime",
                    voice_link=calls.link, voice_call=calls, **fields)
 
 
@@ -521,7 +530,7 @@ def test_the_user_talking_over_muse_stops_its_reply(monkeypatch):
         rig.say()
         await rig.wait_until_or_timeout(lambda: calls.barge_ins > 0, 5)
 
-    events = run(rig, conversation, user)
+    events = run(rig, conversation, user, rest=("thinking",))
     assert calls.opened[0]["half_duplex"] is False
     assert calls.barge_ins == 1
     assert {"robot": "clear_audio"} in events
@@ -753,11 +762,11 @@ def test_ordinary_followup_keeps_the_wake_window_and_call_open(monkeypatch, capl
         call = voice.call
         caplog.clear()
         rig.say()
-        await rig.quiet("listening", "sleeping")
+        await rig.quiet("thinking" if path == "realtime" else "listening")
         observed.append((voice._wake_window, voice._wake_deadline is not None,
                          voice.call is call, call is None or not call.done))
 
-    events = run(rig, conversation, user, rest=("listening", "sleeping"))
+    events = run(rig, conversation, user, rest=("thinking" if path == "realtime" else "listening",))
     assert observed == [(WakeWindow.AWAKE, True, True, True)]
     assert "tts:Good night." not in played(events)
     assert sent_to_muse(events) == (["Tell me a story.", text] if path == "chat" else [])
@@ -793,11 +802,11 @@ def test_unavailable_followup_recovery_preserves_the_request(monkeypatch, caplog
         await rig.quiet("listening")
         caplog.clear()
         rig.say()
-        await rig.quiet("listening")
+        await rig.quiet("thinking" if path == "realtime" else "listening")
         voice = conversation._voice[1]
         observed.append((voice._wake_window, voice.call is not None))
 
-    events = run(rig, conversation, user, rest=("listening",))
+    events = run(rig, conversation, user, rest=("thinking" if path == "realtime" else "listening",))
     assert observed == [(WakeWindow.AWAKE, path == "realtime")]
     assert sent_to_muse(events) == (["Tell me a story.", text] if path == "chat" else [])
     assert not any("handled a device command" in line for line in caplog.messages)
@@ -869,7 +878,7 @@ def test_dismissal_closes_the_call_before_acknowledging_and_uploads_no_more_audi
         await speak_live(rig, wake=True)
         resumed.append(len(calls.frames) - before)
 
-    events = run(rig, conversation, user)
+    events = run(rig, conversation, user, rest=("thinking",))
     assert observed == [(True, 0)]
     assert resumed[0] >= 10
     assert len(calls.opened) == 2
@@ -1117,7 +1126,7 @@ def test_muse_answering_before_reachy_s_endpoint_keeps_the_call_listening_for_th
         await speak_live(rig)
         await rig.wait_until_or_timeout(lambda: transcripts.texts == [], 5)
 
-    events = run(rig, conversation, user)
+    events = run(rig, conversation, user, rest=("thinking",))
     assert calls.loud_after_reply >= 10
     assert sent_to_muse(events) == []
     assert "tts:Yes?" not in played(events)
@@ -1150,6 +1159,43 @@ async def room(rig, seconds):
     for _ in range(round(seconds * 16000 / CHUNK)):
         rig.hardware.samples.put(np.zeros(CHUNK, np.float32))
         await asyncio.sleep(CHUNK / 16000)
+
+
+def test_unconfirmed_sound_crossing_the_deadline_does_not_hang_up_a_reply(monkeypatch, caplog):
+    caplog.set_level("INFO", logger="reachy_muse.conversation")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+
+    async def answer(sdk, emit, script):
+        reply_events(sdk, emit, "r1", REPLY, voiced(7.5))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, StreamingTranscripts("Tell me a story.", "Okay."), calls)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        await room(rig, voice._wake_deadline - time.monotonic() - .3)
+        for _ in range(15):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+        await room(rig, .5)
+        assert voice.call is call
+        assert call.audible
+        assert not call.done
+        await rig.wait_until_or_timeout(lambda: not call.audible, 8)
+        assert voice.call is call
+        assert not call.done
+        assert sum(len(chunk) for chunk in rig.hardware.played) / rig.hardware.output_sample_rate == pytest.approx(7.5, abs=.003)
+
+    events = run(rig, conversation, user)
+    assert calls.barge_ins == 0
+    assert len(calls.opened) == 1
+    assert set(played(events)) == {"muse"}
+    assert sent_to_muse(events) == []
+    assert "Realtime command transcript=arrived words=1 wake_prefix=none outcome=none drop=barge_in" in caplog.messages
+    assert "Reachy's wake window closed after empty recognition and inactivity" not in caplog.messages
 
 
 def test_while_muse_works_past_the_follow_up_window_the_room_stops_reaching_muse_but_the_call_stays(monkeypatch):
