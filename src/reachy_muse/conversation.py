@@ -825,6 +825,7 @@ class VoiceConversation:
         return (not self._muted and now >= self._echo_until
                 and not self._has_output()
                 and (now < self._direction_audio_until
+                     or getattr(self._wake_policy, "verifying", False)
                      or self._wake_deadline is not None and now < self._wake_deadline))
 
     def _attend_wake(self, phrase_end: float | None, *, angle: float | None = None,
@@ -841,7 +842,10 @@ class VoiceConversation:
         else:
             decision = DirectionDecision("unavailable")
         if direction is not None:
-            direction.clear()
+            if phrase_end is not None and decision.reason != "ineligible":
+                direction.discard_through(phrase_end)
+            else:
+                direction.clear()
         yaw = f" yaw={speaker_yaw(decision.angle).head:.1f}" if decision.angle is not None else ""
         log.info("Wake direction decision=%s samples=%d span_ms=%.1f boundary_age_ms=%.1f "
                  "last_age_ms=%.1f mad_deg=%.1f inlier=%.2f%s", decision.reason, decision.samples,
@@ -1131,7 +1135,7 @@ class VoiceConversation:
         recorder = make_recorder()
         recorder_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reachy-recorder")
         last_slow_feed = 0.0
-        async def record_admitted(sample, *, send_to_call=True):
+        async def record_admitted(sample, *, captured_at, send_to_call=True):
             nonlocal last_slow_feed, gap_quiet_samples, turn_open, speech_started_at, speech_bearing
             nonlocal gaze_generation
             # Keep VAD ahead of transcription/TTS work in the shared executor.
@@ -1150,11 +1154,11 @@ class VoiceConversation:
                 heard_over.update(text for text, until in self._audible if until > endpoint_at)
             heard = recorder.take()
             if speech_started_at is None and (recorder.speech_active or heard.ended is not None):
-                speech_started_at = started - len(sample) / self.hardware.sample_rate
+                speech_started_at = captured_at - len(sample) / self.hardware.sample_rate
                 gaze_generation = self._gaze.begin()
             speaker_bearing = None
             if speech_started_at is not None:
-                speech_bearing = self._turn_speaker(speech_started_at, endpoint_at - quiet_s, speech_bearing)
+                speech_bearing = self._turn_speaker(speech_started_at, captured_at - quiet_s, speech_bearing)
             if heard.ended is not None:
                 speaker_bearing, speech_bearing = speech_bearing, None
                 speech_started_at = None
@@ -1239,9 +1243,9 @@ class VoiceConversation:
         def recording_active():
             return recorder.active or (voice_gate is not None and voice_gate.active)
 
-        async def record(sample, *, send_to_call=True):
+        async def record(sample, *, captured_at, send_to_call=True):
             if voice_gate is None:
-                return await record_admitted(sample, send_to_call=send_to_call)
+                return await record_admitted(sample, captured_at=captured_at, send_to_call=send_to_call)
             self.voice_verifier.realtime = self.call is not None
             frame = max(1, self.hardware.sample_rate // 50)
             for offset in range(0, max(1, len(sample)), frame):
@@ -1251,7 +1255,10 @@ class VoiceConversation:
                 for start in range(0, max(1, len(admitted)), frame):
                     if len(admitted):
                         await recorder.drain()
-                    ended = await record_admitted(admitted[start:start + frame], send_to_call=send_to_call)
+                    remaining = max(0, len(sample) - offset - frame) + max(0, len(admitted) - start - frame)
+                    ended = await record_admitted(admitted[start:start + frame],
+                                                  captured_at=captured_at - remaining / self.hardware.sample_rate,
+                                                  send_to_call=send_to_call)
                     if ended is not None:
                         if self.wake_enabled and self.wake_timeout_s == 0:
                             return ended
@@ -1274,11 +1281,11 @@ class VoiceConversation:
             while pre_roll_samples > limit:
                 excess = pre_roll_samples - limit
                 oldest = pre_roll.popleft()
-                if len(oldest) > excess:
-                    pre_roll.appendleft(oldest[excess:])
+                if len(oldest.samples) > excess:
+                    pre_roll.appendleft(replace(oldest, samples=oldest.samples[excess:]))
                     pre_roll_samples -= excess
                 else:
-                    pre_roll_samples -= len(oldest)
+                    pre_roll_samples -= len(oldest.samples)
         wake_resampler = None
         if wake is not None and self.hardware.sample_rate != 16000:
             import av
@@ -1728,7 +1735,7 @@ class VoiceConversation:
                     if wake_required:
                         if wake is None:
                             continue
-                        pre_roll.append(sample.copy())
+                        pre_roll.append(replace(captured, samples=sample.copy()))
                         pre_roll_samples += len(sample)
                         trim_pre_roll(pre_roll_limit)
                         detected, wake_tail = observed_wake if observed_wake is not None else await detects_wake(sample)
@@ -1741,7 +1748,7 @@ class VoiceConversation:
                             import numpy as np
                             self.voice_verifier.realtime = (self.call is not None or
                                                             (self.realtime is not None and self.realtime.usable))
-                            candidate = np.concatenate(tuple(pre_roll))
+                            candidate = np.concatenate([chunk.samples for chunk in pre_roll])
                             if wake_tail:
                                 candidate = candidate[:-wake_tail]
                             candidate = candidate[-int(1.5 * self.hardware.sample_rate):]
@@ -1779,7 +1786,8 @@ class VoiceConversation:
                                      wake_tail / self.hardware.sample_rate)
                         wav = None
                         for captured in pre_roll:
-                            completed = await record(captured, send_to_call=wake_tail is not None)
+                            completed = await record(captured.samples, captured_at=captured.captured_at,
+                                                     send_to_call=wake_tail is not None)
                             while completed is not None:
                                 if wake_tail is not None:
                                     await queue_turn(completed)
@@ -1791,7 +1799,8 @@ class VoiceConversation:
                                         turns_awaiting_transcript.discard(wav.ended)
                                     wav = completed
                                 # Drain any same-buffer speech after an older pre-roll endpoint.
-                                completed = await record(captured[:0], send_to_call=wake_tail is not None)
+                                completed = await record(captured.samples[:0], captured_at=captured.captured_at,
+                                                         send_to_call=wake_tail is not None)
                             if wake_tail is not None and self.wake_timeout_s == 0 and self._wake_deadline is None:
                                 break
                         if recorder.active:
@@ -1804,12 +1813,12 @@ class VoiceConversation:
                         if wake_tail is not None or wav is None:
                             continue
                     else:
-                        wav = await record(sample)
+                        wav = await record(sample, captured_at=captured.captured_at)
                     if wav is None:
                         continue
                 else:
                     active_before = recorder.active
-                    wav = await record(sample)
+                    wav = await record(sample, captured_at=captured.captured_at)
                     if recorder.active != active_before:
                         await self._plan(plan.Recording(active=recorder.active,
                                                         turn_running=turn_task is not None or wav is not None))
@@ -1820,7 +1829,7 @@ class VoiceConversation:
                     if self.wake_enabled and self.wake_timeout_s == 0:
                         break
                     # Retain resampler/VAD state and drain endpoints in this SDK chunk.
-                    wav = await record(sample[:0])
+                    wav = await record(sample[:0], captured_at=captured.captured_at)
         finally:
             capture_stop.set()
             self._gaze.release()

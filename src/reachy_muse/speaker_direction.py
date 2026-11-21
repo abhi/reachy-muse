@@ -117,6 +117,10 @@ class WakeDirection:
     def snapshot(self) -> DirectionSnapshot:
         return DirectionSnapshot(tuple(self._samples), self._clock(), self._empty_reason)
 
+    def discard_through(self, at: float) -> None:
+        while self._samples and self._samples[0][0] <= at:
+            self._samples.popleft()
+
     def bearing_between(self, start: float, end: float) -> float | None:
         angles = [angle for at, angle in self._samples if start <= at <= end]
         return median(angles) if angles else None

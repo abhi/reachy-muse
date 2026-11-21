@@ -202,6 +202,76 @@ def test_lost_transcript_does_not_carry_the_previous_speaker_into_the_next_reque
         'Reachy gaze request outcome=turned faces=2']
 
 
+def test_buffered_greeting_excludes_its_speaker_after_wake_verification(people, caplog, monkeypatch):
+    from reachy_muse.wake_policy import Verification, WakePolicy
+    from test_device_command_turns import service as make_service, never_asked
+    from test_realtime_turns import TimedWake
+
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    verifying = asyncio.Event()
+    reply = voiced(.2)
+    scene.speech = True
+    rig.hardware.read_doa = lambda: DoAReading(scene.doa, scene.speech)
+    monkeypatch.setattr(type(rig.hardware), 'wake_gaze_bearing',
+                        property(lambda self: controller.wake_gaze_bearing), raising=False)
+
+    class DelayedWake(TimedWake):
+        samples = 0
+
+        def feed(self, samples):
+            detected = super().feed(samples)
+            self.samples += len(samples)
+            return detected and self.samples >= 9600
+
+    class Verify:
+        async def verify(self, pcm, phrase):
+            verifying.set()
+            await asyncio.sleep(.9)
+            return Verification('match', 'local')
+
+    async def answer(sdk, emit, script):
+        await rig.wait_until_or_timeout(lambda: any(line.startswith('Reachy gaze request') for line in caplog.messages))
+        reply_events(sdk, emit, 'r1', 'Hello there!', reply)
+
+    calls = ScriptedCalls(answer=answer)
+    service = make_service(rig, never_asked, StreamingTranscripts('Say hi to my friend.'),
+                           wake_detector=DelayedWake(), wake_policy=WakePolicy(Verify()),
+                           wake_timeout_s=5, muse_path='realtime', voice_link=calls.link, voice_call=calls)
+    service.silence_s = .8
+
+    async def user():
+        for _ in range(30):
+            rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
+            await asyncio.sleep(.02)
+        await asyncio.wait_for(verifying.wait(), 2)
+        scene.doa = math.radians(115)
+        for _ in range(35):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(.02)
+        scene.speech = False
+        await room(rig, .9)
+        await rig.wait_until_or_timeout(lambda: controller._person_hold)
+        assert controller.wake_gaze_bearing == pytest.approx(math.pi / 3)
+        assert controller._person_hold
+        assert controller._speaker_look.head == pytest.approx(30)
+        await rig.wait_until_or_timeout(lambda: abs(math.degrees(controller.head_yaw) - 30) < .2)
+        assert math.degrees(controller.head_yaw) == pytest.approx(30, abs=.2)
+        assert math.degrees(robot.body_yaw) == pytest.approx(10, abs=.2)
+        await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events))
+        await rig.wait_until_or_timeout(lambda: not service._voice[1].call.audible)
+        np.testing.assert_array_equal(np.concatenate(rig.hardware.played),
+                                      np.frombuffer(reply, '<i2').astype(np.float32) / 32768)
+
+    events = run(rig, service, user)
+    assert calls.barge_ins == 0
+    assert sent_to_muse(events) == []
+    assert played(events) == ['muse']
+    assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+        'Reachy gaze request outcome=turned faces=2']
+    assert 'Say hi' not in caplog.text and 'Hello there' not in caplog.text
+
+
 @pytest.mark.parametrize('case, text, expected', [
     ('single', 'Say hi to my friend.', 'no_other faces=1'),
     ('empty', 'Greet my guest.', 'no_faces faces=0'),
