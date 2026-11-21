@@ -437,6 +437,37 @@ def test_a_conversation_ending_right_after_an_abort_leaves_nothing_waiting(monke
     assert STRIKES.findall(caplog.text) == ["1", "2", "1"]
 
 
+def test_rejected_call_mode_speech_counts_as_neither_heard_nor_refused(monkeypatch, caplog):
+    """Refused, a call-mode noise too short to accept, refused: the robot dropped the noise itself, so the
+    two refusals stay in a row even after a call command's error window would have closed."""
+    from reachy_muse import companion_client
+    from reachy_muse.companion_server.engines import ScriptedHearing
+    from test_pins import Vad
+
+    monkeypatch.setattr(companion_client, "LATE_ERROR_S", .05)
+    stuck = [True]
+    stalls(monkeypatch, stuck)
+
+    async def scenario():
+        async with companion_hearing(ScriptedHearing(frames_per_partial=1)) as (link, hearing):
+            words = [await heard(hearing)]
+            stuck[0] = False
+            window = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=True)
+            window.feed(SPEECH[:3200])
+            assert window.take().ended is None
+            await asyncio.sleep(.1)
+            window.feed(SILENCE)
+            assert window.take().ended is None
+            window.abort()
+            await asyncio.sleep(.1)
+            stuck[0] = True
+            words.append(await heard(hearing))
+            return words
+
+    assert asyncio.run(scenario()) == ["robot words", "robot words"]
+    assert STRIKES.findall(caplog.text) == ["1", "2"]
+
+
 @pytest.mark.parametrize("commands_only", [False, True])
 @pytest.mark.parametrize("speech_ended", [False, True])
 def test_three_overloaded_streams_rest_hearing_and_retry_after_cooldown(monkeypatch, commands_only, speech_ended):

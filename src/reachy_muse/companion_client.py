@@ -753,7 +753,9 @@ class CompanionHearingTurn:
                     if event.accepted:
                         self._ended.append(_HeardTurn(Endpoint(_wav(bytes(stream.audio)), text),
                                                       self._recorder.last_truncated, end_sample))
-                    stream.abort_command()
+                        stream.abort_command()
+                    else:
+                        stream.close(CloseHow.ABORT)
                 elif event.accepted:
                     stream.finish()
                     self._ended.append(_FinishedTurn(stream, self._recorder.last_truncated,
