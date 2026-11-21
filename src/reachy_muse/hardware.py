@@ -1041,6 +1041,8 @@ class ReachyController:
             frame = self._robot.media.get_frame()
             if not with_pose or frame is None:
                 return frame
+            if background and self._speaker_turn is not None:
+                return None
             from reachy_muse.local_face_tracking import FaceCapture
             captured_at = time.monotonic()
             try:

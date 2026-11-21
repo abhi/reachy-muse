@@ -87,13 +87,15 @@ def people(monkeypatch):
     rig = Rig(monkeypatch)
     robot = FakeRobot()
     scene = SimpleNamespace(faces=[(30, .35), (-25, .12)], camera=True, busy=True, passes=0, doa=math.pi / 3,
-                            age=0.0)
+                            age=0.0, on_frame=None)
     robot.media.camera = SimpleNamespace(K=np.array([[900., 0, 640], [0, 900, 360], [0, 0, 1]]), D=np.zeros(5))
     camera_threads = []
 
     def frame():
         assert controller._camera_lock.locked()
         camera_threads.append(threading.get_ident())
+        if scene.on_frame is not None:
+            scene.on_frame()
         return robot.pose.copy() if scene.camera else None
 
     robot.media.get_frame = frame
@@ -546,6 +548,34 @@ def test_memory_does_not_send_reachy_to_where_the_speaker_stood_earlier(people, 
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
         'Reachy gaze request outcome=turned source=memory faces=1']
     assert seen['greeting'] == (-35, -15)
+
+
+def test_faces_are_not_remembered_from_a_frame_taken_while_the_head_turns(people):
+    from reachy_muse.hardware import SPEAKER_TURN_S
+
+    rig, controller, robot, scene = people
+    scene.faces, scene.busy = [], False
+    turned = {}
+
+    def turn_while_capturing():
+        scene.on_frame = None
+        scene.faces = [(-40, .12)]
+        assert controller.look_at_speaker(math.pi / 3)
+        deadline = time.monotonic() + 1
+        while controller._speaker_turn is None and time.monotonic() < deadline:
+            time.sleep(.002)
+        turned['at'] = time.monotonic()
+
+    controller.set_state('listening')
+    deadline = time.monotonic() + 2
+    while controller.face_snapshot() is None and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert controller.face_snapshot() is not None
+    scene.on_frame = turn_while_capturing
+    time.sleep(SPEAKER_TURN_S + .5)
+    assert 'at' in turned
+    assert [face.captured_at for face in controller.recent_faces(0)
+            if turned['at'] - .05 <= face.captured_at <= turned['at'] + SPEAKER_TURN_S] == []
 
 
 @pytest.mark.parametrize('text', ['Okay, say hi to him.', 'Can you please say hi to my friend?'])
