@@ -159,12 +159,14 @@ With `serve` running, run this command on the Mac:
 reachy-companion enroll-voice
 ```
 
-The companion then takes the next five sentences Reachy hears, each with at least 2 seconds of speech, within 3 minutes.
-Ask ordinary questions, with no one else speaking. Reachy answers them as usual.
-The robot needs no update for this: the companion hears its sentences either way.
-The command reports each sentence it takes or skips.
-Five sentences give at least 10 seconds of speech in ten or more windows of 1 to 1.5 seconds, so the print is steadier than any single request.
-Each sentence must score at least 0.5 against the print the other four make. If one does not, the print does not change. Run the command again with only you speaking.
+Enrolling means talking to Reachy as you normally do, in chat or in a call.
+The companion takes the next five requests Reachy hears, each with at least 2 seconds of speech, within 3 minutes.
+They are ordinary requests, and Muse answers them.
+Say them yourself, and make sure nobody else speaks until the command finishes: a voice heard meanwhile can become part of the print.
+The robot needs no update for this: the companion hears its requests either way.
+The command reports each request it takes or skips.
+Five requests give at least 10 seconds of speech in ten or more windows of 1 to 1.5 seconds, so the print is steadier than any single request.
+Each request must score at least 0.5 against the print the other four make. If one does not, the print does not change. Run the command again, saying every request yourself.
 The companion's log records the five scores. They show how alike your own voice sounds to the model, which helps when you tune the threshold.
 
 Only the Mac user who runs the companion can start an enrollment.

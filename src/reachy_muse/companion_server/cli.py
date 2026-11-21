@@ -61,8 +61,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                                help=f"the score from which a voice counts as the owner's (default {DEFAULT_THRESHOLD}, "
                                     "calibrated for wespeaker_en_voxceleb_resnet34; any other model needs its own)")
 
-    commands.add_parser("enroll-voice", help="learn the owner's voice from the next sentences Reachy hears; "
-                                             "serve must be running with --speaker-model")
+    commands.add_parser("enroll-voice", help="learn your voice from your next five requests to Reachy, which Muse "
+                                             "answers as usual: say them yourself, with nobody else speaking "
+                                             "meanwhile (serve must be running with --speaker-model)")
     commands.add_parser("forget-voice", help="delete the owner's voice print")
 
     library_command = commands.add_parser("motion-library", help="build motion offline, separately from the companion")

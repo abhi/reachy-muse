@@ -28,9 +28,9 @@ ENROLL = {"op": "enroll"}
 FORGET = {"op": "forget"}
 FAILURES = {
     "busy": "Another enrollment is already running. Nothing changed.",
-    "timeout": "Time ran out after {taken} of {of} sentences. Nothing changed.",
-    "mismatch": "Sentence {utterance} does not sound like the others, so nothing changed. "
-                "Run enroll-voice again with only you speaking.",
+    "timeout": "Time ran out after {taken} of {of} requests. Nothing changed.",
+    "mismatch": "Request {utterance} does not sound like the others, so nothing changed. "
+                "Run enroll-voice again, saying every request yourself.",
     "save": "The voice print could not be saved. Nothing changed.",
     "forgotten": "forget-voice ran during the enrollment, so it kept nothing.",
 }
@@ -190,14 +190,15 @@ def _connected(state_dir: Path, request: dict):
 def _described(event: dict, state_dir: Path) -> str:
     kind = event["event"]
     if kind == "listening":
-        return (f"Listening for your voice. Say {event['utterances']} full sentences to Reachy within "
-                f"{event['within_s'] / 60:g} minutes, each with at least {event['speech_s']:g} seconds of speech. "
-                "Only you should speak. Reachy answers them as usual. Press Ctrl-C to stop.")
+        return (f"Listening for your voice. Talk to Reachy as you normally do: make {event['utterances']} requests "
+                f"within {event['within_s'] / 60:g} minutes, each with at least {event['speech_s']:g} seconds of "
+                "speech. Muse answers them as usual. Say them yourself, with nobody else speaking until this "
+                "finishes. Press Ctrl-C to stop.")
     if kind == "taken":
-        return f"Heard sentence {event['taken']} of {event['of']}: {event['voiced_s']:.1f} s of speech."
+        return f"Heard request {event['taken']} of {event['of']}: {event['voiced_s']:.1f} s of speech."
     if kind == "skipped":
-        return f"Skipped a sentence with {event['voiced_s']:.1f} s of speech; each needs {event['speech_s']:g} s."
+        return f"Skipped a request with {event['voiced_s']:.1f} s of speech; each needs {event['speech_s']:g} s."
     if kind == "enrolled":
-        return (f"Enrolled your voice from {event['taken']} sentences, {event['voiced_s']:.1f} s of speech. "
+        return (f"Enrolled your voice from {event['taken']} requests, {event['voiced_s']:.1f} s of speech. "
                 f"The voice print stays on this Mac in {state_dir / PRINT_FILE}.")
     return FAILURES.get(event.get("reason"), "Enrollment failed. Nothing changed.").format(**event)

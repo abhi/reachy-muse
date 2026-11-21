@@ -618,8 +618,9 @@ def test_serve_refuses_a_threshold_outside_cosine_range(threshold, capsys):
 # ---- enrolling and forgetting, as the owner does on the Mac
 
 
-LISTENING = ("Listening for your voice. Say 5 full sentences to Reachy within 3 minutes, each with at least 2 seconds "
-             "of speech. Only you should speak. Reachy answers them as usual. Press Ctrl-C to stop.")
+LISTENING = ("Listening for your voice. Talk to Reachy as you normally do: make 5 requests within 3 minutes, each with "
+             "at least 2 seconds of speech. Muse answers them as usual. Say them yourself, with nobody else speaking "
+             "until this finishes. Press Ctrl-C to stop.")
 NOT_LISTENING = ("No companion is listening for enrollment. Start reachy-companion serve with --speaker-model, "
                  "then try again.")
 
@@ -683,9 +684,9 @@ def test_enroll_voice_takes_five_long_sentences_then_tells_the_owner_from_others
     serve(script, engine, control=private_state)
     assert capsys.readouterr().out.splitlines() == [
         LISTENING,
-        "Skipped a sentence with 1.5 s of speech; each needs 2 s.",
-        *(f"Heard sentence {n} of 5: 2.4 s of speech." for n in range(1, 6)),
-        f"Enrolled your voice from 5 sentences, 12.0 s of speech. The voice print stays on this Mac in "
+        "Skipped a request with 1.5 s of speech; each needs 2 s.",
+        *(f"Heard request {n} of 5: 2.4 s of speech." for n in range(1, 6)),
+        f"Enrolled your voice from 5 requests, 12.0 s of speech. The voice print stays on this Mac in "
         f"{private_state / PRINT_FILE}.",
     ]
     assert VoicePrint.load(private_state / PRINT_FILE) == VoicePrint(MODEL, VOICES[OWNER])
@@ -711,7 +712,7 @@ def test_an_older_robots_sentences_can_enroll_the_owner_and_it_still_gets_nothin
         await nothing_else_arrived(ws)
 
     serve(script, engine, control=private_state)
-    assert capsys.readouterr().out.splitlines()[-1].startswith("Enrolled your voice from 5 sentences, 12.0 s of speech.")
+    assert capsys.readouterr().out.splitlines()[-1].startswith("Enrolled your voice from 5 requests, 12.0 s of speech.")
     assert VoicePrint.load(private_state / PRINT_FILE) == VoicePrint(MODEL, VOICES[OWNER])
 
 
@@ -728,7 +729,7 @@ def test_sentences_that_do_not_sound_alike_change_nothing(private_state, speaker
 
     serve(script, engine, control=private_state)
     assert capsys.readouterr().out.splitlines()[-1] == (
-        "Sentence 3 does not sound like the others, so nothing changed. Run enroll-voice again with only you speaking.")
+        "Request 3 does not sound like the others, so nothing changed. Run enroll-voice again, saying every request yourself.")
     assert VoicePrint.load(private_state / PRINT_FILE).embedding == pytest.approx(VOICES[OTHER], abs=1e-4)
 
 
@@ -765,7 +766,7 @@ def test_an_enrollment_that_runs_out_of_time_changes_nothing(private_state, spea
 
     serve(script, engine, control=private_state)
     assert capsys.readouterr().out.splitlines() == [
-        LISTENING, "Heard sentence 1 of 5: 2.4 s of speech.", "Time ran out after 1 of 5 sentences. Nothing changed."]
+        LISTENING, "Heard request 1 of 5: 2.4 s of speech.", "Time ran out after 1 of 5 requests. Nothing changed."]
     assert not (private_state / PRINT_FILE).exists()
 
 
@@ -842,7 +843,7 @@ def test_forget_voice_stops_an_enrollment_that_is_running_and_it_keeps_nothing(p
 
     serve(script, engine, control=private_state)
     said = capsys.readouterr().out.splitlines()
-    assert said[:2] == [LISTENING, "Heard sentence 1 of 5: 2.4 s of speech."]
+    assert said[:2] == [LISTENING, "Heard request 1 of 5: 2.4 s of speech."]
     assert set(said[2:]) == {
         "forget-voice ran during the enrollment, so it kept nothing.",
         "Stopped the enrollment that was running. " + (
