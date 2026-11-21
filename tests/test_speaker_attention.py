@@ -358,3 +358,48 @@ def test_still_mode_keeps_wake_state_and_refuses_direction_motion(caplog):
     controller.set_state("listening", expression="happy")
     assert (controller.motion_enabled, controller._state, controller._speaker_pending) == (False, "listening", None)
     assert [record.message for record in caplog.records] == ["Speaker gaze angle=1.047 decision=still"]
+
+
+@pytest.mark.parametrize('source', ['generated', 'clip'])
+def test_person_turn_fades_motion_holds_against_commands_and_releases(monkeypatch, source):
+    ignored = _Command('reachy.move', {'yaw': 0, 'duration': .2, 'hold': 0}, 1010)
+
+    def play(controller):
+        controller.set_state('thinking')
+        if source == 'generated':
+            controller.play_motion(generated(8, yaw=12), 25, during={'thinking'}, loop=True)
+        else:
+            from reachy_muse.hardware import _Clip, _Frames
+            from reachy_muse.motion.layers import ClipTimeline
+            controller._clip = _Clip(_Frames(np.asarray(generated(8, yaw=12)), 25, False, pose_factory),
+                                     ClipTimeline(1001.5, 8), 1)
+
+    def look(controller):
+        assert controller.look_at_person(math.radians(-30), math.radians(6)) is True
+
+    controller, robot, clock = simulate(monkeypatch, {
+        2: play, 25: look, 90: lambda c: c._commands.put_nowait(ignored),
+        130: lambda c: c.release_person_gaze(),
+    }, ticks=230)
+    turned = pose_at(controller, robot, clock.times[100])
+    assert (turned['yaw'], turned['body_yaw'], turned['pitch']) == pytest.approx((-30, -10, 6), abs=.2)
+    assert ignored.result == {'ok': False, 'error': 'Person gaze is held until the next request'}
+    assert ignored.done.is_set()
+    released = pose_at(controller, robot, clock.now)
+    assert (released['yaw'], released['body_yaw']) == pytest.approx((0, 0), abs=.1)
+    assert not controller._person_hold
+    assert controller._generated is controller._clip is None
+    yaws = [controller._pose_parameters(frame[1])['yaw'] for frame in robot.frames]
+    assert max(abs(b - a) for a, b in zip(yaws, yaws[1:])) < 4
+    assert len(robot.writers) == 1
+
+
+def test_sleep_releases_person_gaze(monkeypatch):
+    controller, robot, clock = simulate(monkeypatch, {
+        5: lambda c: c.look_at_person(math.radians(80), math.radians(-80)),
+        90: lambda c: c.set_state('sleeping'),
+    }, ticks=200)
+    turned = pose_at(controller, robot, clock.times[70])
+    assert (turned['yaw'], turned['body_yaw'], turned['pitch']) == pytest.approx((35, 15, -20), abs=.1)
+    assert not controller._person_hold
+    assert pose_at(controller, robot, clock.now)['yaw'] == pytest.approx(0, abs=.1)

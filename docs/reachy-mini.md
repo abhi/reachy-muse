@@ -480,6 +480,26 @@ face tracking can take over; without a face, Reachy holds the gaze. Sleep and
 explicit motion commands release it. With `--no-motion`, Reachy neither samples nor turns.
 Direction logs contain only angles and decisions.
 
+With face following enabled, requests such as "say hi to my friend", "greet
+someone else" or "look at the other person" also turn Reachy toward another
+visible face while Muse answers normally. "Look at me" still enables face
+following. Negated requests and quoted examples do not trigger this turn.
+Reachy latches the median speech bearing at the request endpoint, or uses the
+wake gaze from the current window if no request bearing is available. It excludes
+faces within 20 degrees of that bearing, then selects the remaining face that
+requires the smallest head turn. Without a speaker bearing or another face, it
+stays put.
+
+Face snapshots contain only geometry, confidence and capture time, transformed
+through the head pose captured with the image. They survive vision pauses.
+The request reuses a snapshot up to two seconds old; otherwise it asks the same
+camera and detector worker for one fresh pass, waiting at most 300 ms. This pass
+may bypass the vision pause. It adds no continuous detection during listening.
+The person turn fades competing clips and thinking motion, then re-centers the
+follower on the selected direction. It holds through the reply until the next
+request, sleep, stop or window closure. Explicit motion commands return busy
+while this gaze is held. Logs contain only outcomes and face counts.
+
 With `--wave-wake`, a wave also turns Reachy toward the person before face
 tracking takes over. The detected person's position takes priority over recent
 DoA samples, which provide a fallback even without an acoustic wake detector.

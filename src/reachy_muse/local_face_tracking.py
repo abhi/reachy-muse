@@ -159,17 +159,20 @@ class _YuNetDetector:
 
 
 class _FaceTracker:
-    def __init__(self, sample_period: float):
+    def __init__(self, sample_period: float, *, hold_center: bool = False):
         self._period = sample_period
         self.loss_seconds = FACE_LOSS_SECONDS
         self._face: _Face | None = None
         self._target: FaceTarget | None = None
+        self._hold_center = hold_center
 
     def update(self, faces: Sequence[_Face], angles: tuple[float, float],
                now: float) -> FaceTarget | None:
         faces = [face for face in faces if face.score >= 0.7 and face.area > 0
                  and all(math.isfinite(value) for value in (*face.box, face.yaw_error,
                                                             face.pitch_error, face.score))]
+        if self._hold_center:
+            faces = [face for face in faces if abs(angles[0] + face.yaw_error) <= YAW_LIMIT]
         if self._target is not None and now - self._target.observed_at >= self.loss_seconds:
             self._face = self._target = None
         chosen = None
@@ -181,7 +184,8 @@ class _FaceTracker:
             if nearby:
                 chosen = min(nearby, key=lambda face: math.dist(face.center, (cx, cy)))
         elif faces:
-            chosen = max(faces, key=lambda face: face.area)
+            chosen = (min(faces, key=lambda face: abs(angles[0] + face.yaw_error)) if self._hold_center
+                      else max(faces, key=lambda face: face.area))
         if chosen is None:
             return self._target
         yaw, pitch = angles
@@ -241,6 +245,7 @@ class FaceFollower:
         self._target: FaceTarget | None = None
         self._snapshot: FaceSnapshot | None = None
         self._request: _FaceRequest | None = None
+        self._hold_center = False
         self.last_seen_at: float | None = None
         self._failure: Exception | None = None
         self._thread: threading.Thread | None = None
@@ -284,6 +289,13 @@ class FaceFollower:
     def snapshot(self) -> FaceSnapshot | None:
         with self._condition:
             return self._snapshot
+
+    def hold_center(self, active: bool) -> None:
+        with self._condition:
+            self._hold_center = active
+            self._generation += 1
+            self._target = None
+            self._condition.notify_all()
 
     def refresh(self, timeout: float = .3) -> FaceSnapshot | None:
         with self._condition:
@@ -334,7 +346,7 @@ class FaceFollower:
                         request.done.set()
                         continue
                 if generation != current_generation:
-                    tracker = _FaceTracker(self._period)
+                    tracker = _FaceTracker(self._period, hold_center=self._hold_center)
                     generation = current_generation
                 started = self._clock()
                 scale = self._budget.delay() if self._budget is not None else 1.0
@@ -345,6 +357,8 @@ class FaceFollower:
                     continue
                 try:
                     capture = self._capture(background=request is None)
+                    if request is not None and self._clock() >= request.deadline:
+                        capture = None
                     if (request is None and self._budget is not None
                             and not math.isfinite(self._budget.delay())):
                         capture = None

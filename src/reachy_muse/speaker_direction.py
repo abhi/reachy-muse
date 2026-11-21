@@ -117,6 +117,10 @@ class WakeDirection:
     def snapshot(self) -> DirectionSnapshot:
         return DirectionSnapshot(tuple(self._samples), self._clock(), self._empty_reason)
 
+    def bearing_between(self, start: float, end: float) -> float | None:
+        angles = [angle for at, angle in self._samples if start <= at <= end]
+        return median(angles) if angles else None
+
     def estimate(self, phrase_end: float) -> float | None:
         """Median of the last speech segment within 1.5 seconds of the keyword end."""
         return self.snapshot().decide(phrase_end).angle
