@@ -2531,6 +2531,11 @@ class VoiceConversation:
         call = self.call
         if call is None or not call.pending:
             return False
+        if call.finish_silent_answers():
+            if not call.pending and not self._has_output():
+                self._moments.stop_cue()
+                await self._muse_quiet()
+            return False
         speaking = self._playback.user_speaking and quiet_s < CALL_RECOVERY_PAUSE_S
         expired = (self._wake_deadline is not None
                    and time.monotonic() >= self._wake_deadline + CALL_PENDING_EXTENSION_S)

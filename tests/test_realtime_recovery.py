@@ -279,6 +279,68 @@ def test_an_eventless_pending_turn_recovers_at_its_limit(monkeypatch, caplog, wo
     assert stall_cues(caplog) == ([] if working else ["Realtime turn ordinal=1 cue=still_waiting"])
 
 
+@pytest.mark.parametrize("working", [True, False], ids=["Working around it", "no Working"])
+def test_a_request_muse_answers_by_acting_is_answered_without_a_lost_line(monkeypatch, caplog, working):
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+
+    async def answer(sdk, emit, script):
+        if working:
+            emit(sdk.Working(True))
+        emit(sdk.ResponseStarted("nod"))
+        emit(sdk.ResponseDone("nod", "completed"))
+        if working:
+            emit(sdk.Working(False))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, StreamingTranscripts("Nod your head."), calls, wake_timeout_s=10)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        await wait_for(rig, lambda: bool(turn_outcomes(caplog)) or bool(recoveries(caplog)), 17)
+
+    events = run(rig, conversation, user, rest=("listening",), timeout=30)
+    assert [(row["ordinal"], row["outcome"], row["voice_to_reply_ms"]) for row in turn_outcomes(caplog)] == [
+        ("1", "silent", "none")]
+    assert 1000 <= int(turn_outcomes(caplog)[0]["last_event_age_ms"]) < 1300
+    assert recoveries(caplog) == []
+    assert stall_cues(caplog) == []
+    assert played(events) == []
+    assert rig.states()[-2:] == ["thinking", "listening"]
+    assert len(calls.opened) == 1
+
+
+@pytest.mark.parametrize("working_first", [True, False], ids=["Working first", "Working just after"])
+def test_a_hung_tool_call_stays_pending_until_its_work_goes_stale(monkeypatch, caplog, working_first):
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+
+    async def answer(sdk, emit, script):
+        if working_first:
+            emit(sdk.Working(True))
+        emit(sdk.ResponseStarted("tool-call"))
+        emit(sdk.ResponseDone("tool-call", "completed"))
+        if not working_first:
+            await asyncio.sleep(.3)
+            emit(sdk.Working(True))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, StreamingTranscripts("Book a table for two."), calls, wake_timeout_s=10)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await wait_for(rig, lambda: len(calls.opened) == 2, 33)
+        assert 30 <= time.monotonic() - call.last_event_at < 31
+        await wait_for(rig, lambda: LOST in played(rig.recording.events))
+
+    events = run(rig, conversation, user, rest=("listening", "idle"), timeout=45)
+    assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=working_stale"]
+    assert [row["outcome"] for row in turn_outcomes(caplog)] == ["recovered"]
+    assert stall_cues(caplog) == []
+    assert played(events) == [LOST]
+
+
 def test_second_recovery_in_one_wake_sends_only_the_next_request_by_chat(monkeypatch, caplog):
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
@@ -367,7 +429,7 @@ def test_reply_diagnostics_use_each_turns_last_voiced_sample(monkeypatch, caplog
     assert [line for line in caplog.messages if line.startswith("Realtime call_ready ")] == [
         "Realtime call_ready elapsed_ms=0 link=new queued_feed_frames=0"]
     assert [line for line in caplog.messages if line.startswith("Realtime call_summary ")] == [
-        "Realtime call_summary duration_ms=2125 turns=2 answered=2 unanswered=0 recovered=0 "
+        "Realtime call_summary duration_ms=2125 turns=2 answered=2 silent=0 unanswered=0 recovered=0 "
         "responses=1 audio_bytes=14400 feed_sent=49 feed_evictions=0 max_queue_age_ms=0"]
     assert stall_cues(caplog) == []
     assert set(played(events)) == {"muse"}

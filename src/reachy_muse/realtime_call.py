@@ -53,6 +53,8 @@ WAITING_CUE_S = 4.0
 NO_EVENT_S = 15.0
 WORKING_STALE_S = 30.0
 RESPONSE_AUDIO_S = 8.0
+# Working can come on just after a tool call's silent response, so a silent answer must stay quiet this long.
+QUIET_SETTLE_S = 1.0
 
 
 class CallInput:
@@ -518,6 +520,7 @@ class _Response:
     started_at: float
     audio_bytes: int = 0
     done: bool = False
+    completed: bool = False
 
 
 class RealtimeCall:
@@ -539,7 +542,7 @@ class RealtimeCall:
         self.working = False
         self.pending: list[PendingTurn] = []
         self.turns = 0
-        self.outcomes = {"answered": 0, "unanswered": 0, "recovered": 0}
+        self.outcomes = {"answered": 0, "silent": 0, "unanswered": 0, "recovered": 0}
         self.latest_response: Optional[str] = None
         self.muse_moved = False
         self.reason: Optional[str] = None
@@ -549,6 +552,7 @@ class RealtimeCall:
         self.ready_at: Optional[float] = None
         self.link_reused = False
         self.last_event_at: Optional[float] = None
+        self._quiet_since: Optional[float] = None
         self._responses: dict[Optional[str], _Response] = {}
         self._response_count = 0
         self._audio_bytes = 0
@@ -564,6 +568,9 @@ class RealtimeCall:
         if replied_at is not None and replied_at >= speech_end_at:
             self._outcome(turn, "answered", replied_at)
             return False
+        if self._answered_silently(turn, time.monotonic()):
+            self._outcome(turn, "silent")
+            return False
         if self.done:
             self._outcome(turn, "unanswered")
             return False
@@ -574,6 +581,21 @@ class RealtimeCall:
         pending, self.pending = self.pending, []
         for turn in pending:
             self._outcome(turn, outcome, replied_at)
+
+    def finish_silent_answers(self) -> bool:
+        """Finish the pending turns Muse answered without speaking, such as by moving Reachy; whether any were."""
+        now = time.monotonic()
+        answered = [turn for turn in self.pending if self._answered_silently(turn, now)]
+        self.pending = [turn for turn in self.pending if turn not in answered]
+        for turn in answered:
+            self._outcome(turn, "silent")
+        return bool(answered)
+
+    def _answered_silently(self, turn: PendingTurn, now: float) -> bool:
+        """A response begun after the turn completed without audio, and Muse has been quiet since."""
+        return (self._quiet_since is not None and now - self._quiet_since >= QUIET_SETTLE_S
+                and any(response.completed and not response.audio_bytes and response.started_at >= turn.speech_end_at
+                        for response in self._responses.values()))
 
     def _outcome(self, turn: PendingTurn, outcome: str, replied_at: Optional[float] = None) -> None:
         self.outcomes[outcome] += 1
@@ -599,7 +621,8 @@ class RealtimeCall:
                 and now - latest.started_at >= RESPONSE_AUDIO_S
                 and any(latest.started_at >= turn.speech_end_at for turn in self.pending)):
             return False
-        return self.working or bool(opened)
+        settling = self._quiet_since is not None and now - self._quiet_since < QUIET_SETTLE_S
+        return self.working or bool(opened) or settling
 
     def check_pending(self, *, paused: bool, window_expired: bool) -> tuple[list[int], Optional[str]]:
         """Advance the pending turns' clocks: the turns now due a waiting cue, and why to recover the call, if so.
@@ -668,6 +691,7 @@ class RealtimeCall:
             response = self._responses.get(event.response_id)
             if response is not None and not response.done:
                 response.done = True
+                response.completed = event.status in (None, "completed")
                 status = event.status if event.status in ("completed", "cancelled", "failed", "incomplete") else "unknown"
                 log.info("Realtime event=ResponseDone ordinal=%d status=%s audio_bytes=%d",
                          response.ordinal, status, response.audio_bytes)
@@ -689,6 +713,11 @@ class RealtimeCall:
         elif kind == "ResponseStarted":
             self.latest_response = event.response_id
             self.muse_moved = False
+        if kind in ("Working", "ResponseStarted", "ResponseDone"):
+            if self.working or any(not response.done for response in self._responses.values()):
+                self._quiet_since = None
+            elif self._quiet_since is None:
+                self._quiet_since = self.last_event_at
         try:
             if kind == "AudioChunk":
                 self.motion.audio(event.response_id, event.offset, event.pcm)
@@ -743,10 +772,11 @@ class RealtimeCall:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             self.finish_pending("unanswered")
-            log.info("Realtime call_summary duration_ms=%d turns=%d answered=%d unanswered=%d recovered=%d "
+            log.info("Realtime call_summary duration_ms=%d turns=%d answered=%d silent=%d unanswered=%d recovered=%d "
                      "responses=%d audio_bytes=%d feed_sent=%d feed_evictions=%d max_queue_age_ms=%d",
                      round((time.monotonic() - self.opened_at) * 1000), self.turns,
-                     self.outcomes["answered"], self.outcomes["unanswered"], self.outcomes["recovered"],
+                     self.outcomes["answered"], self.outcomes["silent"], self.outcomes["unanswered"],
+                     self.outcomes["recovered"],
                      self._response_count, self._audio_bytes, self.feed.sent, self.feed.evictions,
                      round(self.feed.max_queue_age_s * 1000))
 
