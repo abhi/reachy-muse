@@ -984,13 +984,37 @@ class ReachyController:
         return (self._failure is None and still_since is not None
                 and time.monotonic() - still_since >= CAMERA_STILL_S)
 
-    def _read_camera_frame(self, *, background=True):
+    def _read_camera_frame(self, *, background=True, with_pose=False):
         """All local vision consumers share this reader; no frame cache survives it."""
         with self._camera_lock:
             if (self._robot is None or self._stop.is_set()
                     or background and not math.isfinite(self.vision_budget.delay())):
                 return None
-            return self._robot.media.get_frame()
+            frame = self._robot.media.get_frame()
+            if not with_pose or frame is None:
+                return frame
+            from reachy_muse.local_face_tracking import FaceCapture
+            captured_at = time.monotonic()
+            try:
+                pose = self._robot.get_current_head_pose().copy()
+            except AssertionError:
+                pose = self._last_pose.copy()
+            coordinates = self._pose_parameters(pose)
+            look = self._speaker_look
+            origin = look.head if look is not None else 0.0
+            angles = (math.radians(coordinates["yaw"] - origin), math.radians(coordinates["pitch"]))
+            return FaceCapture(frame, angles, pose[:3, :3], captured_at)
+
+    def _capture_faces(self, *, background=True):
+        return self._read_camera_frame(background=background, with_pose=True)
+
+    def face_snapshot(self):
+        follower = self._face_follower
+        return follower.snapshot() if follower is not None else None
+
+    def refresh_faces(self, timeout: float = .3):
+        follower = self._face_follower
+        return follower.refresh(timeout) if follower is not None else None
 
     def _wave_still(self) -> bool:
         return (not self._stop.is_set()
@@ -1129,6 +1153,7 @@ class ReachyController:
             camera_matrix=self._robot.media.camera.K,
             distortion=self._robot.media.camera.D,
             budget=self.vision_budget,
+            capture_frame=self._capture_faces,
         )
         self._face_follower.start()
         self._face_failure_logged = False
