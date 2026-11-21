@@ -142,6 +142,32 @@ _ELSEWHERE = frozenset((
     "tv", "television", "music", "song", "songs", "playlist", "spotify", "radio", "podcast", "video", "movie",
     "light", "lights", "lamp", "thermostat", "heater", "fan", "alarm", "timer", "phone", "laptop", "computer",
     "app", "zoom", "iphone", "car", "door", "kitchen", "bedroom", "baby", "kids", "dog", "cat"))
+# A photo's subject ends at these words: what follows is a condition, a time, a recipient or another request.
+_PHOTO_STOP = r"(?:and|then|when|whenever|if|later|tomorrow|tonight|every|after|before|until|once|while|to|for)"
+_PHOTO_WORD = rf"(?!{_PHOTO_STOP}\b)[a-z0-9']+"
+_ONE_PHOTO = (r"(?:a|an|one|another|a quick|a new) (?:photo|picture|pic|snapshot|selfie)"
+              rf"(?: of {_PHOTO_WORD}(?: {_PHOTO_WORD}){{0,4}})?")
+_PHOTO_QUESTION = (r"(?:tell me|describe|what|what's|whats|who|who's|which|how|how's|is|are|does|do"
+                   r"|can you|could you|read|identify|explain|count|check|guess)\b.*")
+_IN_VIEW = (r"(?:table|desk|counter|shelf|floor|wall|window|screen|whiteboard|board|plate|bowl|box|bag|hand|hands"
+            r"|book|page|room|kitchen|picture|photo|fridge)")
+# Narrower politeness than device commands: "you can take a photo later" describes rather than asks.
+_PHOTO = re.compile(
+    rf"(?:{_LEAD} )*(?:(?:please|(?:can|could|would|will) you(?: please)?|i (?:want|need) you to"
+    r"|i'd like you to|i would like you to|go ahead and) )?(?:"
+    rf"(?:(?:take|snap|grab) {_ONE_PHOTO}|send muse {_ONE_PHOTO}|send {_ONE_PHOTO} to muse)"
+    rf"(?: (?:and|then|and then) (?P<question>{_PHOTO_QUESTION}))?"
+    r"|what (?:do|can) you see(?: (?:here|there|in front of you"
+    rf"|(?:on|in|under|behind|near|next to|over) (?:the|my|this|that|your) {_IN_VIEW}))?"
+    r"|what are you seeing|what(?:'s| is) in front of you|what am i (?:holding|showing you|wearing|pointing at)"
+    r"|what(?:'s| is) (?:this|that) (?:i'm|i am) holding|(?:can|do) you see (?:this|that|it|what i'm holding"
+    r"|what i am holding)|(?:tell me|describe) what you (?:can )?see"
+    r"|(?:look|have a look|take a look) at (?:this|that|it) and (?P<look>(?:tell me|describe|read|identify)\b.*)"
+    r")(?: (?:please|now|right now|for me|thanks|thank you|reachy|muse))*")
+# A question after the photo may not send, keep or schedule it, or take the request back.
+_NOT_FOR_A_PHOTO = frozenset((
+    "send", "sent", "upload", "share", "post", "save", "email", "text", "message", "store", "keep", "delete",
+    "later", "tomorrow", "tonight", "every", "don't", "dont", "never"))
 
 
 def _words(text: str) -> list[str]:
@@ -231,8 +257,19 @@ def _greets_someone_here(greeted: str) -> bool:
     return words[0] != "the" or (len(words) == 2 and words[1] in _PEOPLE)
 
 
+def photo_requested(text: str) -> bool:
+    """A spoken request for one photo now, or to say what Reachy sees. It is never a device command.
+
+    The request must open the utterance, so negated, quoted, reported and conditional forms never match.
+    """
+    if _QUOTED.search(text):
+        return False
+    match = _PHOTO.fullmatch(_spoken(text))
+    return match is not None and _NOT_FOR_A_PHOTO.isdisjoint((match["question"] or match["look"] or "").split())
+
+
 def worth_asking(text: str, asked: FrozenSet[DeviceCommand]) -> bool:
-    if gaze_requested(text):
+    if gaze_requested(text) or photo_requested(text):
         return False
     words = _words(text)
     if not words or len(words) > MODEL_MAX_WORDS or words[0] in _QUESTION_OPENERS:
