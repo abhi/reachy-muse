@@ -299,6 +299,35 @@ def test_the_owners_label_never_stands_for_a_later_request(people, caplog, asked
     assert_allowed(rig.session.results, caplog)
 
 
+def test_muses_own_voice_heard_back_never_stands_for_the_user(people, caplog):
+    """While Muse's reply plays, its echo reaches the microphone and the companion labels it someone else.
+    Reachy never admits that echo as a request, so the owner's request is still the one Muse hears about."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    rig.hardware.echo_cancelled_input = True
+    fake = companion()
+
+    async def answer(sdk, emit, calls):
+        await labeled(rig, caplog, SpeakerLabel.OWNER)
+        reply_events(sdk, emit, "r1", REPLY, voiced(2.5))
+
+    async def user(voice):
+        await say_live(rig, wake=True)
+        await until(rig, lambda: voice.call is not None and voice.call.audible)
+        fake.partials, fake.speaker = (REPLY,), SpeakerLabel.OTHER
+        await say_live(rig, voiced_s=.6)
+        await labeled(rig, caplog, SpeakerLabel.OTHER, 2)
+        await heard(rig, caplog, 2)
+        await rig.session.invoke("reachy.people")
+
+    calls = ScriptedCalls(answer=answer)
+    converse(rig, calls, fake, user)
+    assert [result["payload"]["speaker"] for result in rig.session.results] == ["owner"]
+    assert logged(caplog, "Realtime command ")[1].endswith(" drop=barge_in")
+    assert calls.barge_ins == 0
+    assert_allowed(rig.session.results, caplog)
+
+
 # ---- reachy.look_at
 
 
