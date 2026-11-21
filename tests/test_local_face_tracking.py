@@ -109,7 +109,7 @@ def captures(read_frame, clock=time.monotonic):
     """A camera owner's captures of ``read_frame`` with the head level and facing forward."""
     def capture(*, background=True):
         frame = read_frame()
-        return FaceCapture(frame, (0.0, 0.0), LEVEL, clock()) if frame is not None else None
+        return FaceCapture(frame, (0.0, 0.0), LEVEL, clock(), 0.0) if frame is not None else None
     return capture
 
 
@@ -358,7 +358,7 @@ def test_all_faces_keep_capture_pose_and_time_while_budget_pauses(monkeypatch):
     clock = [100.0]
     robot = FakeRobot()
     robot.pose = pose_factory(yaw=30, pitch=10, roll=20)
-    robot.media.camera = SimpleNamespace(K=np.eye(3), D=np.zeros(5))
+    robot.media.camera = SimpleNamespace(K=np.array([[900., 0, 640], [0, 900, 360], [0, 0, 1]]), D=np.zeros(5))
     paused = [False]
     budget = SimpleNamespace(delay=lambda: math.inf if paused[0] else 1.0)
     captures, calls = [], []
@@ -395,6 +395,9 @@ def test_all_faces_keep_capture_pose_and_time_while_budget_pauses(monkeypatch):
         assert (math.degrees(first.yaw), math.degrees(first.pitch)) == pytest.approx((30, 10))
         assert (math.degrees(second.yaw), math.degrees(second.pitch)) == pytest.approx((1.460177, 23.468076), abs=.00001)
         assert (first.box, first.score, first.captured_at) == ((.4, .3, .2, .3), .95, 100.0)
+        assert math.degrees(snapshot.heading) == pytest.approx(30)
+        assert math.degrees(snapshot.half_view) == pytest.approx(35.417, abs=.001)
+        assert snapshot.covers(math.radians(64)) and not snapshot.covers(math.radians(-6))
         clock[0] = 103.0
         wait_for(lambda: follower.target() is None)
         assert controller.face_snapshot() == snapshot

@@ -84,7 +84,7 @@ def people(monkeypatch):
     robot = FakeRobot()
     scene = SimpleNamespace(faces=[(30, .35), (-25, .12)], camera=True, busy=True, passes=0, doa=math.pi / 3,
                             age=0.0)
-    robot.media.camera = SimpleNamespace(K=np.eye(3), D=np.zeros(5))
+    robot.media.camera = SimpleNamespace(K=np.array([[900., 0, 640], [0, 900, 360], [0, 0, 1]]), D=np.zeros(5))
     camera_threads = []
 
     def frame():
@@ -505,6 +505,43 @@ def test_a_friend_seen_recently_but_out_of_view_is_remembered(people, caplog, se
     assert scene.passes == 2
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
         'Reachy gaze request outcome=' + expected]
+
+
+def test_memory_does_not_send_reachy_to_where_the_speaker_stood_earlier(people, caplog):
+    """Ten seconds ago Reachy saw the user at +5 and the friend at -40. The user now speaks from +30."""
+    from test_device_command_turns import service as make_service, never_asked
+
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    scene.faces, scene.age = [(5, .35), (-40, .12)], 10
+    assert len(controller.refresh_faces().faces) == 2
+    scene.faces, scene.age = [(30, .35)], 0.0
+    calls = ScriptedCalls(reply='Hello!', reply_s=.1)
+    service = make_service(rig, never_asked, StreamingTranscripts('Say hi to my friend.'),
+                           wake_detector=DelayedWake(), wake_timeout_s=5, muse_path='realtime',
+                           voice_link=calls.link, voice_call=calls)
+    seen = {}
+
+    def facing():
+        return round(math.degrees(controller.head_yaw)), round(math.degrees(robot.body_yaw))
+
+    async def user():
+        for _ in range(30):
+            rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
+            await asyncio.sleep(.02)
+        await rig.wait_until_or_timeout(lambda: facing() == (30, 10))
+        seen['woken'] = facing()
+        await say_live(rig)
+        await rig.wait_until_or_timeout(lambda: any(line.startswith('Reachy gaze request') for line in caplog.messages))
+        await asyncio.sleep(1.2)
+        seen['greeting'] = facing()
+
+    events = run(rig, service, user)
+    assert set(played(events)) == {'muse'}
+    assert seen['woken'] == (30, 10)
+    assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+        'Reachy gaze request outcome=turned source=memory faces=1']
+    assert seen['greeting'] == (-35, -15)
 
 
 @pytest.mark.parametrize('text', ['Okay, say hi to him.', 'Can you please say hi to my friend?'])

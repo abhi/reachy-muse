@@ -1047,7 +1047,9 @@ class ReachyController:
             look = self._speaker_look
             origin = look.head if look is not None else 0.0
             angles = (math.radians(coordinates["yaw"] - origin), math.radians(coordinates["pitch"]))
-            return FaceCapture(frame, angles, pose[:3, :3], captured_at)
+            matrix = self._robot.media.camera.K
+            # The principal point over the focal length is half the horizontal view.
+            return FaceCapture(frame, angles, pose[:3, :3], captured_at, math.atan2(matrix[0][2], matrix[0][0]))
 
     def _capture_faces(self, *, background=True):
         return self._read_camera_frame(background=background, with_pose=True)

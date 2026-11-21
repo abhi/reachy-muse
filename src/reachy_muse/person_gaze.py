@@ -45,7 +45,10 @@ class PersonGaze:
         return True
 
     async def request(self, text: str | None, speaker_bearing: float | None, generation: int) -> None:
-        """Face the person who is not speaking, preferring faces in view to faces seen recently."""
+        """Face the person who is not speaking, preferring faces in view to faces seen recently.
+
+        A remembered bearing that the current view covered is dropped: the camera just looked there.
+        """
         current = self.admit(generation)
         if not text or not text.strip():
             self._log("no_transcript")
@@ -71,7 +74,10 @@ class PersonGaze:
         speaker = math.pi / 2 - speaker_bearing
         others = _away_from(speaker, faces)
         if not others:
-            remembered = _away_from(speaker, self.hardware.recent_faces(time.monotonic() - _REMEMBERED_S))
+            remembered = self.hardware.recent_faces(time.monotonic() - _REMEMBERED_S)
+            if view is not None:
+                remembered = [face for face in remembered if not view.covers(face.yaw)]
+            remembered = _away_from(speaker, remembered)
             if remembered:
                 others, source = remembered, "memory"
         if not others:

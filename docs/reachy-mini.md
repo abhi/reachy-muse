@@ -501,8 +501,9 @@ camera and detector worker for one fresh pass, waiting at most 300 ms. This pass
 may bypass the vision pause. It adds no continuous detection during listening.
 After Reachy turns toward the speaker, that view may show only the speaker. When
 it shows no other face, Reachy uses the world bearings of faces seen in the last
-30 seconds, kept in a list of the last 256 detections without identity. Faces in
-view take priority over remembered ones.
+30 seconds, kept in a list of the last 256 detections without identity. It skips
+remembered bearings inside the horizontal field of view the camera just covered,
+since it saw no one else there. Faces in view take priority over remembered ones.
 The person turn fades competing clips and thinking motion, then re-centers the
 follower on the selected direction. It holds through the reply. The next request,
 including a stop command, or the end of the listening window releases it, and
