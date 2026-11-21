@@ -715,6 +715,33 @@ def test_retry_clock_pauses_for_speech_and_recovery_waits_for_a_seven_tenths_pau
     assert sent_to_muse(events) == []
 
 
+def test_recovery_waits_seven_tenths_of_a_second_after_a_turn_whose_processing_lagged(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(reply=None)
+    conversation = realtime_service(rig, StreamingTranscripts("Please find a table.", "Are you there?"), calls,
+                                    wake_timeout_s=30)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        first = call.pending[0].endpoint_at
+        await wait_for(rig, lambda: time.monotonic() >= first + 14.8, 15)
+        for _ in range(25):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+        await asyncio.sleep(.15)  # the microphone's next audio arrives late, as when Reachy's processing lags
+        await room(rig, .3)
+        stopped = call.pending[-1].speech_end_at
+        await wait_for(rig, lambda: len(calls.opened) == 2, 2)
+        assert .7 <= time.monotonic() - stopped < .8
+        await wait_for(rig, lambda: LOST in played(rig.recording.events))
+
+    events = run(rig, conversation, user, rest=("listening", "idle"), timeout=30)
+    assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=no_events"]
+    assert played(events) == [LOST]
+
+
 def test_reply_arriving_during_the_waiting_gesture_cancels_recovery(monkeypatch, caplog):
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
