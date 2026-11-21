@@ -41,13 +41,14 @@ class PersonGaze:
         return True
 
     async def request(self, text: str | None, speaker_bearing: float | None, generation: int) -> None:
-        if not self.admit(generation):
-            self._log("busy", 0)
-            return
+        current = self.admit(generation)
         if not text or not text.strip():
             self._log("no_transcript", 0)
             return
         if not gaze_requested(text):
+            return
+        if not current:
+            self._log("busy", 0)
             return
         if speaker_bearing is None:
             self._log("no_speaker_bearing", 0)

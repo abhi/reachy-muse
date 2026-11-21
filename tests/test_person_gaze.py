@@ -693,8 +693,13 @@ def test_rejected_echo_keeps_person_gaze_through_the_reply(people, caplog):
         'Reachy gaze request outcome=turned faces=2']
 
 
+@pytest.mark.parametrize('text, logged', [
+    ('Say hello to my guest.', ['Reachy gaze request outcome=busy faces=0']),
+    ('Find me a recipe.', []),
+])
 @pytest.mark.parametrize('path', ['chat', 'realtime'])
-def test_delayed_transcript_cannot_reacquire_gaze_during_the_next_utterance(people, caplog, monkeypatch, path):
+def test_delayed_transcript_cannot_reacquire_gaze_during_the_next_utterance(people, caplog, monkeypatch, path,
+                                                                            text, logged):
     from test_device_command_turns import service as chat_service
     from test_pins import Transcripts
 
@@ -724,12 +729,11 @@ def test_delayed_transcript_cannot_reacquire_gaze_during_the_next_utterance(peop
     async def muse(session, request):
         await session.answer(request, 'Hello there.')
 
-    service = chat_service(rig, muse, Transcribe('Say hello to my guest.', 'What time is it?'),
+    service = chat_service(rig, muse, Transcribe(text, 'What time is it?'),
                            wake_detector=TimedWake(), wake_timeout_s=5)
     if path == 'realtime':
         monkeypatch.setattr('reachy_muse.conversation.CALL_COMMAND_DEADLINE_S', 2)
-        service = realtime_service(rig, Streaming('Say hello to my guest.', 'What time is it?'),
-                                   ScriptedCalls(reply=None))
+        service = realtime_service(rig, Streaming(text, 'What time is it?'), ScriptedCalls(reply=None))
 
     async def user():
         await say_live(rig, wake=True)
@@ -744,8 +748,7 @@ def test_delayed_transcript_cannot_reacquire_gaze_during_the_next_utterance(peop
             await asyncio.sleep(.02)
         assert service._voice[1]._playback.user_speaking
         assert controller._person_hold is None
-        assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-            'Reachy gaze request outcome=busy faces=0']
+        assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == logged
         rig.say(voiced_s=0)
 
     run(rig, service, user)
