@@ -21,6 +21,71 @@ from reachy_muse.voice_audio import SpeechAudio, SpeechEnd
 np = pytest.importorskip("numpy")
 
 
+@pytest.mark.parametrize("commands_only", [False, True])
+@pytest.mark.parametrize("speech_ended", [False, True])
+def test_three_overloaded_streams_rest_hearing_and_retry_after_cooldown(monkeypatch, commands_only, speech_ended):
+    from types import SimpleNamespace
+    from fake_companion import FakeCompanion, TOKEN
+    from reachy_muse.protocol import ErrorCode, HearOpen, Sender, decode
+    from test_pins import Vad
+
+    now = [100.0]
+    monkeypatch.setattr(reachy_muse.failover, "time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    async def scenario():
+        async with FakeCompanion(hear_error=ErrorCode.OVERLOADED) as fake:
+            link = CompanionLink(fake.url.removesuffix("/v1"), token=TOKEN, out_rate=16000, insecure=True)
+            running = asyncio.create_task(link.run())
+            try:
+                await asyncio.wait_for(link.settled(), 2)
+                rest = CompanionRoute(link).hearing
+                hearing = FailoverHearing(CompanionHearing(link), LocalHearing(), rest)
+                options = dict(silence_s=.1, vad=Vad(), commands_only=commands_only)
+                for attempt in range(3):
+                    turn = hearing.open_turn(16000, **options)
+                    turn.feed(np.full(8000, .25, np.float32))
+                    assert turn.take().ended is None
+                    stream, = link._connection.hearing.values()
+                    await asyncio.wait_for(stream.settled.wait(), 2)
+                    if speech_ended:
+                        turn.feed(np.zeros(1600, np.float32))
+                    assert turn.take().ended is None
+                    turn.feed(np.zeros(3200, np.float32))
+                    ended = turn.take().ended
+                    assert ended is not None
+                    endpoint = await ended.endpoint()
+                    assert endpoint.text is None
+                    with wave.open(io.BytesIO(endpoint.audio), "rb") as wav:
+                        assert wav.readframes(8000) == b"\0\x20" * 8000
+                    turn.abort()
+                    assert rest.resting is (attempt == 2)
+                    assert link.up and link.can(Op.SPEAK)
+                now[0] = 159.9
+                local = hearing.open_turn(16000, **options)
+                local.feed(np.full(8000, .25, np.float32))
+                assert local.take().ended is None
+                assert link._connection.hearing == {}
+                local.abort()
+                now[0] = 160.0
+                fake.hear_error = None
+                retry = hearing.open_turn(16000, **options)
+                retry.feed(np.full(8000, .25, np.float32))
+                assert retry.take().ended is None
+                async with asyncio.timeout(2):
+                    while retry.partial is None:
+                        await asyncio.sleep(.01)
+                        retry.take()
+                assert retry.partial.text == "hello"
+                opens = [decode(frame, sender=Sender.ROBOT) for frame in fake.received if isinstance(frame, str)]
+                assert [m.stream for m in opens if isinstance(m, HearOpen)] == [1, 3, 5, 7]
+                retry.abort()
+            finally:
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("text", [None, "volume down", "", "stop talking"])
 def test_call_commands_use_companion_partials_without_requesting_or_waiting_for_its_endpoint(text):
     from test_pins import Vad

@@ -96,6 +96,7 @@ class FakeCompanion:
         fail_after_welcome: bool = False,
         mute: bool = False,
         no_endpoint: bool = False,
+        hear_error: Optional[ErrorCode] = None,
         port: int = 0,
         ssl=None,
         acknowledges: bool = True,
@@ -118,6 +119,7 @@ class FakeCompanion:
         self.fail_after_welcome = fail_after_welcome
         self.mute = mute
         self.no_endpoint = no_endpoint
+        self.hear_error = hear_error
         self.port = port
         self.ssl = ssl
         self.acknowledges = acknowledges
@@ -229,7 +231,10 @@ class _Session:
 
     async def _message(self, message) -> None:
         if isinstance(message, HearOpen):
-            self.hearing[message.stream] = 0
+            if self.fake.hear_error is not None:
+                await self.send(Error(self.fake.hear_error, "hearing unavailable", stream=message.stream))
+            else:
+                self.hearing[message.stream] = 0
         elif isinstance(message, HearClose):
             if (self.hearing.pop(message.stream, None) is not None and message.how is CloseHow.FINISH
                     and not self.fake.no_endpoint):

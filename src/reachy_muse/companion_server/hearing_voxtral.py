@@ -156,6 +156,7 @@ class _Utterance:
         self.config = config
         self.cancelled = cancelled if cancelled is not None else threading.Event()
         self.stream = models.voxtral.create_streaming_session(transcription_delay_ms=config.delay_ms)
+        watchdog.progress()
         self.raw = ""
         self.audio: List[np.ndarray] = []
         self.unread = np.zeros(0, np.float32)
@@ -174,11 +175,13 @@ class _Utterance:
         _check_open(self.cancelled)
         self.audio.append(samples)
         self.stream.feed(samples)
+        watchdog.progress()
         _check_open(self.cancelled)
         for delta in self.stream.step(max_decode_tokens=16):
             watchdog.progress()
             _check_open(self.cancelled)
             self.raw += delta
+        watchdog.progress()
         _check_open(self.cancelled)
         return self.final() if self._turn_over(samples) else None
 
@@ -190,6 +193,7 @@ class _Utterance:
 
             parakeet = self.models.parakeet
             mel = get_logmel(array(np.concatenate(self.audio)), parakeet.preprocessor_config)
+            watchdog.progress()
             _check_open(self.cancelled)
             return parakeet.generate(mel)[0].text.strip()
         self.stream.close()
@@ -199,6 +203,7 @@ class _Utterance:
                 watchdog.progress()
                 _check_open(self.cancelled)
                 self.raw += delta
+            watchdog.progress()
         return self.text
 
     def _turn_over(self, samples: np.ndarray) -> bool:
@@ -224,6 +229,7 @@ class _Utterance:
         framed = np.concatenate((self.context, window))[None, :]
         self.context = window[-VAD_CONTEXT:]
         probability, self.vad_state = self.models.vad.run(None, {"input": framed, "state": self.vad_state, "sr": np.array(RATE, np.int64)})
+        watchdog.progress()
         return float(probability[0][0])
 
     def turn_complete(self) -> bool:
@@ -231,6 +237,7 @@ class _Utterance:
         tail = np.concatenate(self.audio)[-TURN_SECONDS * RATE :]
         tail = np.pad(tail, (TURN_SECONDS * RATE - len(tail), 0))
         features = self.models.features(tail, sampling_rate=RATE, return_tensors="np", padding="max_length", max_length=TURN_SECONDS * RATE, truncation=True, do_normalize=True)
+        watchdog.progress()
         _check_open(self.cancelled)
         (probability,) = self.models.turn.run(None, {"input_features": features.input_features.astype(np.float32)})
         return float(probability[0][0]) >= self.config.turn_threshold

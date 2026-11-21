@@ -678,6 +678,10 @@ class CompanionHearingTurn:
     def take(self) -> HeardAudio:
         from reachy_muse.voice_audio import SpeechAudio, SpeechEnd
 
+        if self._open is not None and self._open.failure is not None:
+            if self._ended:
+                return HeardAudio(self._ended.popleft())
+            raise self._open.failure
         for event in self._recorder.take_audio_events():
             if isinstance(event, SpeechAudio):
                 if self._open is None:

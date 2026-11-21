@@ -12,6 +12,7 @@ from contextlib import contextmanager
 
 LOOP_STALL_S = 10.0
 ENGINE_STALL_S = 30.0
+HEARING_STALL_S = 120.0
 CHECK_S = 0.5
 EXIT_STATUS = 70
 
@@ -23,9 +24,10 @@ class Watchdog:
     native call that is still running. Idle workers and queued calls have no timer.
     """
 
-    def __init__(self, *, loop_s=LOOP_STALL_S, engine_s=ENGINE_STALL_S,
+    def __init__(self, *, loop_s=LOOP_STALL_S, engine_s=ENGINE_STALL_S, hearing_s=HEARING_STALL_S,
                  check_s=CHECK_S, clock=time.monotonic, exit_process=os._exit):
         self.loop_s, self.engine_s, self.check_s = loop_s, engine_s, check_s
+        self.hearing_s = hearing_s
         self._clock, self._exit = clock, exit_process
         self._lock = threading.Lock()
         self._workers = {}
@@ -77,12 +79,18 @@ class Watchdog:
                 name, _ = self._workers[identity]
                 self._workers[identity] = (name, self._clock())
 
+    def stalled(self, name: str, limit_s: float) -> bool:
+        with self._lock:
+            return any(worker == name and self._clock() - last >= limit_s
+                       for worker, last in self._workers.values())
+
     def _watch(self) -> None:
         while not self._stopped.wait(self.check_s):
             now = self._clock()
             with self._lock:
                 stalled = [("event loop", now - self._tick, self.loop_s)]
-                stalled.extend((name, now - last, self.engine_s) for name, last in self._workers.values())
+                stalled.extend((name, now - last, self.hearing_s if name == "hearing" else self.engine_s)
+                               for name, last in self._workers.values())
             for name, age, limit in stalled:
                 if age >= limit:
                     # A wedged worker may own a logging lock. Write directly to launchd's stderr.
