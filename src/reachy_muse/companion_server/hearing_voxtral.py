@@ -30,6 +30,10 @@ SMART_TURN = ("pipecat-ai/smart-turn-v3", "smart-turn-v3.2-cpu.onnx")
 VAD_WINDOW = 512  # Silero's window at 16 kHz, 32 ms
 VAD_CONTEXT = 64  # Silero expects the last 64 samples of the previous window in front of each one
 TURN_SECONDS = 8  # Smart Turn reads the last 8 s of the turn
+# Parakeet's final pass is one native call that reports no progress, and it grows with the utterance:
+# 2.32 / 2.77 s (p50 / p95) for an 8.2 s clip while Kokoro spoke, 0.34 s per second of audio at p95.
+# A real-time factor of 1.0 is about 3x that; the server's 3 s streaming deadline is its floor.
+FINAL_PASS_RTF = 1.0
 
 T = TypeVar("T")
 _timing = threading.local()
@@ -228,6 +232,7 @@ class _Utterance:
             with _stage("parakeet_features"):
                 mel = get_logmel(array(np.concatenate(self.audio)), parakeet.preprocessor_config)
             _check_open(self.cancelled)
+            watchdog.progress(quiet_s=FINAL_PASS_RTF * sum(map(len, self.audio)) / RATE)
             with _stage("parakeet_final"):
                 return parakeet.generate(mel)[0].text.strip()
         with _stage("voxtral_close"):

@@ -1,7 +1,9 @@
 import asyncio
+import sys
 import threading
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from websockets.asyncio.client import connect
@@ -164,3 +166,78 @@ def test_stuck_hearing_fails_streams_and_refuses_opens_until_worker_progress(mon
 
     with EngineExecutor("hearing", monitor=monitor) as worker:
         asyncio.run(scenario())
+
+
+def test_a_long_final_pass_is_progress_within_its_budget(monkeypatch):
+    """Parakeet's final pass is one native call without progress; over 8.2 s of audio it may take 8.2 s."""
+    final_pass_s = 3.5  # past the 3 s streaming deadline and the measured 2.77 s p95
+    now, exits = [100.0], []
+    entered, release = threading.Event(), threading.Event()
+    monitor = Watchdog(clock=lambda: now[0], loop_s=1000, exit_process=exits.append)
+    monkeypatch.setattr(serving, "watchdog", monitor)
+    monkeypatch.setattr(hearing_module, "watchdog", monitor)
+    monkeypatch.setattr(serving, "HEARING_CHECK_S", .01)
+    monkeypatch.setitem(sys.modules, "mlx.core", SimpleNamespace(array=lambda value: value))
+    monkeypatch.setitem(sys.modules, "parakeet_mlx.audio", SimpleNamespace(get_logmel=lambda audio, config: audio))
+
+    class Stream:
+        def feed(self, samples):
+            pass
+
+        def step(self, *, max_decode_tokens):
+            return []
+
+    def generate(mel):
+        now[0] += final_pass_s
+        entered.set()
+        assert release.wait(5)
+        return [SimpleNamespace(text="the final")]
+
+    async def scenario():
+        hearing = hearing_module.VoxtralHearing(hearing_module.HearingConfig())
+        hearing._thread.shutdown()
+        hearing._thread = EngineExecutor("hearing", monitor=monitor)
+        hearing._models = SimpleNamespace(
+            voxtral=SimpleNamespace(create_streaming_session=lambda **kwargs: Stream()),
+            parakeet=SimpleNamespace(generate=generate, preprocessor_config=None),
+            vad=SimpleNamespace(run=lambda *args: (np.array([[1.0]]), None)),
+        )
+        monitor.start()
+        try:
+            async with serving.CompanionServer(serving.Engines(hearing=hearing), "test") as server:
+                async with connect(server.url, proxy=None) as ws:
+                    await ws.send(encode(Hello((1,), "test", (Op.HEAR,), 16000, "test")))
+                    await ws.recv()
+                    speech = b"\1\0" * 320
+                    await ws.send(encode(HearOpen(1, 0)))
+                    for seq in range(410):  # 8.2 s, as long as the benchmark's reminder.wav
+                        await ws.send(encode_audio(AudioKind.MIC, 1, seq, speech))
+                    await ws.send(encode(HearOpen(3, 0)))
+                    await ws.send(encode_audio(AudioKind.MIC, 3, 0, speech))
+                    await ws.send(encode(HearClose(1, CloseHow.FINISH)))
+                    assert await asyncio.to_thread(entered.wait, 2)
+                    await ws.send(encode_audio(AudioKind.MIC, 3, 1, speech))
+                    await asyncio.sleep(.2)
+                    await ws.send(encode(HearOpen(5, 0)))
+                    errors = []
+                    try:
+                        while True:
+                            message = decode(await asyncio.wait_for(ws.recv(), .25), sender=Sender.COMPANION)
+                            if isinstance(message, Error):
+                                errors.append((message.code.value, message.stream))
+                    except asyncio.TimeoutError:
+                        pass
+                    release.set()
+                    assert errors == []
+                    async with asyncio.timeout(2):
+                        while not isinstance(message := decode(await ws.recv(), sender=Sender.COMPANION), HearEndpoint):
+                            pass
+                    assert message == HearEndpoint(1, "the final", True)
+        finally:
+            release.set()
+            await hearing.run(lambda: None)
+            hearing._thread.shutdown()
+            monitor.stop()
+
+    asyncio.run(scenario())
+    assert exits == []

@@ -76,6 +76,9 @@ HELLO_TIMEOUT = 10.0
 CLOSE_POLICY_VIOLATION = 1008
 CLOSE_INTERNAL_ERROR = 1011
 REMEMBERED_EXPRESSIONS = 64
+# Streaming reports progress after every Voxtral token, VAD window and turn check. Even an 8.2 s
+# utterance's whole final transcript took 2.77 s at p95 while Kokoro spoke, so a worker that reports
+# nothing for 3 s is stuck. Parakeet's final pass gets a longer budget (hearing_voxtral.FINAL_PASS_RTF).
 HEARING_SOFT_S = 3.0
 HEARING_CHECK_S = 0.1
 

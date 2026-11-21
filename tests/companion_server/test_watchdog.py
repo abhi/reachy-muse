@@ -66,6 +66,39 @@ def test_hearing_hard_limit_dumps_all_threads_and_fault_counts_before_exit(monke
     assert "private-hearing-content" not in output
 
 
+def test_a_quiet_stage_delays_only_the_soft_stall_check(capfd):
+    now, exits = [100.0], []
+    entered, release = threading.Event(), threading.Event()
+    monitor = Watchdog(clock=lambda: now[0], loop_s=1000, check_s=.001, exit_process=exits.append)
+
+    def final_pass():
+        monitor.progress(quiet_s=60.0)
+        entered.set()
+        assert release.wait(5)
+
+    async def scenario():
+        monitor.start()
+        try:
+            with EngineExecutor("hearing", monitor=monitor) as worker:
+                worker.submit(final_pass)
+                try:
+                    assert await asyncio.to_thread(entered.wait, 2)
+                    stalled = []
+                    for at in (159.9, 160.0, 220.0):
+                        now[0] = at
+                        stalled.append(monitor.stalled("hearing", 3.0))
+                        await asyncio.sleep(.02)
+                    return stalled
+                finally:
+                    release.set()
+        finally:
+            monitor.stop()
+
+    assert asyncio.run(scenario()) == [False, True, True]
+    assert exits == [70]
+    assert "hearing made no progress for 120.0s (limit 120s)" in capfd.readouterr().err
+
+
 @pytest.mark.parametrize("blocked, reason", [
     ("time.sleep(10)", "event loop"),
     ("""

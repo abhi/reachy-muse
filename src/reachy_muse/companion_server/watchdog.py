@@ -66,25 +66,30 @@ class Watchdog:
             return
         identity = threading.get_ident()
         with self._lock:
-            self._workers[identity] = (name, self._clock())
+            self._workers[identity] = (name, self._clock(), 0.0)
         try:
             yield
         finally:
             with self._lock:
                 self._workers.pop(identity, None)
 
-    def progress(self) -> None:
-        """A token or audio chunk completed on the calling model thread."""
+    def progress(self, quiet_s: float = 0.0) -> None:
+        """A token or audio chunk completed on the calling model thread.
+
+        Its next stage may then run ``quiet_s`` without progress before ``stalled`` names the
+        thread. The hard limit is unchanged.
+        """
         identity = threading.get_ident()
         with self._lock:
             if identity in self._workers:
-                name, _ = self._workers[identity]
-                self._workers[identity] = (name, self._clock())
+                name = self._workers[identity][0]
+                self._workers[identity] = (name, self._clock(), quiet_s)
 
     def stalled(self, name: str, limit_s: float) -> bool:
         with self._lock:
-            return any(worker == name and self._clock() - last >= limit_s
-                       for worker, last in self._workers.values())
+            now = self._clock()
+            return any(worker == name and now - last >= max(limit_s, quiet_s)
+                       for worker, last, quiet_s in self._workers.values())
 
     def _watch(self) -> None:
         while not self._stopped.wait(self.check_s):
@@ -92,7 +97,7 @@ class Watchdog:
             with self._lock:
                 stalled = [("event loop", now - self._tick, self.loop_s)]
                 stalled.extend((name, now - last, self.hearing_s if name == "hearing" else self.engine_s)
-                               for name, last in self._workers.values())
+                               for name, last, _ in self._workers.values())
             for name, age, limit in stalled:
                 if age >= limit:
                     # A wedged worker may own a logging lock. Write directly to launchd's stderr.
