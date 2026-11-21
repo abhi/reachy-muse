@@ -848,8 +848,10 @@ class VoiceConversation:
         if decision.angle is not None:
             self._wake_has_gaze = self.hardware.look_at_speaker(decision.angle) is not False
 
-    def _turn_speaker(self, start: float, end: float) -> float | None:
+    def _turn_speaker(self, start: float, end: float, previous: float | None = None) -> float | None:
         bearing = self._wake_direction.bearing_between(start, end) if self._wake_direction is not None else None
+        if bearing is None:
+            bearing = previous
         if bearing is None and self._wake_has_gaze:
             bearing = getattr(self.hardware, "wake_gaze_bearing", None)
         return bearing
@@ -1089,15 +1091,17 @@ class VoiceConversation:
 
         turn_open = False
         speech_started_at = None
+        speech_bearing = None
 
         heard_over: set[str] = set()
         admitted_turns = deque()
         turns_awaiting_transcript = set()
 
         def make_recorder(*, reset_admission=True, **options):
-            nonlocal gap_quiet_samples, turn_open, recorder_for_call, speech_started_at
+            nonlocal gap_quiet_samples, turn_open, recorder_for_call, speech_started_at, speech_bearing
             turn_open = False
             speech_started_at = None
+            speech_bearing = None
             heard_over.clear()
             if reset_admission:
                 if voice_gate is not None:
@@ -1123,7 +1127,7 @@ class VoiceConversation:
         recorder_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reachy-recorder")
         last_slow_feed = 0.0
         async def record_admitted(sample, *, send_to_call=True):
-            nonlocal last_slow_feed, gap_quiet_samples, turn_open, speech_started_at
+            nonlocal last_slow_feed, gap_quiet_samples, turn_open, speech_started_at, speech_bearing
             # Keep VAD ahead of transcription/TTS work in the shared executor.
             started = time.monotonic()
             feed = asyncio.get_running_loop().run_in_executor(recorder_worker, recorder.feed, sample)
@@ -1143,8 +1147,10 @@ class VoiceConversation:
                 speech_started_at = started - len(sample) / self.hardware.sample_rate
                 self._gaze.release()
             speaker_bearing = None
+            if speech_started_at is not None:
+                speech_bearing = self._turn_speaker(speech_started_at, endpoint_at - quiet_s, speech_bearing)
             if heard.ended is not None:
-                speaker_bearing = self._turn_speaker(speech_started_at, endpoint_at - quiet_s)
+                speaker_bearing, speech_bearing = speech_bearing, None
                 speech_started_at = None
             for _ in range(heard.failures):
                 transcription_failed(self.call)

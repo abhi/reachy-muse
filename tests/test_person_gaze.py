@@ -18,7 +18,7 @@ from test_device_command_turns import played, run, sent_to_muse
 from test_hardware import FakeRobot, generated, pose_factory
 from test_pins import CHUNK, VOICE_SAMPLE, WAKE_SAMPLE
 from test_realtime_turns import (RATE, ScriptedCalls, StreamingTranscripts, realtime_service,
-                                 reply_events, rig_for, voiced)
+                                 reply_events, rig_for, room, voiced)
 
 
 @pytest.mark.parametrize('text, expected', [
@@ -92,14 +92,17 @@ def people(monkeypatch):
         controller.close()
 
 
-async def say_live(rig, *, wake=False):
+async def say_live(rig, *, wake=False, paced_silence_s=None):
     if wake:
         rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
         await asyncio.sleep(.02)
     for _ in range(35):
         rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
         await asyncio.sleep(.02)
-    rig.say(voiced_s=0)
+    if paced_silence_s is None:
+        rig.say(voiced_s=0)
+    else:
+        await room(rig, paced_silence_s)
 
 
 @pytest.mark.parametrize('thinking', [False, True])
@@ -232,7 +235,8 @@ def test_cached_faces_choose_smallest_turn_and_release_when_window_closes(people
 
 
 @pytest.mark.parametrize("wake", [False, True])
-def test_chat_keeps_endpoint_bearing_after_robot_audio_clears_the_ring(people, caplog, wake):
+@pytest.mark.parametrize('silence_s', [.8, 1.2])
+def test_chat_keeps_endpoint_bearing_after_robot_audio_clears_the_ring(people, caplog, wake, silence_s):
     from test_device_command_turns import service as chat_service
     from test_pins import Transcripts
     from test_realtime_turns import TimedWake
@@ -252,9 +256,10 @@ def test_chat_keeps_endpoint_bearing_after_robot_audio_clears_the_ring(people, c
 
     service = chat_service(rig, muse, Transcribe('Say hello to my guest.'),
                            wake_detector=TimedWake() if wake else None, wake_timeout_s=5)
+    service.silence_s = silence_s
 
     async def user():
-        await say_live(rig, wake=wake)
+        await say_live(rig, wake=wake, paced_silence_s=silence_s + .1)
         await asyncio.wait_for(entered.wait(), 2)
         voice = service._voice[1]
         await voice._announce('Just a moment.', started=None, defer_playback=False)
