@@ -659,9 +659,10 @@ def test_muse_moving_reachy_answers_a_request_while_working_stays_on(monkeypatch
     assert NOD_COMMAND in events
 
 
-@pytest.mark.parametrize("working_after", [None, .3, 1.2],
-                         ids=["Working first", "Working just after", "Working after a quiet second"])
-def test_a_hung_tool_call_stays_pending_until_its_work_goes_stale(monkeypatch, caplog, working_after):
+@pytest.mark.parametrize("working_after, gestures", [(None, False), (None, True), (.3, False), (1.2, False)],
+                         ids=["Working first", "Muse gestures meanwhile", "Working just after",
+                              "Working after a quiet second"])
+def test_a_hung_tool_call_stays_pending_until_its_work_goes_stale(monkeypatch, caplog, working_after, gestures):
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
 
@@ -673,6 +674,8 @@ def test_a_hung_tool_call_stays_pending_until_its_work_goes_stale(monkeypatch, c
         if working_after is not None:
             await asyncio.sleep(working_after)
             emit(sdk.Working(True))
+        if gestures:
+            await asyncio.to_thread(conversation.run_command, "reachy.expression", {"name": "thinking"}, 5000)
 
     calls = ScriptedCalls(answer=answer)
     conversation = realtime_service(rig, StreamingTranscripts("Book a table for two."), calls, wake_timeout_s=10)
@@ -689,6 +692,7 @@ def test_a_hung_tool_call_stays_pending_until_its_work_goes_stale(monkeypatch, c
         await wait_for(rig, lambda: LOST in played(rig.recording.events))
 
     events = run(rig, conversation, user, rest=("listening", "idle"), timeout=45)
+    assert ({"robot": "command", "name": "reachy.expression", "params": {"name": "thinking"}} in events) == gestures
     assert poses == ["thinking"]
     assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=working_stale"]
     assert [row["outcome"] for row in turn_outcomes(caplog)] == ["recovered"]
