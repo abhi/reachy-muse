@@ -342,5 +342,6 @@ def _speaker_thread() -> ThreadPoolExecutor:
 
 def _agreement(embeddings: Sequence[np.ndarray]) -> List[float]:
     """Each utterance's score against the print the others make."""
-    return [float(np.dot(embedding, normalized(np.mean([other for j, other in enumerate(embeddings) if j != i], axis=0))))
+    return [float(np.dot(embedding, normalized(np.mean([other for j, other in enumerate(embeddings) if j != i],
+                                                       axis=0))))
             for i, embedding in enumerate(embeddings)]

@@ -34,7 +34,8 @@ FAILURES = {
     "save": "The voice print could not be saved. Nothing changed.",
     "forgotten": "forget-voice ran during the enrollment, so it kept nothing.",
 }
-NOT_LISTENING = "No companion is listening for enrollment. Start reachy-companion serve with --speaker-model, then try again."
+NOT_LISTENING = ("No companion is listening for enrollment. Start reachy-companion serve with --speaker-model, "
+                 "then try again.")
 
 
 @contextlib.asynccontextmanager

@@ -12,7 +12,9 @@ from typing import Optional, Sequence
 
 from reachy_muse.companion_server import pair as pairing
 from reachy_muse.companion_server.watchdog import watchdog
-from reachy_muse.companion_server.engines import EchoNarrator, NodAnimator, ScriptedHearing, Speaker, SpeechFirst, ToneVoice
+from reachy_muse.companion_server.engines import (
+    EchoNarrator, NodAnimator, ScriptedHearing, Speaker, SpeechFirst, ToneVoice,
+)
 from reachy_muse.companion_server.narrator_mlx import DEFAULT_REPO
 from reachy_muse.companion_server.server import CompanionServer, Engines
 from reachy_muse.companion_server.voices import DEFAULT as DEFAULT_VOICE, build_voice, parse_voice
