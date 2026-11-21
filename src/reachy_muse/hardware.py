@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Callable, Collection, NamedTuple, Sequence
 
 from reachy_muse.contract.commands import POSE_LIMITS, parse_command
 from reachy_muse.motion import MotionStyle
+from reachy_muse.photo import PHOTO_CAPTURE_S, Encoder, PhotoCapture, fit_jpeg, opencv_jpeg
 from reachy_muse.presence import Presence
 from reachy_muse.speaker_direction import DoAReading, SpeakerYaw, speaker_yaw
 
@@ -87,6 +88,14 @@ CAMERA_STILL_STEP = 0.02
 CAMERA_AXES = [0, 1, 2, 3, 4, 5, 8]
 CAMERA_STILL_S = 0.5
 WATCH_TURN_S = 4.0
+# A photo waits this long for the head to come to rest, longer than a turn toward a speaker, then holds
+# the camera's pose until a frame is read.
+PHOTO_SETTLE_S = 1.0
+PHOTO_STILL_S = 0.1
+# Moving less than this per motion period, in millimeters or degrees, keeps a photo sharp; breathing is slower.
+PHOTO_STILL_STEP = 0.1
+PHOTO_FRAME_S = 0.5
+CAMERA_RELEASE_S = 0.3
 
 
 class _WatchTurn(NamedTuple):
@@ -210,6 +219,14 @@ class _PersonHold:
     restore: SpeakerYaw | None     # the speaker gaze this hold replaced
 
 
+@dataclass(frozen=True)
+class _CameraHold:
+    """The camera pose written while a photo is read; once released, the head eases back from it."""
+
+    pose: np.ndarray               # CAMERA_AXES of the pose vector
+    released_at: float | None = None
+
+
 class ReachyController:
     """Own the robot for a standalone Muse session.
 
@@ -232,6 +249,7 @@ class ReachyController:
         arrival_watcher_factory: Callable | None = None,
         wave_wake: bool = False,
         wave_watcher_factory: Callable | None = None,
+        photo_encoder: Encoder = opencv_jpeg,
         robot_factory: Callable | None = None,
         pose_factory: Callable | None = None, pose_interpolator: Callable | None = None,
         moves_factory: Callable | None = None,
@@ -274,6 +292,11 @@ class ReachyController:
         self._wave_gaze_status = None
         self._wave_lock = threading.Lock()
         self._camera_lock = threading.Lock()
+        self._photo_encoder = photo_encoder
+        self._photo_lock = threading.Lock()
+        self._photo_hold = threading.Event()
+        self._camera_hold: _CameraHold | None = None
+        self._head_still_since: float | None = None
         from reachy_muse.vision_budget import VisionBudget
         self.vision_budget = VisionBudget()
         self._arrival_warned = False
@@ -1038,24 +1061,106 @@ class ReachyController:
     def _read_camera_frame(self, *, background=True, with_pose=False):
         """All local vision consumers share this reader; no frame cache survives it."""
         with self._camera_lock:
-            if (self._robot is None or self._stop.is_set()
-                    or background and not math.isfinite(self.vision_budget.delay())
-                    or background and with_pose and self._speaker_turn is not None):
-                return None
-            frame = self._robot.media.get_frame()
-            if not with_pose or frame is None:
-                return frame
-            from reachy_muse.local_face_tracking import FaceCapture
-            captured_at = time.monotonic()
+            return self._camera_frame(background=background, with_pose=with_pose)
+
+    def _camera_frame(self, *, background, with_pose):
+        """The reader's work, with ``_camera_lock`` held."""
+        if (self._robot is None or self._stop.is_set()
+                or background and not math.isfinite(self.vision_budget.delay())
+                or background and with_pose and self._speaker_turn is not None):
+            return None
+        frame = self._robot.media.get_frame()
+        if not with_pose or frame is None:
+            return frame
+        from reachy_muse.local_face_tracking import FaceCapture
+        captured_at = time.monotonic()
+        try:
+            pose = self._robot.get_current_head_pose().copy()
+        except AssertionError:
+            pose = self._last_pose.copy()
+        coordinates = self._pose_parameters(pose)
+        look = self._speaker_look
+        origin = look.head if look is not None else 0.0
+        angles = (math.radians(coordinates["yaw"] - origin), math.radians(coordinates["pitch"]))
+        return FaceCapture(frame, angles, pose[:3, :3], captured_at, self._face_half_view)
+
+    def capture_photo(self, timeout_s: float = PHOTO_CAPTURE_S) -> PhotoCapture:
+        """One JPEG of what the camera sees now, made within ``timeout_s``; call it off the event loop.
+
+        The head gets PHOTO_SETTLE_S to come to rest, then keeps its camera pose until a frame is read.
+        It reads even while a turn pauses background vision. One capture runs at a time, and only its
+        JPEG leaves this call.
+        """
+        started = time.monotonic()
+        deadline = started + timeout_s
+        if not self._photo_lock.acquire(blocking=False):
+            return PhotoCapture("camera_busy")
+        try:
+            self._wait_for(lambda: not self._head_turning() and self._camera_steady(),
+                           min(deadline, started + PHOTO_SETTLE_S))
+            self._photo_hold.set()
             try:
-                pose = self._robot.get_current_head_pose().copy()
-            except AssertionError:
-                pose = self._last_pose.copy()
-            coordinates = self._pose_parameters(pose)
-            look = self._speaker_look
-            origin = look.head if look is not None else 0.0
-            angles = (math.radians(coordinates["yaw"] - origin), math.radians(coordinates["pitch"]))
-            return FaceCapture(frame, angles, pose[:3, :3], captured_at, self._face_half_view)
+                frame, failure = self._read_photo_frame(deadline)
+            finally:
+                self._photo_hold.clear()
+            capture_ms = round((time.monotonic() - started) * 1000)
+            if failure is not None:
+                return PhotoCapture(failure, capture_ms=capture_ms)
+            encoding = time.monotonic()
+            try:
+                fitted = fit_jpeg(frame, self._photo_encoder, deadline=deadline)
+            except TimeoutError:
+                return PhotoCapture("camera_busy", capture_ms=capture_ms)
+            except Exception as exc:
+                log.warning("Reachy could not encode a photo: %s", type(exc).__name__)
+                return PhotoCapture("camera_failed", capture_ms=capture_ms)
+            finally:
+                del frame
+            encode_ms = round((time.monotonic() - encoding) * 1000)
+            if fitted is None:
+                return PhotoCapture("too_large", capture_ms=capture_ms, encode_ms=encode_ms)
+            jpeg, width, height, quality = fitted
+            return PhotoCapture(jpeg=jpeg, width=width, height=height, quality=quality,
+                                capture_ms=capture_ms, encode_ms=encode_ms)
+        finally:
+            self._photo_lock.release()
+
+    def _read_photo_frame(self, deadline: float):
+        """A frame read once the held camera pose has been still for PHOTO_STILL_S, or why there is none."""
+        self._wait_for(self._camera_steady, min(deadline, time.monotonic() + 2 * PHOTO_STILL_S))
+        read_by = min(deadline, time.monotonic() + PHOTO_FRAME_S)
+        if not self._camera_lock.acquire(timeout=max(0.0, read_by - time.monotonic())):
+            return None, "camera_busy"
+        try:
+            while self._robot is not None and not self._stop.is_set():
+                frame = self._camera_frame(background=False, with_pose=False)
+                if frame is not None:
+                    return frame, None
+                if time.monotonic() >= read_by:
+                    return None, "no_frame"
+                self._stop.wait(.01)
+            return None, "camera_failed"
+        except Exception as exc:
+            log.warning("Reachy could not read a photo frame: %s", type(exc).__name__)
+            return None, "camera_failed"
+        finally:
+            self._camera_lock.release()
+
+    def _wait_for(self, ready: Callable[[], bool], until: float) -> None:
+        while not ready() and time.monotonic() < until and not self._stop.wait(.01):
+            pass
+
+    def _head_turning(self) -> bool:
+        with self._state_lock:
+            return (self._speaker_pending is not None or self._speaker_turn is not None
+                    or self._person_pending is not None or self._person_release)
+
+    def _camera_steady(self) -> bool:
+        """The motion loop has written the same camera pose for PHOTO_STILL_S, or nothing moves the head."""
+        thread = self._motion_thread
+        since = self._head_still_since
+        return (thread is None or not thread.is_alive()
+                or since is not None and time.monotonic() - since >= PHOTO_STILL_S)
 
     def _capture_faces(self, *, background=True):
         return self._read_camera_frame(background=background, with_pose=True)
@@ -1488,6 +1593,23 @@ class ReachyController:
                 return source * (1 - release) + pose * release
         return self._crossfade(clip, now, pose)
 
+    def _hold_camera(self, now: float, written, previous):
+        """While a photo is read, keep writing the camera axes' pose from when the read began; then ease back."""
+        hold = self._camera_hold
+        if self._photo_hold.is_set():
+            if hold is None or hold.released_at is not None:
+                hold = self._camera_hold = _CameraHold((written if previous is None else previous)[CAMERA_AXES])
+        elif hold is not None and hold.released_at is None:
+            hold = self._camera_hold = _CameraHold(hold.pose, now)
+        if hold is None:
+            return written
+        weight = 0.0 if hold.released_at is None else _ease((now - hold.released_at) / CAMERA_RELEASE_S)
+        if weight >= 1:
+            self._camera_hold = None
+        else:
+            written[CAMERA_AXES] = hold.pose + (written[CAMERA_AXES] - hold.pose) * weight
+        return written
+
     def _crossfade(self, clip: _Clip, now: float, pose, gain: float = 1.0):
         weight = clip.timeline.weight(now) * gain
         elapsed = min(clip.timeline.clip_time(now), clip.timeline.duration - 0.001)
@@ -1590,8 +1712,11 @@ class ReachyController:
                         if clip is not None:
                             clip.timeline.stop(now)
                     request, self._deferred = None, request
+                if request is not None and self._photo_hold.is_set():
+                    # The camera keeps still until the photo's frame is read.
+                    request, self._deferred = None, request
                 if request is not None:
-                    self._still_since = None
+                    self._still_since = self._head_still_since = None
                     self._wave_gaze.invalidate()
                     if self._face_follower is not None:
                         self._update_face_tracking(state, commanded=True)
@@ -1754,19 +1879,22 @@ class ReachyController:
                     self._last_written_vector = self._np.asarray(composed).copy()
                     # Clips and their replacement sources contain expression offsets only.
                     # Add gaze once, after crossfades, so a full-strength clip cannot erase it.
-                    written = (composed + gaze + gesture_offset
-                               + self._layers.sway_offset(now, active=state == "speaking")
-                               + self._np.asarray(self._sentences.offset(now)))
+                    written = self._hold_camera(now, composed + gaze + gesture_offset
+                                                + self._layers.sway_offset(now, active=state == "speaking")
+                                                + self._np.asarray(self._sentences.offset(now)), previous_written)
                     resting_camera = ((state in ("idle", "listening", "sleeping") or (state == "error" and self._watching))
                                       and not gesture_active and not commanded
                                       and self._clip is None and self._generated is None and self._deferred is None)
                     # Invalidate before writing a moving target, even between camera samples.
                     self._update_wave_gaze(now, written, eligible=resting_camera)
                     self._write_vector(written)
-                    settled = (resting_camera
-                               and previous_written is not None
-                               and self._np.abs(written - previous_written)[CAMERA_AXES].max()
-                               < CAMERA_STILL_STEP)
+                    step = (self._np.abs(written - previous_written)[CAMERA_AXES].max()
+                            if previous_written is not None else math.inf)
+                    if step >= PHOTO_STILL_STEP:
+                        self._head_still_since = None
+                    elif self._head_still_since is None:
+                        self._head_still_since = now
+                    settled = resting_camera and step < CAMERA_STILL_STEP
                     if not settled:
                         self._still_since = None
                     elif self._still_since is None:
