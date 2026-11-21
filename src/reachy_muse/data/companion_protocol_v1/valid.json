@@ -529,5 +529,47 @@
    "intent": null,
    "lines": []
   }
+ },
+ {
+  "name": "hello_speaker",
+  "sender": "robot",
+  "text": "{\"t\":\"hello\",\"versions\":[1],\"token\":\"rc1_Zm9vYmFyYmF6cXV4cXV1eHF1dXhxdXV4cXV1eA\",\"ops\":[\"hear\",\"speaker\"],\"out_rate\":16000,\"robot\":\"reachy-mini\"}",
+  "expect": {
+   "t": "hello",
+   "versions": [
+    1
+   ],
+   "token": "rc1_Zm9vYmFyYmF6cXV4cXV1eHF1dXhxdXV4cXV1eA",
+   "ops": [
+    "hear",
+    "speaker"
+   ],
+   "out_rate": 16000,
+   "robot": "reachy-mini"
+  }
+ },
+ {
+  "name": "speaker_observation",
+  "sender": "companion",
+  "text": "{\"t\":\"speaker_observation\",\"stream\":5,\"start_sample\":4800,\"end_sample\":52800,\"label\":\"owner\"}",
+  "expect": {
+   "t": "speaker_observation",
+   "stream": 5,
+   "start_sample": 4800,
+   "end_sample": 52800,
+   "label": "owner"
+  }
+ },
+ {
+  "name": "speaker_observation_unknown_label_is_unknown",
+  "sender": "companion",
+  "text": "{\"t\":\"speaker_observation\",\"stream\":7,\"start_sample\":0,\"end_sample\":0,\"label\":\"guest\"}",
+  "expect": {
+   "t": "speaker_observation",
+   "stream": 7,
+   "start_sample": 0,
+   "end_sample": 0,
+   "label": "unknown"
+  }
  }
 ]

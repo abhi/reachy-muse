@@ -2,7 +2,7 @@
 
 This is the normative wire protocol between a Reachy Mini robot and its companion.
 The companion is a computer on the same LAN that hears, speaks, narrates, classifies device commands and generates motion for the robot.
-The robot owns the conversation. The companion is stateless between requests.
+The robot owns the conversation. The companion keeps no state between requests, except an optional print of the owner's voice that never leaves it.
 
 The codec is `src/reachy_muse/protocol.py`.
 Golden vectors ship in the package at `src/reachy_muse/data/companion_protocol_v1/`.
@@ -57,7 +57,7 @@ Fields marked optional may be absent. An optional string or integer may also be 
 |---|---|---|
 | `hello` | `versions` | list of 1 to 8 integers. Every version the robot supports. |
 | | `token` | string, 1 to 128 bytes |
-| | `ops` | list of `hear`, `speak`, `narrate`, `classify`, `animate`. The ops the robot wants. A receiver drops names it does not know. |
+| | `ops` | list of `hear`, `speak`, `narrate`, `classify`, `animate`, `speaker`. The ops the robot wants. A receiver drops names it does not know. |
 | | `out_rate` | integer, 8000 to 48000 Hz |
 | | `robot` | string, at most 64 bytes. A display name. |
 | `hear_open` | `stream` | odd integer, 1 to 65535 |
@@ -88,7 +88,7 @@ Fields marked optional may be absent. An optional string or integer may also be 
 | `t` | Field | Type and limit |
 |---|---|---|
 | `welcome` | `version` | integer. The version chosen from `hello.versions`. |
-| | `ops` | list of `hear`, `speak`, `narrate`, `classify`, `animate`. A subset of `hello.ops`. |
+| | `ops` | list of `hear`, `speak`, `narrate`, `classify`, `animate`, `speaker`. A subset of `hello.ops`. |
 | | `models` | optional object of at most 8 entries, op name to model name (at most 120 bytes). For display. |
 | `hear_partial` | `stream` | odd integer |
 | | `rev` | integer, 0 to 4294967295. Grows within a stream. |
@@ -106,6 +106,10 @@ Fields marked optional may be absent. An optional string or integer may also be 
 | `animate_result` | `id` | the `animate.id` it answers |
 | | `fps` | integer, 1 to 50. Frames per second. |
 | | `frames` | optional string, standard base64 of at most 375 frames. Absent or empty means no motion. |
+| `speaker_observation` | `stream` | odd integer. A hear stream that ended with `hear_endpoint`. |
+| | `start_sample` | integer, 0 to 4294967295 |
+| | `end_sample` | integer, `start_sample` to 4294967295. The label covers the samples from `start_sample` up to but not including `end_sample`, counted from the stream's first microphone sample. |
+| | `label` | `owner`, `other` or `unknown`. An unknown name decodes as `unknown`. |
 | `error` | `code` | `auth`, `version`, `unknown_type`, `bad_request`, `gap`, `overloaded`, `model` or `internal` |
 | | `message` | optional string, at most 500 bytes. For logs only. |
 | | `stream` | optional integer. The stream that failed. |
@@ -120,6 +124,7 @@ Fields marked optional may be absent. An optional string or integer may also be 
 5. **Motion.** `animate_result` answers the `animate` with the same `id`. At most 2 animations are outstanding at once, apart from narrations. Each frame is 18 bytes: nine little-endian int16 values in tenths, in the order x, y, z (millimetres), roll, pitch, yaw, right antenna, left antenna, body yaw (degrees). A motion the companion cannot make is an `animate_result` with no frames, never `error{model}`. The robot clamps every frame to its own limits before it moves.
 6. **Liveness.** A close, a `ProtocolError`, `error{internal}` or `error{model}` fails every op in flight and marks the link down. The robot also closes a connection that sends no valid frame or pong within its inactivity limit. `error{overloaded}`, `error{bad_request}` and `error{gap}` fail only the op they name. The robot aborts a hear stream whose `hear_endpoint` has not arrived 1.5 s after its `finish` close, and transcribes that turn itself. It cancels a speak stream that sends no audio for 6 s. Application relevance budgets may cancel an optional request. None of these marks the connection down.
 7. **Reconnect.** The robot backs off from 0.2 s to 5 s with jitter. Each reconnect starts with a fresh `hello`. No stream or narration state survives a reconnect. The link is up only after `welcome`. After an outage, new replies can use it after a 100 ms readiness guard. The 10 s healthy-session window groups outage logs and resets backoff; it does not delay reply routing.
+8. **Speaker.** When `welcome` grants `speaker`, the companion sends one `speaker_observation` after each hear stream's `hear_endpoint`, unless the robot aborts the stream first. `owner` means the voice matched the print the owner enrolled on the companion. `other` means it did not. `unknown` means the companion has no print, heard too little voice, or could not compare it. The label is an observation for the robot's records. It authorizes nothing.
 
 The robot keeps one voice selection per reply. Slow audio keeps the companion
 voice. A dead connection causes the interrupted sentence to restart from its
@@ -144,5 +149,7 @@ The robot never sends these to the companion:
 
 The companion receives only microphone audio, the request text, public status labels, the lines already spoken, the reply text it must condense, the short utterances it classifies, and motion intents from the robot's fixed table.
 Status labels pass `validate_public_progress` on the robot before they are sent.
+
+The companion never sends the owner's voice print, a speaker embedding or a similarity score. A `speaker_observation` carries only a stream, a sample range and a label. The owner enrolls and deletes the print on the companion itself; nothing on the wire can start an enrollment.
 
 Acknowledgement results carry an intent and either a hold or a local social reply. Old robots omit `may_chat`, so a new companion returns no lines for CHAT. New robots treat an absent intent as an older companion and dispatch to Muse. All new fields are optional and omitted at their defaults; protocol v1 and operation names are unchanged.

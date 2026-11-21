@@ -368,5 +368,33 @@
   "text": "{\"t\":\"narrate\",\"id\":1,\"op\":\"acknowledge\",\"request\":\"hi\",\"may_chat\":1}",
   "code": "bad_request",
   "reason": "wrong_type"
+ },
+ {
+  "name": "speaker_observation_from_robot",
+  "sender": "robot",
+  "text": "{\"t\":\"speaker_observation\",\"stream\":5,\"start_sample\":0,\"end_sample\":16000,\"label\":\"owner\"}",
+  "code": "unknown_type",
+  "reason": "wrong_direction"
+ },
+ {
+  "name": "speaker_observation_samples_reversed",
+  "sender": "companion",
+  "text": "{\"t\":\"speaker_observation\",\"stream\":5,\"start_sample\":16000,\"end_sample\":4800,\"label\":\"other\"}",
+  "code": "bad_request",
+  "reason": "out_of_range"
+ },
+ {
+  "name": "speaker_observation_label_not_a_string",
+  "sender": "companion",
+  "text": "{\"t\":\"speaker_observation\",\"stream\":5,\"start_sample\":0,\"end_sample\":16000,\"label\":1}",
+  "code": "bad_request",
+  "reason": "wrong_type"
+ },
+ {
+  "name": "speaker_observation_on_a_speak_stream",
+  "sender": "companion",
+  "text": "{\"t\":\"speaker_observation\",\"stream\":4,\"start_sample\":0,\"end_sample\":16000,\"label\":\"owner\"}",
+  "code": "bad_request",
+  "reason": "bad_stream"
  }
 ]

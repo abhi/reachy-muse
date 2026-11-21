@@ -107,6 +107,15 @@ class Op(str, Enum):
     NARRATE = "narrate"
     CLASSIFY = "classify"
     ANIMATE = "animate"
+    SPEAKER = "speaker"
+
+
+class SpeakerLabel(str, Enum):
+    """Whose voice a hear stream carried, judged on the companion against the owner's voice print."""
+
+    OWNER = "owner"
+    OTHER = "other"
+    UNKNOWN = "unknown"
 
 
 class CloseHow(str, Enum):
@@ -194,13 +203,17 @@ def _text(max_bytes: int, *, non_empty: bool = False) -> _Codec:
     return _Codec(parse)
 
 
-def _enum(kind: Type[Enum]) -> _Codec:
+def _enum(kind: Type[Enum], *, unknown: Optional[Enum] = None) -> _Codec:
+    """``unknown``, when given, stands in for a name this side does not know yet."""
+
     def parse(name: str, raw: Any) -> Enum:
         if not isinstance(raw, str):
             raise _bad(Reason.WRONG_TYPE, f"{name} must be a string")
         try:
             return kind(raw)
         except ValueError:
+            if unknown is not None:
+                return unknown
             raise _bad(Reason.BAD_ENUM, f"{name} {raw!r} is not one of {[m.value for m in kind]}") from None
 
     return _Codec(parse, lambda value: value.value)
@@ -433,6 +446,16 @@ class AnimateResult:
 
 
 @dataclass(frozen=True)
+class SpeakerObservation:
+    """The label for samples [start_sample, end_sample) of a hear stream, counted from its first microphone sample."""
+
+    stream: int = _wire(HEAR_STREAM)
+    start_sample: int = _wire(U32)
+    end_sample: int = _wire(U32)
+    label: SpeakerLabel = _wire(_enum(SpeakerLabel, unknown=SpeakerLabel.UNKNOWN))
+
+
+@dataclass(frozen=True)
 class Error:
     code: ErrorCode = _wire(_enum(ErrorCode))
     message: str = _wire(_text(MAX_ERROR_MESSAGE_BYTES), default="")
@@ -442,7 +465,8 @@ class Error:
 
 Message = Union[
     Hello, HearOpen, HearClose, SpeakStart, SpeakCancel, Narrate, Classify, Animate,
-    Welcome, HearPartial, HearEndpoint, SpeakDone, NarrateResult, ClassifyResult, AnimateResult, Error,
+    Welcome, HearPartial, HearEndpoint, SpeakDone, NarrateResult, ClassifyResult, AnimateResult,
+    SpeakerObservation, Error,
 ]
 
 
@@ -450,6 +474,11 @@ def _narrate_has_op_inputs(message: Narrate) -> None:
     needed = {NarrateOp.PROGRESS: "status", NarrateOp.LINES: "reply"}.get(message.op)
     if needed is not None and getattr(message, needed) is None:
         raise _bad(Reason.MISSING_FIELD, f"narrate op {message.op.value} needs {needed}")
+
+
+def _samples_in_order(message: SpeakerObservation) -> None:
+    if message.end_sample < message.start_sample:
+        raise _bad(Reason.OUT_OF_RANGE, "end_sample must not precede start_sample")
 
 
 @dataclass(frozen=True)
@@ -475,6 +504,7 @@ MESSAGES: Dict[str, _Spec] = {
     "narrate_result": _Spec(NarrateResult, Sender.COMPANION),
     "classify_result": _Spec(ClassifyResult, Sender.COMPANION),
     "animate_result": _Spec(AnimateResult, Sender.COMPANION),
+    "speaker_observation": _Spec(SpeakerObservation, Sender.COMPANION, _samples_in_order),
     "error": _Spec(Error, Sender.COMPANION),
 }
 _TYPE_OF: Dict[type, str] = {spec.cls: name for name, spec in MESSAGES.items()}
