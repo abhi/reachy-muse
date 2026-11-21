@@ -78,6 +78,14 @@ class SlowLink(CompanionLink):
         for connection, frame in held:
             super()._receive(connection, frame)
 
+    async def drop(self):
+        """Lose the connection and the frames in flight, as a network fault would, then wait for the reconnect."""
+        dropped, self.held = self._connection, None
+        dropped.ws.transport.abort()
+        async with asyncio.timeout(3):
+            while self._connection is dropped or not self.can(Op.HEAR):
+                await asyncio.sleep(.01)
+
 
 @contextlib.asynccontextmanager
 async def companion_hearing(engine, *, link_type=CompanionLink):
@@ -131,6 +139,24 @@ async def heard(hearing, *, commands_only=True):
         return await speak(window)
     finally:
         window.abort()
+
+
+async def given_up_on(link, hearing, now, *, refused=False):
+    """A turn whose reply stays in flight past the robot's endpoint deadline. Returns its words."""
+    from test_pins import Vad
+
+    link.held = []
+    turn = hearing.open_turn(16000, silence_s=.1, vad=Vad())
+    try:
+        turn.feed(SPEECH)
+        assert turn.take().ended is None
+        turn.feed(SILENCE)
+        ended = turn.take().ended
+        await link.in_flight(Error if refused else HearPartial)
+        now[0] += 1.5
+        return (await ended.endpoint()).text
+    finally:
+        turn.abort()
 
 
 def refused_command(hearing):
@@ -283,37 +309,106 @@ def test_late_refusals_rest_an_open_call_window_however_late_the_robot_polls(mon
     assert caplog.text.count("Reachy rests its companion's hearing for 60 s") == 1
 
 
-def test_a_turn_the_robot_gives_up_on_counts_after_an_earlier_heard_command(monkeypatch, caplog):
-    """Refused, refused, heard from its partial, then a turn whose endpoint misses the robot's deadline."""
+@pytest.mark.parametrize("settled_by", ["its late reply", "its late refusal", "the error window", "a lost link"])
+def test_a_turn_the_robot_gives_up_on_counts_after_an_earlier_heard_command(monkeypatch, caplog, settled_by):
+    """Refused, refused, a call command heard from its partial, then a turn whose endpoint misses the robot's
+    deadline: that turn's strike waits until the command settles, so it is never the third in a row."""
     from reachy_muse import companion_client
     from reachy_muse.companion_server.engines import ScriptedHearing
-    from test_pins import Vad
 
     now, stuck = clock(monkeypatch, reachy_muse.failover, companion_client), [True]
     stalls(monkeypatch, stuck)
+    if settled_by == "the error window":
+        monkeypatch.setattr(companion_client, "LATE_ERROR_S", 1.0)
 
     async def scenario():
         async with companion_hearing(ScriptedHearing(frames_per_partial=1), link_type=SlowLink) as (link, hearing):
             words = [await heard(hearing), await heard(hearing)]
             stuck[0] = False
             words.append(await heard(hearing))
-            link.held = []
-            turn = hearing.open_turn(16000, silence_s=.1, vad=Vad())
-            turn.feed(SPEECH)
-            assert turn.take().ended is None
-            turn.feed(SILENCE)
-            ended = turn.take().ended
-            await link.in_flight(HearPartial)
-            now[0] += 1.5
-            words.append((await ended.endpoint()).text)
-            turn.abort()
-            strikes_before_the_reply_lands = STRIKES.findall(caplog.text)
-            link.land()
-            return words, strikes_before_the_reply_lands
+            stuck[0] = settled_by == "its late refusal"
+            words.append(await given_up_on(link, hearing, now, refused=stuck[0]))
+            strikes_while_the_command_waits = STRIKES.findall(caplog.text)
+            if settled_by == "the error window":
+                await asyncio.sleep(1.2)
+            elif settled_by == "a lost link":
+                await link.drop()
+            else:
+                link.land()
+            return words, strikes_while_the_command_waits
 
     assert asyncio.run(scenario()) == (["robot words", "robot words", "hello", None], ["1", "2"])
     assert STRIKES.findall(caplog.text) == ["1", "2", "1"]
     assert "rests its companion's hearing" not in caplog.text
+
+
+@pytest.mark.parametrize("settled_by", ["its own endpoint", "a lost link"])
+def test_a_call_command_counts_as_heard_once_no_error_can_reach_it(monkeypatch, caplog, settled_by):
+    """Refused, refused, a call command nothing later confirms but its own late endpoint or a lost link,
+    then a turn the robot gives up on: its strike counts at once, as the first in a row."""
+    from reachy_muse import companion_client
+    from reachy_muse.companion_server.engines import ScriptedHearing
+    from test_pins import Vad
+
+    now, stuck = clock(monkeypatch, reachy_muse.failover, companion_client), [True]
+    stalls(monkeypatch, stuck)
+    engine = ScriptedHearing(frames_per_partial=1, endpoint_after=2 if settled_by == "its own endpoint" else None)
+
+    async def scenario():
+        async with companion_hearing(engine, link_type=SlowLink) as (link, hearing):
+            words = [await heard(hearing), await heard(hearing)]
+            stuck[0] = False
+            if settled_by == "its own endpoint":
+                command = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=True)
+                link.held = []
+                command.feed(SPEECH)
+                assert command.take().ended is None
+                await link.in_flight(HearEndpoint, speaking=command)
+                command.feed(SILENCE)
+                words.append((await command.take().ended.endpoint()).text)
+                link.land()
+                command.abort()
+            else:
+                words.append(await heard(hearing))
+                await link.drop()
+            words.append(await given_up_on(link, hearing, now))
+            return words
+
+    assert asyncio.run(scenario()) == ["robot words", "robot words", None if settled_by == "its own endpoint" else "hello",
+                                       None]
+    assert STRIKES.findall(caplog.text) == ["1", "2", "1"]
+    assert "rests its companion's hearing" not in caplog.text
+
+
+def test_a_rest_hands_an_open_window_to_the_robot_only_between_turns(monkeypatch, caplog):
+    """Hearing starts resting mid-utterance: the companion still hears that utterance, ending it after the
+    robot's VAD, and the window's next turn is heard on the robot."""
+    from reachy_muse.companion_server.engines import ScriptedHearing
+    from test_pins import Vad
+
+    stalls(monkeypatch, [False])
+
+    async def scenario():
+        async with companion_hearing(ScriptedHearing(frames_per_partial=1)) as (link, hearing):
+            window = hearing.open_turn(16000, silence_s=.1, vad=Vad())
+            try:
+                window.feed(SPEECH)
+                async with asyncio.timeout(2):
+                    while window.take().ended is None and window.partial is None:
+                        await asyncio.sleep(.01)
+                for elsewhere in ("one", "two", "three"):
+                    hearing.rest.fail(elsewhere)
+                window.feed(SPEECH)
+                assert window.take().ended is None
+                window.feed(SILENCE)
+                ended = window.take().ended
+                assert window.take().ended is None
+                return [(await ended.endpoint()).text, await speak(window)]
+            finally:
+                window.abort()
+
+    assert asyncio.run(scenario()) == ["hello", "robot words"]
+    assert caplog.text.count("Reachy rests its companion's hearing for 60 s") == 1
 
 
 def test_a_conversation_ending_right_after_an_abort_leaves_nothing_waiting(monkeypatch, caplog):

@@ -140,9 +140,8 @@ class _Connection:
                 future.set_exception(CapabilityUnavailable(reason))
         for stream in self.hearing.values():
             stream.fail(CapabilityUnavailable(reason))
-        for stream in self.waiting.values():
-            stream.held = stream.held or CapabilityUnavailable(reason)
-        self.settle()
+        # No error can arrive on a closed connection, so every call command still waiting was heard.
+        self.settle(self.opened + 1)
 
     def settle(self, number: int = 0) -> None:
         """Call commands aborted before hear stream ``number`` opened were heard. Tell the waiting
@@ -150,8 +149,8 @@ class _Connection:
         for stream in sorted(self.waiting.values(), key=lambda waiting: waiting.number):
             if stream.held is None and stream.aborted_before > number:
                 return
-            del self.waiting[stream.id]
-            stream.report(stream.held)
+            if self.waiting.pop(stream.id, None) is stream:
+                stream.report(stream.held)
 
 
 class _HearStream:
@@ -481,6 +480,9 @@ class CompanionLink:
                 elif isinstance(message, HearEndpoint):
                     stream.endpoint = message
                     stream.settled.set()
+            elif isinstance(message, HearEndpoint) and message.stream in connection.waiting:
+                connection.waiting[message.stream].aborted_before = 0   # no error follows its own endpoint
+                connection.settle()
         elif isinstance(message, SpeakDone):
             queue = connection.speaking.pop(message.stream, None)
             if queue is not None:
