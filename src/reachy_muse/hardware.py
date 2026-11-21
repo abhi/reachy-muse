@@ -334,12 +334,12 @@ class ReachyController:
         self._pending_motion = None
         self._stop_generated = False
         self._deferred = None
-        self._speaker_pending: tuple[SpeakerYaw, float] | None = None
+        self._speaker_pending: tuple[SpeakerYaw, float, float] | None = None
         self._speaker_look: SpeakerYaw | None = None
         self._speaker_turn: _SpeakerTurn | None = None
         self._speaker_gaze = 0.0
         self.wake_gaze_bearing: float | None = None
-        self._person_pending: tuple[SpeakerYaw, float] | None = None
+        self._person_pending: tuple[SpeakerYaw, float, float] | None = None
         self._person_hold = False
         self._person_release = False
         self._person_pitch = 0.0
@@ -475,7 +475,7 @@ class ReachyController:
                     or self._pending_motion is not None or self._deferred is not None):
                 log.info("Speaker gaze yaw=%.1f body_yaw=%.1f decision=busy", target.head, target.body)
                 return False
-            self._speaker_pending = (target, time.monotonic() + 1.0)
+            self._speaker_pending = (target, time.monotonic() + 1.0, angle)
             return True
 
     def look_at_person(self, yaw: float, pitch: float) -> bool:
@@ -488,7 +488,7 @@ class ReachyController:
                     or self._clip is not None and self._clip.request is not None):
                 return False
             low, high = POSE_LIMITS["pitch"]
-            self._person_pending = (target, max(low, min(high, math.degrees(pitch))))
+            self._person_pending = (target, max(low, min(high, math.degrees(pitch))), yaw)
             self._person_release = False
             self._speaker_pending = None
             self._pending_motion = None
@@ -1285,7 +1285,7 @@ class ReachyController:
             self._speaker_pending = None
             self._person_pending = None
             if self._person_hold and self._face_follower is not None:
-                self._face_follower.hold_center(False)
+                self._face_follower.hold_center(None)
             self._person_hold = False
         self._speaker_look = self._speaker_turn = None
 
@@ -1308,7 +1308,7 @@ class ReachyController:
                     clip.timeline.stop(now)
             if self._clip is not None or self._generated is not None:
                 return
-            target, self._person_pitch = pending
+            target, self._person_pitch, yaw = pending
             self._person_pending = None
             self._person_hold = True
             self._speaker_look = target
@@ -1316,7 +1316,7 @@ class ReachyController:
             self._speaker_turn = _SpeakerTurn(target, now, self._pose_parameters(self._last_pose)["yaw"],
                                               math.degrees(self._last_body_yaw))
             if self._face_follower is not None:
-                self._face_follower.hold_center(True)
+                self._face_follower.hold_center(yaw - math.radians(target.head))
 
     def _update_speaker(self, now: float, state: str, *, occupied: bool) -> None:
         with self._state_lock:
@@ -1326,11 +1326,11 @@ class ReachyController:
             else:
                 pending = None
         if pending is not None:
-            target, deadline = pending
+            target, deadline, bearing = pending
             decision = "busy" if occupied else "stale" if now > deadline else "turn"
             log.info("Speaker gaze yaw=%.1f body_yaw=%.1f decision=%s", target.head, target.body, decision)
             if decision == "turn":
-                self.wake_gaze_bearing = math.pi / 2 - math.radians(target.head)
+                self.wake_gaze_bearing = bearing
                 self._speaker_look = target
                 self._speaker_gaze = target.head
                 self._speaker_turn = _SpeakerTurn(target, now, self._pose_parameters(self._last_pose)["yaw"],

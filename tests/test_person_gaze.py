@@ -272,12 +272,16 @@ def test_chat_keeps_endpoint_bearing_after_robot_audio_clears_the_ring(people, c
         'Reachy gaze request outcome=turned faces=2']
 
 
-def test_wake_gaze_is_fallback_only_within_its_window(people, caplog):
+@pytest.mark.parametrize('speaker_yaw', [30, 60])
+def test_wake_gaze_is_fallback_only_within_its_window(people, caplog, speaker_yaw):
     from test_device_command_turns import service as make_service, never_asked
     from test_realtime_turns import TimedWake
 
     rig, controller, robot, scene = people
     caplog.set_level('INFO')
+    scene.doa = math.radians(90 - speaker_yaw)
+    if speaker_yaw == 60:
+        scene.faces = [(60, .35)]
 
     class DelayedWake(TimedWake):
         samples = 0
@@ -297,15 +301,44 @@ def test_wake_gaze_is_fallback_only_within_its_window(people, caplog):
             rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
             await asyncio.sleep(.02)
         await rig.wait_until_or_timeout(lambda: controller.wake_gaze_bearing is not None)
-        assert controller.wake_gaze_bearing == pytest.approx(math.pi / 3)
         rig.hardware.wake_gaze_bearing = controller.wake_gaze_bearing
         scene.doa = None
         scene.camera = True
         await say_live(rig)
-        await rig.wait_until_or_timeout(lambda: controller._person_hold)
-        assert controller._person_hold
-        assert controller._speaker_look.head == pytest.approx(-25)
+        await rig.wait_until_or_timeout(lambda: any(line.startswith('Reachy gaze request') for line in caplog.messages))
+        assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+            'Reachy gaze request outcome=' + ('turned faces=2' if speaker_yaw == 30 else 'no_other faces=1')]
+        if speaker_yaw == 30:
+            await rig.wait_until_or_timeout(lambda: controller._person_hold)
+        assert controller._person_hold is (speaker_yaw == 30)
+        assert controller._speaker_look.head == pytest.approx(-25 if speaker_yaw == 30 else 35)
+        assert controller.wake_gaze_bearing == pytest.approx(math.radians(90 - speaker_yaw))
 
     run(rig, service, user)
+    assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+        'Reachy gaze request outcome=' + ('turned faces=2' if speaker_yaw == 30 else 'no_other faces=1')]
+
+
+def test_limited_person_turn_does_not_reseed_on_the_speaker(people, caplog):
+    rig, controller, robot, scene = people
+    scene.faces = [(20, .35), (60, .12)]
+    scene.doa = math.radians(70)
+    caplog.set_level('INFO')
+    calls = ScriptedCalls(reply='Hello!', reply_s=.1)
+    service = realtime_service(rig, StreamingTranscripts('Say hi to my friend.'), calls)
+
+    async def user():
+        await say_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: controller._person_hold)
+        assert controller._person_hold
+        scene.busy = False
+        await asyncio.sleep(1.5)
+        assert controller._person_hold
+        assert math.degrees(controller.head_yaw) == pytest.approx(35, abs=.2)
+        assert math.degrees(robot.body_yaw) == pytest.approx(15, abs=.2)
+
+    events = run(rig, service, user)
+    assert set(played(events)) == {'muse'}
+    assert calls.barge_ins == 0
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
         'Reachy gaze request outcome=turned faces=2']

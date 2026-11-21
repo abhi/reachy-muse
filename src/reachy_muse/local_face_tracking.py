@@ -159,7 +159,7 @@ class _YuNetDetector:
 
 
 class _FaceTracker:
-    def __init__(self, sample_period: float, *, hold_center: bool = False):
+    def __init__(self, sample_period: float, *, hold_center: float | None = None):
         self._period = sample_period
         self.loss_seconds = FACE_LOSS_SECONDS
         self._face: _Face | None = None
@@ -171,8 +171,8 @@ class _FaceTracker:
         faces = [face for face in faces if face.score >= 0.7 and face.area > 0
                  and all(math.isfinite(value) for value in (*face.box, face.yaw_error,
                                                             face.pitch_error, face.score))]
-        if self._hold_center:
-            faces = [face for face in faces if abs(angles[0] + face.yaw_error) <= YAW_LIMIT]
+        if self._hold_center is not None:
+            faces = [face for face in faces if abs(angles[0] + face.yaw_error - self._hold_center) <= YAW_LIMIT]
         if self._target is not None and now - self._target.observed_at >= self.loss_seconds:
             self._face = self._target = None
         chosen = None
@@ -184,7 +184,8 @@ class _FaceTracker:
             if nearby:
                 chosen = min(nearby, key=lambda face: math.dist(face.center, (cx, cy)))
         elif faces:
-            chosen = (min(faces, key=lambda face: abs(angles[0] + face.yaw_error)) if self._hold_center
+            chosen = (min(faces, key=lambda face: abs(angles[0] + face.yaw_error - self._hold_center))
+                      if self._hold_center is not None
                       else max(faces, key=lambda face: face.area))
         if chosen is None:
             return self._target
@@ -245,7 +246,7 @@ class FaceFollower:
         self._target: FaceTarget | None = None
         self._snapshot: FaceSnapshot | None = None
         self._request: _FaceRequest | None = None
-        self._hold_center = False
+        self._hold_center: float | None = None
         self.last_seen_at: float | None = None
         self._failure: Exception | None = None
         self._thread: threading.Thread | None = None
@@ -290,9 +291,9 @@ class FaceFollower:
         with self._condition:
             return self._snapshot
 
-    def hold_center(self, active: bool) -> None:
+    def hold_center(self, yaw: float | None) -> None:
         with self._condition:
-            self._hold_center = active
+            self._hold_center = yaw
             self._generation += 1
             self._target = None
             self._condition.notify_all()
