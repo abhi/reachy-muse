@@ -315,7 +315,9 @@ Each turn also logs one `Reachy turn timeline` line with the seconds from its
 first stage to each later one: wake, speech end, endpoint, transcript, dispatch,
 Muse's acceptance, acknowledgement audio, first status, first text, reply done,
 narration done and first answer audio, plus whether the robot's silence forced
-the endpoint. `tools/turn_timeline.py` turns the journal into a table:
+the endpoint. With a companion that recognizes the owner's voice, the line also
+has `speaker=owner`, `other` or `unknown`.
+`tools/turn_timeline.py` turns the journal into a table:
 
 ```bash
 ssh pollen@reachy-mini.local 'journalctl -u muse-reachy --since "-2h" --no-pager -o cat' \
