@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Sequence, TypeVar
@@ -103,15 +104,21 @@ class _Session:
         self.hearing = hearing
         self.utterance: Optional[_Utterance] = None
         self.said = ""
+        self._closed = threading.Event()
 
     async def feed(self, pcm: bytes) -> Sequence[HearEvent]:
-        return await self.hearing.run(self._feed, pcm)
+        try:
+            return await self.hearing.run(self._feed, pcm)
+        except _Abandoned:
+            return []
 
     def _feed(self, pcm: bytes) -> Sequence[HearEvent]:
+        _check_open(self._closed)
         # Creating a streaming session can evaluate MLX arrays, including after idle.
         # Construction, inference and release all belong to the same model worker.
         if self.utterance is None:
-            self.utterance = _Utterance(self.hearing._models, self.hearing.config)
+            self.utterance = _Utterance(self.hearing._models, self.hearing.config, cancelled=self._closed)
+        _check_open(self._closed)
         samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
         final = self.utterance.feed(samples)
         events: List[HearEvent] = []
@@ -123,13 +130,19 @@ class _Session:
         return events
 
     async def finish(self) -> str:
-        return await self.hearing.run(self._finish)
+        try:
+            return await self.hearing.run(self._finish)
+        except _Abandoned:
+            return ""
 
     def _finish(self) -> str:
+        _check_open(self._closed)
         return self.utterance.final() if self.utterance is not None else ""
 
     async def close(self) -> None:
-        await self.hearing.run(self._release)
+        self._closed.set()
+        # Native work cannot be interrupted; release its arrays on the worker when it returns.
+        self.hearing._thread.submit(self._release)
 
     def _release(self) -> None:
         self.utterance = None
@@ -138,9 +151,10 @@ class _Session:
 class _Utterance:
     """One turn's state. Every method runs on the hearing thread."""
 
-    def __init__(self, models: _Models, config: HearingConfig) -> None:
+    def __init__(self, models: _Models, config: HearingConfig, *, cancelled=None) -> None:
         self.models = models
         self.config = config
+        self.cancelled = cancelled if cancelled is not None else threading.Event()
         self.stream = models.voxtral.create_streaming_session(transcription_delay_ms=config.delay_ms)
         self.raw = ""
         self.audio: List[np.ndarray] = []
@@ -157,30 +171,40 @@ class _Utterance:
 
     def feed(self, samples: np.ndarray) -> Optional[str]:
         """Return the final transcript when this audio ends the turn."""
+        _check_open(self.cancelled)
         self.audio.append(samples)
         self.stream.feed(samples)
+        _check_open(self.cancelled)
         for delta in self.stream.step(max_decode_tokens=16):
             watchdog.progress()
+            _check_open(self.cancelled)
             self.raw += delta
+        _check_open(self.cancelled)
         return self.final() if self._turn_over(samples) else None
 
     def final(self) -> str:
+        _check_open(self.cancelled)
         if self.config.final_pass:
             from mlx.core import array
             from parakeet_mlx.audio import get_logmel
 
             parakeet = self.models.parakeet
-            return parakeet.generate(get_logmel(array(np.concatenate(self.audio)), parakeet.preprocessor_config))[0].text.strip()
+            mel = get_logmel(array(np.concatenate(self.audio)), parakeet.preprocessor_config)
+            _check_open(self.cancelled)
+            return parakeet.generate(mel)[0].text.strip()
         self.stream.close()
         while not self.stream.done:
+            _check_open(self.cancelled)
             for delta in self.stream.step(max_decode_tokens=64):
                 watchdog.progress()
+                _check_open(self.cancelled)
                 self.raw += delta
         return self.text
 
     def _turn_over(self, samples: np.ndarray) -> bool:
         self.unread = np.concatenate((self.unread, samples))
         while len(self.unread) >= VAD_WINDOW:
+            _check_open(self.cancelled)
             window, self.unread = self.unread[:VAD_WINDOW], self.unread[VAD_WINDOW:]
             if self._speech_probability(window) >= self.config.speech_threshold:
                 self.heard_speech, self.silence_s, self.turn_checked = True, 0.0, False
@@ -203,8 +227,19 @@ class _Utterance:
         return float(probability[0][0])
 
     def turn_complete(self) -> bool:
+        _check_open(self.cancelled)
         tail = np.concatenate(self.audio)[-TURN_SECONDS * RATE :]
         tail = np.pad(tail, (TURN_SECONDS * RATE - len(tail), 0))
         features = self.models.features(tail, sampling_rate=RATE, return_tensors="np", padding="max_length", max_length=TURN_SECONDS * RATE, truncation=True, do_normalize=True)
+        _check_open(self.cancelled)
         (probability,) = self.models.turn.run(None, {"input_features": features.input_features.astype(np.float32)})
         return float(probability[0][0]) >= self.config.turn_threshold
+
+
+class _Abandoned(Exception):
+    pass
+
+
+def _check_open(cancelled: threading.Event) -> None:
+    if cancelled.is_set():
+        raise _Abandoned()
