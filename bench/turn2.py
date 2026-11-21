@@ -24,7 +24,7 @@ async def engine_replay(stall_s=.3):
     class Utterance:
         text = "Should I work out today?"
 
-        def __init__(self, models, config):
+        def __init__(self, models, config, *, cancelled=None):
             work["open_start"] = time.monotonic()
             time.sleep(stall_s)
             work["open_end"] = time.monotonic()

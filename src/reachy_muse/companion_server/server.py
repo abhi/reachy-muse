@@ -62,10 +62,11 @@ from reachy_muse.protocol import (
 
 from reachy_muse.companion_server.engines import (
     Narrated,
-    Animator, Classifier, Endpoint, Hearing, Narrator, Partial, SpeechFirst, Voice,
+    Animator, Classifier, Endpoint, Hearing, HearingSession, Narrator, Partial, SpeechFirst, Voice,
 )
 from reachy_muse.companion_server.motion_activity import ActivityStatus
 from reachy_muse.companion_server.motion_library import LibraryAnimator
+from reachy_muse.companion_server.watchdog import watchdog
 
 log = logging.getLogger("reachy_muse.companion_server")
 
@@ -75,6 +76,11 @@ HELLO_TIMEOUT = 10.0
 CLOSE_POLICY_VIOLATION = 1008
 CLOSE_INTERNAL_ERROR = 1011
 REMEMBERED_EXPRESSIONS = 64
+# Streaming reports progress after every Voxtral token, VAD window and turn check. Even an 8.2 s
+# utterance's whole final transcript took 2.77 s at p95 while Kokoro spoke, so a worker that reports
+# nothing for 3 s is stuck. Parakeet's final pass gets a longer budget (hearing_voxtral.FINAL_PASS_RTF).
+HEARING_SOFT_S = 3.0
+HEARING_CHECK_S = 0.1
 
 
 @dataclass(frozen=True)
@@ -152,6 +158,8 @@ class _Hear:
 
     queue: "asyncio.Queue[Union[bytes, CloseHow]]"
     task: Optional[asyncio.Task] = None
+    audio_arrived: bool = False                # since the last stall check
+    session: Optional[HearingSession] = None
 
 
 @dataclass
@@ -205,6 +213,7 @@ class _Session:
     async def run(self) -> None:
         if not await self._handshake():
             return
+        health = asyncio.create_task(self._watch_hearing())
         try:
             async for frame in self.ws:
                 try:
@@ -220,6 +229,8 @@ class _Session:
                     log.exception("handling a frame failed")
                     await self._fatal(ErrorCode.INTERNAL, error)
         finally:
+            health.cancel()
+            await asyncio.gather(health, return_exceptions=True)
             await self._stop_everything()
 
     async def _handshake(self) -> bool:
@@ -272,6 +283,10 @@ class _Session:
         if message.stream in self.hearing:
             await self._send(_error(ErrorCode.BAD_REQUEST, f"hear stream {message.stream} is already open", stream=message.stream))
             return
+        stuck_s = watchdog.stalled("hearing", HEARING_SOFT_S)
+        if stuck_s:
+            await self._hear_overloaded(message.stream, stuck_s)
+            return
         hear = self.hearing[message.stream] = _Hear(asyncio.Queue())
         hear.task = asyncio.create_task(self._guard(self._speech_first(lambda: self._hear(message, hear)), stream=message.stream))
 
@@ -298,11 +313,29 @@ class _Session:
             await self._send(_error(ErrorCode.GAP, str(error), stream=frame.stream))
             return
         hear.queue.put_nowait(frame.pcm)
+        hear.audio_arrived = True
+
+    async def _watch_hearing(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(HEARING_CHECK_S)
+                for stream, hear in list(self.hearing.items()):
+                    arrived, hear.audio_arrived = hear.audio_arrived, False
+                    stuck_s = watchdog.stalled("hearing", HEARING_SOFT_S) if arrived else None
+                    if stuck_s and self.hearing.get(stream) is hear:
+                        self._end_hearing(stream, hear)
+                        await self._hear_overloaded(stream, stuck_s)
+        except ConnectionClosed:
+            pass
+
+    async def _hear_overloaded(self, stream: int, stuck_s: float) -> None:
+        log.warning("hearing overloaded (stream=%s; worker made no progress for %.1f s)", stream, stuck_s)
+        await self._send(_error(ErrorCode.OVERLOADED, "hearing worker is not making progress", stream=stream))
 
     async def _hear(self, message: HearOpen, hear: _Hear) -> None:
         assert self.engines.hearing is not None
         stream, rev = message.stream, 0
-        session = self.engines.hearing.open(message.pre_roll_frames)
+        session = hear.session = self.engines.hearing.open(message.pre_roll_frames)
         try:
             while True:
                 item = await hear.queue.get()
@@ -326,6 +359,8 @@ class _Session:
     def _end_hearing(self, stream: int, hear: _Hear) -> None:
         """Free the stream id at once; a cancelled task sends nothing more under it."""
         if self.hearing.get(stream) is hear:
+            if hear.session is not None:
+                hear.session.cancel()
             del self.hearing[stream]
             self.sequence.forget(stream)
             assert hear.task is not None
@@ -520,6 +555,8 @@ class _Session:
     async def _stop_everything(self) -> None:
         tasks = ([h.task for h in self.hearing.values()] + [s.task for s in self.speaking.values()]
                  + list(self.narrating.values()) + list(self.animating.values()) + list(self.warming))
+        for stream, hear in list(self.hearing.items()):
+            self._end_hearing(stream, hear)
         for warm in self.warm.values():
             warm.cancel()
         self.warm.clear()

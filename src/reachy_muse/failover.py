@@ -106,9 +106,8 @@ class CompanionRoute:
 class _CompanionEnded:
     """A companion turn whose words fall back to Reachy's own transcription of its audio."""
 
-    def __init__(self, ended, rest: _Rest):
+    def __init__(self, ended):
         self._ended = ended
-        self._rest = rest
         self.truncated = ended.truncated
         self.end_sample = ended.end_sample
 
@@ -120,14 +119,10 @@ class _CompanionEnded:
 
     async def endpoint(self) -> Optional[Endpoint]:
         try:
-            endpoint = await self._ended.endpoint()
+            return await self._ended.endpoint()
         except CapabilityUnavailable as error:
             log.warning("Reachy transcribes the turn itself: %s", type(error).__name__)
-            if not error.link_down:
-                self._rest.fail(type(error).__name__)
             return Endpoint(self._ended.wav, None)
-        self._rest.succeed()
-        return endpoint
 
 
 class FailoverHearingTurn:
@@ -135,8 +130,9 @@ class FailoverHearingTurn:
 
     While the companion hears, fed audio is kept from the end of its last ended turn. If it
     fails mid-turn, a local turn opens and the kept audio replays into it at the next feed,
-    which runs off the event loop. The local turn hands back to the companion between user
-    turns once the link is up.
+    which runs off the event loop. Between user turns, the local turn hands back to the
+    companion once the link is up, and a resting companion hands over to the robot. The
+    companion tells the rest how each of its streams ended, so this window only routes.
     """
 
     def __init__(self, hearing: FailoverHearing, sample_rate: int, options: dict):
@@ -149,7 +145,7 @@ class FailoverHearingTurn:
         self._turn_start_sample = 0
         self._replay = None
         self._on_companion = hearing.companion_ready
-        self._turn = (hearing.companion if self._on_companion else hearing.local).open_turn(sample_rate, **options)
+        self._turn = self._open(self._on_companion, options)
 
     @property
     def active(self) -> bool:
@@ -219,16 +215,17 @@ class FailoverHearingTurn:
             heard = self._turn.take()
         except CapabilityUnavailable as error:
             log.warning("Reachy's companion stopped hearing (%s); finishing the turn on the robot", error)
-            if not error.link_down:
-                self._hearing.rest.fail(str(error))
             self._replay = tuple(self._kept)
             self._switch(on_companion=False)
             return HeardAudio()
         if heard.ended is not None:
             self._forget_until(self._turn_start_sample + heard.ended.end_sample)
-            return HeardAudio(_CompanionEnded(heard.ended, self._hearing.rest), heard.failures, heard.transcript_lost)
+            return HeardAudio(_CompanionEnded(heard.ended), heard.failures, heard.transcript_lost)
         elif not self._turn.active:
             self._trim(IDLE_KEEP_S)
+            if self._hearing.rest.resting:
+                self._replay = tuple(self._kept)
+                self._switch(on_companion=False)
         return heard
 
     def _switch(self, *, on_companion: bool) -> None:
@@ -239,8 +236,12 @@ class FailoverHearingTurn:
             self._kept_samples = 0
         self._on_companion = on_companion
         self._turn_start_sample = self._fed
-        hearing = self._hearing.companion if on_companion else self._hearing.local
-        self._turn = hearing.open_turn(self._rate, **options)
+        self._turn = self._open(on_companion, options)
+
+    def _open(self, on_companion: bool, options: dict):
+        if on_companion:
+            return self._hearing.companion.open_turn(self._rate, outcomes=self._hearing.rest, **options)
+        return self._hearing.local.open_turn(self._rate, **options)
 
     def finish_initial_capture(self) -> None:
         self._turn.finish_initial_capture()

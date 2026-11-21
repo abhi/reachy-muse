@@ -162,6 +162,9 @@ class SlowHearing:
             async def finish(self):
                 return f"p{self.heard}"
 
+            def cancel(self):
+                pass
+
             async def close(self):
                 hearing.closed[index] = True
 

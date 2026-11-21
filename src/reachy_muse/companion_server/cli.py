@@ -188,5 +188,14 @@ async def _engines(args: argparse.Namespace) -> Engines:
     # One at a time: warming several models on their own threads at once hung the GPU.
     for engine in (hearing, voice, narrator, *([motion] if motion else [])):
         await engine.load()
+    import mlx.core as mx
+
+    # mlx_lm restores the limit it finds on entry. All warm-up generators must finish first.
+    mx.clear_cache()
+    wired = mx.device_info()["max_recommended_working_set_size"]
+    cache = 256 * 1024**2
+    mx.set_wired_limit(wired)
+    mx.set_cache_limit(cache)
+    logging.info("MLX memory limits: wired=%d cache=%d bytes", wired, cache)
     return Engines(hearing=hearing, voice=voice, narrator=narrator, motion=library or motion, classifier=narrator,
                    speech_first=speech_first)

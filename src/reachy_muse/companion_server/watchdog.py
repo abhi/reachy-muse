@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import faulthandler
 import os
+import resource
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from typing import Optional
 
 
 LOOP_STALL_S = 10.0
 ENGINE_STALL_S = 30.0
+# A cold hearing call that pages its weights back in can outlast 30 s while the robot hears on its
+# own, and a restart reloads every model, which took about 42 s after the November 20 stall.
+HEARING_STALL_S = 120.0
 CHECK_S = 0.5
 EXIT_STATUS = 70
 
@@ -23,9 +29,10 @@ class Watchdog:
     native call that is still running. Idle workers and queued calls have no timer.
     """
 
-    def __init__(self, *, loop_s=LOOP_STALL_S, engine_s=ENGINE_STALL_S,
+    def __init__(self, *, loop_s=LOOP_STALL_S, engine_s=ENGINE_STALL_S, hearing_s=HEARING_STALL_S,
                  check_s=CHECK_S, clock=time.monotonic, exit_process=os._exit):
         self.loop_s, self.engine_s, self.check_s = loop_s, engine_s, check_s
+        self.hearing_s = hearing_s
         self._clock, self._exit = clock, exit_process
         self._lock = threading.Lock()
         self._workers = {}
@@ -62,27 +69,39 @@ class Watchdog:
             return
         identity = threading.get_ident()
         with self._lock:
-            self._workers[identity] = (name, self._clock())
+            self._workers[identity] = (name, self._clock(), 0.0)
         try:
             yield
         finally:
             with self._lock:
                 self._workers.pop(identity, None)
 
-    def progress(self) -> None:
-        """A token or audio chunk completed on the calling model thread."""
+    def progress(self, quiet_s: float = 0.0) -> None:
+        """A token or audio chunk completed on the calling model thread.
+
+        Its next stage may then run ``quiet_s`` without progress before ``stalled`` names the
+        thread. The hard limit is unchanged.
+        """
         identity = threading.get_ident()
         with self._lock:
             if identity in self._workers:
-                name, _ = self._workers[identity]
-                self._workers[identity] = (name, self._clock())
+                name = self._workers[identity][0]
+                self._workers[identity] = (name, self._clock(), quiet_s)
+
+    def stalled(self, name: str, limit_s: float) -> Optional[float]:
+        """Seconds a ``name`` worker has gone without progress, once past ``limit_s`` and its stage's allowance."""
+        with self._lock:
+            now = self._clock()
+            return max((now - last for worker, last, quiet_s in self._workers.values()
+                        if worker == name and now - last >= max(limit_s, quiet_s)), default=None)
 
     def _watch(self) -> None:
         while not self._stopped.wait(self.check_s):
             now = self._clock()
             with self._lock:
                 stalled = [("event loop", now - self._tick, self.loop_s)]
-                stalled.extend((name, now - last, self.engine_s) for name, last in self._workers.values())
+                stalled.extend((name, now - last, self.hearing_s if name == "hearing" else self.engine_s)
+                               for name, last, _ in self._workers.values())
             for name, age, limit in stalled:
                 if age >= limit:
                     # A wedged worker may own a logging lock. Write directly to launchd's stderr.
@@ -90,7 +109,14 @@ class Watchdog:
                     try:
                         os.write(2, message.encode())
                     finally:
-                        self._exit(EXIT_STATUS)
+                        try:
+                            faulthandler.dump_traceback(file=2, all_threads=True)
+                        finally:
+                            try:
+                                usage = resource.getrusage(resource.RUSAGE_SELF)
+                                os.write(2, f"companion watchdog: page faults: minor={usage.ru_minflt} major={usage.ru_majflt}\n".encode())
+                            finally:
+                                self._exit(EXIT_STATUS)
                     return
 
 
