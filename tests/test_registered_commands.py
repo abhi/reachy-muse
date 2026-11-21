@@ -815,6 +815,10 @@ def snapshot(faces, age):
 @pytest.mark.parametrize("command, params, payload, line", [
     ("reachy.people", {}, {"speaker": "unknown", "people_visible": 1, "seen_s_ago": 4},
      "Reachy people speaker=unknown visible=1"),
+    ("reachy.look_at", {"target": "speaker"}, {"outcome": "no_speaker_bearing"},
+     "Reachy look_at target=speaker outcome=no_speaker_bearing"),
+    ("reachy.look_at", {"target": "other"}, {"outcome": "no_speaker_bearing"},
+     "Reachy look_at target=other outcome=no_speaker_bearing"),
 ])
 @pytest.mark.parametrize("conversation", [True, False], ids=["before_any_request", "without_a_conversation"])
 def test_people_commands_with_no_request_know_no_speaker(monkeypatch, caplog, command, params, payload, line,
@@ -840,6 +844,7 @@ def test_people_commands_with_no_request_know_no_speaker(monkeypatch, caplog, co
 
 @pytest.mark.parametrize("command, params, line", [
     ("reachy.people", {}, "Reachy people outcome=timeout"),
+    ("reachy.look_at", {"target": "other"}, "Reachy look_at target=other outcome=timeout"),
 ])
 def test_people_commands_that_outwait_their_deadline_in_the_sdk_queue_time_out(monkeypatch, caplog, command, params,
                                                                                line):

@@ -49,6 +49,10 @@ owner or someone else, or how many people are present. Its `speaker` is `owner`,
 identity; on `unknown`, don't guess. `people_visible` counts the faces in Reachy's latest
 camera look. Names are never available.
 
+Call `reachy.look_at` with target `other` when the user asks you to greet, address or look at
+someone else in the room; Reachy holds that look through your reply. Target `speaker` faces
+whoever made the latest request.
+
 ## Things Reachy handles itself
 
 Sleep and wake, stop talking, volume, and face tracking are handled on the robot as soon as

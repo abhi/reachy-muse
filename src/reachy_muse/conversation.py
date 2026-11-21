@@ -1437,7 +1437,7 @@ class VoiceConversation:
                 pending_turns.append(_QueuedTurn(recorded.ended, self._wake_strip_required, wake_epoch,
                                                 timeline, recorded.heard_over, self.call or self._lost_call,
                                                 recorded.speaker_bearing, recorded.gaze_generation))
-                self._gaze.queued(recorded.gaze_generation, timeline.facts)
+                self._gaze.queued(recorded.gaze_generation, recorded.speaker_bearing, timeline.facts)
                 if self.realtime is not None and pending_turns[-1].call is None:
                     self.realtime.chat_turn()
                 self._lost_call = None
@@ -2812,6 +2812,14 @@ class VoiceConversation:
         """Muse's reachy.people: the latest admitted request's speaker and the faces Reachy saw last."""
         return self._gaze.people()
 
+    async def look_at(self, target: str) -> str:
+        """Muse's reachy.look_at. A turn counts as Muse moving Reachy: a response without words answers the
+        request, and Reachy's own closing gives way."""
+        outcome = await self._gaze.look_at(target)
+        if outcome == "turned" and self.call is not None:
+            self.call.moved_by_muse()
+        return outcome
+
     def muse_moved(self, change: int) -> None:
         """Muse started (+1) or finished (-1) moving Reachy itself; local reply motion waits meanwhile."""
         self.muse_moving = max(0, self.muse_moving + change)
@@ -3526,6 +3534,8 @@ class ReachyService(PairedService):
             return self._muse_motion(name, params, timeout_ms)
         if name == "reachy.people":
             return self._people(params, timeout_ms, session=session)
+        if name == "reachy.look_at":
+            return self._look_at(params, timeout_ms, session=session)
         if name not in ("reachy.say", "reachy.presence"):
             return self.executor.run_command(name, params, timeout_ms)
         try:
@@ -3626,6 +3636,23 @@ class ReachyService(PairedService):
         log.info("Reachy people speaker=%s visible=%s", payload["speaker"], "none" if visible is None else visible)
         return {"ok": True, "payload": payload}
 
+    def _look_at(self, params: dict, timeout_ms: int | None, *, session: LinkSession | None) -> dict:
+        try:
+            if not isinstance(params, _CommandParams):
+                params = _CommandParams("reachy.look_at", params, timeout_ms)
+        except ValueError:
+            log.info("Reachy look_at outcome=invalid_parameters")
+            return {"ok": False, "error": "invalid_parameters"}
+        target = params["target"]
+        try:
+            outcome = self._on_voice(lambda voice: voice.look_at(target), lambda: "no_speaker_bearing",
+                                     params.deadline, session)
+        except CommandTimeout:
+            log.info("Reachy look_at target=%s outcome=timeout", target)
+            return {"ok": False, "error": "timeout"}
+        log.info("Reachy look_at target=%s outcome=%s", target, outcome)
+        return {"ok": True, "payload": {"outcome": outcome}}
+
     def _on_voice(self, ask: Callable[[VoiceConversation], Awaitable], absent: Callable[[], object],
                   deadline: float, session: LinkSession | None):
         """``ask`` this session's conversation on its loop, or ``absent()`` while it has none.
@@ -3714,7 +3741,7 @@ class ReachyService(PairedService):
 
         def invoke(message):
             name = message.get("command")
-            if name in ("reachy.say", "reachy.presence", "reachy.notify", "reachy.people"):
+            if name in ("reachy.say", "reachy.presence", "reachy.notify", "reachy.people", "reachy.look_at"):
                 params = message.get("params")
                 try:
                     params = _CommandParams(name, params if isinstance(params, dict) else {},

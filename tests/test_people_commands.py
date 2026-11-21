@@ -8,7 +8,9 @@ handler, and learns only what the owner allowed.
 import asyncio
 from dataclasses import replace
 import itertools
+import math
 import re
+import threading
 
 import pytest
 from musegadget.link_client import MAX_CONCURRENT_INVOKES, LinkSession
@@ -16,6 +18,7 @@ from musegadget.link_client import MAX_CONCURRENT_INVOKES, LinkSession
 from fake_companion import TOKEN, FakeCompanion
 from reachy_muse.companion_client import CompanionHearing, CompanionLink
 from reachy_muse.failover import CompanionRoute, FailoverHearing
+from reachy_muse.hardware import SPEAKER_TURN_S
 from reachy_muse.protocol import Op, SpeakerLabel
 from test_device_command_turns import never_asked, played
 from test_person_gaze import people, say_live  # noqa: F401  # people is the fixture shared with people1's tests
@@ -25,11 +28,14 @@ from test_realtime_turns import ScriptedCalls, StreamingTranscripts, realtime_se
 REQUEST = "Who is here with me, Sarah?"
 REPLY = "Hello Sarah, nice to see you!"
 REPLY_AUDIO = voiced(.2)
+OUTCOMES = ("turned", "no_other", "no_faces", "no_speaker_bearing", "stale", "busy")
 ALLOWED_LOG_LINES = (
     r"Reachy people speaker=(owner|someone_else|unknown) visible=(none|\d+)",
     r"Reachy people outcome=(invalid_parameters|timeout)",
-    r"invoke reachy\.people",
-    r"reachy\.people (ok|failed) in \d+ ms",
+    rf"Reachy look_at target=(speaker|other) outcome=({'|'.join(OUTCOMES)}|timeout)",
+    r"Reachy look_at outcome=invalid_parameters",
+    r"invoke reachy\.(people|look_at)",
+    r"reachy\.(people|look_at) (ok|failed) in \d+ ms",
 )
 
 
@@ -41,21 +47,20 @@ class InvokedSession(PinSession):
         self._register_id = "register"
         self._tasks = set()
         self._invokes = asyncio.Semaphore(MAX_CONCURRENT_INVOKES)
-        self._sent = asyncio.Queue()
+        self._waiting = {}
         self._ids = itertools.count(1)
         self.results = []
 
     async def send(self, message):
-        await self._sent.put(message)
+        self._waiting.pop(message["id"]).set_result(message)
 
     async def invoke(self, command, params=None):
-        message = {"method": "link.invoke", "id": f"invoke-{next(self._ids)}", "command": command,
-                   "params": {} if params is None else params}
-        LinkSession._handle(self, message)
-        result = await asyncio.wait_for(self._sent.get(), 3)
-        assert result["id"] == message["id"]
-        self.results.append(result)
-        return result
+        id = f"invoke-{next(self._ids)}"
+        result = self._waiting[id] = asyncio.get_running_loop().create_future()
+        LinkSession._handle(self, {"method": "link.invoke", "id": id, "command": command,
+                                   "params": {} if params is None else params})
+        self.results.append(await asyncio.wait_for(result, 3))
+        return self.results[-1]
 
 
 class Muse:
@@ -71,14 +76,14 @@ class Muse:
         self.calls = ScriptedCalls(answer=answer, every_turn=True)
 
 
-def companion(speaker=SpeakerLabel.OWNER):
-    return FakeCompanion(ops=(Op.HEAR, Op.SPEAK, Op.NARRATE, Op.SPEAKER), partials=(REQUEST,), speaker=speaker)
+def companion(speaker=SpeakerLabel.OWNER, request=REQUEST):
+    return FakeCompanion(ops=(Op.HEAR, Op.SPEAK, Op.NARRATE, Op.SPEAKER), partials=(request,), speaker=speaker)
 
 
-def converse(rig, muse, fake, user):
-    """Reachy in a realtime call that hears through ``fake``, from rest until ``user(voice)`` is done and it
-    rests again."""
-    service = realtime_service(rig, StreamingTranscripts(), muse.calls)
+def converse(rig, calls, fake, user):
+    """Reachy in a realtime call with ``calls`` that hears through ``fake``, from rest until ``user(voice)`` is
+    done and it rests again."""
+    service = realtime_service(rig, StreamingTranscripts(), calls)
     rig.session = InvokedSession(rig.recording)
 
     async def scenario():
@@ -137,24 +142,33 @@ async def replied(rig, voice, count=1):
                 and (voice.call is None or not voice.call.audible))
 
 
-def assert_allowed(results, caplog):
+def facing(controller, robot):
+    return round(math.degrees(controller.head_yaw)), round(math.degrees(robot.body_yaw))
+
+
+def assert_allowed(results, caplog, *, words=(REQUEST, REPLY, "Sarah")):
     """Every result carries only the allowed fields, and every line about the commands only fixed words."""
     for result in results:
         assert set(result) <= {"method", "id", "ok", "payload", "error"}
-        if "payload" in result:
-            payload = result["payload"]
+        payload = result.get("payload")
+        if payload is None:
+            assert result["ok"] is False and result["error"] in ("invalid_parameters", "timeout")
+        elif set(payload) == {"outcome"}:
+            assert payload["outcome"] in OUTCOMES
+        else:
             assert set(payload) == {"speaker", "people_visible", "seen_s_ago"}
             assert payload["speaker"] in ("owner", "someone_else", "unknown")
             for count in (payload["people_visible"], payload["seen_s_ago"]):
                 assert count is None or type(count) is int and count >= 0
             assert (payload["people_visible"] is None) == (payload["seen_s_ago"] is None)
-        else:
-            assert result["ok"] is False and result["error"] in ("invalid_parameters", "timeout")
     for line in caplog.messages:
-        if "people" in line:
+        if re.search(r"reachy\.(people|look_at)|Reachy (people|look_at)", line):
             assert any(re.fullmatch(pattern, line) for pattern in ALLOWED_LOG_LINES), line
-    for words in ("Sarah", REQUEST, REPLY):
-        assert words not in caplog.text
+    for text in words:
+        assert text not in caplog.text
+
+
+# ---- reachy.people
 
 
 @pytest.mark.parametrize("label, speaker", [
@@ -180,7 +194,7 @@ def test_muse_learns_whether_its_owner_asked_and_how_many_people_reachy_sees(peo
         await say_live(rig, wake=True)
         await replied(rig, voice)
 
-    converse(rig, muse, companion(label), user)
+    converse(rig, muse.calls, companion(label), user)
     assert rig.session.results == [{"method": "link.result", "id": "invoke-1", "ok": True,
                                     "payload": {"speaker": speaker, "people_visible": 2, "seen_s_ago": 0}}]
     assert logged(caplog, "Reachy people") == [f"Reachy people speaker={speaker} visible=2"]
@@ -216,7 +230,7 @@ def test_visible_people_come_from_a_face_snapshot_at_most_about_ten_seconds_old(
         await say_live(rig, wake=True)
         await replied(rig, voice)
 
-    converse(rig, muse, companion(), user)
+    converse(rig, muse.calls, companion(), user)
     assert [result["payload"] for result in rig.session.results] == [
         {"speaker": "owner", "people_visible": visible, "seen_s_ago": seen}]
     assert logged(caplog, "Reachy people") == [
@@ -240,7 +254,7 @@ def test_a_label_from_a_closed_listening_window_is_unknown(people, caplog):
         await until(rig, lambda: "Reachy's wake window closed after inactivity" in caplog.messages, 8)
         await rig.session.invoke("reachy.people")
 
-    converse(rig, muse, companion(), user)
+    converse(rig, muse.calls, companion(), user)
     assert [result["payload"]["speaker"] for result in rig.session.results] == ["owner", "unknown"]
     assert logged(caplog, "Reachy people") == ["Reachy people speaker=owner visible=none",
                                                "Reachy people speaker=unknown visible=none"]
@@ -279,7 +293,216 @@ def test_the_owners_label_never_stands_for_a_later_request(people, caplog, asked
             await speaking
         await replied(rig, voice, 2)
 
-    converse(rig, muse, fake, user)
+    converse(rig, muse.calls, fake, user)
     assert [result["payload"]["speaker"] for result in rig.session.results] == ["owner", "unknown"]
     assert len(logged(caplog, "Realtime command ")) == 2
     assert_allowed(rig.session.results, caplog)
+
+
+# ---- reachy.look_at
+
+
+@pytest.mark.parametrize("target, turned, held", [("speaker", (30, 10), False), ("other", (-25, -5), True)])
+def test_muse_turns_reachy_to_the_speaker_or_holds_it_on_someone_else(people, caplog, target, turned, held):
+    """The speaker stands at +30 degrees and a friend at -25. Only a look at the friend is held, and the next
+    request ends it, as a spoken greeting's does."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    seen = {}
+
+    async def ask(ordinal):
+        if ordinal == 1:
+            await heard(rig, caplog)
+            await rig.session.invoke("reachy.look_at", {"target": target})
+
+    muse = Muse(ask)
+
+    async def user(voice):
+        await say_live(rig, wake=True)
+        await replied(rig, voice)
+        await until(rig, lambda: facing(controller, robot) == turned)
+        seen["after_the_reply"] = facing(controller, robot), controller.person_gaze_held
+        await room(rig, .5)
+        await say_live(rig)
+        await replied(rig, voice, 2)
+        await asyncio.sleep(SPEAKER_TURN_S + .3)
+        seen["after_the_next_request"] = facing(controller, robot)
+
+    converse(rig, muse.calls, companion(), user)
+    assert rig.session.results == [{"method": "link.result", "id": "invoke-1", "ok": True,
+                                    "payload": {"outcome": "turned"}}]
+    assert logged(caplog, "Reachy look_at") == [f"Reachy look_at target={target} outcome=turned"]
+    assert logged(caplog, "Reachy gaze request") == []
+    assert seen == {"after_the_reply": (turned, held), "after_the_next_request": (0, 0) if held else turned}
+    assert muse.calls.barge_ins == 0
+    assert_allowed(rig.session.results, caplog)
+
+
+@pytest.mark.parametrize("target, case, outcome", [
+    ("other", "only_the_speaker", "no_other"),
+    ("other", "no_faces", "no_faces"),
+    ("other", "stale", "stale"),
+    ("other", "no_direction", "no_speaker_bearing"),
+    ("speaker", "no_direction", "no_speaker_bearing"),
+])
+def test_look_at_says_why_reachy_stays_put(people, caplog, target, case, outcome):
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    if case in ("only_the_speaker", "stale"):
+        scene.faces = [(30, .35)]
+    if case == "no_faces":
+        scene.faces = []
+    if case == "stale":
+        scene.age = 3
+        assert len(controller.refresh_faces().faces) == 1
+        scene.camera = False
+    if case == "no_direction":
+        scene.doa = None
+
+    async def ask(ordinal):
+        await heard(rig, caplog)
+        await rig.session.invoke("reachy.look_at", {"target": target})
+
+    muse = Muse(ask)
+
+    async def user(voice):
+        await say_live(rig, wake=True)
+        await replied(rig, voice)
+        await asyncio.sleep(SPEAKER_TURN_S)
+
+    converse(rig, muse.calls, companion(), user)
+    assert [result["payload"] for result in rig.session.results] == [{"outcome": outcome}]
+    assert logged(caplog, "Reachy look_at") == [f"Reachy look_at target={target} outcome={outcome}"]
+    assert facing(controller, robot) == (0, 0)
+    assert not controller.person_gaze_held
+    assert_allowed(rig.session.results, caplog)
+
+
+@pytest.mark.parametrize("target, turned", [("speaker", (30, 10)), ("other", (-25, -5))])
+def test_look_at_is_busy_only_while_reachy_still_turns_toward_a_person(people, caplog, monkeypatch, target, turned):
+    """The user asks Reachy itself to greet their friend; Muse asks to look too, while Reachy turns and after."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    monkeypatch.setattr("reachy_muse.hardware.SPEAKER_TURN_S", 2.0)
+    outcomes = []
+
+    async def ask(ordinal):
+        await until(rig, lambda: logged(caplog, "Reachy gaze request") == [
+            "Reachy gaze request outcome=turned source=fresh faces=2"])
+        outcomes.append((controller.person_turning, (await rig.session.invoke(
+            "reachy.look_at", {"target": target}))["payload"]["outcome"]))
+        await until(rig, lambda: not controller.person_turning, 4)
+        outcomes.append((controller.person_turning, (await rig.session.invoke(
+            "reachy.look_at", {"target": target}))["payload"]["outcome"]))
+
+    muse = Muse(ask)
+
+    async def user(voice):
+        await say_live(rig, wake=True)
+        await replied(rig, voice)
+        await until(rig, lambda: facing(controller, robot) == turned, 4)
+
+    converse(rig, muse.calls, companion(request="Say hi to my friend."), user)
+    assert outcomes == [(True, "busy"), (False, "turned")]
+    assert logged(caplog, "Reachy look_at") == [f"Reachy look_at target={target} outcome=busy",
+                                                f"Reachy look_at target={target} outcome=turned"]
+    assert_allowed(rig.session.results, caplog, words=(REPLY, "Say hi"))
+
+
+def test_look_at_is_busy_while_a_greeting_still_chooses_whom_to_face(people, caplog, monkeypatch):
+    """The user asks Reachy itself to greet their friend, and Muse asks to look while Reachy's camera pass for
+    that greeting is still running: the greeting's turn is already pending."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    monkeypatch.setattr("reachy_muse.person_gaze._FRESH_PASS_S", 2.0)
+    held, release = threading.Event(), threading.Event()
+
+    def hold_the_pass():
+        scene.before_capture = None
+        held.set()
+        release.wait(2)
+
+    scene.before_capture = hold_the_pass
+
+    async def ask(ordinal):
+        await until(rig, held.is_set)
+        await rig.session.invoke("reachy.look_at", {"target": "other"})
+        release.set()
+        await until(rig, lambda: bool(logged(caplog, "Reachy gaze request")))
+
+    muse = Muse(ask)
+
+    async def user(voice):
+        await say_live(rig, wake=True)
+        await replied(rig, voice)
+        await until(rig, lambda: facing(controller, robot) == (-25, -5))
+
+    converse(rig, muse.calls, companion(request="Say hi to my friend."), user)
+    assert [result["payload"] for result in rig.session.results] == [{"outcome": "busy"}]
+    assert logged(caplog, "Reachy look_at") + logged(caplog, "Reachy gaze request") == [
+        "Reachy look_at target=other outcome=busy", "Reachy gaze request outcome=turned source=fresh faces=2"]
+    assert scene.passes == 1
+    assert_allowed(rig.session.results, caplog, words=(REPLY, "Say hi"))
+
+
+def test_nothing_beyond_the_allowed_fields_reaches_muse_or_the_log(people, caplog, monkeypatch):
+    """A guest names someone in the request, Muse names them in its reply and in invalid parameters; Muse
+    still gets only the allowed fields, and the log only fixed words."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    monkeypatch.setattr("reachy_muse.hardware.SPEAKER_TURN_S", 2.0)
+
+    async def ask(ordinal):
+        await labeled(rig, caplog, SpeakerLabel.OTHER)
+        assert len((await asyncio.to_thread(controller.refresh_faces)).faces) == 2
+        for command, params in (("reachy.people", {"name": "Sarah"}), ("reachy.look_at", {"target": "Sarah"}),
+                                ("reachy.look_at", {}), ("reachy.people", {}),
+                                ("reachy.look_at", {"target": "other"}), ("reachy.look_at", {"target": "other"})):
+            await rig.session.invoke(command, params)
+
+    muse = Muse(ask)
+
+    async def user(voice):
+        await say_live(rig, wake=True)
+        await replied(rig, voice)
+
+    converse(rig, muse.calls, companion(SpeakerLabel.OTHER), user)
+    assert [{key: value for key, value in result.items() if key != "id"} for result in rig.session.results] == [
+        {"method": "link.result", "ok": False, "error": "invalid_parameters"},
+        {"method": "link.result", "ok": False, "error": "invalid_parameters"},
+        {"method": "link.result", "ok": False, "error": "invalid_parameters"},
+        {"method": "link.result", "ok": True,
+         "payload": {"speaker": "someone_else", "people_visible": 2, "seen_s_ago": 0}},
+        {"method": "link.result", "ok": True, "payload": {"outcome": "turned"}},
+        {"method": "link.result", "ok": True, "payload": {"outcome": "busy"}},
+    ]
+    assert logged(caplog, "Reachy people") + logged(caplog, "Reachy look_at") == [
+        "Reachy people outcome=invalid_parameters",
+        "Reachy people speaker=someone_else visible=2",
+        "Reachy look_at outcome=invalid_parameters",
+        "Reachy look_at outcome=invalid_parameters",
+        "Reachy look_at target=other outcome=turned",
+        "Reachy look_at target=other outcome=busy",
+    ]
+    assert_allowed(rig.session.results, caplog)
+
+
+def test_a_request_muse_answers_only_by_turning_reachy_is_answered(people, caplog):
+    """Turning Reachy is Muse acting on the request, as a nod is, so a response without words answers it."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+
+    async def answer(sdk, emit, calls):
+        await heard(rig, caplog)
+        await rig.session.invoke("reachy.look_at", {"target": "other"})
+        emit(sdk.ResponseStarted("r1"))
+        emit(sdk.ResponseDone("r1", "completed"))
+
+    async def user(voice):
+        await say_live(rig, wake=True)
+        await until(rig, lambda: bool(logged(caplog, "Realtime turn ordinal=1 outcome=")))
+
+    converse(rig, ScriptedCalls(answer=answer), companion(), user)
+    assert [line.split()[3] for line in logged(caplog, "Realtime turn ordinal=1 ")] == ["outcome=silent"]
+    assert [result["payload"] for result in rig.session.results] == [{"outcome": "turned"}]
+    assert played(rig.recording.events) == []
