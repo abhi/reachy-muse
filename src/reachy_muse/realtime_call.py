@@ -592,7 +592,8 @@ class RealtimeCall:
         return bool(answered)
 
     def _answered_silently(self, turn: PendingTurn, now: float) -> bool:
-        """A response begun after the turn completed without audio, and Muse has been quiet since."""
+        """Whether a response begun after the turn's last voiced sample completed without audio, and
+        Muse has been quiet, neither working nor in a response, for the last ``QUIET_SETTLE_S``."""
         return (self._quiet_since is not None and now - self._quiet_since >= QUIET_SETTLE_S
                 and any(response.completed and not response.audio_bytes and response.started_at >= turn.speech_end_at
                         for response in self._responses.values()))
