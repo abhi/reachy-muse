@@ -14,6 +14,7 @@ import logging
 import os
 import stat
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator, Callable, List, Optional, Protocol, Sequence, Tuple
@@ -128,13 +129,15 @@ class OwnerVoice:
     """
 
     def __init__(self, encoder: Encoder, print_path: Path, threshold: float, *, name: str = "speaker",
-                 vad: Callable[[], Vad] = _webrtc_vad, thread: Optional[EngineExecutor] = None) -> None:
+                 vad: Callable[[], Vad] = _webrtc_vad, thread: Optional[EngineExecutor] = None,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self.encoder = encoder
         self.print_path = print_path
         self.threshold = threshold
         self.name = name
         self._vad = vad
         self._thread = thread if thread is not None else EngineExecutor("speaker")
+        self._clock = clock
         self._seen: Tuple[object, Optional[VoicePrint]] = (None, None)
         self._enrollment: Optional[asyncio.Queue] = None
 
@@ -176,15 +179,16 @@ class OwnerVoice:
         heard: asyncio.Queue = asyncio.Queue()
         self._enrollment = heard
         try:
-            loop = asyncio.get_running_loop()
-            deadline = loop.time() + ENROLL_WITHIN_S
+            deadline = self._clock() + ENROLL_WITHIN_S
             yield {"event": "listening", "utterances": ENROLL_UTTERANCES, "speech_s": ENROLL_SPEECH_S,
                    "within_s": ENROLL_WITHIN_S}
             taken: List[Tuple[float, np.ndarray]] = []
             while len(taken) < ENROLL_UTTERANCES:
                 try:
-                    voiced_s, embedding = await asyncio.wait_for(heard.get(), deadline - loop.time())
+                    voiced_s, embedding = await asyncio.wait_for(heard.get(), deadline - self._clock())
                 except asyncio.TimeoutError:
+                    voiced_s = None
+                if voiced_s is None or self._clock() >= deadline:
                     yield {"event": "failed", "reason": "timeout", "taken": len(taken), "of": ENROLL_UTTERANCES}
                     return
                 if embedding is None or voiced_s < ENROLL_SPEECH_S:

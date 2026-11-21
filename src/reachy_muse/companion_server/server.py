@@ -64,7 +64,7 @@ from reachy_muse.protocol import (
 )
 
 from reachy_muse.companion_server.engines import (
-    Narrated, Observation,
+    Narrated,
     Animator, Classifier, Endpoint, Hearing, HearingSession, Narrator, Partial, Speaker, SpeechFirst, Voice,
 )
 from reachy_muse.companion_server.motion_activity import ActivityStatus
@@ -384,13 +384,15 @@ class _Session:
         try:
             try:
                 observation = await self.engines.speaker.observe(pcm)
+                frame = encode(SpeakerObservation(stream, observation.start_sample, observation.end_sample,
+                                                  observation.label))
             except Exception as error:
                 log.warning("speaker check failed (stream=%s): %s", stream, type(error).__name__)
-                observation = Observation(SpeakerLabel.UNKNOWN, 0, len(pcm) // 2, None, 0.0)
+                frame = encode(SpeakerObservation(stream, 0, len(pcm) // 2, SpeakerLabel.UNKNOWN))
             else:
                 log.info("speaker stream=%d voiced_s=%.2f score=%s label=%s", stream, observation.voiced_s,
                          "none" if observation.score is None else f"{observation.score:.4f}", observation.label.value)
-            await self._send(SpeakerObservation(stream, observation.start_sample, observation.end_sample, observation.label))
+            await self.ws.send(frame)
         except ConnectionClosed:
             pass
         finally:

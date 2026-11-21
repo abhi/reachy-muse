@@ -16,11 +16,11 @@ import numpy as np
 import pytest
 from websockets.asyncio.client import connect
 
-from reachy_muse.companion_server import cli, hearing_voxtral, owner_voice as owner_voice_module, voice_control
-from reachy_muse.companion_server.engines import EchoNarrator, ScriptedHearing
+from reachy_muse.companion_server import cli, hearing_voxtral, server as serving, voice_control
+from reachy_muse.companion_server.engines import EchoNarrator, Observation, ScriptedHearing
 from reachy_muse.companion_server.owner_voice import PRINT_FILE, OwnerVoice, VoicePrint
 from reachy_muse.companion_server.server import CompanionServer, Engines
-from reachy_muse.companion_server.watchdog import EngineExecutor
+from reachy_muse.companion_server.watchdog import EngineExecutor, Watchdog
 from reachy_muse.protocol import (
     AudioKind, CloseHow, Error, ErrorCode, HearClose, HearEndpoint, HearOpen, HearPartial, Hello, Narrate,
     NarratedLine, NarrateOp, NarrateResult, Op, Sender, SpeakerLabel, SpeakerObservation, Welcome, decode, encode,
@@ -87,8 +87,9 @@ def speaker_thread():
         yield thread
 
 
-def owner_voice(state, thread, encoder=None, threshold=0.74):
-    return OwnerVoice(encoder or Encoder(), state / PRINT_FILE, threshold, name="fake-speaker", vad=Vad, thread=thread)
+def owner_voice(state, thread, encoder=None, threshold=0.74, **options):
+    return OwnerVoice(encoder or Encoder(), state / PRINT_FILE, threshold, name="fake-speaker", vad=Vad, thread=thread,
+                      **options)
 
 
 def serve(script, speaker, *, hearing=None, control=None):
@@ -275,6 +276,41 @@ def test_hearing_runs_on_while_a_slow_speaker_check_holds_its_own_thread(state, 
         hearing._thread.shutdown()
 
 
+def test_a_slow_speaker_check_never_makes_hearing_look_stuck(state, monkeypatch, capfd):
+    """comp1's fail-fast watches the hearing worker; a speaker check is another worker under the same 30 s limit."""
+    now, exits = [100.0], []
+    monitor = Watchdog(clock=lambda: now[0], loop_s=1000, check_s=.01, exit_process=exits.append)
+    monkeypatch.setattr(serving, "watchdog", monitor)
+    enrolled(state)
+    gate = threading.Event()
+    encoder = Encoder(gate)
+
+    async def script(companion):
+        monitor.start()
+        try:
+            ws = await robot(companion)
+            await say(ws, 1, voice(OWNER, 2))
+            assert (await recv(ws), await recv(ws)) == (HearPartial(1, 0, WORDS), HearEndpoint(1, WORDS, True))
+            assert await asyncio.to_thread(encoder.entered.wait, 2)
+            now[0] += 29.9
+            await say(ws, 3, voice(OTHER, 2))
+            assert (await recv(ws), await recv(ws)) == (HearPartial(3, 0, WORDS), HearEndpoint(3, WORDS, True))
+            assert exits == []
+            now[0] += 1.2
+            await until(lambda: exits)
+            gate.set()
+            assert [await recv(ws), await recv(ws)] == [SpeakerObservation(1, 0, 32000, SpeakerLabel.OWNER),
+                                                        SpeakerObservation(3, 0, 32000, SpeakerLabel.OTHER)]
+        finally:
+            gate.set()
+            monitor.stop()
+
+    with EngineExecutor("speaker", monitor=monitor) as thread:
+        serve(script, owner_voice(state, thread, encoder))
+    assert exits == [70]
+    assert "companion watchdog: speaker made no progress for 31.1s (limit 30s)" in capfd.readouterr().err
+
+
 @pytest.mark.parametrize("finished", [True, False], ids=["after_its_endpoint", "before_its_endpoint"])
 def test_an_aborted_stream_gets_no_label(state, speaker_thread, finished):
     enrolled(state)
@@ -354,6 +390,23 @@ def test_a_failing_check_is_unknown_and_keeps_the_link_without_logging_its_detai
     serve(script, owner_voice(state, speaker_thread, encoder))
     assert "speaker check failed (stream=1): RuntimeError" in caplog.messages
     assert WORDS not in caplog.text
+
+
+def test_a_label_the_codec_refuses_goes_out_as_unknown_and_keeps_the_link(caplog):
+    class Backwards:
+        name = "backwards"
+
+        async def observe(self, pcm):
+            return Observation(SpeakerLabel.OWNER, len(pcm) // 2, 0, .9, 2.0)
+
+    async def script(companion):
+        ws = await robot(companion)
+        await say(ws, 1, voice(OWNER, 2))
+        assert (await heard(ws, 1))[-1] == SpeakerObservation(1, 0, 32000, SpeakerLabel.UNKNOWN)
+        await nothing_else_arrived(ws)
+
+    serve(script, Backwards())
+    assert "speaker check failed (stream=1): ProtocolError" in caplog.messages
 
 
 def test_no_log_holds_the_words_the_audio_or_an_embedding(state, speaker_thread, caplog, capfd):
@@ -586,21 +639,23 @@ def test_sentences_that_do_not_sound_alike_change_nothing(private_state, speaker
     assert VoicePrint.load(private_state / PRINT_FILE) == VoicePrint(MODEL, VOICES[OTHER])
 
 
-def test_an_enrollment_that_runs_out_of_time_changes_nothing(private_state, speaker_thread, capsys, monkeypatch):
-    monkeypatch.setattr(owner_voice_module, "ENROLL_WITHIN_S", 1.2)
-    engine = owner_voice(private_state, speaker_thread)
+def test_an_enrollment_that_runs_out_of_time_changes_nothing(private_state, speaker_thread, capsys):
+    now = [1000.0]
+    engine = owner_voice(private_state, speaker_thread, clock=lambda: now[0])
 
     async def script(companion):
         ws = await robot(companion)
         enrolling = await enroll_in_background(engine, private_state)
         await label(ws, 1, voice(OWNER, 2.4))
+        now[0] += 180
+        await label(ws, 3, voice(OWNER, 2.4))
         assert await enrolling == 1
         assert not engine.enrolling
-        assert await label(ws, 3, voice(OWNER, 2.4)) is SpeakerLabel.UNKNOWN
+        assert await label(ws, 5, voice(OWNER, 2.4)) is SpeakerLabel.UNKNOWN
 
     serve(script, engine, control=private_state)
-    assert capsys.readouterr().out.splitlines()[1:] == [
-        "Heard sentence 1 of 5: 2.4 s of speech.", "Time ran out after 1 of 5 sentences. Nothing changed."]
+    assert capsys.readouterr().out.splitlines() == [
+        LISTENING, "Heard sentence 1 of 5: 2.4 s of speech.", "Time ran out after 1 of 5 sentences. Nothing changed."]
     assert not (private_state / PRINT_FILE).exists()
 
 

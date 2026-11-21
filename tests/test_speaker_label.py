@@ -14,7 +14,7 @@ from reachy_muse.companion_server.owner_voice import PRINT_FILE, OwnerVoice, Voi
 from reachy_muse.companion_server.server import CompanionServer, Engines
 from reachy_muse.companion_server.watchdog import EngineExecutor
 from reachy_muse.protocol import (
-    VERSION, NarrateOp, NarrateResult, Op, Sender, SpeakerLabel, SpeakerObservation, Welcome, decode, encode,
+    VERSION, Narrate, NarrateOp, NarrateResult, Op, Sender, SpeakerLabel, SpeakerObservation, Welcome, decode, encode,
 )
 from reachy_muse.turn_timeline import TurnTimeline
 from test_pins import Vad
@@ -146,6 +146,41 @@ def test_a_label_for_a_stream_the_robot_is_not_waiting_on_is_ignored(caplog):
             return link.up
 
     assert asyncio.run(asyncio.wait_for(run(), 10)) is True
+    assert speaker_logs(caplog) == []
+
+
+def test_a_label_after_the_robot_aborted_its_stream_is_ignored(caplog):
+    """A companion that sends the label anyway, after handling the abort, changes nothing on the robot."""
+    from reachy_muse.protocol import CloseHow, HearClose, HearEndpoint
+
+    caplog.set_level(logging.INFO, logger="reachy_muse.companion_client")
+
+    async def companion(ws):
+        await ws.recv()
+        await ws.send(encode(Welcome(VERSION, (Op.HEAR, Op.NARRATE, Op.SPEAKER), ())))
+        async for frame in ws:
+            if isinstance(frame, bytes):
+                continue
+            request = decode(frame, sender=Sender.ROBOT)
+            if isinstance(request, HearClose) and request.how is CloseHow.FINISH:
+                await ws.send(encode(HearEndpoint(request.stream, "hello", True)))
+            elif isinstance(request, HearClose):
+                await ws.send(encode(SpeakerObservation(request.stream, 0, 32000, SpeakerLabel.OWNER)))
+            elif isinstance(request, Narrate):
+                await ws.send(encode(NarrateResult(request.id, ())))
+
+    async def run():
+        async with serve(companion, "127.0.0.1", 0) as server, \
+                linked(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}") as link:
+            ended = await spoken_turn(link, OWNER_LEVEL)
+            timeline = TurnTimeline()
+            ended.note_speaker(timeline.facts)
+            await ended.endpoint()
+            ended.cancel()
+            await link.narrate(NarrateOp.ACKNOWLEDGE, "Barrier.")
+            return timeline.facts
+
+    assert asyncio.run(asyncio.wait_for(run(), 10)) == {}
     assert speaker_logs(caplog) == []
 
 

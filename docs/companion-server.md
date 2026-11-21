@@ -162,7 +162,7 @@ reachy-companion enroll-voice
 The companion then takes the next five sentences Reachy hears, each with at least 2 seconds of speech, within 3 minutes.
 Ask ordinary questions, with no one else speaking. Reachy answers them as usual.
 The command reports each sentence it takes or skips.
-Five sentences give at least 10 seconds of speech in ten or more 1.5-second windows, so the print is steadier than any single request.
+Five sentences give at least 10 seconds of speech in ten or more windows of 1 to 1.5 seconds, so the print is steadier than any single request.
 If one sentence does not sound like the others, the print does not change. Run the command again with only you speaking.
 
 Only the Mac user who runs the companion can start an enrollment.
@@ -183,7 +183,7 @@ The companion stops using the print at the next request. It does not need a rest
 ### What the robot receives
 
 A robot that asks for the protocol's `speaker` op gets one `speaker_observation` after each request's endpoint: `owner`, `other` or `unknown`.
-`unknown` means there is no print, or the request held less than 1 second of speech.
+`unknown` means there is no print, the request held less than 1 second of speech, or the check could not run.
 The robot logs `Reachy speaker=owner` and adds `speaker=owner` to the turn's timeline line.
 A turn whose stream the robot aborts gets no label. During a realtime call, that is every turn.
 An older robot never asks for the op and receives nothing new. A newer robot works with an older companion as before.
@@ -192,7 +192,7 @@ An older robot never asks for the op and receives nothing new. A newer robot wor
 
 The check runs after the robot has the request's endpoint, on a thread of its own, so it never delays hearing.
 sherpa-onnx releases Python's global interpreter lock while it computes.
-Each request costs at most four 1.5-second windows. The benchmark measured 52 ms per window on one M3 Ultra core.
+Each request costs at most four windows, 6 seconds of speech. The benchmark measured 52 ms for a 1.5-second window on one M3 Ultra core.
 The model file is 26.5 MB. Its memory in use is not measured yet: compare the companion's resident memory with and without `--speaker-model`.
 
 ### Measure accuracy
