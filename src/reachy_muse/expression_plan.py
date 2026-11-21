@@ -216,6 +216,11 @@ class ExpressionPlanner:
                 self._state = cue.state
         return cues
 
+    @property
+    def state(self) -> Optional[State]:
+        """The state of the last pose the planner cued."""
+        return self._state
+
     def resting(self, state: State) -> SetState:
         """The cue that holds ``state``; thinking keeps the lean Muse's work last chose."""
         return SetState(state, self._thinking_expression if state is State.THINKING else None)

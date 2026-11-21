@@ -250,9 +250,11 @@ def test_realtime_follow_up_refreshes_expired_wake_presence_and_releases_notific
         service.inbox.add(notice())
         assert service.presence_result()["present"] is None
         call = SimpleNamespace(failed=False, audible=False, working=False,
+                               accept_turn=lambda **marks: True,
                                speaker=SimpleNamespace(reply_started=None))
         timeline = TurnTimeline()
         timeline.mark("speech_end")
+        timeline.mark("endpoint")
         request = _QueuedTurn(None, False, 0, timeline, (), call, None, voice._gaze.begin())
         assert await voice._realtime_turn(Endpoint(b"", text), request) is TurnOutcome.ACCEPTED
         assert service.presence_result()["present"] is True
