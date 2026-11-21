@@ -486,7 +486,9 @@ person's face while Muse answers normally. As with device commands, a request
 may open with words such as "okay" or "Reachy", use a polite form such as "can
 you please", and end with "please", and its commas and final punctuation do not
 matter. A greeting may name the person in up to four words, as in "say hello to
-Sarah" or "greet our guests"; "look at" accepts only "him", "her", "them", "my
+Sarah", "greet our guests" or "say hi to the kids". It does not turn Reachy for
+targets that are not in the room, such as "the camera", "Bob in the email",
+"Mom on the phone" or "Alexa". "Look at" accepts only "him", "her", "them", "my
 friend", "my guest", "someone else" or "the other person". "Look at me" still
 enables face following, and these requests never go to the companion's command
 model, which could take them for face following. Negated requests, quoted

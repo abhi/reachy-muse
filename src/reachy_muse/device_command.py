@@ -127,7 +127,9 @@ _GAZE = _request_grammar(r"(?:say (?:hi|hello) to|greet) (?P<greeted>[a-z0-9']+(
                          rf"|look at {_OTHER_PERSON}")
 _NOT_ANOTHER_PERSON = frozenset((
     "me", "myself", "us", "ourselves", "you", "yourself", "yourselves", "it", "this", "that",
-    "muse", "reachy", "robot", "nobody", "none"))
+    "muse", "reachy", "robot", "alexa", "siri", "google", "nobody", "none"))
+_PEOPLE = frozenset(("kids", "children", "guests", "visitors", "family", "boys", "girls"))
+_TRAILING_TAIL = re.compile(rf"(?: (?:{_TAIL}))+$")
 # Quotation marks, not apostrophes inside a word.
 _QUOTED = re.compile(r"[\"“”]|(?<![a-z])['‘’]|['‘’](?![a-z])", re.IGNORECASE)
 # "Say hi to her for me", "when you call her" or "later": the greeting is for someone who is not here.
@@ -215,8 +217,18 @@ def gaze_requested(text: str) -> bool:
     if _QUOTED.search(text) or _ABSENT.search(spoken) or not _NEGATIONS.isdisjoint(spoken.split()):
         return False
     match = _GAZE.fullmatch(spoken)
-    return match is not None and (match["greeted"] is None
-                                  or match["greeted"].split()[0] not in _NOT_ANOTHER_PERSON)
+    return match is not None and (match["greeted"] is None or _greets_someone_here(match["greeted"]))
+
+
+def _greets_someone_here(greeted: str) -> bool:
+    """Names and "my mom" are people in the room; "the camera" or "Bob in the email" are not."""
+    greeted = _TRAILING_TAIL.sub("", greeted)
+    if re.fullmatch(_OTHER_PERSON, greeted):
+        return True
+    words = greeted.split()
+    if words[0] in _NOT_ANOTHER_PERSON or "in" in words or "on" in words:
+        return False
+    return words[0] != "the" or (len(words) == 2 and words[1] in _PEOPLE)
 
 
 def worth_asking(text: str, asked: FrozenSet[DeviceCommand]) -> bool:

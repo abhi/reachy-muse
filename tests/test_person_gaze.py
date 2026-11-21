@@ -35,8 +35,13 @@ from test_realtime_turns import (RATE, CallHardware, ScriptedCalls, StreamingTra
     ('“Say hi to my friend.”', False), ('‘Greet my guest.’', False),
     ('For example, say hi to him.', False), ('What does say hello to someone mean?', False),
     ('Say hi to my friend Sarah.', True), ('Say hello to Sarah.', True), ('Say hello to my mom.', True),
-    ('Greet our guests.', True), ('Can you say hi to everyone in the room?', True),
-    ("Say hi to my friend's dog.", True),
+    ('Greet our guests.', True), ('Can you say hi to everyone?', True),
+    ("Say hi to my friend's dog.", True), ('Say hi to the kids.', True), ('Say hi to the kids, please.', True),
+    ('Say hi to my little friend.', True), ('Say hi to Noah.', True),
+    ('Say hi to the camera.', False), ('Say hi to Bob in the email.', False),
+    ('Say hi to everyone on the team.', False), ('Say hello to the team in Slack.', False),
+    ('Say hi to Mom on the phone.', False), ('Say hello to Alexa.', False), ('Say hi to the robot.', False),
+    ('Say hi to the dog.', False), ('Greet the new year.', False),
     ('Say hi to me.', False), ('Say hello to yourself.', False), ('Say hi to Reachy.', False),
     ('Say hello to no one.', False), ('Say hi to my friend Sarah who sits by the window.', False),
     ('Look at this.', False), ('Look at that dog.', False), ('Look at Sarah.', False),
@@ -588,6 +593,29 @@ def test_faces_are_not_remembered_from_a_frame_taken_while_the_head_turns(people
     assert 'at' in turned
     assert [face.captured_at for face in controller.recent_faces(0)
             if turned['at'] - .05 <= face.captured_at <= turned['at'] + SPEAKER_TURN_S] == []
+
+
+@pytest.mark.parametrize('text', ['Say hi to the camera.', 'Say hi to Bob in the email.',
+                                  'Say hi to everyone on the team.', 'Say hello to Alexa.'])
+def test_greetings_for_no_one_in_the_room_leave_the_head_alone(people, caplog, text):
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    calls = ScriptedCalls(reply='Sure.', reply_s=.1)
+    service = realtime_service(rig, StreamingTranscripts(text), calls)
+    seen = {}
+
+    async def user():
+        await say_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events), 3)
+        await asyncio.sleep(1.0)
+        seen['facing'] = round(math.degrees(controller.head_yaw))
+
+    events = run(rig, service, user)
+    assert calls.barge_ins == 0
+    assert set(played(events)) == {'muse'}
+    assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == []
+    assert seen['facing'] == 0
+    assert controller._person_hold is None
 
 
 @pytest.mark.parametrize('text', ['Okay, say hi to him.', 'Can you please say hi to my friend?',
