@@ -1791,8 +1791,8 @@ class VoiceConversation:
                             log.info("Wake handoff retained %.3fs of post-keyword audio; request capture open",
                                      wake_tail / self.hardware.sample_rate)
                         wav = None
-                        for captured in pre_roll:
-                            completed = await record(captured.samples, captured_at=captured.captured_at,
+                        for buffered in pre_roll:
+                            completed = await record(buffered.samples, captured_at=buffered.captured_at,
                                                      send_to_call=wake_tail is not None)
                             while completed is not None:
                                 if wake_tail is not None:
@@ -1805,7 +1805,7 @@ class VoiceConversation:
                                         turns_awaiting_transcript.discard(wav.ended)
                                     wav = completed
                                 # Drain any same-buffer speech after an older pre-roll endpoint.
-                                completed = await record(captured.samples[:0], captured_at=captured.captured_at,
+                                completed = await record(buffered.samples[:0], captured_at=buffered.captured_at,
                                                          send_to_call=wake_tail is not None)
                             if wake_tail is not None and self.wake_timeout_s == 0 and self._wake_deadline is None:
                                 break
