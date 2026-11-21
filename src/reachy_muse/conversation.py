@@ -22,7 +22,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from functools import partial
 from statistics import median
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Coroutine
 
 from reachy_muse import expression_plan as plan
 from musegadget.link_client import DeviceDescription, LinkSession, Outcome, acknowledgement
@@ -639,7 +639,7 @@ class VoiceConversation:
         self.wake_enabled = wake_detector is not None or wave_wake
         self._wake_direction: WakeDirection | None = None
         self._direction_audio_until = 0.0
-        self._gaze = PersonGaze(hardware)
+        self._gaze = PersonGaze(hardware, hearing=lambda: self._hearing_open())
         self._wake_has_gaze = False
         self._wake_policy = wake_policy
         self._wake_unknown_output_until = 0.0
@@ -2808,14 +2808,14 @@ class VoiceConversation:
                 log.info("Reachy closed Muse's realtime reply with %s", name)
                 return
 
-    def people(self) -> dict:
+    async def people(self, deadline: float) -> dict:
         """Muse's reachy.people: the latest admitted request's speaker and the faces Reachy saw last."""
-        return self._gaze.people()
+        return await self._gaze.people(deadline)
 
-    async def look_at(self, target: str) -> str:
+    async def look_at(self, target: str, deadline: float) -> str:
         """Muse's reachy.look_at. A turn counts as Muse moving Reachy: a response without words answers the
         request, and Reachy's own closing gives way."""
-        outcome = await self._gaze.look_at(target)
+        outcome = await self._gaze.look_at(target, deadline)
         if outcome == "turned" and self.call is not None:
             self.call.moved_by_muse()
         return outcome
@@ -3623,11 +3623,9 @@ class ReachyService(PairedService):
         except ValueError:
             log.info("Reachy people outcome=invalid_parameters")
             return {"ok": False, "error": "invalid_parameters"}
-
-        async def ask(voice):
-            return voice.people()
         try:
-            payload = self._on_voice(ask, lambda: people_result("unknown", self.executor.face_snapshot()),
+            payload = self._on_voice(lambda voice: voice.people(params.deadline),
+                                     lambda: people_result("unknown", self.executor.face_snapshot()),
                                      params.deadline, session)
         except CommandTimeout:
             log.info("Reachy people outcome=timeout")
@@ -3645,19 +3643,20 @@ class ReachyService(PairedService):
             return {"ok": False, "error": "invalid_parameters"}
         target = params["target"]
         try:
-            outcome = self._on_voice(lambda voice: voice.look_at(target), lambda: "no_speaker_bearing",
-                                     params.deadline, session)
+            outcome = self._on_voice(lambda voice: voice.look_at(target, params.deadline),
+                                     lambda: "no_speaker_bearing", params.deadline, session)
         except CommandTimeout:
             log.info("Reachy look_at target=%s outcome=timeout", target)
             return {"ok": False, "error": "timeout"}
         log.info("Reachy look_at target=%s outcome=%s", target, outcome)
         return {"ok": True, "payload": {"outcome": outcome}}
 
-    def _on_voice(self, ask: Callable[[VoiceConversation], Awaitable], absent: Callable[[], object],
+    def _on_voice(self, ask: Callable[[VoiceConversation], Coroutine], absent: Callable[[], object],
                   deadline: float, session: LinkSession | None):
         """``ask`` this session's conversation on its loop, or ``absent()`` while it has none.
 
-        Raises CommandTimeout once ``deadline`` passes, without asking if it already has.
+        ``ask`` answers by ``deadline`` itself, then has a second for its last step, such as a camera pass.
+        Raises CommandTimeout if it has not answered by then, without asking if ``deadline`` already passed.
         """
         active = self._voice
         if active is None or session is not None and active[1].session is not session:
@@ -3673,7 +3672,7 @@ class ReachyService(PairedService):
             work.close()
             return absent()
         try:
-            return future.result(remaining)
+            return future.result(remaining + 1)
         except CommandCancelled:
             return absent()
         except CommandTimeout:

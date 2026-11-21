@@ -124,25 +124,29 @@ returns an error only while Reachy is still turning toward that person. After
 that, the command runs and ends the gaze.
 
 `reachy.people` reports the companion's voice label for the latest request
-Reachy admitted, with `other` reported as `someone_else`. It reports `unknown`
-while that request has no label, once a newer request begins, and after Reachy
-lets the request go: when the listening window closes, Reachy sleeps or is
-hushed, or the call to Muse drops. A label is a voice match, not proof of
-identity, and nothing is gated on it. `people_visible` counts the faces in the
-latest face snapshot and `seen_s_ago` gives its rounded age, when that snapshot
-is at most 10 seconds old. The command never moves Reachy or reads the camera.
-It logs one line with fixed words, such as `Reachy people speaker=owner visible=2`.
+Reachy admitted, with `other` reported as `someone_else`. Asked while a newer
+request is still spoken, it waits up to three seconds for Reachy's own end of
+that request; a sound that never becomes a request, such as a cough, leaves the
+latest request standing. It reports `unknown` when that request has no label,
+when a request is still unfinished after the wait, and after Reachy lets its
+requests go: when the listening window closes, Reachy sleeps or is hushed, or the
+call to Muse drops. A label is a voice match, not proof of identity, and nothing
+is gated on it. `people_visible` counts the faces in the latest face snapshot and
+`seen_s_ago` gives its rounded age, when that snapshot is at most 10 seconds old.
+The command never moves Reachy or reads the camera. It logs one line with fixed
+words, such as `Reachy people speaker=owner visible=2`.
 
-`reachy.look_at` uses the bearing latched for that same request. With `speaker`,
-Reachy turns head and body toward it; the turn becomes its gaze toward the
-speaker, as a wake turn does, so the next request does not undo it. With `other`,
-it runs the selector and hold of a local request to greet someone else, without
-the words: it reports the same outcomes, and the next request releases the hold.
-Either target fades clips and the thinking motion first. Like Muse's other motion
-commands, it reports `busy` only while a person turn is being chosen, queued or
-still moving, or while another motion command runs. In a call, a turn counts as Muse acting on
-the request, so a response without words still answers it, and Reachy's own
-closing expression gives way. It logs one line, such as
+`reachy.look_at` uses the bearing latched for that same request, waiting for it
+the same way. With `speaker`, Reachy turns head and body toward it; the turn
+becomes its gaze toward the speaker, as a wake turn does, so the next request
+does not undo it. With `other`, it runs the selector and hold of a local request
+to greet someone else, without the words: it reports the same outcomes, and the
+next request releases the hold. Either target fades clips and the thinking
+motion first. Like Muse's other motion commands, it reports `busy` only while a
+person turn is being chosen, queued or still moving, or while another motion
+command runs. In a call, a turn counts as Muse acting on the request, so a
+response without words still answers it, and Reachy's own closing expression
+gives way. It logs one line, such as
 `Reachy look_at target=other outcome=turned`.
 
 ## Registration size

@@ -16,8 +16,10 @@ Scripted hearing, a deterministic tone for speech, an echo narrator, and fault k
 - acknowledges: False answers every acknowledge request with no lines, as a narrator does for small talk.
 - narrate_delay_s: {op: seconds} answers that narration op only after a delay, as a busy model does.
 - with Op.ANIMATE in ops, every animate gets a nod of the asked length; `animated` lists the intents.
-- with Op.SPEAKER in ops, each hear stream the robot closes is labeled `speaker` just before the close is
-  handled, as a label still in flight would be; None sends no label. Tests may change it between requests.
+- with Op.SPEAKER in ops, each hear stream is labeled `speaker` at the fake's own end of speech, the
+  END_OF_SPEECH_FRAMES quiet frames after its voice, as the real companion labels before the robot's later
+  end; a stream the robot closes sooner is labeled just before the close is handled, as a label still in
+  flight would be. None sends no label. Tests may change it between requests.
 
 `answered` lists, in order, "<op> narrated" each time a narration result is sent.
 
@@ -73,6 +75,7 @@ from reachy_muse.protocol import (
 )
 
 TOKEN = "rc1_test_token_0123456789abcdef0123456789"
+END_OF_SPEECH_FRAMES = 5
 MODELS = (("hear", "fake"), ("speak", "tone"), ("narrate", "echo"), ("animate", "nod"))
 FABRICATION = " It took 17 minutes."
 
@@ -171,6 +174,8 @@ class _Session:
         self.ops: Tuple[Op, ...] = ()
         self.hearing: Dict[int, int] = {}
         self.heard_samples: Dict[int, int] = {}
+        self.quiet_frames: Dict[int, int] = {}     # since the stream's voice, once it had some
+        self.labeled = set()
         self.speaking: Dict[int, asyncio.Task] = {}
         self.sent: Dict[int, int] = {}
         self.narrating = set()
@@ -231,6 +236,12 @@ class _Session:
             return
         heard = self.hearing[audio.stream] = self.hearing[audio.stream] + 1
         self.heard_samples[audio.stream] += len(audio.pcm) // 2
+        if any(audio.pcm):
+            self.quiet_frames[audio.stream] = 0
+        elif audio.stream in self.quiet_frames:
+            self.quiet_frames[audio.stream] += 1
+            if self.quiet_frames[audio.stream] == END_OF_SPEECH_FRAMES:
+                await self._label(audio.stream)
         if heard % self.fake.frames_per_partial == 0 and heard // self.fake.frames_per_partial <= len(self.fake.partials):
             rev = heard // self.fake.frames_per_partial - 1
             await self.send(HearPartial(audio.stream, rev, self.fake.partials[rev]))
@@ -246,9 +257,11 @@ class _Session:
                 self.hearing[message.stream] = self.heard_samples[message.stream] = 0
         elif isinstance(message, HearClose):
             heard = self.hearing.pop(message.stream, None) is not None
-            samples = self.heard_samples.pop(message.stream, 0)
-            if heard and Op.SPEAKER in self.ops and self.fake.speaker is not None:
-                await self.send(SpeakerObservation(message.stream, 0, samples, self.fake.speaker))
+            if heard:
+                await self._label(message.stream)
+            self.heard_samples.pop(message.stream, None)
+            self.quiet_frames.pop(message.stream, None)
+            self.labeled.discard(message.stream)
             if heard and message.how is CloseHow.FINISH and not self.fake.no_endpoint:
                 await self.send(HearEndpoint(message.stream, self.fake.partials[-1], True))
         elif isinstance(message, SpeakStart) and not self.fake.mute:
@@ -269,6 +282,11 @@ class _Session:
             self.fake.animated.append(message.intent)
             animation = await NodAnimator().animate(message.intent, message.duration_ms / 1000)
             await self.send(AnimateResult(message.id, animation.fps, animation.frames))
+
+    async def _label(self, stream: int) -> None:
+        if Op.SPEAKER in self.ops and self.fake.speaker is not None and stream not in self.labeled:
+            self.labeled.add(stream)
+            await self.send(SpeakerObservation(stream, 0, self.heard_samples[stream], self.fake.speaker))
 
     async def _narrate(self, message: Narrate, delay_s: float = 0.0) -> None:
         await asyncio.sleep(delay_s)

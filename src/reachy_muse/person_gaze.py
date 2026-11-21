@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import logging
 import math
 import time
+from typing import Callable
 
 from reachy_muse.device_command import gaze_requested
 
@@ -20,6 +21,8 @@ _FRESH_PASS_S = .3
 _REMEMBERED_S = 30.0
 _SPEAKER_ARC = math.radians(20)
 _VISIBLE_MAX_AGE_S = 10.0
+# The robot's longest end-of-turn silence: an utterance becomes a request within it once its words end.
+_HEARD_OUT_S = 3.0
 _SPEAKERS = {"owner": "owner", "other": "someone_else"}
 
 
@@ -42,16 +45,22 @@ def people_result(speaker: str, snapshot) -> dict:
 class PersonGaze:
     """Gaze tokens: one begins with each utterance, and admitting a newer one supersedes the rest.
 
-    Muse's people commands answer about the request whose token was admitted last. Every release,
-    such as when the listening window closes, admits a token with no request, so they know no speaker.
+    Muse's people commands answer about the latest request Reachy admitted. They wait a little for an
+    admitted utterance still being heard, which may become that request; one that ends without a request,
+    such as a cough, leaves the previous request standing. A release, such as when the listening window
+    closes, drops every request.
     """
 
-    def __init__(self, hardware):
+    def __init__(self, hardware, hearing: Callable[[], bool] = lambda: False):
+        """``hearing`` tells whether an utterance is still being heard or turned into a request."""
         self.hardware = hardware
+        self._hearing = hearing
         self._generation = 0
         self._admitted_generation = 0
+        self._released_generation = 0
         self._holding = False
         self._choosing = False         # a turn toward someone else waits for its camera pass
+        self._admitted: set[int] = set()
         self._requests: dict[int, _Request] = {}
 
     @property
@@ -64,39 +73,42 @@ class PersonGaze:
         return self._generation
 
     def release(self) -> None:
-        self.admit(self.begin())
+        self._released_generation = self.begin()
+        self.admit(self._released_generation)
 
     def queued(self, generation: int, bearing: float | None, facts: dict[str, str]) -> None:
-        if generation >= self._admitted_generation:
+        if generation > self._released_generation:
             self._requests[generation] = _Request(bearing, facts)
+            self._forget_older()
 
     def admit(self, generation: int) -> bool:
         if generation <= self._admitted_generation:
             return generation == self._admitted_generation
         self._admitted_generation = generation
-        self._requests = {key: request for key, request in self._requests.items() if key >= generation}
+        self._admitted.add(generation)
+        self._forget_older()
         if self._holding:
             self._holding = False
             self.hardware.release_person_gaze()
         return True
 
-    def people(self) -> dict:
-        request = self._requests.get(self._admitted_generation)
+    async def people(self, deadline: float) -> dict:
+        request = await self._heard_out(deadline)
         label = request.facts.get("speaker") if request is not None else None
         return people_result(_SPEAKERS.get(label, "unknown"), self.hardware.face_snapshot())
 
-    async def look_at(self, target: str) -> str:
+    async def look_at(self, target: str, deadline: float) -> str:
         """Face the latest admitted request's speaker, or someone else as a request to greet them does.
 
         As with Muse's other motion commands, a person turn that is still being chosen, queued or moving
         makes it busy.
         """
-        generation = self._admitted_generation
-        request = self._requests.get(generation)
+        request = await self._heard_out(deadline)
         if request is None or request.bearing is None:
             return "no_speaker_bearing"
         if self._choosing or self.hardware.person_turning:
             return "busy"
+        generation = self._admitted_generation
         if target == "other":
             outcome, _, _ = await self._look_at_other(request.bearing, generation)
             return outcome
@@ -104,6 +116,35 @@ class PersonGaze:
             return "busy"
         self._holding = False
         return "turned"
+
+    async def _heard_out(self, deadline: float) -> _Request | None:
+        """The latest admitted request, once an admitted utterance still being heard has become one, or by
+        ``deadline``; None if there is none, or the utterance is still heard by then."""
+        until = min(time.monotonic() + _HEARD_OUT_S, deadline)
+        while self._undecided() and time.monotonic() < until:
+            await asyncio.sleep(.05)
+        newest = self._admitted_generation
+        if newest in self._requests:
+            return self._requests[newest]
+        if self._undecided() or newest == self._released_generation:
+            return None
+        latest = self._latest()
+        return self._requests[latest] if latest is not None else None
+
+    def _undecided(self) -> bool:
+        newest = self._admitted_generation
+        return newest not in self._requests and newest != self._released_generation and self._hearing()
+
+    def _latest(self) -> int | None:
+        admitted = self._admitted.intersection(self._requests)
+        return max(admitted) if admitted else None
+
+    def _forget_older(self) -> None:
+        """Forget requests and tokens older than the last release or the latest admitted request; no answer
+        reads them again."""
+        oldest = max(self._released_generation, self._latest() or 0)
+        self._requests = {key: request for key, request in self._requests.items() if key >= oldest}
+        self._admitted = {key for key in self._admitted if key >= oldest}
 
     async def request(self, text: str | None, speaker_bearing: float | None, generation: int) -> None:
         """Face the person who is not speaking when the request asks Reachy to greet or look at them."""
