@@ -91,6 +91,7 @@ class EndedTurn(Protocol):
 
     def start(self) -> None: ...   # begin recognition now, if it waits for the caller; idempotent
     def cancel(self) -> None: ...
+    def note_speaker(self, facts: dict[str, str]) -> None: ...   # put the companion's speaker label in facts once it arrives
     async def endpoint(self) -> Optional[Endpoint]: ...   # None: its transcription was lost
 
 

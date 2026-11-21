@@ -117,6 +117,9 @@ class _CompanionEnded:
     def cancel(self) -> None:
         self._ended.cancel()
 
+    def note_speaker(self, facts: dict[str, str]) -> None:
+        self._ended.note_speaker(facts)
+
     async def endpoint(self) -> Optional[Endpoint]:
         try:
             return await self._ended.endpoint()
