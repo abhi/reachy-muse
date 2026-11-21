@@ -9,10 +9,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from reachy_muse.device_command import gaze_requested
 from reachy_muse.hardware import ReachyController
 from reachy_muse.local_face_tracking import FaceFollower, _Face
 from reachy_muse.motion import MotionStyle
-from reachy_muse.person_gaze import gaze_requested
 from reachy_muse.speaker_direction import DoAReading
 from test_device_command_turns import played, run, sent_to_muse
 from test_hardware import FakeRobot, generated, pose_factory
@@ -24,11 +24,16 @@ from test_realtime_turns import (RATE, CallHardware, ScriptedCalls, StreamingTra
 @pytest.mark.parametrize('text, expected', [
     ('Say hi to my friend.', True), ('Say hello to someone else.', True),
     ('Greet my guest.', True), ('Please look at her.', True), ('Could you look at them?', True),
+    ('Okay, say hi to him.', True), ('Reachy, say hi to my friend.', True),
+    ('Say hi to my friend, please.', True), ('Can you please say hi to my friend?', True),
+    ('Hey Muse, would you greet the other person now?', True), ('Alright, look at her!', True),
     ('Look at me.', False), ('Look over here.', False), ('Watch me.', False),
-    ("Don't say hi to him.", False), ('Do not greet her.', False),
-    ('Never look at him.', False), ('Say "say hi to him".', False),
-    ('"Say hi to him."', False), ("'Say hi to him.'", False),
+    ("Don't say hi to him.", False), ('Don’t say hi to him.', False), ('Do not greet her.', False),
+    ('Never look at him.', False), ('Please don’t look at them.', False), ('Say hi to him, not her.', False),
+    ('Say "say hi to him".', False), ('"Say hi to him."', False), ("'Say hi to him.'", False),
+    ('“Say hi to my friend.”', False), ('‘Greet my guest.’', False),
     ('For example, say hi to him.', False), ('What does say hello to someone mean?', False),
+    ("Say hi to my friend's dog.", False),
 ])
 def test_small_imperative_grammar(text, expected):
     assert gaze_requested(text) is expected
@@ -411,6 +416,25 @@ def test_request_negative_outcomes_keep_the_call_reply(people, caplog, case, tex
     assert calls.barge_ins == 0
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == (
         ['Reachy gaze request outcome=' + expected] if expected else [])
+
+
+@pytest.mark.parametrize('text', ['Okay, say hi to him.', 'Can you please say hi to my friend?'])
+def test_natural_phrasings_turn_toward_the_friend(people, caplog, text):
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    calls = ScriptedCalls(reply='Hello!', reply_s=.1)
+    service = realtime_service(rig, StreamingTranscripts(text), calls)
+
+    async def user():
+        await say_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: round(math.degrees(controller.head_yaw)) == -25)
+        assert round(math.degrees(controller.head_yaw)) == -25
+
+    events = run(rig, service, user)
+    assert calls.barge_ins == 0
+    assert set(played(events)) == {'muse'}
+    assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+        'Reachy gaze request outcome=turned faces=2']
 
 
 def test_look_at_me_remains_the_local_face_tracking_command(people, caplog):

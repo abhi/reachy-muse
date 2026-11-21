@@ -113,10 +113,19 @@ COMMANDS: Mapping[DeviceCommand, Spec] = MappingProxyType({
 _LEAD = r"(?:oh|okay|ok|alright|hey|um|uh|so|now|well|muse|reachy|robot)"
 _POLITE = r"(?:please|(?:can|could|would|will) you(?: please)?|i (?:want|need) you to|you (?:can|should|may)|(?:it's )?time to|go ahead and)"
 _TAIL = r"(?:please|now|right now|then|thanks|thank you|for now|for a (?:bit|while)|for me|a (?:little )?bit|a little|muse|reachy)"
-_GRAMMAR = re.compile(
-    rf"(?:{_LEAD} )*(?:{_POLITE} )?(?:"
-    + "|".join(f"(?P<{command.value}>{spec.phrases})" for command, spec in COMMANDS.items() if spec.phrases)
-    + rf")(?: {_TAIL})*")
+
+
+def _request(phrases: str) -> re.Pattern:
+    """A spoken request: lead words, a polite form, one of ``phrases``, then tail words."""
+    return re.compile(rf"(?:{_LEAD} )*(?:{_POLITE} )?(?:{phrases})(?: {_TAIL})*")
+
+
+_GRAMMAR = _request("|".join(f"(?P<{command.value}>{spec.phrases})"
+                             for command, spec in COMMANDS.items() if spec.phrases))
+_OTHER_PERSON = r"(?:him|her|them|my friend|someone(?: else)?|somebody(?: else)?|the other person|my guest)"
+_GAZE = _request(rf"(?:say (?:hi|hello) to|greet|look at) {_OTHER_PERSON}")
+# Quotation marks, not apostrophes inside a word.
+_QUOTED = re.compile(r"[\"“”]|(?<![a-z])['‘’]|['‘’](?![a-z])", re.IGNORECASE)
 _QUESTION_OPENERS = frozenset((
     "what", "what's", "whats", "when", "where", "who", "why", "how", "which", "is", "are", "was", "were",
     "does", "did", "do", "should"))
@@ -131,6 +140,10 @@ def _words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9']+", text.replace("’", "'").casefold())
 
 
+def _spoken(text: str) -> str:
+    return " ".join(_words(text))
+
+
 def parse_command(text: str) -> Optional[DeviceCommand]:
     command = whole_command(text)
     if command is not None:
@@ -142,7 +155,7 @@ def parse_command(text: str) -> Optional[DeviceCommand]:
 
 def whole_command(text: str) -> Optional[DeviceCommand]:
     """A hardware command, without converting work cancellation into playback control."""
-    match = _GRAMMAR.fullmatch(" ".join(_words(text)))
+    match = _GRAMMAR.fullmatch(_spoken(text))
     if match is not None:
         return DeviceCommand(match.lastgroup)
     if classify_follow_up(text) is FollowUp.SILENCE:
@@ -185,6 +198,11 @@ def command_after_wake(text: str, phrase: str) -> Optional[str]:
             if score >= .75 and whole_command(remainder) is not None:
                 command = remainder
     return command
+
+
+def gaze_requested(text: str) -> bool:
+    """A request to face someone other than the speaker. It is never a device command."""
+    return _QUOTED.search(text) is None and _GAZE.fullmatch(_spoken(text)) is not None
 
 
 def worth_asking(text: str, asked: FrozenSet[DeviceCommand]) -> bool:

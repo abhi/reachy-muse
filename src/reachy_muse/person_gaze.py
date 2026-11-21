@@ -6,18 +6,11 @@
 import asyncio
 import logging
 import math
-import re
 import time
 
+from reachy_muse.device_command import gaze_requested
+
 log = logging.getLogger(__name__)
-_TARGET = r"(?:him|her|them|my friend|someone(?: else)?|somebody(?: else)?|the other person|my guest)"
-_REQUEST = re.compile(
-    rf"(?:please )?(?:(?:can|could|would) you )?(?:say (?:hi|hello) to {_TARGET}|greet {_TARGET}|look at {_TARGET})"
-    r"(?: please)?[.!?]*", re.IGNORECASE)
-
-
-def gaze_requested(text: str) -> bool:
-    return _REQUEST.fullmatch(" ".join(text.split())) is not None
 
 
 class PersonGaze:
