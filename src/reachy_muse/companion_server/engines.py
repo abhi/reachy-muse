@@ -36,6 +36,9 @@ class HearingSession(Protocol):
     async def finish(self) -> str:
         """The robot ended the turn. Return the final transcript."""
 
+    def cancel(self) -> None:
+        """Signal abandonment before the worker can start another model stage."""
+
     async def close(self) -> None:
         """The stream ended: endpoint, finish, abort, gap or disconnect. Release what the session holds."""
 
@@ -154,6 +157,9 @@ class _ScriptedSession:
 
     async def finish(self) -> str:
         return self.said
+
+    def cancel(self) -> None:
+        pass
 
     async def close(self) -> None:
         pass

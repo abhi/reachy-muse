@@ -57,6 +57,10 @@ ENDPOINT_WAIT_S = 1.5
 # Pongs prove the socket, not the voice. Measured loaded first audio peaks at 1.47 s and the
 # 06:12 incident's slowest line took 3.6 s; a voice silent for longer restarts on the robot.
 SPEECH_STALL_S = 6.0
+# The companion sends nothing under a hear stream after handling its abort, and the socket keeps
+# order, so any reply under a stream opened after an abort shows that no error is coming for it.
+# Without one, an aborted call command counts as heard after the link's own stall allowance.
+LATE_ERROR_S = PING_TIMEOUT_S
 _PIN = re.compile(r"sha256:([0-9a-f]{64})")
 _FATAL = (ErrorCode.AUTH, ErrorCode.VERSION, ErrorCode.INTERNAL, ErrorCode.MODEL)
 
@@ -101,6 +105,8 @@ class _Connection:
         self.ops = frozenset(ops)
         self.outbox: asyncio.Queue = asyncio.Queue()
         self.hearing: Dict[int, _HearStream] = {}
+        self.waiting: Dict[int, _HearStream] = {}   # outcomes not yet told, behind call commands that can still fail
+        self.opened = 0                             # hear streams so far, numbered in the order sent
         self.speaking: Dict[int, asyncio.Queue] = {}
         self.narrations: Dict[int, asyncio.Future] = {}
         self.animations: Dict[int, asyncio.Future] = {}
@@ -112,6 +118,7 @@ class _Connection:
 
     def stream_id(self, op: Op) -> int:
         if op is Op.HEAR:
+            self.opened += 1
             self._next_hear = self._next_hear + 2 if self._next_hear < 65533 else 1
             return self._next_hear
         self._next_speak = self._next_speak + 2 if self._next_speak < 65534 else 2
@@ -133,18 +140,35 @@ class _Connection:
                 future.set_exception(CapabilityUnavailable(reason))
         for stream in self.hearing.values():
             stream.fail(CapabilityUnavailable(reason))
+        # The lost link may have carried an error for a waiting call command, but counting each as heard is the
+        # cheaper mistake: a missed rest costs only a few fast refusals, a false rest 60 s on the robot's own hearing.
+        self.settle(self.opened + 1)
+
+    def settle(self, number: int = 0) -> None:
+        """Call commands aborted before hear stream ``number`` opened were heard. Tell the waiting
+        outcomes in stream order, up to the first command that a late error can still fail. Only aborted
+        call commands hold later outcomes back, not a finished turn still waiting for its endpoint."""
+        for stream in sorted(self.waiting.values(), key=lambda waiting: waiting.number):
+            if stream.held is None and stream.aborted_before > number:
+                return
+            del self.waiting[stream.id]
+            stream.report(stream.held)
 
 
 class _HearStream:
-    def __init__(self, connection: _Connection, stream: int):
+    def __init__(self, connection: _Connection, stream: int, outcomes=None):
         self.connection = connection
         self.id = stream
+        self.number = connection.opened
+        self.aborted_before = 0                    # once aborted as a call command: the next stream's number
+        self.held: Optional[CapabilityUnavailable] = None   # its failure, told after earlier commands settle
         self.audio = bytearray()
         self.inbox: List[object] = []
         self.failure: Optional[CapabilityUnavailable] = None
         self.finished_at: Optional[float] = None   # when the robot's VAD ended the utterance
         self.endpoint: Optional[HearEndpoint] = None
         self.settled = asyncio.Event()             # an endpoint or a failure arrived
+        self._outcomes = outcomes                  # told once whether this stream was heard
         self._seq = 0
 
     def send(self, pcm: bytes) -> None:
@@ -159,6 +183,16 @@ class _HearStream:
         if not self.connection.closed:
             self.connection.send(HearClose(self.id, how))
 
+    def abort_command(self) -> None:
+        """End a call command at the robot's speech end. Until ``_Connection.settle`` or
+        ``LATE_ERROR_S`` counts it as heard, an error sent before the companion handled the abort fails it."""
+        connection = self.connection
+        if connection.hearing.get(self.id) is self and not connection.closed:
+            self.aborted_before = connection.opened + 1
+            connection.waiting[self.id] = self
+            asyncio.get_running_loop().call_later(LATE_ERROR_S, connection.settle, self.aborted_before)
+        self.close(CloseHow.ABORT)
+
     def finish(self) -> None:
         self.finished_at = time.monotonic()
         self.endpoint = next((message for message in self.inbox if isinstance(message, HearEndpoint)), None)
@@ -167,8 +201,18 @@ class _HearStream:
         self.close(CloseHow.FINISH)
 
     def fail(self, failure: CapabilityUnavailable) -> None:
-        self.failure = failure
+        self.failure = self.held = failure
         self.settled.set()
+        self.connection.waiting[self.id] = self
+        self.connection.settle()
+
+    def report(self, failure: Optional[CapabilityUnavailable]) -> None:
+        """Tell ``outcomes`` once whether the companion heard this stream; a lost link counts as neither."""
+        outcomes, self._outcomes = self._outcomes, None
+        if outcomes is not None and failure is None:
+            outcomes.succeed()
+        elif outcomes is not None and not failure.link_down:
+            outcomes.fail(str(failure))
 
 
 def _clip(text: str, limit: int) -> str:
@@ -423,16 +467,24 @@ class CompanionLink:
             return
         message = decode(frame, sender=Sender.COMPANION)
         connection.last_progress_at = time.monotonic()
+        if isinstance(message, (HearPartial, HearEndpoint, Error)):
+            replied = connection.hearing.get(message.stream) or connection.waiting.get(message.stream)
+            if replied is not None:
+                connection.settle(replied.number)
         if isinstance(message, (HearPartial, HearEndpoint)):
             stream = connection.hearing.get(message.stream)
             if stream is not None:
                 if isinstance(message, HearEndpoint):
                     del connection.hearing[message.stream]
+                    stream.report(None)
                 if stream.finished_at is None:
                     stream.inbox.append(message)
                 elif isinstance(message, HearEndpoint):
                     stream.endpoint = message
                     stream.settled.set()
+            elif isinstance(message, HearEndpoint) and message.stream in connection.waiting:
+                connection.waiting[message.stream].aborted_before = 0   # no error follows its own endpoint
+                connection.settle()
         elif isinstance(message, SpeakDone):
             queue = connection.speaking.pop(message.stream, None)
             if queue is not None:
@@ -454,6 +506,8 @@ class CompanionLink:
         failure = CapabilityUnavailable(f"companion {error.code.value}", link_down=False)
         if error.stream is not None and error.stream in connection.hearing:
             connection.hearing.pop(error.stream).fail(failure)
+        elif error.stream is not None and error.stream in connection.waiting:
+            connection.waiting[error.stream].fail(failure)
         elif error.stream is not None and error.stream in connection.speaking:
             connection.speaking.pop(error.stream).put_nowait(failure)
             connection.sequence.forget(error.stream)
@@ -469,9 +523,11 @@ class CompanionLink:
             raise CapabilityUnavailable(f"the companion cannot {op.value} now", link_down=self.state is not LinkState.UP)
         return self._connection
 
-    def open_hear(self) -> _HearStream:
+    def open_hear(self, outcomes=None) -> _HearStream:
+        """A new hear stream. ``outcomes`` hears ``succeed()`` or ``fail(reason)`` once it settles, and
+        nothing if the robot drops it first: a closed window, rejected speech or a cancelled turn."""
         connection = self._live(Op.HEAR)
-        stream = _HearStream(connection, connection.stream_id(Op.HEAR))
+        stream = _HearStream(connection, connection.stream_id(Op.HEAR), outcomes)
         connection.send(HearOpen(stream.id, 0))
         connection.hearing[stream.id] = stream
         return stream
@@ -574,7 +630,7 @@ def _wav(pcm: bytes) -> bytes:
 
 
 class _HeardTurn:
-    """A turn the companion already ended and transcribed; its audio ends at ``end_sample``."""
+    """A turn with available words; its audio ends at ``end_sample``."""
 
     def __init__(self, endpoint: Endpoint, truncated: bool, end_sample: int):
         self._endpoint = endpoint
@@ -624,7 +680,8 @@ class _FinishedTurn:
                 await asyncio.wait_for(stream.settled.wait(), max(0.0, remaining))
         except asyncio.TimeoutError:
             stream.close(CloseHow.ABORT)
-            raise CapabilityUnavailable("the companion did not end the turn in time", link_down=False) from None
+            stream.fail(CapabilityUnavailable("the companion did not end the turn in time", link_down=False))
+            raise stream.failure from None
         if self._cancelled:
             raise asyncio.CancelledError
         if stream.endpoint is None:
@@ -642,7 +699,7 @@ class CompanionHearingTurn:
 
     supports_partials = True
 
-    def __init__(self, link: CompanionLink, recorder, *, commands_only: bool = False):
+    def __init__(self, link: CompanionLink, recorder, *, commands_only: bool = False, outcomes=None):
         self._link = link
         self._recorder = recorder
         self._open: Optional[_HearStream] = None
@@ -651,6 +708,7 @@ class CompanionHearingTurn:
         self._vad_ends = deque()
         self.partial: Optional[Partial] = None
         self._commands_only = commands_only
+        self._outcomes = outcomes
 
     @property
     def active(self) -> bool:
@@ -682,10 +740,14 @@ class CompanionHearingTurn:
     def take(self) -> HeardAudio:
         from reachy_muse.voice_audio import SpeechAudio, SpeechEnd
 
+        if self._open is not None and self._open.failure is not None:
+            if self._ended:
+                return HeardAudio(self._ended.popleft())
+            raise self._open.failure
         for event in self._recorder.take_audio_events():
             if isinstance(event, SpeechAudio):
                 if self._open is None:
-                    self._open = self._link.open_hear()
+                    self._open = self._link.open_hear(self._outcomes)
                 self._open.send(event.pcm)
             elif isinstance(event, SpeechEnd) and self._open is not None:
                 stream, self._open = self._open, None
@@ -697,7 +759,9 @@ class CompanionHearingTurn:
                     if event.accepted:
                         self._ended.append(_HeardTurn(Endpoint(_wav(bytes(stream.audio)), text),
                                                       self._recorder.last_truncated, end_sample))
-                    stream.close(CloseHow.ABORT)
+                        stream.abort_command()
+                    else:
+                        stream.close(CloseHow.ABORT)
                 elif event.accepted:
                     stream.finish()
                     self._ended.append(_FinishedTurn(stream, self._recorder.last_truncated,
@@ -746,7 +810,7 @@ class CompanionHearing:
         pass
 
     def open_turn(self, sample_rate: int, *, silence_s: float, vad=None, recorder=None,
-                  commands_only: bool = False, **options) -> CompanionHearingTurn:
+                  commands_only: bool = False, outcomes=None, **options) -> CompanionHearingTurn:
         from reachy_muse.voice_audio import TurnRecorder
 
         if recorder is None:
@@ -754,7 +818,7 @@ class CompanionHearing:
                                     **({"vad": vad} if vad is not None else {}), **options)
         else:
             recorder.enable_streaming()
-        return CompanionHearingTurn(self.link, recorder, commands_only=commands_only)
+        return CompanionHearingTurn(self.link, recorder, commands_only=commands_only, outcomes=outcomes)
 
     async def transcribe(self, wav: bytes) -> str:
         raise CapabilityUnavailable("the companion transcribes live turns only", link_down=False)
