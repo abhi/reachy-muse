@@ -1,7 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # Licensed under the Apache License, Version 2.0 (the "License").
 
-"""Local gaze accompaniment; never owns conversation input or reply audio."""
+"""Local gaze accompaniment, and what Muse may learn about the people Reachy hears and sees.
+
+Never owns conversation input or reply audio.
+"""
 
 import asyncio
 import logging
@@ -15,14 +18,31 @@ _SNAPSHOT_MAX_AGE_S = 2.0
 _FRESH_PASS_S = .3
 _REMEMBERED_S = 30.0
 _SPEAKER_ARC = math.radians(20)
+_VISIBLE_MAX_AGE_S = 10.0
+_SPEAKERS = {"owner": "owner", "other": "someone_else"}
+
+
+def people_result(speaker: str, snapshot) -> dict:
+    """The reachy.people payload: ``speaker`` and the faces of a snapshot at most about 10 seconds old."""
+    age = time.monotonic() - snapshot.captured_at if snapshot is not None else math.inf
+    if not 0 <= age <= _VISIBLE_MAX_AGE_S:
+        return {"speaker": speaker, "people_visible": None, "seen_s_ago": None}
+    return {"speaker": speaker, "people_visible": len(snapshot.faces), "seen_s_ago": round(age)}
 
 
 class PersonGaze:
+    """Gaze tokens: one begins with each utterance, and admitting a newer one supersedes the rest.
+
+    Muse's people commands answer about the request whose token was admitted last. Every release,
+    such as when the listening window closes, admits a token with no request, so they answer unknown.
+    """
+
     def __init__(self, hardware):
         self.hardware = hardware
         self._generation = 0
         self._admitted_generation = 0
         self._holding = False
+        self._requests: dict[int, dict[str, str]] = {}
 
     @property
     def holding(self) -> bool:
@@ -36,14 +56,24 @@ class PersonGaze:
     def release(self) -> None:
         self.admit(self.begin())
 
+    def queued(self, generation: int, facts: dict[str, str]) -> None:
+        """``facts`` are the request's timeline facts, where the companion's speaker label lands, maybe later."""
+        if generation >= self._admitted_generation:
+            self._requests[generation] = facts
+
     def admit(self, generation: int) -> bool:
         if generation <= self._admitted_generation:
             return generation == self._admitted_generation
         self._admitted_generation = generation
+        self._requests = {key: request for key, request in self._requests.items() if key >= generation}
         if self._holding:
             self._holding = False
             self.hardware.release_person_gaze()
         return True
+
+    def people(self) -> dict:
+        label = self._requests.get(self._admitted_generation, {}).get("speaker")
+        return people_result(_SPEAKERS.get(label, "unknown"), self.hardware.face_snapshot())
 
     async def request(self, text: str | None, speaker_bearing: float | None, generation: int) -> None:
         """Face the person who is not speaking when the request asks Reachy to greet or look at them."""

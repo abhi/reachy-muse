@@ -126,6 +126,12 @@
           }
         },
         "timeout_ms": 15000
+      },
+      "reachy.people": {
+        "description": "Call reachy.people before answering when it matters whether you're talking to Reachy's owner or someone else, or how many people are present. Returns speaker: owner, someone_else or unknown, from a voice match on the latest request; a match is not proof of identity, and unknown means Reachy can't tell, so don't guess. people_visible counts the faces in Reachy's latest camera look, or is null if it hasn't looked in about 10 seconds; seen_s_ago is that look's age in seconds. Names are never available.",
+        "required": {},
+        "optional": {},
+        "timeout_ms": 5000
       }
     }
   }

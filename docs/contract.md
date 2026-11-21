@@ -24,6 +24,7 @@ briefing request asks for its own 60 to 90 seconds, roughly 150 to 220 words.
 | `reachy.notify` | Required `id` (1 to 128 UTF-8 bytes), `text` (1 to 240 UTF-8 bytes), `mode` (`now` or `when_present`) and `kind` (`notification` or `suggestion`). Optional `expires_in_s`, default 14400, range 0 to 86400. Returns `{"ok": true, "payload": {"status": "queued", "reason": "awaiting_presence"}}`. Status is `delivered`, `queued`, `expired` or `refused`. |
 | `reachy.expression` | Required expression `name`, optional `intensity` and `duration`. Built-in or recorded motions remain bounded and serialized. |
 | `reachy.move` | Optional head, body, and antenna coordinates, plus `duration` and `hold`. At least one coordinate is required. `POSE_LIMITS` defines the bounds. |
+| `reachy.people` | No parameters. Returns `{"ok": true, "payload": {"speaker": "owner", "people_visible": 2, "seen_s_ago": 0}}`. `speaker` is `owner`, `someone_else` or `unknown`; the other two fields are null without a recent face snapshot. Never names, bearings, images, scores or embeddings. |
 
 `reachy.say` refuses while asleep, hushed, handling a user turn, or before voice
 readiness. It waits for the current line otherwise, then checks again before
@@ -121,12 +122,22 @@ gaze through Muse's reply. It does not consume the voice turn. A motion command
 returns an error only while Reachy is still turning toward that person. After
 that, the command runs and ends the gaze.
 
+`reachy.people` reports the companion's voice label for the latest request
+Reachy admitted, with `other` reported as `someone_else`. It reports `unknown`
+while that request has no label, once a newer request begins, and after Reachy
+lets the request go: when the listening window closes, Reachy sleeps or is
+hushed, or the call to Muse drops. A label is a voice match, not proof of
+identity, and nothing is gated on it. `people_visible` counts the faces in the
+latest face snapshot and `seen_s_ago` gives its rounded age, when that snapshot
+is at most 10 seconds old. The command never moves Reachy or reads the camera.
+It logs one line with fixed words, such as `Reachy people speaker=owner visible=2`.
+
 ## Registration size
 
 `tests/pins/registration.json` pins the entire SDK registration with a fixed
 36-character request ID and the SDK's 15-character node ID. The compact JSON
-is **5,548 bytes**, or **5,552 bytes** including the four-byte length prefix,
-under the 8,192-byte cap. `commands_v2` occupies 5,272 bytes.
+is **6,133 bytes**, or **6,137 bytes** including the four-byte length prefix,
+under the 8,192-byte cap. `commands_v2` occupies 5,857 bytes.
 
 | Command description | UTF-8 bytes |
 | --- | ---: |
@@ -135,10 +146,11 @@ under the 8,192-byte cap. `commands_v2` occupies 5,272 bytes.
 | `reachy.notify` | 475 |
 | `reachy.expression` | 446 |
 | `reachy.move` | 388 |
+| `reachy.people` | 504 |
 
-The guide is 2,390 UTF-8 bytes, within its 4,096-byte limit. Configuring `office`
-makes the current SDK registration 5,588 bytes including its prefix. The worst
-escaped 64-byte place label makes it 5,838 bytes, still below 8,192.
+The guide is 2,806 UTF-8 bytes, within its 4,096-byte limit. Configuring `office`
+makes the current SDK registration 6,173 bytes including its prefix. The worst
+escaped 64-byte place label makes it 6,423 bytes, still below 8,192.
 
 `tests/test_registration.py` compares the literal registration fixture and
 measures the actual SDK `encode_message` output, including the prefix. It also

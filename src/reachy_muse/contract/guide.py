@@ -41,6 +41,14 @@ Your gesture takes over Reachy's motion while it plays; Reachy's own expressions
 afterwards. Keep gestures short (about 1 to 2 seconds) and at most one per sentence. Do not
 narrate gestures in words.
 
+## People in the room
+
+Call `reachy.people` before answering when it matters whether you're talking to Reachy's
+owner or someone else, or how many people are present. Its `speaker` is `owner`,
+`someone_else` or `unknown` for the latest request, from a voice match that is not proof of
+identity; on `unknown`, don't guess. `people_visible` counts the faces in Reachy's latest
+camera look. Names are never available.
+
 ## Things Reachy handles itself
 
 Sleep and wake, stop talking, volume, and face tracking are handled on the robot as soon as

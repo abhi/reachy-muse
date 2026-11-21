@@ -74,6 +74,12 @@ def test_say_has_no_urgent_override_and_presence_accepts_no_parameters():
         parse_command("reachy.presence", {"image": True})
 
 
+def test_people_takes_no_parameters_and_answers_within_five_seconds():
+    assert parse_command("reachy.people", {}) == Command("reachy.people", {}, 5.0)
+    with pytest.raises(ValueError, match="^unknown parameter: name$"):
+        parse_command("reachy.people", {"name": "Sarah"})
+
+
 def test_notification_defaults_and_maximum_lifetime():
     assert parse_command("reachy.notify", {"id": "calendar-1", "text": "Your call starts soon.",
                                           "mode": "when_present", "kind": "notification"}) == Command(

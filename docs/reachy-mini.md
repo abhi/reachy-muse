@@ -524,6 +524,16 @@ skips its own closing expression for a reply while it holds this gaze. Logs
 contain only the outcome, the source of the faces it used (`snapshot`, `fresh`,
 `memory` or `none`) and the number of faces in view.
 
+Muse can ask through `reachy.people` whether the owner made the latest request
+and how many faces Reachy saw. It gets only `speaker` (`owner`, `someone_else`
+or `unknown`), `people_visible` and `seen_s_ago`. The speaker comes from the
+companion's voice label for the latest request admitted in the listening window;
+without a label for that request, or after the window closes, it is `unknown`.
+In a call, Muse can ask before Reachy's own end of the request, and then hears
+`unknown`. The count comes from the latest face snapshot if it is at most 10
+seconds old; the command takes no picture. It logs one line, such as `Reachy
+people speaker=owner visible=2`.
+
 With `--wave-wake`, a wave also turns Reachy toward the person before face
 tracking takes over. The detected person's position takes priority over recent
 DoA samples, which provide a fallback even without an acoustic wake detector.

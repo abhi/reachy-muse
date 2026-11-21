@@ -16,6 +16,8 @@ Scripted hearing, a deterministic tone for speech, an echo narrator, and fault k
 - acknowledges: False answers every acknowledge request with no lines, as a narrator does for small talk.
 - narrate_delay_s: {op: seconds} answers that narration op only after a delay, as a busy model does.
 - with Op.ANIMATE in ops, every animate gets a nod of the asked length; `animated` lists the intents.
+- with Op.SPEAKER in ops, each hear stream the robot closes is labeled `speaker` just before the close is
+  handled, as a label still in flight would be; None sends no label. Tests may change it between requests.
 
 `answered` lists, in order, "<op> narrated" each time a narration result is sent.
 
@@ -60,6 +62,8 @@ from reachy_muse.protocol import (
     Sender,
     SpeakCancel,
     SpeakDone,
+    SpeakerLabel,
+    SpeakerObservation,
     SpeakStart,
     Welcome,
     decode,
@@ -103,6 +107,7 @@ class FakeCompanion:
         opening_intent: Optional[Intent] = None,
         opening_lines: Optional[Tuple[str, ...]] = None,
         narrate_delay_s: Optional[Dict[NarrateOp, float]] = None,
+        speaker: Optional[SpeakerLabel] = None,
     ) -> None:
         self.token = token
         self.ops = ops
@@ -126,6 +131,7 @@ class FakeCompanion:
         self.opening_intent = opening_intent
         self.opening_lines = opening_lines
         self.narrate_delay_s = narrate_delay_s or {}
+        self.speaker = speaker
         self.answered = []
         self.animated = []
         self.hellos = []
@@ -162,7 +168,9 @@ class _Session:
         self.ws = ws
         self.crossed: Optional[int] = None
         self.out_rate = 0
+        self.ops: Tuple[Op, ...] = ()
         self.hearing: Dict[int, int] = {}
+        self.heard_samples: Dict[int, int] = {}
         self.speaking: Dict[int, asyncio.Task] = {}
         self.sent: Dict[int, int] = {}
         self.narrating = set()
@@ -196,7 +204,7 @@ class _Session:
             await self.ws.send(encode(Error(ErrorCode.VERSION, f"only v{VERSION}")))
             return
         self.out_rate = hello.out_rate
-        ops = tuple(op for op in hello.ops if op in self.fake.ops)
+        ops = self.ops = tuple(op for op in hello.ops if op in self.fake.ops)
         await self.ws.send(encode(Welcome(VERSION, ops, tuple(m for m in MODELS if Op(m[0]) in ops))))
         if self.fake.fail_after_welcome:
             await self.ws.send(encode(Error(ErrorCode.INTERNAL, "the model crashed")))
@@ -222,6 +230,7 @@ class _Session:
         if audio.kind is not AudioKind.MIC or audio.stream not in self.hearing:
             return
         heard = self.hearing[audio.stream] = self.hearing[audio.stream] + 1
+        self.heard_samples[audio.stream] += len(audio.pcm) // 2
         if heard % self.fake.frames_per_partial == 0 and heard // self.fake.frames_per_partial <= len(self.fake.partials):
             rev = heard // self.fake.frames_per_partial - 1
             await self.send(HearPartial(audio.stream, rev, self.fake.partials[rev]))
@@ -234,10 +243,13 @@ class _Session:
             if self.fake.hear_error is not None:
                 await self.send(Error(self.fake.hear_error, "hearing unavailable", stream=message.stream))
             else:
-                self.hearing[message.stream] = 0
+                self.hearing[message.stream] = self.heard_samples[message.stream] = 0
         elif isinstance(message, HearClose):
-            if (self.hearing.pop(message.stream, None) is not None and message.how is CloseHow.FINISH
-                    and not self.fake.no_endpoint):
+            heard = self.hearing.pop(message.stream, None) is not None
+            samples = self.heard_samples.pop(message.stream, 0)
+            if heard and Op.SPEAKER in self.ops and self.fake.speaker is not None:
+                await self.send(SpeakerObservation(message.stream, 0, samples, self.fake.speaker))
+            if heard and message.how is CloseHow.FINISH and not self.fake.no_endpoint:
                 await self.send(HearEndpoint(message.stream, self.fake.partials[-1], True))
         elif isinstance(message, SpeakStart) and not self.fake.mute:
             self.speaking[message.stream] = asyncio.ensure_future(self._speak(message.stream))

@@ -57,3 +57,13 @@ def test_guide_explains_presence_first_delivery_and_recipient_limit():
     assert "check `reachy.presence`, then call `reachy.notify`" in REACHY_GUIDE
     assert "delivery goes to whoever is there" in REACHY_GUIDE
     assert "These commands grant no additional permissions." in REACHY_GUIDE
+
+
+def test_the_people_trigger_reaches_muse_with_or_without_the_guide_and_promises_no_names():
+    description = COMMAND_SPECS["reachy.people"]["description"]
+    trigger = ("Call reachy.people before answering when it matters whether you're talking to Reachy's owner or "
+               "someone else, or how many people are present.")
+    assert trigger in description
+    assert trigger.replace("reachy.people", "`reachy.people`") in " ".join(REACHY_GUIDE.split())
+    for text in (description, REACHY_GUIDE):
+        assert "Names are never available." in text
