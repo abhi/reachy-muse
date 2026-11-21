@@ -307,30 +307,61 @@ def test_a_tool_calls_silent_response_does_not_end_slow_work(monkeypatch, caplog
     assert len(calls.opened) == 1
 
 
-@pytest.mark.parametrize("wake_timeout_s, outcomes", [
-    (10, ["answered"]),  # the question comes after the window's deadline, so it needs the wake word
-    (30, ["answered", "answered"]),
-])
-def test_asking_again_during_a_long_tool_call_does_not_hang_up_on_muse(monkeypatch, caplog, wake_timeout_s, outcomes):
+def test_a_remark_during_a_long_tool_call_reaches_muse_without_a_nod_or_a_recovery(monkeypatch, caplog):
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
     calls = ScriptedCalls(answer=tool_calls_then_reply(0, reply_at=22))
-    conversation = realtime_service(rig, StreamingTranscripts("Book a table for two.", "Are you still there?"), calls,
-                                    wake_timeout_s=wake_timeout_s)
+    conversation = realtime_service(rig, StreamingTranscripts("Book a table for two.", "And make it for 7 pm."), calls,
+                                    wake_timeout_s=10)
+    remark = []
 
     async def user():
         await speak_live(rig, wake=True)
-        endpoint = conversation._voice[1].call.pending[0].endpoint_at
+        voice = conversation._voice[1]
+        call = voice.call
+        endpoint = call.pending[0].endpoint_at
         await wait_for(rig, lambda: time.monotonic() >= endpoint + 13, 15)
+        remark.append(time.monotonic() > voice._wake_deadline)
         await speak_live(rig)
+        await wait_for(rig, lambda: len(call.pending) == 2, 2)
+        remark.append(call.working)
         await wait_for(rig, lambda: "muse" in played(rig.recording.events) or bool(recoveries(caplog)), 12)
 
     events = run(rig, conversation, user, rest=("listening", "idle"), timeout=45)
+    assert remark == [True, True]
     assert recoveries(caplog) == []
     assert stall_cues(caplog) == []
+    assert [event for event in events if event.get("robot") == "gesture"] == []
     assert set(played(events)) == {"muse"}
-    assert [row["outcome"] for row in turn_outcomes(caplog)] == outcomes
+    assert [(row["ordinal"], row["outcome"]) for row in turn_outcomes(caplog)] == [("1", "answered"), ("2", "answered")]
     assert len(calls.opened) == 1
+
+
+def test_a_call_that_dies_while_muse_works_is_recovered_with_the_remark_heard_meanwhile(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(answer=keeps_working)
+    conversation = realtime_service(rig, StreamingTranscripts("Please find a table.", "And make it for 7 pm."), calls,
+                                    wake_timeout_s=10)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        endpoint = call.pending[0].endpoint_at
+        await wait_for(rig, lambda: time.monotonic() >= endpoint + 13, 15)
+        await speak_live(rig)
+        await wait_for(rig, lambda: len(call.pending) == 2, 2)
+        await wait_for(rig, lambda: len(calls.opened) == 2, 20)
+        assert 30 <= time.monotonic() - call.last_event_at < 31
+        await wait_for(rig, lambda: LOST in played(rig.recording.events))
+
+    events = run(rig, conversation, user, rest=("listening", "idle"), timeout=45)
+    assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=working_stale"]
+    assert [(row["ordinal"], row["outcome"]) for row in turn_outcomes(caplog)] == [("1", "recovered"), ("2", "recovered")]
+    assert stall_cues(caplog) == []
+    assert played(events) == [LOST]
+    assert sent_to_muse(events) == []
 
 
 @pytest.mark.parametrize("working, delay, reason", [(False, 15, "no_events"), (True, 30, "working_stale")])

@@ -633,8 +633,20 @@ class RealtimeCall:
             log.info("Muse's realtime reply started %.2f s after turn %d's last voiced sample",
                      replied_at - turn.speech_end_at, turn.ordinal)
 
+    def _events_fresh(self, now: float) -> bool:
+        return self.last_event_at is not None and now - self.last_event_at < WORKING_STALE_S
+
+    @property
+    def at_work(self) -> bool:
+        """Muse is working on a request: Working is on and its work has not gone stale.
+
+        The robot's SDK can leave Working on after Muse stops, so Working with no SDK event for
+        ``WORKING_STALE_S`` no longer counts.
+        """
+        return self.working and self._events_fresh(time.monotonic())
+
     def _progress_suspended(self, now: float) -> bool:
-        if self.last_event_at is None or now - self.last_event_at >= WORKING_STALE_S:
+        if not self._events_fresh(now):
             return False
         opened = [response for response in self._responses.values() if not response.done]
         latest = self._responses.get(self.latest_response)

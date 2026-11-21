@@ -1198,6 +1198,59 @@ def test_unconfirmed_sound_crossing_the_deadline_does_not_hang_up_a_reply(monkey
     assert "Reachy's wake window closed after empty recognition and inactivity" not in caplog.messages
 
 
+def echo_of(rig, seconds):
+    """The last ``seconds`` that Reachy's speaker played, as its microphone hears them."""
+    played = np.concatenate(rig.hardware.played)[-round(seconds * rig.hardware.output_sample_rate):]
+    return np.repeat(played, rig.hardware.sample_rate // rig.hardware.output_sample_rate)
+
+
+@pytest.mark.parametrize("sound, seconds, words, reached, diagnostics", [
+    ("voice", .5, "Actually, tell me about trains.", True,
+     ["Realtime command transcript=arrived words=5 wake_prefix=none outcome=none drop=none"]),
+    ("voice", .3, "Okay.", False,
+     ["Realtime command transcript=arrived words=1 wake_prefix=none outcome=none drop=barge_in"]),
+    ("cough", .16, "", False, []),
+    ("echo", .5, "it will be sunny tomorrow", False,
+     ["Realtime command transcript=arrived words=5 wake_prefix=none outcome=none drop=barge_in"]),
+])
+def test_while_muse_talks_past_the_wake_deadline_only_confirmed_speech_reaches_it(
+        monkeypatch, caplog, sound, seconds, words, reached, diagnostics):
+    caplog.set_level("INFO", logger="reachy_muse.conversation")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+
+    async def answer(sdk, emit, script):
+        reply_events(sdk, emit, "r1", REPLY, voiced(7.5))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, StreamingTranscripts("Tell me a story.", words), calls)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        await room(rig, voice._wake_deadline - time.monotonic() + .5)
+        assert call.audible
+        caplog.clear()
+        before = calls.loud_after_reply
+        audio = echo_of(rig, seconds) if sound == "echo" else np.full(round(seconds * 16000), VOICE_SAMPLE, np.float32)
+        for start in range(0, len(audio), CHUNK):
+            rig.hardware.samples.put(audio[start:start + CHUNK])
+            await asyncio.sleep(CHUNK / 16000)
+        await room(rig, .5)
+        heard.append((calls.loud_after_reply > before, calls.barge_ins, voice.call is call and not call.done))
+        await rig.wait_until_or_timeout(lambda: not call.audible, 8)
+        heard.append(sum(len(chunk) for chunk in rig.hardware.played) / rig.hardware.output_sample_rate)
+
+    events = run(rig, conversation, user, rest=("listening", "idle", "thinking"))
+    assert heard[0] == (reached, int(reached), True)
+    assert (heard[1] < 7) if reached else (heard[1] == pytest.approx(7.5, abs=.003))
+    assert [line for line in caplog.messages if line.startswith("Realtime command ")] == diagnostics
+    assert set(played(events)) == {"muse"}
+    assert sent_to_muse(events) == []
+
+
 def test_while_muse_works_past_the_follow_up_window_the_room_stops_reaching_muse_but_the_call_stays(monkeypatch):
     rig = rig_for(monkeypatch)
     calls = ScriptedCalls(answer=keeps_working)
@@ -1215,10 +1268,10 @@ def test_while_muse_works_past_the_follow_up_window_the_room_stops_reaching_muse
     assert heard["call_open"] is True
 
 
-def test_new_speech_after_the_wake_deadline_needs_another_wake_even_while_muse_works(monkeypatch):
+def test_new_speech_after_the_wake_deadline_reaches_muse_without_a_wake_while_muse_works(monkeypatch):
     rig = rig_for(monkeypatch)
     calls = ScriptedCalls(answer=keeps_working)
-    transcripts = StreamingTranscripts("Book me a table for two.", "Cancel that booking.")
+    transcripts = StreamingTranscripts("Book me a table for two.", "Make it for seven.")
     conversation = realtime_service(rig, transcripts, calls)
     heard = []
 
@@ -1226,17 +1279,78 @@ def test_new_speech_after_the_wake_deadline_needs_another_wake_even_while_muse_w
         await speak_live(rig, wake=True)
         await room(rig, 2.5)
         voice = conversation._voice[1]
-        before = len(calls.frames)
+        call = voice.call
+        assert time.monotonic() > voice._wake_deadline
+        before = calls.loud_after_reply
         await speak_live(rig)
-        heard.append((len(calls.frames) - before, voice.call is not None and not voice.call.done))
-        assert len(calls.frames) == before
-        assert transcripts.texts == ["Cancel that booking."]
-        await speak_live(rig, wake=True)
-        heard.append(len(calls.frames) > before)
+        await rig.wait_until_or_timeout(lambda: len(call.pending) == 2)
+        heard.append((calls.loud_after_reply - before >= 10, transcripts.texts, [turn.ordinal for turn in call.pending],
+                      voice.call is call and not call.done))
 
-    events = run(rig, conversation, user, rest=("thinking", "listening", "idle"))
-    assert heard == [(0, True), True]
+    events = run(rig, conversation, user, rest=("thinking",))
+    assert heard == [(True, [], [1, 2], True)]
     assert sent_to_muse(events) == []
+    assert len(calls.opened) == 1
+
+
+async def works_past_the_deadline_then_answers(sdk, emit, script):
+    emit(sdk.Working(True))
+    await asyncio.sleep(11)
+    reply_events(sdk, emit, "r1", REPLY, voiced(1.0))
+    emit(sdk.Working(False))
+
+
+@pytest.mark.parametrize("after_s, reached", [(9, True), (10.5, False)])
+def test_once_muse_finishes_speech_needs_no_wake_until_the_follow_up_timeout_ends(monkeypatch, after_s, reached):
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(answer=works_past_the_deadline_then_answers)
+    transcripts = StreamingTranscripts("Book me a table for two.", "Is there parking nearby?")
+    conversation = realtime_service(rig, transcripts, calls, wake_timeout_s=10)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        deadline = voice._wake_deadline
+        while not ("muse" in played(rig.recording.events) and not call.audible and not call.working):
+            await room(rig, .04)
+        finished = time.monotonic()
+        await room(rig, finished + after_s - time.monotonic())
+        before = calls.loud_after_reply
+        await speak_live(rig)
+        heard.append((finished > deadline, calls.loud_after_reply > before, transcripts.texts, voice.call is call))
+
+    events = run(rig, conversation, user, rest=("thinking", "idle"), timeout=40)
+    assert heard == ([(True, True, [], True)] if reached else [(True, False, ["Is there parking nearby?"], False)])
+    assert sent_to_muse(events) == []
+
+
+async def answers_and_leaves_working_on(sdk, emit, script):
+    emit(sdk.Working(True))
+    reply_events(sdk, emit, "r1", REPLY, voiced(1.0))
+
+
+def test_working_left_on_without_events_stops_holding_the_microphone_open(monkeypatch):
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(answer=answers_and_leaves_working_on)
+    transcripts = StreamingTranscripts("What's the weather?", "And tomorrow?")
+    conversation = realtime_service(rig, transcripts, calls)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        while not ("muse" in played(rig.recording.events) and not call.audible):
+            await room(rig, .04)
+        await room(rig, call.last_event_at + 30.2 - time.monotonic())
+        before = calls.loud_after_reply
+        await speak_live(rig)
+        heard.append((call.working, calls.loud_after_reply - before, transcripts.texts, voice.call is call))
+
+    run(rig, conversation, user, rest=("thinking",), timeout=45)
+    assert heard == [(True, 0, ["And tomorrow?"], True)]
 
 
 def test_speech_admitted_before_the_wake_deadline_can_finish_after_it(monkeypatch):

@@ -743,6 +743,10 @@ class VoiceConversation:
                 or self._output_prefetched or not self._output_queue.empty()
                 or (self.call is not None and self.call.audible))
 
+    def _muse_holds_window(self) -> bool:
+        """In an open call, output that is still playing or queued, or Muse still at work, admits speech without a wake."""
+        return self.call is not None and (self._has_output() or self.call.at_work)
+
     async def _speech_with_timeout(self, speaking) -> None:
         task = asyncio.create_task(speaking)
         progressed = time.monotonic()
@@ -1714,7 +1718,8 @@ class VoiceConversation:
                 input_blocked = captured.discard or self._input_blocked()
                 observed_wake = None
                 now = time.monotonic()
-                wake_required = self._wake_deadline is None or (now >= self._wake_deadline and not recording_active())
+                wake_required = self._wake_deadline is None or (
+                    now >= self._wake_deadline and not recording_active() and not self._muse_holds_window())
                 if self._wake_direction is not None and len(sample) and not input_blocked:
                     import numpy as np
                     if float(np.mean(np.square(sample))) >= .0001:
