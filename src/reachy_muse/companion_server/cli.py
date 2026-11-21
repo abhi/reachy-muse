@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import os
 import signal
@@ -58,6 +59,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                                help=f"the score from which a voice counts as the owner's (default {DEFAULT_THRESHOLD}, "
                                     "calibrated for wespeaker_en_voxceleb_resnet34; any other model needs its own)")
 
+    commands.add_parser("enroll-voice", help="learn the owner's voice from the next sentences Reachy hears; "
+                                             "serve must be running with --speaker-model")
+    commands.add_parser("forget-voice", help="delete the owner's voice print")
+
     library_command = commands.add_parser("motion-library", help="build motion offline, separately from the companion")
     library_commands = library_command.add_subparsers(dest="library_command", required=True)
     build_command = library_commands.add_parser("build", help="resume building the motion library with local model weights")
@@ -73,6 +78,14 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         result = pairing.pair(args.state_dir, hosts=[args.host], force=args.force)
         print(result.line(args.host, args.port))
         print(f"{'kept' if existed and not args.force else 'created'} the pairing in {args.state_dir}", file=sys.stderr)
+    elif args.command == "enroll-voice":
+        from reachy_muse.companion_server import voice_control
+
+        raise SystemExit(voice_control.enroll(args.state_dir))
+    elif args.command == "forget-voice":
+        from reachy_muse.companion_server import voice_control
+
+        print(voice_control.forget(args.state_dir))
     elif args.command == "motion-library":
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
         try:
@@ -145,6 +158,7 @@ def _build_library(args: argparse.Namespace) -> None:
 
 
 async def _serve(args: argparse.Namespace) -> None:
+    from reachy_muse.companion_server import voice_control
     from reachy_muse.companion_server.motion_activity import ActivityStatus
 
     paired = pairing.load(args.state_dir)
@@ -166,7 +180,9 @@ async def _serve(args: argparse.Namespace) -> None:
     stop = asyncio.get_running_loop().create_future()
     for sig in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(sig, lambda: stop.done() or stop.set_result(None))
-    async with CompanionServer(engines, paired.token, ssl_context=tls, host=args.bind or ("127.0.0.1" if args.insecure else "0.0.0.0"), port=args.port, activity=activity) as server:
+    enrollment = (voice_control.serving(engines.speaker, args.state_dir) if engines.speaker is not None
+                  else contextlib.nullcontext())
+    async with CompanionServer(engines, paired.token, ssl_context=tls, host=args.bind or ("127.0.0.1" if args.insecure else "0.0.0.0"), port=args.port, activity=activity) as server, enrollment:
         logging.info("serving %s (%s engines)%s", server.url, args.engines, "  INSECURE: no TLS" if args.insecure else "")
         await stop
     logging.info("stopped")

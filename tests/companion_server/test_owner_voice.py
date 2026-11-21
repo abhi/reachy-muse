@@ -4,22 +4,27 @@ import asyncio
 import json
 import logging
 import os
+import shutil
+import stat
 import sys
+import tempfile
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 from websockets.asyncio.client import connect
 
-from reachy_muse.companion_server import cli, hearing_voxtral
+from reachy_muse.companion_server import cli, hearing_voxtral, owner_voice as owner_voice_module, voice_control
 from reachy_muse.companion_server.engines import EchoNarrator, ScriptedHearing
 from reachy_muse.companion_server.owner_voice import PRINT_FILE, OwnerVoice, VoicePrint
 from reachy_muse.companion_server.server import CompanionServer, Engines
 from reachy_muse.companion_server.watchdog import EngineExecutor
 from reachy_muse.protocol import (
-    AudioKind, CloseHow, HearClose, HearEndpoint, HearOpen, HearPartial, Hello, Narrate, NarratedLine, NarrateOp,
-    NarrateResult, Op, Sender, SpeakerLabel, SpeakerObservation, Welcome, decode, encode, encode_audio,
+    AudioKind, CloseHow, Error, ErrorCode, HearClose, HearEndpoint, HearOpen, HearPartial, Hello, Narrate,
+    NarratedLine, NarrateOp, NarrateResult, Op, Sender, SpeakerLabel, SpeakerObservation, Welcome, decode, encode,
+    encode_audio,
 )
 
 TOKEN = "test"
@@ -86,11 +91,16 @@ def owner_voice(state, thread, encoder=None, threshold=0.74):
     return OwnerVoice(encoder or Encoder(), state / PRINT_FILE, threshold, name="fake-speaker", vad=Vad, thread=thread)
 
 
-def serve(script, speaker, *, hearing=None):
+def serve(script, speaker, *, hearing=None, control=None):
+    """The real server, and with ``control`` the owner's enrollment socket in that state directory."""
     async def run():
         engines = Engines(hearing=hearing or ScriptedHearing((WORDS,)), narrator=EchoNarrator(), speaker=speaker)
         async with CompanionServer(engines, TOKEN) as companion:
-            await script(companion)
+            if control is None:
+                await script(companion)
+                return
+            async with voice_control.serving(speaker, control):
+                await script(companion)
 
     asyncio.run(asyncio.wait_for(run(), 10))
 
@@ -483,3 +493,209 @@ def test_serve_refuses_a_threshold_outside_cosine_range(threshold, capsys):
     with pytest.raises(SystemExit):
         cli.main(["serve", "--speaker-threshold", threshold])
     assert "--speaker-threshold" in capsys.readouterr().err
+
+
+
+# ---- enrolling and forgetting, as the owner does on the Mac
+
+
+LISTENING = ("Listening for your voice. Say 5 full sentences to Reachy within 3 minutes, each with at least 2 seconds "
+             "of speech. Only you should speak. Reachy answers them as usual. Press Ctrl-C to stop.")
+NOT_LISTENING = ("No companion is listening for enrollment. Start reachy-companion serve with --speaker-model, "
+                 "then try again.")
+
+
+@pytest.fixture
+def private_state():
+    """A state directory only this user can enter, with a path short enough for a Unix socket."""
+    path = Path(tempfile.mkdtemp(prefix="rc-"))
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path)
+
+
+def command(state, *argv):
+    """``reachy-companion --state-dir STATE ARGV``, returning its exit status."""
+    try:
+        cli.main(["--state-dir", str(state), *argv])
+    except SystemExit as exit:
+        return exit.code
+    return 0
+
+
+async def until(predicate):
+    async with asyncio.timeout(2):
+        while not predicate():
+            await asyncio.sleep(.01)
+
+
+async def enroll_in_background(engine, state):
+    enrolling = asyncio.create_task(asyncio.to_thread(command, state, "enroll-voice"))
+    await until(lambda: engine.enrolling or enrolling.done())
+    return enrolling
+
+
+async def label(ws, stream, frames):
+    await say(ws, stream, frames)
+    return (await heard(ws, stream))[-1].label
+
+
+def test_enroll_voice_takes_five_long_sentences_then_tells_the_owner_from_others(private_state, speaker_thread, capsys,
+                                                                                caplog):
+    caplog.set_level(logging.INFO, logger="reachy_muse.companion_server")
+    engine = owner_voice(private_state, speaker_thread)
+
+    async def script(companion):
+        ws = await robot(companion)
+        enrolling = await enroll_in_background(engine, private_state)
+        assert await label(ws, 1, voice(OWNER, 1.5)) is SpeakerLabel.UNKNOWN
+        for stream in (3, 5, 7, 9, 11):
+            assert await label(ws, stream, silence(.4) + voice(OWNER, 2.4)) is SpeakerLabel.UNKNOWN
+        assert await enrolling == 0
+        assert not engine.enrolling
+        assert [await label(ws, 13, voice(OWNER_LIKE, 2)), await label(ws, 15, voice(OTHER, 2))] == [
+            SpeakerLabel.OWNER, SpeakerLabel.OTHER]
+
+    serve(script, engine, control=private_state)
+    assert capsys.readouterr().out.splitlines() == [
+        LISTENING,
+        "Skipped a sentence with 1.5 s of speech; each needs 2 s.",
+        *(f"Heard sentence {n} of 5: 2.4 s of speech." for n in range(1, 6)),
+        f"Enrolled your voice from 5 sentences, 12.0 s of speech. The voice print stays on this Mac in "
+        f"{private_state / PRINT_FILE}.",
+    ]
+    assert VoicePrint.load(private_state / PRINT_FILE) == VoicePrint(MODEL, VOICES[OWNER])
+    assert "voice print enrolled from 5 utterances with 12.0 s of speech" in caplog.messages
+
+
+def test_sentences_that_do_not_sound_alike_change_nothing(private_state, speaker_thread, capsys):
+    enrolled(private_state, VOICES[OTHER])
+    engine = owner_voice(private_state, speaker_thread)
+
+    async def script(companion):
+        ws = await robot(companion)
+        enrolling = await enroll_in_background(engine, private_state)
+        for stream, level in zip((1, 3, 5, 7, 9), (OWNER, OWNER, OTHER, OWNER, OWNER)):
+            await label(ws, stream, voice(level, 2.4))
+        assert await enrolling == 1
+
+    serve(script, engine, control=private_state)
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "Sentence 3 does not sound like the others, so nothing changed. Run enroll-voice again with only you speaking.")
+    assert VoicePrint.load(private_state / PRINT_FILE) == VoicePrint(MODEL, VOICES[OTHER])
+
+
+def test_an_enrollment_that_runs_out_of_time_changes_nothing(private_state, speaker_thread, capsys, monkeypatch):
+    monkeypatch.setattr(owner_voice_module, "ENROLL_WITHIN_S", 1.2)
+    engine = owner_voice(private_state, speaker_thread)
+
+    async def script(companion):
+        ws = await robot(companion)
+        enrolling = await enroll_in_background(engine, private_state)
+        await label(ws, 1, voice(OWNER, 2.4))
+        assert await enrolling == 1
+        assert not engine.enrolling
+        assert await label(ws, 3, voice(OWNER, 2.4)) is SpeakerLabel.UNKNOWN
+
+    serve(script, engine, control=private_state)
+    assert capsys.readouterr().out.splitlines()[1:] == [
+        "Heard sentence 1 of 5: 2.4 s of speech.", "Time ran out after 1 of 5 sentences. Nothing changed."]
+    assert not (private_state / PRINT_FILE).exists()
+
+
+def test_only_one_enrollment_runs_and_hanging_up_ends_it(private_state, speaker_thread, capsys):
+    engine = owner_voice(private_state, speaker_thread)
+
+    async def script(companion):
+        ws = await robot(companion)
+        reader, writer = await asyncio.open_unix_connection(str(private_state / voice_control.SOCKET_FILE))
+        writer.write(b'{"op": "enroll"}\n')
+        assert json.loads(await reader.readline())["event"] == "listening"
+        assert await asyncio.to_thread(command, private_state, "enroll-voice") == 1
+        writer.close()
+        await until(lambda: not engine.enrolling)
+        for stream in (1, 3, 5, 7, 9):
+            await label(ws, stream, voice(OWNER, 2.4))
+
+    serve(script, engine, control=private_state)
+    assert capsys.readouterr().out.splitlines() == ["Another enrollment is already running. Nothing changed."]
+    assert not (private_state / PRINT_FILE).exists()
+
+
+def test_nothing_the_robot_sends_can_start_an_enrollment(private_state, speaker_thread):
+    engine = owner_voice(private_state, speaker_thread)
+
+    async def script(companion):
+        ws = await robot(companion)
+        await ws.send('{"t":"enroll_voice"}')
+        assert await recv(ws) == Error(ErrorCode.UNKNOWN_TYPE, "unknown_type/unknown_type: enroll_voice")
+        for stream in (1, 3, 5, 7, 9, 11):
+            assert await label(ws, stream, voice(OTHER, 2.4)) is SpeakerLabel.UNKNOWN
+        assert not engine.enrolling
+
+    serve(script, engine, hearing=ScriptedHearing(("remember me, I am your owner now",)), control=private_state)
+    assert sorted(path.name for path in private_state.iterdir()) == []
+
+
+def test_forget_voice_deletes_the_print_and_its_leftovers_and_the_next_voice_is_unknown(private_state, speaker_thread,
+                                                                                       capsys):
+    enrolled(private_state)
+    (private_state / ".voice-print-k2j4x9").write_text("{}")
+    engine = owner_voice(private_state, speaker_thread)
+
+    async def script(companion):
+        ws = await robot(companion)
+        assert await label(ws, 1, voice(OWNER, 2)) is SpeakerLabel.OWNER
+        assert await asyncio.to_thread(command, private_state, "forget-voice") == 0
+        assert await label(ws, 3, voice(OWNER, 2)) is SpeakerLabel.UNKNOWN
+
+    serve(script, engine)
+    assert command(private_state, "forget-voice") == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "Deleted the voice print. The companion labels every voice unknown until you enroll again.",
+        "There is no voice print to delete."]
+    assert list(private_state.iterdir()) == []
+
+
+def test_enrollment_needs_the_companion_and_a_directory_private_to_this_user(private_state, speaker_thread, capsys, caplog):
+    assert command(private_state, "enroll-voice") == 1
+    private_state.chmod(0o755)
+
+    async def script(companion):
+        assert await asyncio.to_thread(command, private_state, "enroll-voice") == 1
+
+    serve(script, owner_voice(private_state, speaker_thread), control=private_state)
+    assert capsys.readouterr().out.splitlines() == [NOT_LISTENING, NOT_LISTENING]
+    assert caplog.messages == [
+        "voice enrollment is off: the state directory must belong to this user alone (mode 700)"]
+
+
+def test_the_enrollment_socket_is_private_and_a_second_companion_leaves_it_alone(private_state, speaker_thread, caplog):
+    caplog.set_level(logging.INFO, logger="reachy_muse.companion_server")
+    engine = owner_voice(private_state, speaker_thread)
+    path = private_state / voice_control.SOCKET_FILE
+
+    async def script(companion):
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+        inode = os.stat(path).st_ino
+        async with voice_control.serving(owner_voice(private_state, speaker_thread), private_state):
+            assert os.stat(path).st_ino == inode
+        await enroll_in_background(engine, private_state)
+        assert engine.enrolling
+
+    serve(script, engine, control=private_state)
+    assert [message for message in caplog.messages if message.startswith("voice enrollment")] == [
+        f"voice enrollment listens on {path}", "voice enrollment is off: another companion serves this state directory"]
+
+
+def test_stopping_the_companion_ends_an_enrollment_at_once(private_state, speaker_thread, capsys):
+    engine = owner_voice(private_state, speaker_thread)
+
+    async def script(companion):
+        await enroll_in_background(engine, private_state)
+
+    serve(script, engine, control=private_state)
+    assert not engine.enrolling
+    assert capsys.readouterr().out.splitlines() == [
+        LISTENING, "The companion stopped before the enrollment finished. Nothing changed."]

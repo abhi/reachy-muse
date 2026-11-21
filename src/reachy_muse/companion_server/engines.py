@@ -113,6 +113,9 @@ class Speaker(Protocol):
     async def observe(self, pcm: bytes) -> Observation:
         """Judge one finished request's 16 kHz s16le audio against the owner's voice print."""
 
+    def enroll(self) -> AsyncIterator[dict]:
+        """Replace the print from the next requests observed. Yields one event per step for the owner's CLI."""
+
 
 class SpeechFirst:
     """Hearing, speech, narration and classify share the GPU with motion and go first.
