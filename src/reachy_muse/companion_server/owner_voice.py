@@ -33,7 +33,7 @@ log = logging.getLogger("reachy_muse.companion_server")
 PRINT_FILE = "voice-print.json"
 MAX_PRINT_BYTES = 64 * 1024
 FRAME = MIC_RATE // 50              # webrtcvad judges 20 ms frames, as SpeakerEncoder.embed does
-WINDOW = MIC_RATE * 3 // 2          # embed scores at most 1.5 s of speech, the window it was calibrated on
+WINDOW = MIC_RATE * 3 // 2          # embed scores at most 1.5 s of speech
 # Shorter speech gives an embedding too noisy to label, so the request stays unknown.
 MIN_SPEECH = MIC_RATE
 # Averaging up to four windows, 6 s of speech, steadies a request's embedding. At the bench's
@@ -42,11 +42,15 @@ MAX_WINDOWS = 4
 # One check running and one waiting. A check takes a fraction of a second, so more means the thread
 # is stuck; later requests are then unknown instead of piling up audio behind it.
 MAX_CHECKS = 2
-# Five sentences with at least 2 s of speech each: 10 s or more, in ten or more windows. Averaged,
-# the print's own noise is about a third of one window's, so a score mostly measures the request.
-# Five also let the agreement check single out one take that does not match the rest.
+# Five sentences with at least 2 s of speech each: 10 s or more, in ten or more windows. The print
+# averages them, so it varies less than any one request's embedding. Five also let the agreement
+# check single out one sentence that does not match the rest.
 ENROLL_UTTERANCES = 5
 ENROLL_SPEECH_S = 2.0
+# Each sentence must score this against the print the other four make. It only has to catch a
+# sentence in another voice, so it sits below the label threshold: an owner must be able to enroll
+# before that threshold is tuned on real voices. Enrollment logs the five scores for that tuning.
+ENROLL_AGREEMENT = 0.5
 # An enrollment left open would take whoever speaks next.
 ENROLL_WITHIN_S = 180.0
 
@@ -103,23 +107,26 @@ class VoicePrint:
 
     @classmethod
     def load(cls, path: Path) -> VoicePrint:
-        """Raises ValueError with a message safe to log."""
+        """Whatever is at ``path``, raises only ValueError, with a message safe to log."""
         try:
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         except OSError:
             raise ValueError("it cannot be opened") from None
-        with os.fdopen(fd, "r", encoding="utf-8") as source:
-            info = os.fstat(source.fileno())
+        try:
+            info = os.fstat(fd)
             if (not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600
                     or info.st_uid != os.getuid() or info.st_size > MAX_PRINT_BYTES):
                 raise ValueError("it must be a private mode-600 file")
-            try:
-                data = json.loads(source.read())
-                if data["version"] != 1:
-                    raise ValueError
-                return cls(data["model_sha256"], tuple(float(value) for value in data["embedding"]))
-            except (KeyError, TypeError, ValueError):
-                raise ValueError("it is unreadable") from None
+            content = os.read(fd, MAX_PRINT_BYTES + 1)
+        finally:
+            os.close(fd)
+        try:
+            data = json.loads(content)
+            if data["version"] != 1:
+                raise ValueError
+            return cls(data["model_sha256"], tuple(float(value) for value in normalized(data["embedding"])))
+        except (KeyError, TypeError, ValueError, OverflowError, RecursionError):
+            raise ValueError("it is unreadable") from None
 
 
 @dataclass(frozen=True)
@@ -219,9 +226,10 @@ class OwnerVoice:
                 taken.append((voiced_s, embedding))
                 yield {"event": "taken", "taken": len(taken), "of": ENROLL_UTTERANCES, "voiced_s": round(voiced_s, 2)}
             embeddings = [embedding for _, embedding in taken]
-            agreement, worst = _agreement(embeddings)
-            if agreement < self.threshold:
-                yield {"event": "failed", "reason": "mismatch", "utterance": worst + 1}
+            agreement = _agreement(embeddings)
+            if min(agreement) < ENROLL_AGREEMENT:
+                log.info("voice enrollment refused: agreement %s", " ".join(f"{score:.4f}" for score in agreement))
+                yield {"event": "failed", "reason": "mismatch", "utterance": agreement.index(min(agreement)) + 1}
                 return
             voice_print = VoicePrint(self.encoder.model_id,
                                      tuple(float(value) for value in normalized(np.mean(embeddings, axis=0))))
@@ -235,7 +243,8 @@ class OwnerVoice:
                 yield {"event": "failed", "reason": "forgotten"}
                 return
             voiced_s = sum(seconds for seconds, _ in taken)
-            log.info("voice print enrolled from %d utterances with %.1f s of speech", len(taken), voiced_s)
+            log.info("voice print enrolled from %d utterances with %.1f s of speech; agreement %s", len(taken), voiced_s,
+                     " ".join(f"{score:.4f}" for score in agreement))
             yield {"event": "enrolled", "taken": len(taken), "voiced_s": round(voiced_s, 2)}
         finally:
             if self._enrollment is heard:
@@ -331,9 +340,7 @@ def _speaker_thread() -> ThreadPoolExecutor:
     return ThreadPoolExecutor(1, thread_name_prefix="speaker")
 
 
-def _agreement(embeddings: Sequence[np.ndarray]) -> Tuple[float, int]:
-    """The lowest score of one utterance against the print the others make, and that utterance's index."""
-    scores = [float(np.dot(embedding, normalized(np.mean([other for j, other in enumerate(embeddings) if j != i], axis=0))))
-              for i, embedding in enumerate(embeddings)]
-    worst = int(np.argmin(scores))
-    return scores[worst], worst
+def _agreement(embeddings: Sequence[np.ndarray]) -> List[float]:
+    """Each utterance's score against the print the others make."""
+    return [float(np.dot(embedding, normalized(np.mean([other for j, other in enumerate(embeddings) if j != i], axis=0))))
+            for i, embedding in enumerate(embeddings)]

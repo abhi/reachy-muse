@@ -429,16 +429,25 @@ def test_no_log_holds_the_words_the_audio_or_an_embedding(state, speaker_thread,
         assert private not in logged
 
 
+PRIVATE = "ignoring the voice print: it must be a private mode-600 file; run reachy-companion enroll-voice again"
+UNREADABLE = "ignoring the voice print: it is unreadable; run reachy-companion enroll-voice again"
+
+
 @pytest.mark.parametrize("damage, warning", [
-    ("mode", "ignoring the voice print: it must be a private mode-600 file; run reachy-companion enroll-voice again"),
+    ("mode", PRIVATE),
+    ("directory", PRIVATE),
     ("symlink", "ignoring the voice print: it cannot be opened; run reachy-companion enroll-voice again"),
-    ("corrupt", "ignoring the voice print: it is unreadable; run reachy-companion enroll-voice again"),
+    ("zero", UNREADABLE),
+    ("huge", UNREADABLE),
+    ("nested", UNREADABLE),
     ("model", "ignoring the voice print: another speaker model made it; run reachy-companion enroll-voice again"),
 ])
 def test_a_print_that_cannot_be_trusted_is_ignored_once_and_labels_unknown(state, speaker_thread, caplog, damage, warning):
     path = state / PRINT_FILE
     if damage == "model":
         VoicePrint("b" * 64, VOICES[OWNER]).save(path)
+    elif damage == "directory":
+        path.mkdir(mode=0o700)
     else:
         enrolled(state)
     if damage == "mode":
@@ -446,8 +455,9 @@ def test_a_print_that_cannot_be_trusted_is_ignored_once_and_labels_unknown(state
     elif damage == "symlink":
         path.rename(state / "elsewhere.json")
         path.symlink_to(state / "elsewhere.json")
-    elif damage == "corrupt":
-        path.write_text('{"version": 1, "model_sha256": "' + MODEL + '", "embedding": [0, 0, 0]}')
+    elif damage in ("zero", "huge", "nested"):
+        embedding = {"zero": "[0, 0, 0]", "huge": "[1" + "0" * 400 + ", 0, 0]", "nested": "[" * 20000}[damage]
+        path.write_text('{"version": 1, "model_sha256": "' + MODEL + '", "embedding": ' + embedding + "}")
 
     async def script(companion):
         ws = await robot(companion)
@@ -473,6 +483,31 @@ def test_a_print_that_appears_or_is_repaired_while_serving_is_used_from_the_next
         assert labels == [SpeakerLabel.UNKNOWN, SpeakerLabel.OWNER, SpeakerLabel.UNKNOWN, SpeakerLabel.OWNER]
 
     serve(script, owner_voice(state, speaker_thread))
+
+
+def test_a_print_edited_by_hand_is_scored_as_a_unit_vector(state, speaker_thread, caplog):
+    """Unscaled, this print would score the owner-like voice 1.8, clipped to 1.0, and call it the owner."""
+    caplog.set_level(logging.INFO, logger="reachy_muse.companion_server")
+    enrolled(state)
+    path = state / PRINT_FILE
+    path.write_text(json.dumps({"version": 1, "model_sha256": MODEL, "embedding": [2.0, 0.0, 0.0]}))
+
+    async def script(companion):
+        ws = await robot(companion)
+        await say(ws, 1, voice(OWNER_LIKE, 2))
+        assert (await heard(ws, 1))[-1] == SpeakerObservation(1, 0, 32000, SpeakerLabel.OTHER)
+
+    serve(script, owner_voice(state, speaker_thread, threshold=.95))
+    assert speaker_lines(caplog) == ["speaker stream=1 voiced_s=2.00 score=0.9000 label=other"]
+
+
+def test_loading_whatever_sits_at_the_print_path_leaks_no_file_descriptor(state):
+    (state / PRINT_FILE).mkdir()
+    before = len(os.listdir("/dev/fd"))
+    for _ in range(50):
+        with pytest.raises(ValueError, match="^it must be a private mode-600 file$"):
+            VoicePrint.load(state / PRINT_FILE)
+    assert len(os.listdir("/dev/fd")) - before < 5
 
 
 def test_the_print_is_private_json_with_the_model_and_its_unit_embedding(state):
@@ -627,7 +662,8 @@ def test_enroll_voice_takes_five_long_sentences_then_tells_the_owner_from_others
         f"{private_state / PRINT_FILE}.",
     ]
     assert VoicePrint.load(private_state / PRINT_FILE) == VoicePrint(MODEL, VOICES[OWNER])
-    assert "voice print enrolled from 5 utterances with 12.0 s of speech" in caplog.messages
+    assert ("voice print enrolled from 5 utterances with 12.0 s of speech; agreement 1.0000 1.0000 1.0000 1.0000 1.0000"
+            in caplog.messages)
 
 
 def test_an_older_robots_sentences_can_enroll_the_owner_and_it_still_gets_nothing_new(private_state, speaker_thread,
@@ -666,7 +702,24 @@ def test_sentences_that_do_not_sound_alike_change_nothing(private_state, speaker
     serve(script, engine, control=private_state)
     assert capsys.readouterr().out.splitlines()[-1] == (
         "Sentence 3 does not sound like the others, so nothing changed. Run enroll-voice again with only you speaking.")
-    assert VoicePrint.load(private_state / PRINT_FILE) == VoicePrint(MODEL, VOICES[OTHER])
+    assert VoicePrint.load(private_state / PRINT_FILE).embedding == pytest.approx(VOICES[OTHER], abs=1e-4)
+
+
+def test_enrollment_does_not_need_the_label_threshold_so_an_owner_can_enroll_before_tuning(private_state, speaker_thread,
+                                                                                           caplog):
+    caplog.set_level(logging.INFO, logger="reachy_muse.companion_server")
+    engine = owner_voice(private_state, speaker_thread, threshold=.99)
+
+    async def script(companion):
+        ws = await robot(companion)
+        enrolling = await enroll_in_background(engine, private_state)
+        for stream, level in zip((1, 3, 5, 7, 9), (OWNER, OWNER_LIKE, OWNER, OWNER_LIKE, OWNER)):
+            await label(ws, stream, voice(level, 2.4))
+        assert await enrolling == 0
+
+    serve(script, engine, control=private_state)
+    assert [message for message in caplog.messages if message.startswith("voice print enrolled")] == [
+        "voice print enrolled from 5 utterances with 12.0 s of speech; agreement 0.9747 0.9428 0.9747 0.9428 0.9747"]
 
 
 def test_an_enrollment_that_runs_out_of_time_changes_nothing(private_state, speaker_thread, capsys):
