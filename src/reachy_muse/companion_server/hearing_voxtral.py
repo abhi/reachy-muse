@@ -163,8 +163,8 @@ class _Session:
                 self.said = self.utterance.text
                 events.append(Partial(self.said))
             if ended:
-                # Queued from this call, the final pass runs next on this worker, as early as it ran inline,
-                # while the server acts on SpeechEnded.
+                # Queued here rather than by the server on SpeechEnded, the final pass starts without waiting for
+                # the event loop. Work that another stream queued during this feed still runs first.
                 self._final = self.hearing.submit(self._finish)
                 events.append(SpeechEnded())
             return events
