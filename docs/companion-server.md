@@ -188,10 +188,13 @@ To keep the print out of them, run `tmutil addexclusion ~/.reachy-companion`.
 
 ### What the robot receives
 
-A robot that asks for the protocol's `speaker` op gets one `speaker_observation` after each request's endpoint: `owner`, `other` or `unknown`.
+A robot that asks for the protocol's `speaker` op gets one `speaker_observation` for each request: `owner`, `other` or `unknown`.
+The companion starts on the label when the request's speech ends, by its own end-of-speech detection or by the robot's, and sends it as soon as it is ready, often before the transcript.
+During a realtime call, Reachy ends each request about 2 seconds after you stop talking and drops the companion's stream.
+The companion's own detection usually ends the request after about 1.2 seconds, so the label comes first.
+A request that Reachy drops before the companion hears its end, usually a very short one, gets no label.
 `unknown` means there is no print, the request held less than 1 second of speech, or the check could not run in time.
-The robot logs `Reachy speaker=owner` and adds `speaker=owner` to the turn's timeline line.
-A turn whose stream the robot aborts gets no label. During a realtime call, that is every turn.
+The robot logs `Reachy speaker=owner` and adds `speaker=owner` to the turn's timeline line, in chat and in calls.
 An older robot never asks for the op and receives nothing new. A newer robot works with an older companion as before.
 
 ### Cost

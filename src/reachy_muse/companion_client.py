@@ -61,7 +61,8 @@ SPEECH_STALL_S = 6.0
 # order, so any reply under a stream opened after an abort shows that no error is coming for it.
 # Without one, an aborted call command counts as heard after the link's own stall allowance.
 LATE_ERROR_S = PING_TIMEOUT_S
-# A speaker label follows its stream's endpoint within about a second. Keep the latest few in case one never comes.
+# A speaker label comes about a second after its stream's speech ends, before or after the endpoint, or even
+# just after the robot aborts the stream. Keep the latest few streams' slots, for labels that never come.
 PENDING_LABELS = 8
 _PIN = re.compile(r"sha256:([0-9a-f]{64})")
 _FATAL = (ErrorCode.AUTH, ErrorCode.VERSION, ErrorCode.INTERNAL, ErrorCode.MODEL)
@@ -109,7 +110,7 @@ class _Connection:
         self.hearing: Dict[int, _HearStream] = {}
         self.waiting: Dict[int, _HearStream] = {}   # outcomes not yet told, behind call commands that can still fail
         self.opened = 0                             # hear streams so far, numbered in the order sent
-        self.labeling: Dict[int, _SpeakerSlot] = {}  # ended streams whose speaker label is on its way
+        self.labeling: Dict[int, _SpeakerSlot] = {}  # recent streams whose speaker label may still come
         self.speaking: Dict[int, asyncio.Queue] = {}
         self.narrations: Dict[int, asyncio.Future] = {}
         self.animations: Dict[int, asyncio.Future] = {}
@@ -149,6 +150,7 @@ class _Connection:
 
     def expect_label(self, stream: _HearStream) -> None:
         if Op.SPEAKER in self.ops:
+            self.labeling.pop(stream.id, None)
             self.labeling[stream.id] = stream.speaker
             while len(self.labeling) > PENDING_LABELS:
                 del self.labeling[next(iter(self.labeling))]
@@ -173,14 +175,17 @@ class _SpeakerSlot:
 
     def arrived(self, label: SpeakerLabel) -> None:
         self.label = label
-        log.info("Reachy speaker=%s", label.value)
         if self._facts is not None:
-            self._facts["speaker"] = label.value
+            self._record()
 
     def note(self, facts: Dict[str, str]) -> None:
         self._facts = facts
         if self.label is not None:
-            facts["speaker"] = self.label.value
+            self._record()
+
+    def _record(self) -> None:
+        self._facts["speaker"] = self.label.value
+        log.info("Reachy speaker=%s", self.label.value)
 
 
 class _HearStream:
@@ -209,8 +214,6 @@ class _HearStream:
     def close(self, how: CloseHow) -> None:
         if how is CloseHow.ABORT:
             self.connection.hearing.pop(self.id, None)
-            if self.connection.labeling.get(self.id) is self.speaker:
-                del self.connection.labeling[self.id]
         if not self.connection.closed:
             self.connection.send(HearClose(self.id, how))
 
@@ -507,7 +510,6 @@ class CompanionLink:
             if stream is not None:
                 if isinstance(message, HearEndpoint):
                     del connection.hearing[message.stream]
-                    connection.expect_label(stream)
                     stream.report(None)
                 if stream.finished_at is None:
                     stream.inbox.append(message)
@@ -561,10 +563,11 @@ class CompanionLink:
 
     def open_hear(self, outcomes=None) -> _HearStream:
         """A new hear stream. ``outcomes`` hears ``succeed()`` or ``fail(reason)`` once it settles, and
-        nothing if the robot drops it first: a closed window, rejected speech or a cancelled turn."""
+        nothing if the robot drops it first: a closed window, rejected speech or a cancelled turn.
+        Its speaker label, which can come before or after its end, waits in its slot for a turn to take it."""
         connection = self._live(Op.HEAR)
         stream = _HearStream(connection, connection.stream_id(Op.HEAR), outcomes)
-        connection.labeling.pop(stream.id, None)
+        connection.expect_label(stream)
         connection.send(HearOpen(stream.id, 0))
         connection.hearing[stream.id] = stream
         return stream

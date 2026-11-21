@@ -3,18 +3,23 @@
 import asyncio
 import contextlib
 import logging
+import sys
+import threading
+from types import SimpleNamespace
 
 import pytest
 from websockets.asyncio.server import serve
 
 from fake_companion import TOKEN, FakeCompanion
 from reachy_muse.companion_client import CompanionHearing, CompanionLink
+from reachy_muse.companion_server import hearing_voxtral
 from reachy_muse.companion_server.engines import EchoNarrator, ScriptedHearing, ToneVoice
 from reachy_muse.companion_server.owner_voice import PRINT_FILE, OwnerVoice, VoicePrint
 from reachy_muse.companion_server.server import CompanionServer, Engines
 from reachy_muse.companion_server.watchdog import EngineExecutor
 from reachy_muse.protocol import (
-    VERSION, Narrate, NarrateOp, NarrateResult, Op, Sender, SpeakerLabel, SpeakerObservation, Welcome, decode, encode,
+    VERSION, Error, Narrate, NarrateOp, NarrateResult, Op, Sender, SpeakerLabel, SpeakerObservation, Welcome, decode,
+    encode,
 )
 from reachy_muse.turn_timeline import TurnTimeline
 from test_pins import Vad
@@ -27,13 +32,34 @@ OWNER_LEVEL, OTHER_LEVEL = .3, .7
 
 
 class Encoder:
-    """A quiet voice embeds like the owner's print, a loud one far from it."""
+    """A quiet voice embeds like the owner's print, a loud one far from it. ``gate`` holds each check."""
 
     model_id = MODEL
     dimension = 2
 
+    def __init__(self, gate=None):
+        self.gate = gate
+        self.entered, self.done = threading.Event(), threading.Event()
+
     def embed(self, samples, rate):
+        self.entered.set()
+        if self.gate is not None:
+            assert self.gate.wait(5)
+        self.done.set()
         return np.array([1.0, 0.0] if np.mean(np.abs(samples)) < .5 else [0.0, 1.0])
+
+
+class RecordingLink(CompanionLink):
+    """The robot's real link, keeping every message the companion sent, in order."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.received = []
+
+    def _receive(self, connection, frame):
+        if isinstance(frame, str):
+            self.received.append(decode(frame, sender=Sender.COMPANION))
+        super()._receive(connection, frame)
 
 
 def enrolled(state):
@@ -41,16 +67,16 @@ def enrolled(state):
 
 
 @contextlib.asynccontextmanager
-async def companion_engines(state, **engines):
+async def companion_engines(state, encoder=None, **engines):
     with EngineExecutor("speaker") as thread:
-        speaker = OwnerVoice(Encoder(), state / PRINT_FILE, .74, name="fake-speaker", vad=Vad, thread=thread)
+        speaker = OwnerVoice(encoder or Encoder(), state / PRINT_FILE, .74, name="fake-speaker", vad=Vad, thread=thread)
         async with CompanionServer(Engines(speaker=speaker, narrator=EchoNarrator(), **engines), TOKEN) as server:
             yield server.url.removesuffix("/v1")
 
 
 @contextlib.asynccontextmanager
-async def linked(url):
-    link = CompanionLink(url, token=TOKEN, out_rate=16000, insecure=True, backoff_s=(5, 5))
+async def linked(url, link_type=CompanionLink):
+    link = link_type(url, token=TOKEN, out_rate=16000, insecure=True, backoff_s=(5, 5))
     running = asyncio.create_task(link.run())
     try:
         await asyncio.wait_for(link.settled(), 2)
@@ -80,26 +106,24 @@ def speaker_logs(caplog):
     return [message for message in caplog.messages if message.startswith("Reachy speaker")]
 
 
-def test_the_label_reaches_the_turns_timeline_facts_whichever_comes_first(tmp_path, caplog):
+def test_a_turn_queued_before_its_label_gets_it_when_it_comes(tmp_path, caplog):
     caplog.set_level(logging.INFO, logger="reachy_muse.companion_client")
     enrolled(tmp_path)
 
     async def run():
+        facts = []
         async with companion_engines(tmp_path, hearing=ScriptedHearing(("hello",))) as url, linked(url) as link:
             assert link.can(Op.SPEAKER)
-            queued_first = await spoken_turn(link, OWNER_LEVEL)
-            early = TurnTimeline()
-            queued_first.note_speaker(early.facts)
-            assert (await queued_first.endpoint()).text == "hello"
-            await until(lambda: "speaker" in early.facts)
-            labeled_first = await spoken_turn(link, OTHER_LEVEL)
-            await labeled_first.endpoint()
-            await until(lambda: "Reachy speaker=other" in caplog.messages)
-            late = TurnTimeline()
-            labeled_first.note_speaker(late.facts)
-            return early.facts, late.facts
+            for level in (OWNER_LEVEL, OTHER_LEVEL):
+                ended = await spoken_turn(link, level)
+                timeline = TurnTimeline()
+                ended.note_speaker(timeline.facts)
+                assert (await ended.endpoint()).text == "hello"
+                await until(lambda: "speaker" in timeline.facts)
+                facts.append(timeline.facts)
+        return facts
 
-    assert asyncio.run(asyncio.wait_for(run(), 10)) == ({"speaker": "owner"}, {"speaker": "other"})
+    assert asyncio.run(asyncio.wait_for(run(), 10)) == [{"speaker": "owner"}, {"speaker": "other"}]
     assert speaker_logs(caplog) == ["Reachy speaker=owner", "Reachy speaker=other"]
 
 
@@ -149,8 +173,8 @@ def test_a_label_for_a_stream_the_robot_is_not_waiting_on_is_ignored(caplog):
     assert speaker_logs(caplog) == []
 
 
-def test_a_label_after_the_robot_aborted_its_stream_is_ignored(caplog):
-    """A companion that sends the label anyway, after handling the abort, changes nothing on the robot."""
+def test_a_label_still_in_flight_when_the_robot_aborts_reaches_the_turn(caplog):
+    """A companion sends nothing once it has handled an abort, so a label arriving later left before it."""
     from reachy_muse.protocol import CloseHow, HearClose, HearEndpoint
 
     caplog.set_level(logging.INFO, logger="reachy_muse.companion_client")
@@ -180,7 +204,163 @@ def test_a_label_after_the_robot_aborted_its_stream_is_ignored(caplog):
             await link.narrate(NarrateOp.ACKNOWLEDGE, "Barrier.")
             return timeline.facts
 
-    assert asyncio.run(asyncio.wait_for(run(), 10)) == {}
+    assert asyncio.run(asyncio.wait_for(run(), 10)) == {"speaker": "owner"}
+    assert speaker_logs(caplog) == ["Reachy speaker=owner"]
+
+
+# ---- realtime calls: the robot aborts each command stream at its own end of speech
+
+
+@pytest.fixture
+def final_pass(monkeypatch):
+    """Parakeet stand-in for the real Voxtral session, held until the test sets it."""
+    held = threading.Event()
+    monkeypatch.setitem(sys.modules, "mlx.core", SimpleNamespace(array=lambda value: value))
+    monkeypatch.setitem(sys.modules, "parakeet_mlx.audio", SimpleNamespace(get_logmel=lambda audio, config: audio))
+    try:
+        yield held
+    finally:
+        held.set()
+
+
+def voxtral(final_pass):
+    """The real hearing session and its endpointing, on fake models: speech is any nonzero sample, and Smart
+    Turn calls a turn complete at its 1.2 s check, so the companion ends speech after 1.2 s of silence."""
+
+    class Stream:
+        spoken = False
+
+        def feed(self, samples):
+            pass
+
+        def step(self, *, max_decode_tokens):
+            spoken, self.spoken = self.spoken, True
+            return [] if spoken else ["stop listening"]
+
+    def generate(mel):
+        assert final_pass.wait(5)
+        return [SimpleNamespace(text="stop listening")]
+
+    def speech(_, inputs):
+        return np.array([[float(np.any(inputs["input"][0, hearing_voxtral.VAD_CONTEXT:]))]]), inputs["state"]
+
+    hearing = hearing_voxtral.VoxtralHearing(hearing_voxtral.HearingConfig(turn_check_after_s=1.2))
+    hearing._models = SimpleNamespace(
+        voxtral=SimpleNamespace(create_streaming_session=lambda **kwargs: Stream()),
+        parakeet=SimpleNamespace(generate=generate, preprocessor_config=None),
+        vad=SimpleNamespace(run=speech),
+        turn=SimpleNamespace(run=lambda *args: (np.array([[1.0]]),)),
+        features=lambda *args, **kwargs: SimpleNamespace(input_features=np.zeros((1, 80, 800))))
+    return hearing
+
+
+def seconds(value, level=0.0):
+    return np.full(round(value * 16000), level, dtype=np.float32)
+
+
+def under(link, stream=1):
+    return [type(message).__name__ for message in link.received if getattr(message, "stream", None) == stream]
+
+
+@pytest.mark.parametrize("commands_only", [True, False], ids=["call", "chat"])
+def test_the_label_reaches_the_turn_at_the_companions_end_of_speech_before_the_robots(tmp_path, caplog, final_pass,
+                                                                                    commands_only):
+    """The companion ends speech after 1.2 s of silence and the robot after 2.0 s. In a call the robot then aborts;
+    in chat it finishes. Either way the label is on the turn first, while Parakeet still holds the endpoint."""
+    caplog.set_level(logging.INFO, logger="reachy_muse.companion_client")
+    enrolled(tmp_path)
+    hearing = voxtral(final_pass)
+
+    async def run():
+        async with companion_engines(tmp_path, hearing=hearing) as url, linked(url, RecordingLink) as link:
+            turn = CompanionHearing(link).open_turn(16000, silence_s=2.0, vad=Vad(), commands_only=commands_only)
+            for audio in (seconds(2, OWNER_LEVEL), seconds(1.3)):
+                turn.feed(audio)
+                assert turn.take().ended is None
+            await until(lambda: "SpeakerObservation" in under(link))
+            turn.feed(seconds(.8))
+            ended = turn.take().ended
+            timeline = TurnTimeline()
+            ended.note_speaker(timeline.facts)
+            at_the_robots_end = dict(timeline.facts)
+            await link.narrate(NarrateOp.ACKNOWLEDGE, "Barrier.")
+            final_pass.set()
+            words = (await ended.endpoint()).text
+            await link.narrate(NarrateOp.ACKNOWLEDGE, "Barrier.")
+            return at_the_robots_end, words, under(link)
+
+    try:
+        assert asyncio.run(asyncio.wait_for(run(), 10)) == (
+            {"speaker": "owner"}, "stop listening",
+            ["HearPartial", "SpeakerObservation"] + ([] if commands_only else ["HearEndpoint"]))
+    finally:
+        final_pass.set()
+        hearing._thread.shutdown()
+    assert speaker_logs(caplog) == ["Reachy speaker=owner"]
+
+
+def test_a_robot_abort_before_the_companions_end_of_speech_gets_no_label_and_no_error(tmp_path, caplog, final_pass):
+    caplog.set_level(logging.INFO, logger="reachy_muse.companion_client")
+    enrolled(tmp_path)
+    hearing = voxtral(final_pass)
+
+    async def run():
+        async with companion_engines(tmp_path, hearing=hearing) as url, linked(url, RecordingLink) as link:
+            turn = CompanionHearing(link).open_turn(16000, silence_s=.5, vad=Vad(), commands_only=True)
+            turn.feed(seconds(2, OWNER_LEVEL))
+            assert turn.take().ended is None
+            await until(lambda: "HearPartial" in under(link))
+            turn.feed(seconds(.6))
+            ended = turn.take().ended
+            timeline = TurnTimeline()
+            ended.note_speaker(timeline.facts)
+            await link.narrate(NarrateOp.ACKNOWLEDGE, "Barrier.")
+            final_pass.set()
+            await asyncio.sleep(.2)
+            await link.narrate(NarrateOp.ACKNOWLEDGE, "Barrier.")
+            errors = [message for message in link.received if isinstance(message, Error)]
+            return timeline.facts, under(link), errors, link.up
+
+    try:
+        assert asyncio.run(asyncio.wait_for(run(), 10)) == ({}, ["HearPartial"], [], True)
+    finally:
+        final_pass.set()
+        hearing._thread.shutdown()
+    assert speaker_logs(caplog) == []
+
+
+def test_an_abort_while_the_speaker_check_runs_sends_nothing_after_it(tmp_path, caplog, final_pass):
+    caplog.set_level(logging.INFO, logger="reachy_muse.companion_client")
+    enrolled(tmp_path)
+    check = threading.Event()
+    encoder = Encoder(check)
+    hearing = voxtral(final_pass)
+
+    async def run():
+        async with companion_engines(tmp_path, encoder, hearing=hearing) as url, linked(url, RecordingLink) as link:
+            turn = CompanionHearing(link).open_turn(16000, silence_s=2.0, vad=Vad(), commands_only=True)
+            for audio in (seconds(2, OWNER_LEVEL), seconds(1.3)):
+                turn.feed(audio)
+                assert turn.take().ended is None
+            assert await asyncio.to_thread(encoder.entered.wait, 2)
+            turn.feed(seconds(.8))
+            ended = turn.take().ended
+            timeline = TurnTimeline()
+            ended.note_speaker(timeline.facts)
+            await link.narrate(NarrateOp.ACKNOWLEDGE, "Barrier.")
+            check.set()
+            final_pass.set()
+            assert await asyncio.to_thread(encoder.done.wait, 2)
+            await asyncio.sleep(.2)
+            await link.narrate(NarrateOp.ACKNOWLEDGE, "Barrier.")
+            return timeline.facts, under(link)
+
+    try:
+        assert asyncio.run(asyncio.wait_for(run(), 10)) == ({}, ["HearPartial"])
+    finally:
+        check.set()
+        final_pass.set()
+        hearing._thread.shutdown()
     assert speaker_logs(caplog) == []
 
 
