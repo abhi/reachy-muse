@@ -1161,6 +1161,9 @@ class VoiceConversation:
             for _ in range(heard.failures):
                 transcription_failed(self.call)
             if heard.transcript_lost:
+                speech_started_at = None
+                speech_bearing = None
+                gaze_generation = None
                 self._wake_strip_required = False
                 self._wake_first_request_pending = False
                 recorder.finish_initial_capture()

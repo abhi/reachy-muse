@@ -92,11 +92,11 @@ def people(monkeypatch):
         controller.close()
 
 
-async def say_live(rig, *, wake=False, paced_silence_s=None):
+async def say_live(rig, *, wake=False, voiced_s=.7, paced_silence_s=None):
     if wake:
         rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
         await asyncio.sleep(.02)
-    for _ in range(35):
+    for _ in range(round(voiced_s * 16000 / CHUNK)):
         rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
         await asyncio.sleep(.02)
     if paced_silence_s is None:
@@ -150,6 +150,56 @@ def test_other_face_turn_preempts_and_muse_reply_plays_in_full(people, caplog, t
     assert sent_to_muse(events) == []
     assert set(played(events)) == {'muse'}
     assert 'Say hi' not in caplog.text and 'nice to meet' not in caplog.text
+
+
+def test_lost_transcript_does_not_carry_the_previous_speaker_into_the_next_request(people, caplog):
+    from test_pins import FailingStreamingTranscriber
+
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    reply = voiced(.2)
+
+    class FailOnce(StreamingTranscripts):
+        failed = False
+
+        def open_turn(self):
+            if not self.failed:
+                self.failed = True
+                return FailingStreamingTranscriber().open_turn()
+            return super().open_turn()
+
+    async def answer(sdk, emit, script):
+        await rig.wait_until_or_timeout(lambda: controller._person_hold)
+        assert controller._person_hold
+        reply_events(sdk, emit, 'r1', 'Hello there!', reply)
+
+    calls = ScriptedCalls(answer=answer)
+    service = realtime_service(rig, FailOnce('Say hi to my friend.'), calls)
+
+    async def user():
+        await say_live(rig, wake=True, voiced_s=1.3)
+        await rig.wait_until_or_timeout(lambda: not service._voice[1]._playback.user_speaking)
+        assert not service._voice[1]._playback.user_speaking
+        scene.doa = math.radians(115)
+        await say_live(rig, voiced_s=.5)
+        await rig.wait_until_or_timeout(lambda: controller._person_hold)
+        assert controller._person_hold
+        assert controller._speaker_look.head == pytest.approx(30)
+        await rig.wait_until_or_timeout(lambda: abs(math.degrees(controller.head_yaw) - 30) < .2)
+        assert math.degrees(controller.head_yaw) == pytest.approx(30, abs=.2)
+        assert math.degrees(robot.body_yaw) == pytest.approx(10, abs=.2)
+        await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events))
+        await rig.wait_until_or_timeout(lambda: not service._voice[1].call.audible)
+        np.testing.assert_array_equal(np.concatenate(rig.hardware.played),
+                                      np.frombuffer(reply, '<i2').astype(np.float32) / 32768)
+
+    events = run(rig, service, user)
+    assert calls.barge_ins == 0
+    assert sent_to_muse(events) == []
+    assert played(events) == ['muse']
+    assert 'Reachy could not transcribe a turn Muse heard in its call; Muse answers it' in caplog.messages
+    assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+        'Reachy gaze request outcome=turned faces=2']
 
 
 @pytest.mark.parametrize('case, text, expected', [
