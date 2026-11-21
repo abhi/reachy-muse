@@ -1041,16 +1041,16 @@ def test_follow_up_after_a_plain_opening_still_reaches_the_running_task(streamin
                 session.acknowledgement = {
                     "ok": True, "status": 200, "response": {"result": {"message_id": "user-2"}},
                 }
-                assert await conversation._follow_up(Endpoint(b"voice", "Also make it quick."),
-                                                     _QueuedTurn(None, False, 0, timeline, ()), None) is None
+                request = _QueuedTurn(None, False, 0, timeline, (), None, None, conversation._gaze.begin())
+                assert await conversation._follow_up(Endpoint(b"voice", "Also make it quick."), request, None) is None
                 sent.append(("Also make it quick.", "robot-chat"))
                 await conversation._queue_replies(feed(job, chat_event(
                     "delta.message_done", "reply-1", seq=3, content="I'll find a recipe.")), job)
                 await conversation._queue_replies(feed(job, chat_event(
                     "task.status", seq=4, status="completed")), job)
                 assert not job.turn.busy and not job.turn.complete(time.monotonic())
-            held = await conversation._follow_up(Endpoint(b"voice", text),
-                                                 _QueuedTurn(None, False, 0, timeline, ()), None)
+            request = _QueuedTurn(None, False, 0, timeline, (), None, None, conversation._gaze.begin())
+            held = await conversation._follow_up(Endpoint(b"voice", text), request, None)
             assert session.setup_messages == [*sent, (expected, "robot-chat")]
             assert held is None
         finally:

@@ -225,9 +225,9 @@ class _QueuedTurn:
     wake_epoch: int
     timeline: TurnTimeline
     heard_over: tuple[str, ...]
-    call: object = None          # the realtime call that streamed this turn's audio to Muse
-    speaker_bearing: float | None = None
-    gaze_generation: int | None = None
+    call: object                 # the realtime call that streamed this turn's audio to Muse
+    speaker_bearing: float | None
+    gaze_generation: int
 
 
 @dataclass(frozen=True)
@@ -2462,8 +2462,7 @@ class VoiceConversation:
                                 held=held)
         if isinstance(text, TurnOutcome):
             return held
-        if request.gaze_generation is not None:
-            self._gaze.admit(request.gaze_generation)
+        self._gaze.admit(request.gaze_generation)
         kind = FollowUp.NEW if text is None else classify_follow_up(text)
         # A one-word command ("goodnight", "louder") is obeyed before one-word asides are dropped.
         command = (await self._obey(text, request.timeline.marks["endpoint"], request.timeline)
@@ -2472,8 +2471,7 @@ class VoiceConversation:
             if not COMMANDS[command].silence_speech:
                 self._say_hushed = False
             return None if COMMANDS[command].wake_window in (WakeWindow.DISMISSED, WakeWindow.ASLEEP) else held
-        if request.gaze_generation is not None:
-            await self._gaze.request(text, request.speaker_bearing, request.gaze_generation)
+        await self._gaze.request(text, request.speaker_bearing, request.gaze_generation)
         if kind in (FollowUp.NEW, FollowUp.ADD_DETAIL) and text is not None and too_short_for_follow_up(text):
             log.info("Reachy ignored a one-word follow-up while Muse worked")
             return held
@@ -2593,8 +2591,7 @@ class VoiceConversation:
                                        outcome=command.name if command is not None else "none")
         if command is not None:
             return TurnOutcome.ACCEPTED
-        if request.gaze_generation is not None:
-            await self._gaze.request(text, request.speaker_bearing, request.gaze_generation)
+        await self._gaze.request(text, request.speaker_bearing, request.gaze_generation)
         call = request.call
         if call.failed:
             await self._call_lost()
