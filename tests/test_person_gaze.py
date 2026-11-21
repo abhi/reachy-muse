@@ -437,6 +437,36 @@ def test_natural_phrasings_turn_toward_the_friend(people, caplog, text):
         'Reachy gaze request outcome=turned faces=2']
 
 
+@pytest.mark.parametrize('text, gaze, barge_ins, command', [
+    ('Look at him.', ['Reachy gaze request outcome=turned faces=2'], 0, 'none'),
+    ('Look at my friend.', ['Reachy gaze request outcome=turned faces=2'], 0, 'none'),
+    ('Could you look at the other person?', ['Reachy gaze request outcome=turned faces=2'], 0, 'none'),
+    ('Look at me.', [], 1, 'FACE_TRACKING_ON'),
+])
+def test_gaze_phrases_never_reach_the_command_classifier(people, caplog, text, gaze, barge_ins, command):
+    from reachy_muse.device_command import DeviceCommand
+    from test_device_command_turns import FakeModel, service as make_service, never_asked
+
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    model = FakeModel(DeviceCommand.FACE_TRACKING_ON)
+    calls = ScriptedCalls(reply='Hello!', reply_s=.1)
+    service = make_service(rig, never_asked, StreamingTranscripts(text), model=model,
+                           wake_detector=TimedWake(), wake_timeout_s=2, muse_path='realtime',
+                           voice_link=calls.link, voice_call=calls)
+
+    async def user():
+        await say_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: controller._person_hold or calls.barge_ins or model.asked, 3)
+        await asyncio.sleep(.3)
+
+    run(rig, service, user)
+    assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == gaze
+    assert (calls.barge_ins, model.asked) == (barge_ins, [])
+    assert [line.split(' outcome=')[1].split()[0] for line in caplog.messages
+            if line.startswith('Realtime command transcript=arrived')] == [command]
+
+
 def test_look_at_me_remains_the_local_face_tracking_command(people, caplog):
     rig, controller, robot, scene = people
     caplog.set_level('INFO')

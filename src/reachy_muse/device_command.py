@@ -206,6 +206,8 @@ def gaze_requested(text: str) -> bool:
 
 
 def worth_asking(text: str, asked: FrozenSet[DeviceCommand]) -> bool:
+    if gaze_requested(text):
+        return False
     words = _words(text)
     if not words or len(words) > MODEL_MAX_WORDS or words[0] in _QUESTION_OPENERS:
         return False
