@@ -25,6 +25,7 @@ class PersonGaze:
         self.hardware = hardware
         self._generation = 0
         self._admitted_generation = 0
+        self._holding = False
 
     def begin(self) -> int:
         self._generation += 1
@@ -37,9 +38,9 @@ class PersonGaze:
         if generation <= self._admitted_generation:
             return generation == self._admitted_generation
         self._admitted_generation = generation
-        release = getattr(self.hardware, "release_person_gaze", None)
-        if release is not None:
-            release()
+        if self._holding:
+            self._holding = False
+            self.hardware.release_person_gaze()
         return True
 
     async def request(self, text: str | None, speaker_bearing: float | None,
@@ -56,13 +57,11 @@ class PersonGaze:
         if speaker_bearing is None:
             self._log("no_speaker_bearing", 0)
             return
-        read = getattr(self.hardware, "face_snapshot", None)
-        snapshot = read() if read is not None else None
+        snapshot = self.hardware.face_snapshot()
         stale = snapshot is not None
         if snapshot is None or not 0 <= time.monotonic() - snapshot.captured_at <= 2.0:
-            refresh = getattr(self.hardware, "refresh_faces", None)
             try:
-                snapshot = await asyncio.wait_for(asyncio.to_thread(refresh, .3), .3) if refresh is not None else None
+                snapshot = await asyncio.wait_for(asyncio.to_thread(self.hardware.refresh_faces, .3), .3)
             except asyncio.TimeoutError:
                 snapshot = None
         if generation != self._admitted_generation:
@@ -82,6 +81,8 @@ class PersonGaze:
             return
         target = min(others, key=lambda face: abs(face.yaw - self.hardware.head_yaw))
         turned = self.hardware.look_at_person(target.yaw, target.pitch)
+        if turned:
+            self._holding = True
         self._log("turned" if turned else "busy", len(faces))
 
     @staticmethod

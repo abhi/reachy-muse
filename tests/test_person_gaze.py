@@ -16,9 +16,9 @@ from reachy_muse.person_gaze import gaze_requested
 from reachy_muse.speaker_direction import DoAReading
 from test_device_command_turns import played, run, sent_to_muse
 from test_hardware import FakeRobot, generated, pose_factory
-from test_pins import CHUNK, VOICE_SAMPLE, WAKE_SAMPLE
-from test_realtime_turns import (RATE, ScriptedCalls, StreamingTranscripts, realtime_service,
-                                 reply_events, rig_for, room, voiced)
+from test_pins import CHUNK, VOICE_SAMPLE, WAKE_SAMPLE, Rig
+from test_realtime_turns import (RATE, CallHardware, ScriptedCalls, StreamingTranscripts, TimedWake,
+                                 realtime_service, reply_events, room, voiced)
 
 
 @pytest.mark.parametrize('text, expected', [
@@ -34,9 +34,47 @@ def test_small_imperative_grammar(text, expected):
     assert gaze_requested(text) is expected
 
 
+class PeopleHardware(CallHardware):
+    """The rig's microphone and speaker, with motion, gaze and faces from a real controller."""
+
+    motion_enabled = True
+    face_tracking_enabled = True
+    output_sample_rate = RATE
+
+    def __init__(self, recording, controller):
+        super().__init__(recording)
+        self.controller = controller
+        for name in ('face_snapshot', 'refresh_faces', 'look_at_speaker', 'look_at_person',
+                     'release_person_gaze', 'allow_face_tracking'):
+            setattr(self, name, getattr(controller, name))
+
+    def set_state(self, state, **kwargs):
+        super().set_state(state, **kwargs)
+        self.controller.set_state(state, **kwargs)
+
+    @property
+    def head_yaw(self):
+        return self.controller.head_yaw
+
+    @property
+    def wake_gaze_bearing(self):
+        return self.controller.wake_gaze_bearing
+
+
+class DelayedWake(TimedWake):
+    """Fires after 0.6 s of wake audio, once DoA has had time to place the speaker."""
+
+    samples = 0
+
+    def feed(self, samples):
+        detected = super().feed(samples)
+        self.samples += len(samples)
+        return detected and self.samples >= 9600
+
+
 @pytest.fixture
 def people(monkeypatch):
-    rig = rig_for(monkeypatch)
+    rig = Rig(monkeypatch)
     robot = FakeRobot()
     scene = SimpleNamespace(faces=[(30, .35), (-25, .12)], camera=True, busy=True, passes=0, doa=math.pi / 3)
     robot.media.camera = SimpleNamespace(K=np.eye(3), D=np.zeros(5))
@@ -69,20 +107,8 @@ def people(monkeypatch):
                                  sleep_on_close=False, style=MotionStyle(breathing=False, expression_clips=False))
     controller.vision_budget = SimpleNamespace(delay=lambda: math.inf if scene.busy else 1.0)
     controller.start()
-    original_state = rig.hardware.set_state
-
-    def set_state(state, **kwargs):
-        original_state(state, **kwargs)
-        controller.set_state(state, **kwargs)
-
-    rig.hardware.set_state = set_state
-    rig.hardware.motion_enabled = True
-    rig.hardware.face_tracking_enabled = True
-    rig.hardware.head_yaw = 0.0
-    rig.hardware.output_sample_rate = RATE
+    rig.hardware = PeopleHardware(rig.recording, controller)
     rig.hardware.read_doa = lambda: DoAReading(scene.doa, True) if scene.doa is not None else None
-    for name in ('face_snapshot', 'refresh_faces', 'look_at_speaker', 'look_at_person', 'release_person_gaze', 'allow_face_tracking'):
-        setattr(rig.hardware, name, getattr(controller, name))
     try:
         yield rig, controller, robot, scene
         assert controller._failure is None
@@ -202,10 +228,9 @@ def test_lost_transcript_does_not_carry_the_previous_speaker_into_the_next_reque
         'Reachy gaze request outcome=turned faces=2']
 
 
-def test_buffered_greeting_excludes_its_speaker_after_wake_verification(people, caplog, monkeypatch):
+def test_buffered_greeting_excludes_its_speaker_after_wake_verification(people, caplog):
     from reachy_muse.wake_policy import Verification, WakePolicy
     from test_device_command_turns import service as make_service, never_asked
-    from test_realtime_turns import TimedWake
 
     rig, controller, robot, scene = people
     caplog.set_level('INFO')
@@ -213,16 +238,6 @@ def test_buffered_greeting_excludes_its_speaker_after_wake_verification(people, 
     reply = voiced(.2)
     scene.speech = True
     rig.hardware.read_doa = lambda: DoAReading(scene.doa, scene.speech)
-    monkeypatch.setattr(type(rig.hardware), 'wake_gaze_bearing',
-                        property(lambda self: controller.wake_gaze_bearing), raising=False)
-
-    class DelayedWake(TimedWake):
-        samples = 0
-
-        def feed(self, samples):
-            detected = super().feed(samples)
-            self.samples += len(samples)
-            return detected and self.samples >= 9600
 
     class Verify:
         async def verify(self, pcm, phrase):
@@ -354,12 +369,38 @@ def test_cached_faces_choose_smallest_turn_and_release_when_window_closes(people
         'Reachy gaze request outcome=turned faces=3']
 
 
+def test_a_turned_head_picks_the_other_face_needing_the_smallest_turn(people, caplog):
+    from test_device_command_turns import service as make_service, never_asked
+
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    scene.faces = [(30, .35), (-10, .12), (55, .12)]
+    calls = ScriptedCalls(reply='Hello!', reply_s=.1)
+    service = make_service(rig, never_asked, StreamingTranscripts('Say hi to my friend.'),
+                           wake_detector=DelayedWake(), wake_timeout_s=5, muse_path='realtime',
+                           voice_link=calls.link, voice_call=calls)
+
+    async def user():
+        for _ in range(30):
+            rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
+            await asyncio.sleep(.02)
+        await rig.wait_until_or_timeout(lambda: abs(math.degrees(controller.head_yaw) - 30) < .2)
+        assert math.degrees(controller.head_yaw) == pytest.approx(30, abs=.2)
+        await say_live(rig)
+        await rig.wait_until_or_timeout(lambda: abs(math.degrees(controller.head_yaw) - 35) < .2)
+        assert math.degrees(controller.head_yaw) == pytest.approx(35, abs=.2)
+        assert math.degrees(robot.body_yaw) == pytest.approx(15, abs=.2)
+
+    run(rig, service, user)
+    assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+        'Reachy gaze request outcome=turned faces=3']
+
+
 @pytest.mark.parametrize("wake", [False, True])
 @pytest.mark.parametrize('silence_s', [.8, 1.2])
 def test_chat_keeps_endpoint_bearing_after_robot_audio_clears_the_ring(people, caplog, wake, silence_s):
     from test_device_command_turns import service as chat_service
     from test_pins import Transcripts
-    from test_realtime_turns import TimedWake
 
     rig, controller, robot, scene = people
     caplog.set_level('INFO')
@@ -436,7 +477,6 @@ def test_rejected_echo_keeps_person_gaze_through_the_reply(people, caplog):
 def test_delayed_transcript_cannot_reacquire_gaze_during_the_next_utterance(people, caplog, monkeypatch, path):
     from test_device_command_turns import service as chat_service
     from test_pins import Transcripts
-    from test_realtime_turns import TimedWake
 
     rig, controller, robot, scene = people
     caplog.set_level('INFO')
@@ -494,22 +534,12 @@ def test_delayed_transcript_cannot_reacquire_gaze_during_the_next_utterance(peop
 @pytest.mark.parametrize('speaker_yaw', [30, 60])
 def test_wake_gaze_is_fallback_only_within_its_window(people, caplog, speaker_yaw):
     from test_device_command_turns import service as make_service, never_asked
-    from test_realtime_turns import TimedWake
 
     rig, controller, robot, scene = people
     caplog.set_level('INFO')
     scene.doa = math.radians(90 - speaker_yaw)
     if speaker_yaw == 60:
         scene.faces = [(60, .35)]
-
-    class DelayedWake(TimedWake):
-        samples = 0
-
-        def feed(self, samples):
-            detected = super().feed(samples)
-            self.samples += len(samples)
-            return detected and self.samples >= 9600
-
     calls = ScriptedCalls(reply='Hello!', reply_s=.1)
     service = make_service(rig, never_asked, StreamingTranscripts('Say hi to my friend.'),
                            wake_detector=DelayedWake(), wake_timeout_s=5, muse_path='realtime',
@@ -520,7 +550,6 @@ def test_wake_gaze_is_fallback_only_within_its_window(people, caplog, speaker_ya
             rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
             await asyncio.sleep(.02)
         await rig.wait_until_or_timeout(lambda: controller.wake_gaze_bearing is not None)
-        rig.hardware.wake_gaze_bearing = controller.wake_gaze_bearing
         scene.doa = None
         scene.camera = True
         await say_live(rig)

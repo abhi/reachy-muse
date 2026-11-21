@@ -852,14 +852,14 @@ class VoiceConversation:
                  decision.span_ms, decision.boundary_age_ms, decision.last_age_ms,
                  decision.mad_deg, decision.inlier, yaw)
         if decision.angle is not None:
-            self._wake_has_gaze = self.hardware.look_at_speaker(decision.angle) is not False
+            self._wake_has_gaze = self.hardware.look_at_speaker(decision.angle)
 
     def _turn_speaker(self, start: float, end: float, previous: float | None = None) -> float | None:
         bearing = self._wake_direction.bearing_between(start, end) if self._wake_direction is not None else None
         if bearing is None:
             bearing = previous
         if bearing is None and self._wake_has_gaze:
-            bearing = getattr(self.hardware, "wake_gaze_bearing", None)
+            bearing = self.hardware.wake_gaze_bearing
         return bearing
 
     def _wake_capture_context(self, now):
