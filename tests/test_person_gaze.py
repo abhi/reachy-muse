@@ -277,6 +277,100 @@ def test_chat_keeps_endpoint_bearing_after_robot_audio_clears_the_ring(people, c
         'Reachy gaze request outcome=turned faces=2']
 
 
+def test_rejected_echo_keeps_person_gaze_through_the_reply(people, caplog):
+    rig, controller, robot, scene = people
+    rig.hardware.echo_cancelled_input = True
+    caplog.set_level('INFO')
+    reply = voiced(3)
+
+    async def answer(sdk, emit, script):
+        await rig.wait_until_or_timeout(lambda: controller._person_hold)
+        assert controller._person_hold
+        reply_events(sdk, emit, 'r1', 'Hello, nice to meet you!', reply)
+
+    calls = ScriptedCalls(answer=answer)
+    service = realtime_service(rig, StreamingTranscripts('Say hi to my friend.', 'Hello, nice to meet you!'), calls)
+
+    async def user():
+        await say_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events))
+        await say_live(rig)
+        assert service._voice[1].call.audible
+        assert controller._person_hold
+        await rig.wait_until_or_timeout(lambda: any('drop=barge_in' in line for line in caplog.messages))
+        assert controller._person_hold
+        assert calls.barge_ins == 0
+        assert calls.loud_after_reply == 0
+        await rig.wait_until_or_timeout(lambda: not service._voice[1].call.audible, 5)
+        assert controller._person_hold
+        assert math.degrees(controller.head_yaw) == pytest.approx(-25, abs=.2)
+        np.testing.assert_array_equal(np.concatenate(rig.hardware.played),
+                                      np.frombuffer(reply, '<i2').astype(np.float32) / 32768)
+
+    run(rig, service, user)
+    assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+        'Reachy gaze request outcome=turned faces=2']
+
+
+@pytest.mark.parametrize('path', ['chat', 'realtime'])
+def test_delayed_transcript_cannot_reacquire_gaze_during_the_next_utterance(people, caplog, monkeypatch, path):
+    from test_device_command_turns import service as chat_service
+    from test_pins import Transcripts
+    from test_realtime_turns import TimedWake
+
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    entered, proceed = asyncio.Event(), asyncio.Event()
+
+    class Transcribe(Transcripts):
+        async def transcribe(self, wav):
+            entered.set()
+            await proceed.wait()
+            return await super().transcribe(wav)
+
+    class Streaming(StreamingTranscripts):
+        def open_turn(self):
+            turn = super().open_turn()
+            finish = turn.finish
+
+            async def delayed():
+                entered.set()
+                await proceed.wait()
+                return await finish()
+
+            turn.finish = lambda: asyncio.create_task(delayed())
+            return turn
+
+    async def muse(session, request):
+        await session.answer(request, 'Hello there.')
+
+    service = chat_service(rig, muse, Transcribe('Say hello to my guest.', 'What time is it?'),
+                           wake_detector=TimedWake(), wake_timeout_s=5)
+    if path == 'realtime':
+        monkeypatch.setattr('reachy_muse.conversation.CALL_COMMAND_DEADLINE_S', 2)
+        service = realtime_service(rig, Streaming('Say hello to my guest.', 'What time is it?'),
+                                   ScriptedCalls(reply=None))
+
+    async def user():
+        await say_live(rig, wake=True)
+        await asyncio.wait_for(entered.wait(), 2)
+        for _ in range(15):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(.02)
+        assert service._voice[1]._playback.user_speaking
+        proceed.set()
+        for _ in range(25):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(.02)
+        assert service._voice[1]._playback.user_speaking
+        assert controller._person_hold is False
+        assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+            'Reachy gaze request outcome=busy faces=0']
+        rig.say(voiced_s=0)
+
+    run(rig, service, user)
+
+
 @pytest.mark.parametrize('speaker_yaw', [30, 60])
 def test_wake_gaze_is_fallback_only_within_its_window(people, caplog, speaker_yaw):
     from test_device_command_turns import service as make_service, never_asked

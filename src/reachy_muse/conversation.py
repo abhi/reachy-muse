@@ -193,6 +193,7 @@ class _RecordedTurn:
     heard_over: tuple[str, ...]    # Reachy's own lines that were audible while the user spoke
     call_input: object = None
     speaker_bearing: float | None = None
+    gaze_generation: int | None = None
 
 
 @dataclass(frozen=True)
@@ -204,6 +205,7 @@ class _QueuedTurn:
     heard_over: tuple[str, ...]
     call: object = None          # the realtime call that streamed this turn's audio to Muse
     speaker_bearing: float | None = None
+    gaze_generation: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1092,6 +1094,7 @@ class VoiceConversation:
         turn_open = False
         speech_started_at = None
         speech_bearing = None
+        gaze_generation = None
 
         heard_over: set[str] = set()
         admitted_turns = deque()
@@ -1099,9 +1102,11 @@ class VoiceConversation:
 
         def make_recorder(*, reset_admission=True, **options):
             nonlocal gap_quiet_samples, turn_open, recorder_for_call, speech_started_at, speech_bearing
+            nonlocal gaze_generation
             turn_open = False
             speech_started_at = None
             speech_bearing = None
+            gaze_generation = None
             heard_over.clear()
             if reset_admission:
                 if voice_gate is not None:
@@ -1128,6 +1133,7 @@ class VoiceConversation:
         last_slow_feed = 0.0
         async def record_admitted(sample, *, send_to_call=True):
             nonlocal last_slow_feed, gap_quiet_samples, turn_open, speech_started_at, speech_bearing
+            nonlocal gaze_generation
             # Keep VAD ahead of transcription/TTS work in the shared executor.
             started = time.monotonic()
             feed = asyncio.get_running_loop().run_in_executor(recorder_worker, recorder.feed, sample)
@@ -1145,7 +1151,7 @@ class VoiceConversation:
             heard = recorder.take()
             if speech_started_at is None and (recorder.speech_active or heard.ended is not None):
                 speech_started_at = started - len(sample) / self.hardware.sample_rate
-                self._gaze.release()
+                gaze_generation = self._gaze.begin()
             speaker_bearing = None
             if speech_started_at is not None:
                 speech_bearing = self._turn_speaker(speech_started_at, endpoint_at - quiet_s, speech_bearing)
@@ -1189,6 +1195,10 @@ class VoiceConversation:
                 # Hardware AEC can leave residual speech. Keep capturing it, but
                 # require words distinct from our output before pausing playback.
                 speaking = partial is not None and interrupts_playback(partial.text, tuple(heard_over))
+            if (speaking and gaze_generation is not None
+                    and (self.call is not None or not heard_over
+                         or partial is not None and interrupts_playback(partial.text, tuple(heard_over)))):
+                self._gaze.admit(gaze_generation)
             if wave_greeting is not None and (speaking or heard.ended is not None):
                 wave_greeting.cancel()
             if speaking:
@@ -1219,7 +1229,9 @@ class VoiceConversation:
                 return None
             over = tuple(sorted(heard_over))
             heard_over.clear()
-            return _RecordedTurn(heard.ended, endpoint_at, endpoint_at - quiet_s, over, call_input, speaker_bearing)
+            generation, gaze_generation = gaze_generation, None
+            return _RecordedTurn(heard.ended, endpoint_at, endpoint_at - quiet_s, over, call_input,
+                                 speaker_bearing, generation)
 
         def recording_active():
             return recorder.active or (voice_gate is not None and voice_gate.active)
@@ -1351,6 +1363,8 @@ class VoiceConversation:
                 if self.wake_detector is not None:
                     text = self._without_wake(text)
                 if self.call is call and gate.finish(text, recorded.heard_over):
+                    if recorded.gaze_generation is not None:
+                        self._gaze.admit(recorded.gaze_generation)
                     if call.audible:
                         await call.barge_in()
                 else:
@@ -1402,7 +1416,7 @@ class VoiceConversation:
                 timeline.mark("endpoint", recorded.endpoint_at)
                 pending_turns.append(_QueuedTurn(recorded.ended, self._wake_strip_required, wake_epoch,
                                                 timeline, recorded.heard_over, self.call or self._lost_call,
-                                                recorded.speaker_bearing))
+                                                recorded.speaker_bearing, recorded.gaze_generation))
                 if self.realtime is not None and pending_turns[-1].call is None:
                     self.realtime.chat_turn()
                 self._lost_call = None
@@ -1532,14 +1546,16 @@ class VoiceConversation:
                             if endpoint.text is None:
                                 return await self.turn(endpoint.audio,
                                     wake_strip_required=request.wake_strip_required, timeline=timeline,
-                                    heard_over=request.heard_over, speaker_bearing=request.speaker_bearing)
+                                    heard_over=request.heard_over, speaker_bearing=request.speaker_bearing,
+                                    gaze_generation=request.gaze_generation)
                             timeline.mark("transcript")
                             log.info("Reachy transcript ready for dispatch %.3fs after endpoint",
                                      timeline.marks["transcript"] - timeline.marks["endpoint"])
                             return await self.turn(endpoint.audio,
                                 wake_strip_required=request.wake_strip_required,
                                 recognized_text=endpoint.text, defer_playback=True, timeline=timeline,
-                                heard_over=request.heard_over, speaker_bearing=request.speaker_bearing)
+                                heard_over=request.heard_over, speaker_bearing=request.speaker_bearing,
+                                gaze_generation=request.gaze_generation)
                         finally:
                             call_recognitions.pop(request.ended, None)
                             turns_awaiting_transcript.discard(request.ended)
@@ -1932,9 +1948,12 @@ class VoiceConversation:
     async def turn(self, wav: bytes | None, *, wake_strip_required: bool | None = None,
                    recognized_text: str | None = None, defer_playback: bool = False,
                    timeline: TurnTimeline | None = None, heard_over: tuple[str, ...] = (),
-                   speaker_bearing: float | None = None, gaze_handled: bool = False) -> TurnOutcome:
+                   speaker_bearing: float | None = None, gaze_handled: bool = False,
+                   gaze_generation: int | None = None) -> TurnOutcome:
         if wav is None:
             return TurnOutcome.EMPTY
+        if gaze_generation is None:
+            gaze_generation = self._gaze.begin()
         self._turn_active = True
         timeline = timeline or TurnTimeline()
         woken = self._wake_window is WakeWindow.WOKEN
@@ -1956,6 +1975,8 @@ class VoiceConversation:
                 if isinstance(text, TurnOutcome):
                     completed = True
                     return text
+                if not gaze_handled:
+                    self._gaze.admit(gaze_generation)
                 if text is not None:
                     self._presence.mark("voice", time.monotonic())
                     timeline.mark("transcript")
@@ -1964,7 +1985,7 @@ class VoiceConversation:
                     completed = True
                     return TurnOutcome.ACCEPTED
                 if not gaze_handled:
-                    await self._gaze.request(text, speaker_bearing)
+                    await self._gaze.request(text, speaker_bearing, gaze_generation)
             style = self.backends.reply_style()
             if text is not None and not self._has_output() and not self._playback.user_speaking:
                 heard = self._recent.heard(text, may_chat=self.local_chat and maybe_chat(text))
@@ -2426,6 +2447,8 @@ class VoiceConversation:
                                 held=held)
         if isinstance(text, TurnOutcome):
             return held
+        if request.gaze_generation is not None:
+            self._gaze.admit(request.gaze_generation)
         kind = FollowUp.NEW if text is None else classify_follow_up(text)
         # A one-word command ("goodnight", "louder") is obeyed before one-word asides are dropped.
         command = (await self._obey(text, request.timeline.marks["endpoint"], request.timeline)
@@ -2434,7 +2457,7 @@ class VoiceConversation:
             if not COMMANDS[command].silence_speech:
                 self._say_hushed = False
             return None if COMMANDS[command].wake_window in (WakeWindow.DISMISSED, WakeWindow.ASLEEP) else held
-        await self._gaze.request(text, request.speaker_bearing)
+        await self._gaze.request(text, request.speaker_bearing, request.gaze_generation)
         if kind in (FollowUp.NEW, FollowUp.ADD_DETAIL) and text is not None and too_short_for_follow_up(text):
             log.info("Reachy ignored a one-word follow-up while Muse worked")
             return held
@@ -2554,7 +2577,7 @@ class VoiceConversation:
                                        outcome=command.name if command is not None else "none")
         if command is not None:
             return TurnOutcome.ACCEPTED
-        await self._gaze.request(text, request.speaker_bearing)
+        await self._gaze.request(text, request.speaker_bearing, request.gaze_generation)
         call = request.call
         if call.failed:
             await self._call_lost()

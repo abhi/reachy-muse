@@ -24,15 +24,30 @@ class PersonGaze:
     def __init__(self, hardware):
         self.hardware = hardware
         self._generation = 0
+        self._admitted_generation = 0
+
+    def begin(self) -> int:
+        self._generation += 1
+        return self._generation
 
     def release(self) -> None:
-        self._generation += 1
+        self.admit(self.begin())
+
+    def admit(self, generation: int) -> bool:
+        if generation <= self._admitted_generation:
+            return generation == self._admitted_generation
+        self._admitted_generation = generation
         release = getattr(self.hardware, "release_person_gaze", None)
         if release is not None:
             release()
+        return True
 
-    async def request(self, text: str | None, speaker_bearing: float | None) -> None:
-        self.release()
+    async def request(self, text: str | None, speaker_bearing: float | None,
+                      generation: int | None = None) -> None:
+        generation = self.begin() if generation is None else generation
+        if not self.admit(generation):
+            self._log("busy", 0)
+            return
         if not text or not text.strip():
             self._log("no_transcript", 0)
             return
@@ -41,7 +56,6 @@ class PersonGaze:
         if speaker_bearing is None:
             self._log("no_speaker_bearing", 0)
             return
-        generation = self._generation
         read = getattr(self.hardware, "face_snapshot", None)
         snapshot = read() if read is not None else None
         stale = snapshot is not None
@@ -51,7 +65,7 @@ class PersonGaze:
                 snapshot = await asyncio.wait_for(asyncio.to_thread(refresh, .3), .3) if refresh is not None else None
             except asyncio.TimeoutError:
                 snapshot = None
-        if generation != self._generation:
+        if generation != self._admitted_generation:
             self._log("busy", 0)
             return
         if snapshot is None or not 0 <= time.monotonic() - snapshot.captured_at <= 2.0:
