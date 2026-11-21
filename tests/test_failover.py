@@ -63,10 +63,10 @@ class SlowLink(CompanionLink):
         else:
             self.held.append((connection, frame))
 
-    async def error_in_flight(self, *, speaking=None):
-        """Wait until an error from the companion is held, feeding ``speaking`` more speech meanwhile."""
+    async def in_flight(self, kind, *, speaking=None):
+        """Wait until a ``kind`` message from the companion is held, feeding ``speaking`` more speech meanwhile."""
         async with asyncio.timeout(2):
-            while not any(isinstance(frame, str) and isinstance(decode(frame, sender=Sender.COMPANION), Error)
+            while not any(isinstance(frame, str) and isinstance(decode(frame, sender=Sender.COMPANION), kind)
                           for _, frame in self.held):
                 if speaking is not None:
                     speaking.feed(SPEECH[:320])
@@ -109,23 +109,28 @@ def clock(monkeypatch, *modules):
     return now
 
 
+async def speak(window):
+    """One user turn in an open window, spoken until a recognizer shows who hears it. Returns its words."""
+    window.feed(SPEECH)
+    async with asyncio.timeout(2):
+        while (ended := window.take().ended) is None and window.partial is None:
+            await asyncio.sleep(.01)
+            window.feed(SPEECH[:320])
+    if ended is None:
+        window.feed(SILENCE)
+        ended = window.take().ended
+    return (await ended.endpoint()).text
+
+
 async def heard(hearing, *, commands_only=True):
-    """One user turn, spoken until a recognizer shows who hears it. Returns its words."""
+    """One user turn in a window of its own. Returns its words."""
     from test_pins import Vad
 
-    turn = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=commands_only)
+    window = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=commands_only)
     try:
-        turn.feed(SPEECH)
-        async with asyncio.timeout(2):
-            while (ended := turn.take().ended) is None and turn.partial is None:
-                await asyncio.sleep(.01)
-                turn.feed(SPEECH[:320])
-        if ended is None:
-            turn.feed(SILENCE)
-            ended = turn.take().ended
-        return (await ended.endpoint()).text
+        return await speak(window)
     finally:
-        turn.abort()
+        window.abort()
 
 
 def refused_command(hearing):
@@ -173,7 +178,7 @@ def test_a_late_refusal_is_one_strike_and_spares_the_next_window(monkeypatch, ca
             command, ended = refused_command(hearing)
             assert (await ended.endpoint()).text is None
             command.abort()
-            await link.error_in_flight()
+            await link.in_flight(Error)
             link.land()
             now[0] += 3600.0
             stuck[0] = False
@@ -223,7 +228,7 @@ def test_three_failures_in_a_row_rest_companion_hearing_until_the_cooldown(monke
                     await asyncio.sleep(.01)
             link.held = []
             stuck[0] = True
-            await link.error_in_flight(speaking=crossing)
+            await link.in_flight(Error, speaking=crossing)
             crossing.feed(SILENCE)
             words.append((await crossing.take().ended.endpoint()).text)
             link.land()
@@ -255,7 +260,7 @@ def test_refusals_that_land_long_before_the_next_poll_still_rest_hearing(monkeyp
                 link.held = []
                 command, ended = refused_command(hearing)
                 assert (await ended.endpoint()).text is None
-                await link.error_in_flight()
+                await link.in_flight(Error)
                 link.land()
                 now[0] += 21.0
                 assert command.take().ended is None
@@ -271,8 +276,42 @@ def test_refusals_that_land_long_before_the_next_poll_still_rest_hearing(monkeyp
     assert caplog.text.count("Reachy rests its companion's hearing for 60 s") == 1
 
 
-def test_the_last_command_of_a_conversation_settles_within_its_error_window(monkeypatch, caplog):
-    """No stream follows the conversation's last command, so only LATE_ERROR_S bounds what the robot keeps for it."""
+def test_a_turn_the_robot_gives_up_on_counts_after_an_earlier_heard_command(monkeypatch, caplog):
+    """Refused, refused, heard from its partial, then a turn whose endpoint misses the robot's deadline."""
+    from reachy_muse import companion_client
+    from reachy_muse.companion_server.engines import ScriptedHearing
+    from test_pins import Vad
+
+    now, stuck = clock(monkeypatch, reachy_muse.failover, companion_client), [True]
+    stalls(monkeypatch, stuck)
+
+    async def scenario():
+        async with companion_hearing(ScriptedHearing(frames_per_partial=1), link_type=SlowLink) as (link, hearing):
+            words = [await heard(hearing), await heard(hearing)]
+            stuck[0] = False
+            words.append(await heard(hearing))
+            link.held = []
+            turn = hearing.open_turn(16000, silence_s=.1, vad=Vad())
+            turn.feed(SPEECH)
+            assert turn.take().ended is None
+            turn.feed(SILENCE)
+            ended = turn.take().ended
+            await link.in_flight(HearPartial)
+            now[0] += 1.5
+            words.append((await ended.endpoint()).text)
+            turn.abort()
+            strikes_before_the_reply_lands = STRIKES.findall(caplog.text)
+            link.land()
+            return words, strikes_before_the_reply_lands
+
+    assert asyncio.run(scenario()) == (["robot words", "robot words", "hello", None], ["1", "2"])
+    assert STRIKES.findall(caplog.text) == ["1", "2", "1"]
+    assert "rests its companion's hearing" not in caplog.text
+
+
+def test_a_conversation_ending_right_after_an_abort_leaves_nothing_waiting(monkeypatch, caplog):
+    """With no later stream, LATE_ERROR_S alone settles the last command: it counts as heard, and a refusal
+    that lands later does not count."""
     from reachy_muse import companion_client
     from reachy_muse.companion_server.engines import ScriptedHearing
 
@@ -281,16 +320,19 @@ def test_the_last_command_of_a_conversation_settles_within_its_error_window(monk
 
     async def scenario():
         async with companion_hearing(ScriptedHearing(frames_per_partial=1), link_type=SlowLink) as (link, hearing):
+            words = [await heard(hearing), await heard(hearing)]
             link.held = []
             command, ended = refused_command(hearing)
-            assert (await ended.endpoint()).text is None
+            words.append((await ended.endpoint()).text)
             command.abort()
-            await link.error_in_flight()
+            await link.in_flight(Error)
             await asyncio.sleep(.1)
             link.land()
+            words.append(await heard(hearing))
+            return words
 
-    asyncio.run(scenario())
-    assert STRIKES.findall(caplog.text) == []
+    assert asyncio.run(scenario()) == ["robot words", "robot words", None, "robot words"]
+    assert STRIKES.findall(caplog.text) == ["1", "2", "1"]
 
 
 @pytest.mark.parametrize("commands_only", [False, True])

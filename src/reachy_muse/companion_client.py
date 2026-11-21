@@ -105,8 +105,8 @@ class _Connection:
         self.ops = frozenset(ops)
         self.outbox: asyncio.Queue = asyncio.Queue()
         self.hearing: Dict[int, _HearStream] = {}
-        self.unconfirmed: Dict[int, _HearStream] = {}   # aborted call commands a late error can still fail
-        self.opened = 0                                 # hear streams so far, numbered in the order sent
+        self.waiting: Dict[int, _HearStream] = {}   # outcomes not yet told, behind call commands that can still fail
+        self.opened = 0                             # hear streams so far, numbered in the order sent
         self.speaking: Dict[int, asyncio.Queue] = {}
         self.narrations: Dict[int, asyncio.Future] = {}
         self.animations: Dict[int, asyncio.Future] = {}
@@ -140,15 +140,18 @@ class _Connection:
                 future.set_exception(CapabilityUnavailable(reason))
         for stream in self.hearing.values():
             stream.fail(CapabilityUnavailable(reason))
-        self.unconfirmed.clear()
+        for stream in self.waiting.values():
+            stream.held = stream.held or CapabilityUnavailable(reason)
+        self.settle()
 
-    def confirm(self, number: int) -> None:
-        """Commands aborted before hear stream ``number`` opened can get no error now: they were heard."""
-        for stream in list(self.unconfirmed.values()):
-            if stream.aborted_before > number:
+    def settle(self, number: int = 0) -> None:
+        """Call commands aborted before hear stream ``number`` opened were heard. Tell the waiting
+        outcomes in stream order, up to the first command that a late error can still fail."""
+        for stream in sorted(self.waiting.values(), key=lambda waiting: waiting.number):
+            if stream.held is None and stream.aborted_before > number:
                 return
-            del self.unconfirmed[stream.id]
-            stream.report(None)
+            del self.waiting[stream.id]
+            stream.report(stream.held)
 
 
 class _HearStream:
@@ -157,6 +160,7 @@ class _HearStream:
         self.id = stream
         self.number = connection.opened
         self.aborted_before = 0                    # once aborted as a call command: the next stream's number
+        self.held: Optional[CapabilityUnavailable] = None   # its failure, told after earlier commands settle
         self.audio = bytearray()
         self.inbox: List[object] = []
         self.failure: Optional[CapabilityUnavailable] = None
@@ -179,13 +183,13 @@ class _HearStream:
             self.connection.send(HearClose(self.id, how))
 
     def abort_command(self) -> None:
-        """End a call command at the robot's speech end. Until ``_Connection.confirm`` or
+        """End a call command at the robot's speech end. Until ``_Connection.settle`` or
         ``LATE_ERROR_S`` counts it as heard, an error sent before the companion handled the abort fails it."""
         connection = self.connection
         if connection.hearing.get(self.id) is self and not connection.closed:
             self.aborted_before = connection.opened + 1
-            connection.unconfirmed[self.id] = self
-            asyncio.get_running_loop().call_later(LATE_ERROR_S, connection.confirm, self.aborted_before)
+            connection.waiting[self.id] = self
+            asyncio.get_running_loop().call_later(LATE_ERROR_S, connection.settle, self.aborted_before)
         self.close(CloseHow.ABORT)
 
     def finish(self) -> None:
@@ -196,9 +200,10 @@ class _HearStream:
         self.close(CloseHow.FINISH)
 
     def fail(self, failure: CapabilityUnavailable) -> None:
-        self.failure = failure
+        self.failure = self.held = failure
         self.settled.set()
-        self.report(failure)
+        self.connection.waiting[self.id] = self
+        self.connection.settle()
 
     def report(self, failure: Optional[CapabilityUnavailable]) -> None:
         """Tell ``outcomes`` once whether the companion heard this stream; a lost link counts as neither."""
@@ -462,9 +467,9 @@ class CompanionLink:
         message = decode(frame, sender=Sender.COMPANION)
         connection.last_progress_at = time.monotonic()
         if isinstance(message, (HearPartial, HearEndpoint, Error)):
-            replied = connection.hearing.get(message.stream) or connection.unconfirmed.get(message.stream)
+            replied = connection.hearing.get(message.stream) or connection.waiting.get(message.stream)
             if replied is not None:
-                connection.confirm(replied.number)
+                connection.settle(replied.number)
         if isinstance(message, (HearPartial, HearEndpoint)):
             stream = connection.hearing.get(message.stream)
             if stream is not None:
@@ -476,8 +481,6 @@ class CompanionLink:
                 elif isinstance(message, HearEndpoint):
                     stream.endpoint = message
                     stream.settled.set()
-            elif isinstance(message, HearEndpoint) and message.stream in connection.unconfirmed:
-                connection.unconfirmed.pop(message.stream).report(None)
         elif isinstance(message, SpeakDone):
             queue = connection.speaking.pop(message.stream, None)
             if queue is not None:
@@ -499,8 +502,8 @@ class CompanionLink:
         failure = CapabilityUnavailable(f"companion {error.code.value}", link_down=False)
         if error.stream is not None and error.stream in connection.hearing:
             connection.hearing.pop(error.stream).fail(failure)
-        elif error.stream is not None and error.stream in connection.unconfirmed:
-            connection.unconfirmed.pop(error.stream).report(failure)
+        elif error.stream is not None and error.stream in connection.waiting:
+            connection.waiting[error.stream].fail(failure)
         elif error.stream is not None and error.stream in connection.speaking:
             connection.speaking.pop(error.stream).put_nowait(failure)
             connection.sequence.forget(error.stream)
@@ -517,7 +520,8 @@ class CompanionLink:
         return self._connection
 
     def open_hear(self, outcomes=None) -> _HearStream:
-        """A new hear stream. ``outcomes`` hears ``succeed()`` or ``fail(reason)`` once it settles."""
+        """A new hear stream. ``outcomes`` hears ``succeed()`` or ``fail(reason)`` once it settles, and
+        nothing if the robot drops it first: a closed window, rejected speech or a cancelled turn."""
         connection = self._live(Op.HEAR)
         stream = _HearStream(connection, connection.stream_id(Op.HEAR), outcomes)
         connection.send(HearOpen(stream.id, 0))
