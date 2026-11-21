@@ -85,8 +85,8 @@ def test_direction_history_uses_each_readings_head_pose(doa_server):
         readings.append(controller.read_doa())
 
     def check(direction, clock, delays):
-        assert direction.estimate(clock.now) == pytest.approx(math.pi / 3)
-        target = speaker_yaw(direction.estimate(clock.now))
+        assert direction.snapshot().decide(clock.now).angle == pytest.approx(math.pi / 3)
+        target = speaker_yaw(direction.snapshot().decide(clock.now).angle)
         assert (target.head, target.body) == pytest.approx((30, 10))
 
     sampled(readings, check)
@@ -127,7 +127,7 @@ def sampled(readings, check):
 
 def test_median_uses_speech_only_and_ignores_one_outlier():
     def check(direction, clock, delays):
-        assert direction.estimate(clock.now) == pytest.approx(1.0384709049)
+        assert direction.snapshot().decide(clock.now).angle == pytest.approx(1.0384709049)
         assert delays == pytest.approx([.2, .2, .2, .2, .2])
 
     sampled([DoAReading(0, False), DoAReading(math.radians(59), True),
@@ -138,12 +138,12 @@ def test_median_uses_speech_only_and_ignores_one_outlier():
 @pytest.mark.parametrize("angles", [[60], [0, 60], [0, 60, 120, 180], [0, 0, 180, 180]])
 def test_sparse_or_disagreeing_samples_have_no_direction_then_good_speech_does(angles):
     def check(direction, clock, delays):
-        assert direction.estimate(clock.now) is None
+        assert direction.snapshot().decide(clock.now).angle is None
 
     sampled([DoAReading(math.radians(angle), True) for angle in angles], check)
 
     def consistent(direction, clock, delays):
-        assert direction.estimate(clock.now) == pytest.approx(math.radians(80))
+        assert direction.snapshot().decide(clock.now).angle == pytest.approx(math.radians(80))
 
     sampled([DoAReading(math.radians(80), True)] * 4, consistent)
 
@@ -152,16 +152,16 @@ def test_phrase_boundary_excludes_later_speech_and_stale_or_cleared_history():
     clock = SimpleNamespace(now=100.8)
     direction = WakeDirection(lambda: None, clock=lambda: clock.now)
     direction._samples.extend([(100, 1), (100.2, 1), (100.4, 1), (100.6, 2), (100.8, 2)])
-    assert direction.estimate(100.4) == 1
+    assert direction.snapshot().decide(100.4).angle == 1
     clock.now = 101.5
-    assert direction.estimate(100.4) is None
+    assert direction.snapshot().decide(100.4).angle is None
     direction.clear()
-    assert direction.estimate(clock.now) is None
+    assert direction.snapshot().decide(clock.now).angle is None
 
 
 def test_a_pause_and_changed_speaker_selects_only_the_later_segment():
     def check(direction, clock, delays):
-        assert direction.estimate(clock.now) == pytest.approx(2.0943951024)
+        assert direction.snapshot().decide(clock.now).angle == pytest.approx(2.0943951024)
 
     sampled([DoAReading(math.radians(60), True)] * 6 + [DoAReading(0, False)]
             + [DoAReading(math.radians(120), True)] * 4, check)
@@ -169,7 +169,7 @@ def test_a_pause_and_changed_speaker_selects_only_the_later_segment():
 
 def test_failed_source_clears_old_speech_but_new_speech_can_restore_attention():
     def check(direction, clock, delays):
-        assert direction.estimate(clock.now) == pytest.approx(math.radians(120))
+        assert direction.snapshot().decide(clock.now).angle == pytest.approx(math.radians(120))
         assert delays[3] == 1.0
 
     sampled([DoAReading(math.radians(60), True)] * 3 + [None]
@@ -202,7 +202,8 @@ def test_inflight_read_is_rejected_across_a_listening_epoch():
             gate.eligible = True
             proceed.set()
             await asyncio.sleep(.65)
-            assert direction.estimate(time.monotonic()) == pytest.approx(math.pi / 2)
+            phrase_end = time.monotonic()
+            assert direction.snapshot().decide(phrase_end).angle == pytest.approx(math.pi / 2)
         finally:
             proceed.set()
             task.cancel()

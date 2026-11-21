@@ -67,7 +67,7 @@ def test_short_keyword_collects_direction_through_microphone_activity(handoff, m
         now[0] = 100.30
         await feed((0, 1))
         assert hw.directions == [(pytest.approx(1.0471975512), "idle")]
-        assert conversation._wake_direction.estimate(100.28) is None
+        assert conversation._wake_direction.snapshot().decide(100.28).angle is None
         assert session.setup_messages == []
 
     asyncio.run(bounded(handoff(run, delayed=True, hardware=hardware)))
@@ -104,7 +104,8 @@ def test_direction_gate_excludes_all_robot_audio_even_with_aec(handoff, blocked)
     async def run(conversation, session, hw, wake, recognition, recordings, accepted, feed):
         conversation._direction_audio_until = math.inf
         await wait_for_reads(hw, 4)
-        assert conversation._wake_direction.estimate(time.monotonic()) == pytest.approx(1.0471975512)
+        phrase_end = time.monotonic()
+        assert conversation._wake_direction.snapshot().decide(phrase_end).angle == pytest.approx(1.0471975512)
         if blocked == "muted":
             conversation._muted = True
         elif blocked == "echo_tail":

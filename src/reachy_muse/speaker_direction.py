@@ -124,10 +124,6 @@ class WakeDirection:
     def samples_between(self, start: float, end: float) -> tuple[tuple[float, float], ...]:
         return tuple((at, angle) for at, angle in self._samples if start <= at <= end)
 
-    def estimate(self, phrase_end: float) -> float | None:
-        """Median of the last speech segment within 1.5 seconds of the keyword end."""
-        return self.snapshot().decide(phrase_end).angle
-
     async def sample_while(self, eligible: Callable[[], bool]) -> None:
         try:
             while True:

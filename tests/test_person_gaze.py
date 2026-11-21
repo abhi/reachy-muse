@@ -645,7 +645,7 @@ def test_chat_keeps_endpoint_bearing_after_robot_audio_clears_the_ring(people, c
         voice = service._voice[1]
         await voice._announce('Just a moment.', started=None, defer_playback=False)
         await asyncio.sleep(.1)
-        assert voice._wake_direction.estimate(time.monotonic()) is None
+        assert voice._wake_direction.snapshot().samples == ()
         proceed.set()
         await rig.wait_until_or_timeout(lambda: controller._person_hold)
         assert controller._person_hold
