@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import sys
 import threading
 from types import SimpleNamespace
@@ -136,3 +137,46 @@ def test_closed_session_never_reopens_or_runs_a_final_pass(monkeypatch):
     finally:
         hearing._thread.shutdown()
     assert calls == []
+
+
+def test_abandoned_native_work_releases_arrays_on_the_hearing_worker():
+    entered, release, cleaned = threading.Event(), threading.Event(), threading.Event()
+    created, destroyed = [], []
+
+    class Stream:
+        def feed(self, samples):
+            entered.set()
+            assert release.wait(5)
+
+        def __del__(self):
+            destroyed.append(threading.get_ident())
+
+    def create_stream(**kwargs):
+        created.append(threading.get_ident())
+        return Stream()
+
+    hearing = VoxtralHearing()
+    hearing._models = SimpleNamespace(voxtral=SimpleNamespace(create_streaming_session=create_stream))
+
+    async def scenario():
+        session = hearing.open(0)
+        feeding = asyncio.create_task(session.feed(b"\0\0" * 160))
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            feeding.cancel()
+            await asyncio.gather(feeding, return_exceptions=True)
+            await session.close()
+            hearing._thread.submit(cleaned.set)
+            release.set()
+            # Hold the asyncio callbacks until the worker has cleared the session's reference.
+            assert cleaned.wait(2)
+        finally:
+            release.set()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        hearing._thread.shutdown()
+    gc.collect()
+    assert len(created) == 1
+    assert destroyed == created

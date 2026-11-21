@@ -139,37 +139,37 @@ class _Session:
         self._closed = threading.Event()
 
     async def feed(self, pcm: bytes) -> Sequence[HearEvent]:
+        return await self.hearing.run(self._feed, pcm)
+
+    def _feed(self, pcm: bytes) -> Sequence[HearEvent]:
         try:
-            return await self.hearing.run(self._feed, pcm)
+            _check_open(self._closed)
+            # Creating a streaming session can evaluate MLX arrays, including after idle.
+            # Construction, inference and release all belong to the same model worker.
+            if self.utterance is None:
+                self.utterance = _Utterance(self.hearing._models, self.hearing.config, cancelled=self._closed)
+            _check_open(self._closed)
+            samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
+            final = self.utterance.feed(samples)
+            events: List[HearEvent] = []
+            if self.utterance.text != self.said:
+                self.said = self.utterance.text
+                events.append(Partial(self.said))
+            if final is not None:
+                events.append(Endpoint(final))
+            return events
         except _Abandoned:
             return []
 
-    def _feed(self, pcm: bytes) -> Sequence[HearEvent]:
-        _check_open(self._closed)
-        # Creating a streaming session can evaluate MLX arrays, including after idle.
-        # Construction, inference and release all belong to the same model worker.
-        if self.utterance is None:
-            self.utterance = _Utterance(self.hearing._models, self.hearing.config, cancelled=self._closed)
-        _check_open(self._closed)
-        samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
-        final = self.utterance.feed(samples)
-        events: List[HearEvent] = []
-        if self.utterance.text != self.said:
-            self.said = self.utterance.text
-            events.append(Partial(self.said))
-        if final is not None:
-            events.append(Endpoint(final))
-        return events
-
     async def finish(self) -> str:
-        try:
-            return await self.hearing.run(self._finish)
-        except _Abandoned:
-            return ""
+        return await self.hearing.run(self._finish)
 
     def _finish(self) -> str:
-        _check_open(self._closed)
-        return self.utterance.final() if self.utterance is not None else ""
+        try:
+            _check_open(self._closed)
+            return self.utterance.final() if self.utterance is not None else ""
+        except _Abandoned:
+            return ""
 
     async def close(self) -> None:
         self._closed.set()
