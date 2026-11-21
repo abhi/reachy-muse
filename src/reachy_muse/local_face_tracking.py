@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -17,6 +18,7 @@ YAW_LIMIT = math.radians(20)
 PITCH_LIMIT = math.radians(12)
 FACE_LOSS_SECONDS = 0.8
 IDLE_SAMPLE_PERIOD = 0.5
+SEEN_FACES = 256
 
 
 def default_face_model() -> Path:
@@ -243,6 +245,7 @@ class FaceFollower:
         self._generation = 0
         self._target: FaceTarget | None = None
         self._snapshot: FaceSnapshot | None = None
+        self._seen: deque[ObservedFace] = deque(maxlen=SEEN_FACES)
         self._request: _FaceRequest | None = None
         self._hold_center: float | None = None
         self.last_seen_at: float | None = None
@@ -288,6 +291,11 @@ class FaceFollower:
     def snapshot(self) -> FaceSnapshot | None:
         with self._condition:
             return self._snapshot
+
+    def seen_since(self, since: float) -> tuple[ObservedFace, ...]:
+        """Faces from snapshots captured at or after ``since``, among the last ``SEEN_FACES`` seen."""
+        with self._condition:
+            return tuple(face for face in self._seen if face.captured_at >= since)
 
     def hold_center(self, yaw: float | None) -> None:
         with self._condition:
@@ -360,6 +368,7 @@ class FaceFollower:
                         with self._condition:
                             if not self._closed:
                                 self._snapshot = snapshot
+                                self._seen.extend(snapshot.faces)
                                 if request is not None:
                                     request.snapshot = snapshot
                                 if self._active and self._generation == generation:

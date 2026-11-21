@@ -1,6 +1,7 @@
 """Gaze requests through microphone capture, scripted calls, camera and motor owners."""
 
 import asyncio
+from dataclasses import replace
 import math
 import threading
 import time
@@ -49,7 +50,7 @@ class PeopleHardware(CallHardware):
     def __init__(self, recording, controller):
         super().__init__(recording)
         self.controller = controller
-        for name in ('face_snapshot', 'refresh_faces', 'look_at_speaker', 'look_at_person',
+        for name in ('face_snapshot', 'refresh_faces', 'recent_faces', 'look_at_speaker', 'look_at_person',
                      'release_person_gaze', 'allow_face_tracking'):
             setattr(self, name, getattr(controller, name))
 
@@ -81,7 +82,8 @@ class DelayedWake(TimedWake):
 def people(monkeypatch):
     rig = Rig(monkeypatch)
     robot = FakeRobot()
-    scene = SimpleNamespace(faces=[(30, .35), (-25, .12)], camera=True, busy=True, passes=0, doa=math.pi / 3)
+    scene = SimpleNamespace(faces=[(30, .35), (-25, .12)], camera=True, busy=True, passes=0, doa=math.pi / 3,
+                            age=0.0)
     robot.media.camera = SimpleNamespace(K=np.eye(3), D=np.zeros(5))
     camera_threads = []
 
@@ -103,8 +105,11 @@ def people(monkeypatch):
                                    math.atan2(-z, math.hypot(x, y)), .95))
             return faces
 
-    def factory(*args, **kwargs):
-        return FaceFollower(*args, **kwargs, detector_factory=lambda *args: Detect())
+    def factory(capture_frame, *args, **kwargs):
+        def capture(**options):
+            captured = capture_frame(**options)
+            return replace(captured, captured_at=captured.captured_at - scene.age) if captured is not None else None
+        return FaceFollower(capture, *args, **kwargs, detector_factory=lambda *args: Detect())
 
     controller = ReachyController(robot_factory=lambda **kwargs: robot, pose_factory=pose_factory,
                                  pose_interpolator=lambda a, b, t: a * (1 - t) + b * t,
@@ -171,7 +176,7 @@ def test_other_face_turn_preempts_and_muse_reply_plays_in_full(people, caplog, t
                                       np.frombuffer(reply, "<i2").astype(np.float32) / 32768)
         assert calls.barge_ins == 0
         assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-            'Reachy gaze request outcome=turned faces=2']
+            'Reachy gaze request outcome=turned source=fresh faces=2']
         rig.hardware.samples.put(np.full(CHUNK * 8, VOICE_SAMPLE, np.float32))
         await rig.wait_until_or_timeout(lambda: not controller._person_hold)
         assert not controller._person_hold
@@ -230,7 +235,7 @@ def test_lost_transcript_does_not_carry_the_previous_speaker_into_the_next_reque
     assert played(events) == ['muse']
     assert 'Reachy could not transcribe a turn Muse heard in its call; Muse answers it' in caplog.messages
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-        'Reachy gaze request outcome=turned faces=2']
+        'Reachy gaze request outcome=turned source=fresh faces=2']
 
 
 def test_buffered_greeting_excludes_its_speaker_after_wake_verification(people, caplog):
@@ -288,7 +293,7 @@ def test_buffered_greeting_excludes_its_speaker_after_wake_verification(people, 
     assert sent_to_muse(events) == []
     assert played(events) == ['muse']
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-        'Reachy gaze request outcome=turned faces=2']
+        'Reachy gaze request outcome=turned source=fresh faces=2']
     assert 'Say hi' not in caplog.text and 'Hello there' not in caplog.text
 
 
@@ -316,7 +321,7 @@ def test_rejected_short_utterances_do_not_supply_the_next_speakers_bearing(peopl
         await say_live(rig, paced_silence_s=.9)
         await rig.wait_until_or_timeout(lambda: any(line.startswith('Reachy gaze request') for line in caplog.messages))
         assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-            'Reachy gaze request outcome=no_speaker_bearing faces=0']
+            'Reachy gaze request outcome=no_speaker_bearing source=none faces=0']
         assert controller._person_hold is None
         await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events))
         await rig.wait_until_or_timeout(lambda: not service._voice[1].call.audible)
@@ -363,7 +368,7 @@ def test_an_ended_utterance_never_supplies_the_next_speakers_bearing(people, cap
         await room(rig, .9)
         await rig.wait_until_or_timeout(lambda: any(line.startswith('Reachy gaze request') for line in caplog.messages))
         assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-            'Reachy gaze request outcome=no_speaker_bearing faces=0']
+            'Reachy gaze request outcome=no_speaker_bearing source=none faces=0']
         await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events))
         await rig.wait_until_or_timeout(lambda: not service._voice[1].call.audible)
         assert math.degrees(controller.head_yaw) == pytest.approx(0, abs=.2)
@@ -377,12 +382,12 @@ def test_an_ended_utterance_never_supplies_the_next_speakers_bearing(people, cap
 
 
 @pytest.mark.parametrize('case, text, expected', [
-    ('single', 'Say hi to my friend.', 'no_other faces=1'),
-    ('empty', 'Greet my guest.', 'no_faces faces=0'),
-    ('stale', 'Look at the other person.', 'stale faces=0'),
-    ('unknown', 'Say hello to someone else.', 'no_speaker_bearing faces=0'),
-    ('missing', '', 'no_transcript faces=0'),
-    ('busy', 'Greet my guest.', 'busy faces=2'),
+    ('single', 'Say hi to my friend.', 'no_other source=fresh faces=1'),
+    ('empty', 'Greet my guest.', 'no_faces source=fresh faces=0'),
+    ('stale', 'Look at the other person.', 'stale source=none faces=0'),
+    ('unknown', 'Say hello to someone else.', 'no_speaker_bearing source=none faces=0'),
+    ('missing', '', 'no_transcript source=none faces=0'),
+    ('busy', 'Greet my guest.', 'busy source=fresh faces=2'),
     ('negative', "Don't say hi to him.", None),
     ('quoted', 'For example, "say hi to him".', None),
 ])
@@ -394,6 +399,7 @@ def test_request_negative_outcomes_keep_the_call_reply(people, caplog, case, tex
     if case == 'empty':
         scene.faces = []
     if case == 'stale':
+        scene.faces = [(30, .35)]
         assert controller.refresh_faces() is not None
         time.sleep(2.1)
         scene.camera = False
@@ -418,6 +424,39 @@ def test_request_negative_outcomes_keep_the_call_reply(people, caplog, case, tex
         ['Reachy gaze request outcome=' + expected] if expected else [])
 
 
+@pytest.mark.parametrize('seen_s, remembered, current, expected, facing', [
+    (10, [(30, .35), (-40, .12)], [(30, .35)], 'turned source=memory faces=1', (-35, -15)),
+    (40, [(30, .35), (-40, .12)], [(30, .35)], 'no_other source=fresh faces=1', (0, 0)),
+    (10, [(30, .35), (-5, .12)], [(30, .35), (-25, .12)], 'turned source=fresh faces=2', (-25, -5)),
+])
+def test_a_friend_seen_recently_but_out_of_view_is_remembered(people, caplog, seen_s, remembered, current,
+                                                               expected, facing):
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    scene.faces, scene.age = remembered, seen_s
+    assert len(controller.refresh_faces().faces) == 2
+    scene.faces, scene.age = current, 0.0
+    calls = ScriptedCalls(reply='Hello!', reply_s=.1)
+    service = realtime_service(rig, StreamingTranscripts('Say hi to my friend.'), calls)
+
+    def turned():
+        return round(math.degrees(controller.head_yaw)), round(math.degrees(robot.body_yaw))
+
+    async def user():
+        await say_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: any(line.startswith('Reachy gaze request') for line in caplog.messages))
+        await rig.wait_until_or_timeout(lambda: turned() == facing)
+        await asyncio.sleep(.3)
+        assert turned() == facing
+
+    events = run(rig, service, user)
+    assert calls.barge_ins == 0
+    assert set(played(events)) == {'muse'}
+    assert scene.passes == 2
+    assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+        'Reachy gaze request outcome=' + expected]
+
+
 @pytest.mark.parametrize('text', ['Okay, say hi to him.', 'Can you please say hi to my friend?'])
 def test_natural_phrasings_turn_toward_the_friend(people, caplog, text):
     rig, controller, robot, scene = people
@@ -434,13 +473,13 @@ def test_natural_phrasings_turn_toward_the_friend(people, caplog, text):
     assert calls.barge_ins == 0
     assert set(played(events)) == {'muse'}
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-        'Reachy gaze request outcome=turned faces=2']
+        'Reachy gaze request outcome=turned source=fresh faces=2']
 
 
 @pytest.mark.parametrize('text, gaze, barge_ins, command', [
-    ('Look at him.', ['Reachy gaze request outcome=turned faces=2'], 0, 'none'),
-    ('Look at my friend.', ['Reachy gaze request outcome=turned faces=2'], 0, 'none'),
-    ('Could you look at the other person?', ['Reachy gaze request outcome=turned faces=2'], 0, 'none'),
+    ('Look at him.', ['Reachy gaze request outcome=turned source=fresh faces=2'], 0, 'none'),
+    ('Look at my friend.', ['Reachy gaze request outcome=turned source=fresh faces=2'], 0, 'none'),
+    ('Could you look at the other person?', ['Reachy gaze request outcome=turned source=fresh faces=2'], 0, 'none'),
     ('Look at me.', [], 1, 'FACE_TRACKING_ON'),
 ])
 def test_gaze_phrases_never_reach_the_command_classifier(people, caplog, text, gaze, barge_ins, command):
@@ -504,7 +543,7 @@ def test_cached_faces_choose_smallest_turn_and_release_when_window_closes(people
 
     run(rig, service, user)
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-        'Reachy gaze request outcome=turned faces=3']
+        'Reachy gaze request outcome=turned source=snapshot faces=3']
 
 
 def test_a_turned_head_picks_the_other_face_needing_the_smallest_turn(people, caplog):
@@ -531,7 +570,7 @@ def test_a_turned_head_picks_the_other_face_needing_the_smallest_turn(people, ca
 
     run(rig, service, user)
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-        'Reachy gaze request outcome=turned faces=3']
+        'Reachy gaze request outcome=turned source=fresh faces=3']
 
 
 @pytest.mark.parametrize('release', ['next_request', 'window_close'])
@@ -579,7 +618,7 @@ def test_releasing_the_greeting_turns_back_to_the_speaker(people, caplog, releas
 
     run(rig, service, user)
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-        'Reachy gaze request outcome=turned faces=2']
+        'Reachy gaze request outcome=turned source=fresh faces=2']
 
 
 def test_muse_motion_commands_run_once_reachy_faces_the_friend(people, caplog):
@@ -655,7 +694,7 @@ def test_chat_keeps_endpoint_bearing_after_robot_audio_clears_the_ring(people, c
     assert sent_to_muse(events) == ['Say hello to my guest.']
     assert played(events) == ['tts:Just a moment.', 'tts:Hello there.']
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-        'Reachy gaze request outcome=turned faces=2']
+        'Reachy gaze request outcome=turned source=fresh faces=2']
 
 
 def test_rejected_echo_keeps_person_gaze_through_the_reply(people, caplog):
@@ -690,11 +729,11 @@ def test_rejected_echo_keeps_person_gaze_through_the_reply(people, caplog):
 
     run(rig, service, user)
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-        'Reachy gaze request outcome=turned faces=2']
+        'Reachy gaze request outcome=turned source=fresh faces=2']
 
 
 @pytest.mark.parametrize('text, logged', [
-    ('Say hello to my guest.', ['Reachy gaze request outcome=busy faces=0']),
+    ('Say hello to my guest.', ['Reachy gaze request outcome=busy source=none faces=0']),
     ('Find me a recipe.', []),
 ])
 @pytest.mark.parametrize('path', ['chat', 'realtime'])
@@ -778,7 +817,7 @@ def test_wake_gaze_is_fallback_only_within_its_window(people, caplog, speaker_ya
         await say_live(rig)
         await rig.wait_until_or_timeout(lambda: any(line.startswith('Reachy gaze request') for line in caplog.messages))
         assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-            'Reachy gaze request outcome=' + ('turned faces=2' if speaker_yaw == 30 else 'no_other faces=1')]
+            'Reachy gaze request outcome=' + ('turned source=fresh faces=2' if speaker_yaw == 30 else 'no_other source=fresh faces=1')]
         if speaker_yaw == 30:
             await rig.wait_until_or_timeout(lambda: controller._person_hold)
         assert (controller._person_hold is not None) is (speaker_yaw == 30)
@@ -787,7 +826,7 @@ def test_wake_gaze_is_fallback_only_within_its_window(people, caplog, speaker_ya
 
     run(rig, service, user)
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-        'Reachy gaze request outcome=' + ('turned faces=2' if speaker_yaw == 30 else 'no_other faces=1')]
+        'Reachy gaze request outcome=' + ('turned source=fresh faces=2' if speaker_yaw == 30 else 'no_other source=fresh faces=1')]
 
 
 def test_limited_person_turn_does_not_reseed_on_the_speaker(people, caplog):
@@ -812,4 +851,4 @@ def test_limited_person_turn_does_not_reseed_on_the_speaker(people, caplog):
     assert set(played(events)) == {'muse'}
     assert calls.barge_ins == 0
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
-        'Reachy gaze request outcome=turned faces=2']
+        'Reachy gaze request outcome=turned source=fresh faces=2']

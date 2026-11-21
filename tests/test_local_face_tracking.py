@@ -435,3 +435,25 @@ def test_refresh_deadline_does_not_queue_more_inference_or_drop_old_snapshot():
     finally:
         release.set()
         item.close()
+
+
+def test_seen_faces_keep_their_capture_times_within_a_bound(monkeypatch):
+    monkeypatch.setattr('reachy_muse.local_face_tracking.SEEN_FACES', 3)
+    now = [10.0]
+
+    class Two:
+        def detect(self, frame):
+            return [face(yaw=-10), face(x=.7, yaw=20)]
+
+    item = FaceFollower(captures(lambda: object(), lambda: now[0]), camera_matrix=None,
+                        detector_factory=lambda *args: Two(), clock=lambda: now[0])
+    item.start()
+    try:
+        assert item.refresh() is not None
+        now[0] = 20.0
+        assert item.refresh() is not None
+        assert [(face.captured_at, round(math.degrees(face.yaw))) for face in item.seen_since(0)] == [
+            (10.0, 20), (20.0, -10), (20.0, 20)]
+        assert [face.captured_at for face in item.seen_since(15)] == [20.0, 20.0]
+    finally:
+        item.close()

@@ -11,6 +11,10 @@ import time
 from reachy_muse.device_command import gaze_requested
 
 log = logging.getLogger(__name__)
+_SNAPSHOT_MAX_AGE_S = 2.0
+_FRESH_PASS_S = .3
+_REMEMBERED_S = 30.0
+_SPEAKER_ARC = math.radians(20)
 
 
 class PersonGaze:
@@ -41,46 +45,62 @@ class PersonGaze:
         return True
 
     async def request(self, text: str | None, speaker_bearing: float | None, generation: int) -> None:
+        """Face the person who is not speaking, preferring faces in view to faces seen recently."""
         current = self.admit(generation)
         if not text or not text.strip():
-            self._log("no_transcript", 0)
+            self._log("no_transcript")
             return
         if not gaze_requested(text):
             return
         if not current:
-            self._log("busy", 0)
+            self._log("busy")
             return
         if speaker_bearing is None:
-            self._log("no_speaker_bearing", 0)
+            self._log("no_speaker_bearing")
             return
-        snapshot = self.hardware.face_snapshot()
-        stale = snapshot is not None
-        if snapshot is None or not 0 <= time.monotonic() - snapshot.captured_at <= 2.0:
-            try:
-                snapshot = await asyncio.wait_for(asyncio.to_thread(self.hardware.refresh_faces, .3), .3)
-            except asyncio.TimeoutError:
-                snapshot = None
+        cached = self.hardware.face_snapshot()
+        view, source = cached, "snapshot"
+        if not _recent(view):
+            view, source = await self._fresh_pass(), "fresh"
         if generation != self._admitted_generation:
-            self._log("busy", 0)
+            self._log("busy")
             return
-        if snapshot is None or not 0 <= time.monotonic() - snapshot.captured_at <= 2.0:
-            self._log("stale" if stale or snapshot is not None else "no_faces", 0)
-            return
-        faces = snapshot.faces
-        if not faces:
-            self._log("no_faces", 0)
-            return
-        speaker_yaw = math.pi / 2 - speaker_bearing
-        others = [face for face in faces if abs(face.yaw - speaker_yaw) > math.radians(20)]
+        if not _recent(view):
+            view = None
+        faces = view.faces if view is not None else ()
+        speaker = math.pi / 2 - speaker_bearing
+        others = _away_from(speaker, faces)
         if not others:
-            self._log("no_other", len(faces))
+            remembered = _away_from(speaker, self.hardware.recent_faces(time.monotonic() - _REMEMBERED_S))
+            if remembered:
+                others, source = remembered, "memory"
+        if not others:
+            if view is not None:
+                self._log("no_other" if faces else "no_faces", source, len(faces))
+            else:
+                self._log("stale" if cached is not None else "no_faces")
             return
         target = min(others, key=lambda face: abs(face.yaw - self.hardware.head_yaw))
         turned = self.hardware.look_at_person(target.yaw, target.pitch)
         if turned:
             self._holding = True
-        self._log("turned" if turned else "busy", len(faces))
+        self._log("turned" if turned else "busy", source, len(faces))
+
+    async def _fresh_pass(self):
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(self.hardware.refresh_faces, _FRESH_PASS_S),
+                                          _FRESH_PASS_S)
+        except asyncio.TimeoutError:
+            return None
 
     @staticmethod
-    def _log(outcome: str, faces: int) -> None:
-        log.info("Reachy gaze request outcome=%s faces=%d", outcome, faces)
+    def _log(outcome: str, source: str = "none", faces: int = 0) -> None:
+        log.info("Reachy gaze request outcome=%s source=%s faces=%d", outcome, source, faces)
+
+
+def _recent(snapshot) -> bool:
+    return snapshot is not None and 0 <= time.monotonic() - snapshot.captured_at <= _SNAPSHOT_MAX_AGE_S
+
+
+def _away_from(speaker_yaw: float, faces) -> list:
+    return [face for face in faces if abs(face.yaw - speaker_yaw) > _SPEAKER_ARC]

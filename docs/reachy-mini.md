@@ -499,6 +499,10 @@ through the head pose captured with the image. They survive vision pauses.
 The request reuses a snapshot up to two seconds old; otherwise it asks the same
 camera and detector worker for one fresh pass, waiting at most 300 ms. This pass
 may bypass the vision pause. It adds no continuous detection during listening.
+After Reachy turns toward the speaker, that view may show only the speaker. When
+it shows no other face, Reachy uses the world bearings of faces seen in the last
+30 seconds, kept in a list of the last 256 detections without identity. Faces in
+view take priority over remembered ones.
 The person turn fades competing clips and thinking motion, then re-centers the
 follower on the selected direction. It holds through the reply. The next request,
 including a stop command, or the end of the listening window releases it, and
@@ -507,7 +511,8 @@ releases it to the sleep pose. An explicit motion command returns an error only
 while Reachy is still turning toward the person. Once Reachy faces them, the
 command runs and releases this gaze, as commands release the wake gaze. Reachy
 skips its own closing expression for a reply while it holds this gaze. Logs
-contain only outcomes and face counts.
+contain only the outcome, the source of the faces it used (`snapshot`, `fresh`,
+`memory` or `none`) and the number of faces in view.
 
 With `--wave-wake`, a wave also turns Reachy toward the person before face
 tracking takes over. The detected person's position takes priority over recent
