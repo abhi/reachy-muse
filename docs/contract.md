@@ -114,12 +114,17 @@ fills defaults. Invalid speech or presence parameters return
 `{"ok": false, "error": "invalid_parameters"}`. Notification parameter errors
 use the notification result format with `status: refused`.
 
+In `reachy.move`, yaw 0 means straight ahead. Reachy turns toward whoever is
+speaking. A local request to greet or look at another person selects a visible
+face away from the speaker and holds that gaze through Muse's reply. It does
+not consume the voice turn. Motion commands return a busy error while this gaze is held.
+
 ## Registration size
 
 `tests/pins/registration.json` pins the entire SDK registration with a fixed
 36-character request ID and the SDK's 15-character node ID. The compact JSON
-is **5,553 bytes**, or **5,557 bytes** including the four-byte length prefix,
-under the 8,192-byte cap. `commands_v2` occupies 5,277 bytes.
+is **5,548 bytes**, or **5,552 bytes** including the four-byte length prefix,
+under the 8,192-byte cap. `commands_v2` occupies 5,272 bytes.
 
 | Command description | UTF-8 bytes |
 | --- | ---: |
@@ -127,11 +132,11 @@ under the 8,192-byte cap. `commands_v2` occupies 5,277 bytes.
 | `reachy.presence` | 537 |
 | `reachy.notify` | 475 |
 | `reachy.expression` | 446 |
-| `reachy.move` | 393 |
+| `reachy.move` | 388 |
 
-The guide is 2,425 UTF-8 bytes, within its 4,096-byte limit. Configuring `office`
-makes the current SDK registration 5,593 bytes including its prefix. The worst
-escaped 64-byte place label makes it 5,843 bytes, still below 8,192.
+The guide is 2,390 UTF-8 bytes, within its 4,096-byte limit. Configuring `office`
+makes the current SDK registration 5,588 bytes including its prefix. The worst
+escaped 64-byte place label makes it 5,838 bytes, still below 8,192.
 
 `tests/test_registration.py` compares the literal registration fixture and
 measures the actual SDK `encode_message` output, including the prefix. It also

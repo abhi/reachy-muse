@@ -33,8 +33,7 @@ at the moment it matters, then let Reachy carry on by itself:
 
 - Nod yes: `reachy.expression` with name `nod`, when you agree or confirm.
 - Shake no: `reachy.expression` with name `shake`, when you refuse or disagree.
-- Look at the user: `reachy.move` with `pitch` near -5 and `yaw` 0, when you address them
-  directly or wait for their answer.
+- Look straight ahead: `reachy.move` with `yaw` 0. Reachy turns toward whoever is speaking.
 - Show a feeling on purpose: `reachy.expression` with `happy`, `sad`, `surprised`, `curious`
   or `thinking`.
 
