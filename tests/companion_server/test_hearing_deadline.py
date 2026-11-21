@@ -172,7 +172,7 @@ def test_stuck_hearing_fails_streams_and_refuses_opens_until_worker_progress(mon
     (3.5, []),  # past the 3 s streaming deadline and the measured 2.77 s p95
     (8.3, [("overloaded", 3), ("overloaded", 5)]),  # the finishing stream sends no audio, so only it waits
 ])
-def test_a_final_pass_is_progress_until_its_budget_runs_out(monkeypatch, final_pass_s, refused):
+def test_a_final_pass_is_progress_until_its_budget_runs_out(monkeypatch, caplog, final_pass_s, refused):
     """Parakeet's final pass is one native call without progress; over 8.2 s of audio it may take 8.2 s."""
     now, exits = [100.0], []
     entered, release = threading.Event(), threading.Event()
@@ -244,3 +244,5 @@ def test_a_final_pass_is_progress_until_its_budget_runs_out(monkeypatch, final_p
 
     asyncio.run(scenario())
     assert exits == []
+    assert [line for line in caplog.messages if line.startswith("hearing overloaded")] == [
+        f"hearing overloaded (stream={stream}; worker made no progress for {final_pass_s} s)" for _, stream in refused]

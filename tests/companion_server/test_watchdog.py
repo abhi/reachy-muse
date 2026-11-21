@@ -94,7 +94,7 @@ def test_a_quiet_stage_delays_only_the_soft_stall_check(capfd):
         finally:
             monitor.stop()
 
-    assert asyncio.run(scenario()) == [False, True, True]
+    assert asyncio.run(scenario()) == [None, 60.0, 120.0]
     assert exits == [70]
     assert "hearing made no progress for 120.0s (limit 120s)" in capfd.readouterr().err
 

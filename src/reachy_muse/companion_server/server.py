@@ -283,8 +283,9 @@ class _Session:
         if message.stream in self.hearing:
             await self._send(_error(ErrorCode.BAD_REQUEST, f"hear stream {message.stream} is already open", stream=message.stream))
             return
-        if watchdog.stalled("hearing", HEARING_SOFT_S):
-            await self._hear_overloaded(message.stream)
+        stuck_s = watchdog.stalled("hearing", HEARING_SOFT_S)
+        if stuck_s:
+            await self._hear_overloaded(message.stream, stuck_s)
             return
         hear = self.hearing[message.stream] = _Hear(asyncio.Queue())
         hear.task = asyncio.create_task(self._guard(self._speech_first(lambda: self._hear(message, hear)), stream=message.stream))
@@ -320,15 +321,15 @@ class _Session:
                 await asyncio.sleep(HEARING_CHECK_S)
                 for stream, hear in list(self.hearing.items()):
                     arrived, hear.audio_arrived = hear.audio_arrived, False
-                    if (arrived and self.hearing.get(stream) is hear
-                            and watchdog.stalled("hearing", HEARING_SOFT_S)):
+                    stuck_s = watchdog.stalled("hearing", HEARING_SOFT_S) if arrived else None
+                    if stuck_s and self.hearing.get(stream) is hear:
                         self._end_hearing(stream, hear)
-                        await self._hear_overloaded(stream)
+                        await self._hear_overloaded(stream, stuck_s)
         except ConnectionClosed:
             pass
 
-    async def _hear_overloaded(self, stream: int) -> None:
-        log.warning("hearing overloaded (stream=%s; worker made no progress for %.1f s)", stream, HEARING_SOFT_S)
+    async def _hear_overloaded(self, stream: int, stuck_s: float) -> None:
+        log.warning("hearing overloaded (stream=%s; worker made no progress for %.1f s)", stream, stuck_s)
         await self._send(_error(ErrorCode.OVERLOADED, "hearing worker is not making progress", stream=stream))
 
     async def _hear(self, message: HearOpen, hear: _Hear) -> None:

@@ -10,6 +10,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from typing import Optional
 
 
 LOOP_STALL_S = 10.0
@@ -85,11 +86,12 @@ class Watchdog:
                 name = self._workers[identity][0]
                 self._workers[identity] = (name, self._clock(), quiet_s)
 
-    def stalled(self, name: str, limit_s: float) -> bool:
+    def stalled(self, name: str, limit_s: float) -> Optional[float]:
+        """Seconds a ``name`` worker has gone without progress, once past ``limit_s`` and its stage's allowance."""
         with self._lock:
             now = self._clock()
-            return any(worker == name and now - last >= max(limit_s, quiet_s)
-                       for worker, last, quiet_s in self._workers.values())
+            return max((now - last for worker, last, quiet_s in self._workers.values()
+                        if worker == name and now - last >= max(limit_s, quiet_s)), default=None)
 
     def _watch(self) -> None:
         while not self._stopped.wait(self.check_s):
