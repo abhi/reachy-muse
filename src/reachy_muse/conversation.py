@@ -1416,7 +1416,7 @@ class VoiceConversation:
                 if endpoint.text is not None:
                     request.timeline.mark("transcript")
                 if request.call is not None and (request.call.audio_sent or not request.call.failed):
-                    await self._realtime_turn(endpoint, request)
+                    await self._realtime_turn(endpoint, request, follow_up=True)
                     return held
                 return await self._follow_up(endpoint, request, held)
             finally:
@@ -2689,8 +2689,11 @@ class VoiceConversation:
         log.info("Realtime command transcript=%s words=%d wake_prefix=%s outcome=%s drop=%s",
                  transcript, len(text.split()), prefix, outcome, drop)
 
-    async def _realtime_turn(self, endpoint: Endpoint, request: _QueuedTurn) -> TurnOutcome:
-        """A turn Muse already heard in a realtime call: Reachy acts only on its own device commands."""
+    async def _realtime_turn(self, endpoint: Endpoint, request: _QueuedTurn, *, follow_up: bool = False) -> TurnOutcome:
+        """A turn Muse already heard in a realtime call: Reachy acts only on its own device commands and photo requests.
+
+        ``follow_up`` is a turn heard while another one is still handled.
+        """
         started = time.monotonic()
         if self._wake_window is WakeWindow.WOKEN:
             self._wake_window = WakeWindow.AWAKE
@@ -2703,11 +2706,14 @@ class VoiceConversation:
             return TurnOutcome.EMPTY
         self._presence.mark("voice", started)
         command = await self._obey(text, started, request.timeline) if text.strip() else None
+        photo = command is None and self._photo_requested(text, request.timeline)
         if request.timeline.facts.get("command_transcript") != "deadline":
             self._log_realtime_command(endpoint.text, decision, transcript=request.timeline.facts.get("command_transcript"),
-                                       outcome=command.name if command is not None else "none")
+                                       outcome=command.name if command is not None else "PHOTO" if photo else "none")
         if command is not None:
             return TurnOutcome.ACCEPTED
+        if photo:
+            return await self._photo_in_call(endpoint, request, text, follow_up=follow_up)
         await self._gaze.request(text, request.speaker_bearing, request.gaze_generation)
         call = request.call
         # The turn's speech_end mark can be later than the last voiced chunk's processing time when processing lags.
@@ -2722,6 +2728,22 @@ class VoiceConversation:
         request.timeline.facts["path"] = "realtime"
         request.timeline.report()
         return TurnOutcome.ACCEPTED
+
+    async def _photo_in_call(self, endpoint: Endpoint, request: _QueuedTurn, text: str, *,
+                             follow_up: bool) -> TurnOutcome:
+        """Take a photo request over from the call: Muse's call answer is cut off, and Reachy speaks its chat answer.
+
+        The call never counts this turn as waiting for Muse. A request heard as a follow-up gets the busy line,
+        so a photo turn runs only as the turn task and later turns are handled while it runs.
+        """
+        await request.call.barge_in()
+        request.timeline.facts["path"] = "realtime"
+        if follow_up:
+            PhotoLog("realtime", "busy").write()
+            await self._announce(BUSY_CUE, started=None, defer_playback=True)
+            return TurnOutcome.ACCEPTED
+        return await self.turn(endpoint.audio, wake_strip_required=False, recognized_text=text, defer_playback=True,
+                               timeline=request.timeline, gaze_generation=request.gaze_generation)
 
     def _pending_call_decision(self) -> bool:
         return bool(self.call is not None and self.call.pending)

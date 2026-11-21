@@ -15,17 +15,22 @@ import reachy_muse.conversation
 from reachy_muse.hardware import ReachyController
 from reachy_muse.photo import JPEG_MAGIC, PhotoCapture, shutter_cue
 from test_device_command_turns import SpeakerHardware, played, run, sent_to_muse, service
+from test_person_gaze import people  # noqa: F401
 from test_photo_capture import Encoder
 from test_pins import FakeHardware, PinSession, Rig, Transcripts
+from reachy_muse.realtime_call import realtime_supported
+from test_realtime_turns import (CallHardware, ScriptedCalls, StreamingTranscripts, realtime_service,
+                                 reply_events, voiced)
 
 PHOTO = PhotoCapture(jpeg=JPEG_MAGIC + bytes(120_000 - len(JPEG_MAGIC)), width=1280, height=720, quality=80,
                      capture_ms=40, encode_ms=12)
+realtime = pytest.mark.skipif(not realtime_supported(), reason="the Muse SDK has no voice call events")
 PHOTO_MESSAGE = ("Reachy took this photo with its camera just now because the user asked. "
                  "The user's spoken request is: {}")
 
 
-class PhotoHardware(SpeakerHardware):
-    """The rig's microphone and speaker, with a camera that returns ``photos`` in turn; the shutter plays as itself."""
+class PhotoCamera:
+    """A camera that returns ``photos`` in turn, and a speaker that plays the shutter as itself."""
 
     def __init__(self, recording, photos=()):
         super().__init__(recording)
@@ -39,7 +44,7 @@ class PhotoHardware(SpeakerHardware):
             return photo()
         return photo
 
-    def play_audio(self, samples):
+    def play_audio(self, samples, **motion):
         cue = shutter_cue(self.output_sample_rate)
         if any(np.array_equal(cue[start:start + len(samples)], samples) for start in np.flatnonzero(cue == samples[0])):
             event = {"robot": "play", "audio": "shutter"}
@@ -47,7 +52,15 @@ class PhotoHardware(SpeakerHardware):
                 self.recording.add(event)
             FakeHardware.play_audio(self, samples)
         else:
-            super().play_audio(samples)
+            super().play_audio(samples, **motion)
+
+
+class PhotoHardware(PhotoCamera, SpeakerHardware):
+    pass
+
+
+class PhotoCallHardware(PhotoCamera, CallHardware):
+    pass
 
 
 def photo_rig(monkeypatch, photos=()):
@@ -310,3 +323,243 @@ def test_muse_commands_presence_briefings_and_notifications_never_take_a_photo(m
         "reachy.presence": True, "reachy.notify": "delivered"}
     assert sent_to_muse(events) == ["Brief me."]
     assert played(events)[-1] == "tts:Your package arrived."
+
+
+def call_rig(monkeypatch, photos=()):
+    rig = Rig(monkeypatch)
+    rig.hardware = PhotoCallHardware(rig.recording, photos)
+    return rig
+
+
+def answers_the_next_call_turn(spoken):
+    """Muse's call answer to the photo request is the SDK's to drop after the barge-in; this one answers later."""
+    async def answer(sdk, emit, script):
+        await spoken.wait()
+        reply_events(sdk, emit, "r2", "It will be sunny.", voiced(.4))
+    return answer
+
+
+def realtime_command_lines(caplog):
+    return [message for message in caplog.messages if message.startswith("Realtime command ")]
+
+
+@realtime
+def test_a_photo_request_in_a_call_takes_the_turn_from_muse_and_the_call_stays_open(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    rig = call_rig(monkeypatch, [PHOTO])
+    asked_again = asyncio.Event()
+    calls = ScriptedCalls(answer=answers_the_next_call_turn(asked_again))
+    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, what am I holding?",
+                                                              "Will it be sunny tomorrow?"),
+                                    calls, muse=answers("A red mug."), photo_requests=True, wake_timeout_s=5)
+    observed = []
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "tts:A red mug." in played(rig.recording.events), 5)
+        voice = conversation._voice[1]
+        call, frames = voice.call, len(calls.frames)
+        await rig.quiet("listening", "thinking")
+        observed.append((call.turns, list(call.pending)))
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: len(calls.frames) > frames + 20, 3)
+        asked_again.set()
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+        observed.append((voice.call is call, call.done, call.turns, list(call.pending)))
+
+    events = run(rig, conversation, user, rest=("listening", "idle"))
+    assert calls.barge_ins == 1
+    assert [(event["muse"], event["text"]) for event in sent(events)] == [
+        ("send_image", PHOTO_MESSAGE.format("what am I holding?"))]
+    assert played(events) == ["shutter", "tts:A red mug.", "muse"]
+    assert observed == [(0, []), (True, False, 1, [])]
+    assert realtime_command_lines(caplog) == [
+        "Realtime command transcript=arrived words=6 wake_prefix=exact outcome=PHOTO drop=none",
+        "Realtime command transcript=arrived words=5 wake_prefix=none outcome=none drop=none"]
+    assert [(fields(line)["outcome"], fields(line)["path"]) for line in photo_lines(caplog)] == [("sent", "realtime")]
+
+
+@realtime
+def test_a_second_photo_request_in_a_call_gets_the_busy_line(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    rig = call_rig(monkeypatch, [PHOTO, PHOTO])
+
+    async def muse(session, request):
+        await rig.wait_until_or_timeout(lambda: "tts:One at a time, please." in played(rig.recording.events), 10)
+        await session.answer(request, "A red mug.")
+
+    calls = ScriptedCalls(reply=None)
+    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, what am I holding?", "Take a photo."),
+                                    calls, muse=muse, photo_requests=True, wake_timeout_s=5)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.quiet("thinking")
+        rig.say()
+
+    events = run(rig, conversation, user, rest=("listening", "idle"))
+    assert calls.barge_ins == 2
+    assert rig.hardware.captures == [2.0]
+    assert [event["muse"] for event in sent(events)] == ["send_image"]
+    assert played(events) == ["shutter", "tts:One at a time, please.", "tts:A red mug."]
+    assert [(fields(line)["outcome"], fields(line)["path"]) for line in photo_lines(caplog)] == [
+        ("busy", "realtime"), ("sent", "realtime")]
+    assert [line.split(" outcome=")[1] for line in realtime_command_lines(caplog)] == [
+        "PHOTO drop=none", "PHOTO drop=none"]
+
+
+@realtime
+@pytest.mark.parametrize("case, photos, line", [
+    ("camera_failed", [PhotoCapture("camera_failed", capture_ms=3)], "I couldn't take a photo."),
+    ("too_large", [PhotoCapture("too_large", capture_ms=40, encode_ms=90)], "That photo was too large to send."),
+    ("slow_camera", [slowly], "I couldn't take a photo."),
+    ("rejected", [PHOTO], "Muse didn't get the photo."),
+    ("send_timeout", [PHOTO], "Muse didn't get the photo."),
+    ("no_answer", [PHOTO], "Muse didn't answer about the photo."),
+    ("expired", [PHOTO], "Please ask me again for the photo."),
+])
+def test_each_failure_in_a_call_gets_one_line_and_the_call_stays_open(monkeypatch, caplog, case, photos, line):
+    caplog.set_level(logging.INFO)
+    rig = call_rig(monkeypatch, photos)
+    if case == "slow_camera":
+        monkeypatch.setattr(reachy_muse.conversation, "PHOTO_CAPTURE_S", .05)
+    if case == "send_timeout":
+        monkeypatch.setattr(reachy_muse.conversation, "PHOTO_SEND_TIMEOUT_S", .2)
+    if case == "no_answer":
+        monkeypatch.setattr(reachy_muse.conversation, "VoiceConversation",
+                            functools.partial(reachy_muse.conversation.VoiceConversation, reply_timeout_s=.5))
+    if case == "expired":
+        monkeypatch.setattr("reachy_muse.photo.PHOTO_REQUEST_TTL_S", 0.0)
+    asked_again = asyncio.Event()
+    calls = ScriptedCalls(answer=answers_the_next_call_turn(asked_again))
+
+    async def muse(session, request):
+        if case != "no_answer":
+            raise AssertionError("only the photo request goes to Muse by chat")
+
+    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, what do you see?", "Will it be sunny?"),
+                                    calls, muse=muse, photo_requests=True, wake_timeout_s=5)
+    if case in ("rejected", "send_timeout"):
+        rig.session = (RejectsPhotos if case == "rejected" else PhotosNeverArrive)(rig.recording, muse)
+    observed = []
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: f"tts:{line}" in played(rig.recording.events), 5)
+        voice = conversation._voice[1]
+        call, frames = voice.call, len(calls.frames)
+        await rig.quiet("listening", "thinking")
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: len(calls.frames) > frames + 20, 3)
+        asked_again.set()
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+        observed.append((voice.call is call, call.done))
+
+    events = run(rig, conversation, user, rest=("listening", "idle"))
+    assert calls.barge_ins == 1
+    assert played(events) == ["shutter"] * (case in ("rejected", "send_timeout", "no_answer")) + [f"tts:{line}", "muse"]
+    assert observed == [(True, False)]
+    assert sent_to_muse(events) == []
+    assert [fields(entry)["outcome"] for entry in photo_lines(caplog)] == [
+        "camera_busy" if case == "slow_camera" else case]
+
+
+@realtime
+def test_a_photo_request_whose_words_arrive_too_late_stays_with_muse(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    rig = call_rig(monkeypatch, [PHOTO])
+
+    class LateWords(StreamingTranscripts):
+        def open_turn(self):
+            turn = super().open_turn()
+            text = turn.partial.text
+
+            def finish():
+                async def recognize():
+                    await asyncio.sleep(1)
+                    return text
+                return asyncio.ensure_future(recognize())
+
+            turn.finish = finish
+            return turn
+
+    calls = ScriptedCalls(reply="I can't see, but I can listen.")
+    conversation = realtime_service(rig, LateWords("Hey Muse, what do you see?"), calls, photo_requests=True)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+
+    events = run(rig, conversation, user)
+    assert rig.hardware.captures == []
+    assert sent(events) == []
+    assert set(played(events)) == {"muse"}
+    assert calls.barge_ins == 0
+    assert realtime_command_lines(caplog) == [
+        "Realtime command transcript=deadline words=0 wake_prefix=none outcome=none drop=deadline"]
+    assert photo_lines(caplog) == []
+
+
+@realtime
+def test_a_photo_request_releases_a_held_person_gaze_and_shows_what_reachy_faces_then(people, caplog):
+    import math
+    import threading
+    from test_person_gaze import DelayedWake, say_live
+    from test_pins import CHUNK, WAKE_SAMPLE
+    from test_realtime_turns import room
+
+    rig, controller, robot, scene = people
+    caplog.set_level(logging.INFO)
+    controller._photo_encoder = Encoder()
+    photo_yaws, capturing = [], threading.Event()
+    read_frame = robot.media.get_frame
+
+    def get_frame():
+        if capturing.is_set():
+            photo_yaws.append(round(math.degrees(controller.head_yaw)))
+        return read_frame()
+
+    def capture_photo(timeout_s):
+        capturing.set()
+        try:
+            return controller.capture_photo(timeout_s)
+        finally:
+            capturing.clear()
+
+    robot.media.get_frame = get_frame
+    rig.hardware.capture_photo = capture_photo
+
+    async def greets(sdk, emit, script):
+        await rig.wait_until_or_timeout(lambda: controller._person_hold, 3)
+        reply_events(sdk, emit, "r1", "Hello there!", voiced(.3))
+
+    calls = ScriptedCalls(answer=greets)
+    conversation = service(rig, answers("A desk and a lamp."), StreamingTranscripts("Say hi to my friend.",
+                                                                                     "What do you see?"),
+                           wake_detector=DelayedWake(), wake_timeout_s=5, muse_path="realtime",
+                           voice_link=calls.link, voice_call=calls, photo_requests=True)
+    conversation.silence_s = .8
+
+    def facing():
+        return round(math.degrees(controller.head_yaw)), round(math.degrees(robot.body_yaw))
+
+    async def user():
+        for _ in range(30):
+            rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
+            await asyncio.sleep(.02)
+        await rig.wait_until_or_timeout(lambda: facing() == (30, 10))
+        await say_live(rig, paced_silence_s=.9)
+        await rig.wait_until_or_timeout(lambda: facing() == (-25, -5))
+        assert facing() == (-25, -5)
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events))
+        await rig.wait_until_or_timeout(lambda: not conversation._voice[1].call.audible, 4)
+        await room(rig, .3)
+        await say_live(rig, paced_silence_s=.9)
+        await rig.wait_until_or_timeout(lambda: "tts:A desk and a lamp." in played(rig.recording.events), 5)
+
+    events = run(rig, conversation, user)
+    assert photo_yaws == [30]
+    assert [event["muse"] for event in sent(events)] == ["send_image"]
+    assert played(events)[-1] == "tts:A desk and a lamp."
+    assert [line for line in caplog.messages if line.startswith("Reachy gaze request")] == [
+        "Reachy gaze request outcome=turned source=fresh faces=2"]
