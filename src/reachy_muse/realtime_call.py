@@ -62,7 +62,8 @@ class CallInput:
 
     Silence keeps the remote VAD clock moving while local recognition catches up. Only
     a confirmed interruption releases the bounded pre-roll, preserving its first words.
-    Echo and unrecognized room sounds never enter Muse's microphone stream.
+    Echo and unrecognized room sounds never enter Muse's microphone stream. One gate serves
+    one utterance, which can run on past the endpoint of a turn within it.
     """
 
     def __init__(self, feed, sample_rate: int):
@@ -78,9 +79,11 @@ class CallInput:
         self._quiet_samples = 0
         self.confirmed = False
         self.sent_speech = False
+        self.heard_speech = False
 
     def push(self, samples, *, speaking: bool, text: str, playback: bool,
              heard_over: tuple[str, ...], quiet_s: float = 0.0) -> bool:
+        self.heard_speech = self.heard_speech or speaking
         if not playback or self.confirmed:
             self.feed.push(samples, silent=quiet_s >= len(samples) / self.rate + FRAME_SAMPLES / SAMPLE_RATE)
             self.sent_speech = self.sent_speech or speaking
@@ -111,11 +114,10 @@ class CallInput:
         return False
 
     def finish(self, text: str, heard_over: tuple[str, ...]) -> bool:
+        """Confirm on a finished turn's words. Held audio stays: the utterance can go on past the turn."""
         if (not self.confirmed and self._speech_samples >= BARGE_IN_SPEECH_S * self.rate
                 and self._distinct(text, heard_over)):
             self._confirm()
-        self._pending.clear()
-        self._samples = 0
         return self.confirmed
 
     def _distinct(self, text: str, heard_over: tuple[str, ...]) -> bool:

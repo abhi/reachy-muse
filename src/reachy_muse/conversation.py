@@ -1123,12 +1123,19 @@ class VoiceConversation:
         turns_awaiting_transcript = set()
         # The latest audio the call was not sent while it heard only the room, sent first when speech resumes it.
         call_pre_roll = None
+        # The user talked on through a call turn's endpoint and no turn has opened since; that speech stays admitted.
+        speech_continues = False
+
+        def renew_call_input():
+            from reachy_muse.realtime_call import CallInput
+            self.call.input = CallInput(self.call.feed, self.hardware.sample_rate)
 
         def make_recorder(*, reset_admission=True, **options):
-            nonlocal gap_quiet_samples, turn_open, recorder_for_call, utterance, call_pre_roll
+            nonlocal gap_quiet_samples, turn_open, recorder_for_call, utterance, call_pre_roll, speech_continues
             turn_open = False
             utterance = None
             call_pre_roll = None
+            speech_continues = False
             heard_over.clear()
             if reset_admission:
                 if voice_gate is not None:
@@ -1140,7 +1147,7 @@ class VoiceConversation:
             recorder_for_call = self.call is not None
             if recorder_for_call:
                 options["commands_only"] = True
-                self.call.input.reset()
+                renew_call_input()
             if recorder is not None:
                 recorder.abort()
             if self._playback.user_speaking:
@@ -1154,7 +1161,7 @@ class VoiceConversation:
         recorder_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reachy-recorder")
         last_slow_feed = 0.0
         async def record_admitted(sample, *, captured_at, send_to_call=True):
-            nonlocal last_slow_feed, gap_quiet_samples, turn_open, utterance, call_pre_roll
+            nonlocal last_slow_feed, gap_quiet_samples, turn_open, utterance, call_pre_roll, speech_continues
             # Keep VAD ahead of transcription/TTS work in the shared executor.
             started = time.monotonic()
             feed = asyncio.get_running_loop().run_in_executor(recorder_worker, recorder.feed, sample)
@@ -1165,6 +1172,8 @@ class VoiceConversation:
                 raise
             endpoint_at = time.monotonic()
             quiet_s = recorder.quiet_s
+            # Read before take: a companion's endpoint there starts the recorder's voice detector over.
+            voicing = recorder.speech_active and quiet_s == 0
             if recorder.active or recorder.speech_active:
                 if self.call is not None:
                     heard_over.update(self.call.audible_transcripts(ECHO_TAIL_S))
@@ -1221,9 +1230,17 @@ class VoiceConversation:
                 elif not streaming:
                     call_pre_roll = None
                 if heard.ended is not None or heard.transcript_lost:
-                    from reachy_muse.realtime_call import CallInput
                     call_input = call.input if playback else None
-                    call.input = CallInput(call.feed, self.hardware.sample_rate)
+                    # A turn the user talks straight through keeps its gate, so the rest of the utterance flows on.
+                    speech_continues = voicing
+                    if not voicing:
+                        renew_call_input()
+                elif recorder.active:
+                    speech_continues = False
+                elif quiet_s >= CALL_RECOVERY_PAUSE_S:
+                    speech_continues = False
+                    if call.input.heard_speech:
+                        renew_call_input()
             elif (speaking and heard_over and recorder.supports_partials
                     and not self._playback.user_speaking):
                 # Hardware AEC can leave residual speech. Keep capturing it, but
@@ -1270,7 +1287,7 @@ class VoiceConversation:
                                  bearing, current.generation)
 
         def recording_active():
-            return recorder.active or (voice_gate is not None and voice_gate.active)
+            return recorder.active or speech_continues or (voice_gate is not None and voice_gate.active)
 
         async def record(sample, *, captured_at, send_to_call=True):
             if voice_gate is None:

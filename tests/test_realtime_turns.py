@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from reachy_muse.realtime_call import VoiceLink, realtime_supported
-from test_device_command_turns import SpeakerHardware, never_asked, played, run, sent_to_muse, service
+from test_device_command_turns import FakeModel, SpeakerHardware, never_asked, played, run, sent_to_muse, service
 from test_pins import CHUNK, VOICE_SAMPLE, WAKE_SAMPLE, FailingStreamingTranscriber, Rig, Transcripts, Wake
 from reachy_muse.capabilities import Partial
 
@@ -292,10 +292,37 @@ def voiced(seconds, amp=4000):
     return (amp * np.sin(2 * np.pi * 150 * t)).astype("<i2").tobytes()
 
 
+def _voice(frames):
+    return np.abs(np.frombuffer(b"".join(frames), "<i2").astype(int)) >= VOICE_SAMPLE * 32767 / 2
+
+
 def voiced_ms(frames):
     """Milliseconds of the user's voice, at ``VOICE_SAMPLE``, in the microphone frames a call received."""
-    pcm = np.abs(np.frombuffer(b"".join(frames), "<i2").astype(int))
-    return round(np.count_nonzero(pcm >= VOICE_SAMPLE * 32767 / 2) * 1000 / RATE)
+    return round(np.count_nonzero(_voice(frames)) * 1000 / RATE)
+
+
+def gaps_ms(frames):
+    """Each stretch, in milliseconds, missing from the user's voice between its first and last sample in call frames."""
+    voice = _voice(frames)
+    if not voice.any():
+        return []
+    inside = ~voice[np.argmax(voice):len(voice) - np.argmax(voice[::-1])]
+    changes = np.flatnonzero(np.diff(np.concatenate(([0], inside.astype(int), [0]))))
+    return [round((end - start) * 1000 / RATE) for start, end in zip(changes[::2], changes[1::2])]
+
+
+def companion_hearing(conversation):
+    """Route the conversation's hearing through a companion link whose replies the test sends; returns the link."""
+    from dataclasses import replace
+    from reachy_muse.companion_client import CompanionHearing, CompanionLink, LinkState, _Connection
+    from reachy_muse.protocol import Op
+
+    link = CompanionLink("ws://localhost:9", token="test", out_rate=16000, insecure=True)
+    link._connection = _Connection(None, (Op.HEAR,))
+    link._set(LinkState.UP)
+    backends = conversation.backends
+    conversation.backends = lambda session: replace(backends(session), hearing=CompanionHearing(link))
+    return link
 
 
 class CallHardware(SpeakerHardware):
@@ -1255,6 +1282,62 @@ def test_while_muse_talks_past_the_wake_deadline_only_confirmed_speech_reaches_i
     assert [line for line in caplog.messages if line.startswith("Realtime command ")] == diagnostics
     assert set(played(events)) == {"muse"}
     assert sent_to_muse(events) == []
+
+
+@pytest.mark.parametrize("muse, barge_ins, pending", [("works", 0, [1, 2, 3]), ("talks", 1, [2, 3]),
+                                                     ("has finished", 0, [2, 3])])
+def test_speech_that_runs_on_past_a_companion_endpoint_reaches_muse_without_a_gap(monkeypatch, muse, barge_ins, pending):
+    """The companion ends the user's turn while the user is still talking, after the wake deadline.
+
+    A command model that takes its time, as on the robot, holds up each turn's acceptance."""
+    from reachy_muse.protocol import HearEndpoint, HearPartial, encode
+
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    words = "Actually, I love your voice, tell me about trains."
+
+    async def answer(sdk, emit, script):
+        if muse == "works":
+            emit(sdk.Working(True))
+        else:
+            reply_events(sdk, emit, "r1", REPLY, voiced(7.5 if muse == "talks" else .5))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, model=FakeModel(None, delay_s=.25))
+    link = companion_hearing(conversation)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        if muse == "has finished":
+            while not ("muse" in played(rig.recording.events) and not call.audible):
+                await room(rig, .04)
+        deadline = voice._wake_deadline
+        await room(rig, deadline - time.monotonic() + (-.3 if muse == "has finished" else .3))
+        due = {"works": lambda: chunks >= 25, "talks": lambda: calls.barge_ins > 0,
+               "has finished": lambda: time.monotonic() > deadline}[muse]
+        before = len(calls.frames)
+        streams, ended = [], False
+        for chunks in range(1, 51):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            for stream in [stream for stream in link._connection.hearing if stream not in streams]:
+                streams.append(stream)
+                link._receive(link._connection, encode(HearPartial(stream, 1, words)))
+            if streams and not ended and due():
+                link._receive(link._connection, encode(HearEndpoint(streams[0], words, False)))
+                ended = True
+        for _ in range(100):
+            if call.turns == 3:
+                break
+            await room(rig, .04)
+        heard.append((gaps_ms(calls.frames[before:]), voiced_ms(calls.frames[before:]), calls.barge_ins,
+                      [turn.ordinal for turn in call.pending]))
+
+    run(rig, conversation, user, rest=("thinking", "listening"))
+    assert heard == [([], 1000, barge_ins, pending)]
 
 
 def test_while_muse_works_past_the_follow_up_window_the_room_stops_reaching_muse_but_the_call_stays(monkeypatch):
