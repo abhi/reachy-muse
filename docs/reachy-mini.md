@@ -717,9 +717,10 @@ Realtime needs a wake word (`--wake-model`) and `--mode on-robot` or
 uses chat. Muse hears everything said after the wake word until the follow-up
 window closes, so Reachy's local chat does not answer greetings in a call.
 
-- Reachy uses streaming words only to detect sleep, stop talking, volume, and
-  face following. Local recognition does not create requests or conversational
-  cues. It never runs Whisper during a call or waits for the companion's final
+- Reachy uses streaming words only to detect sleep, stop talking, volume, face
+  following and, with `--photo-requests`, a [photo request](#photos-for-muse).
+  Local recognition does not create other requests or conversational cues. It
+  never runs Whisper during a call or waits for the companion's final
   endpoint. A local streaming final has a 250 ms deadline.
 - During playback, an interruption needs 300 ms of speech and distinct words
   for at least 120 ms. Two words are required, except for stop commands. Reply
@@ -936,8 +937,9 @@ back to normal expressions. In still mode, idle following returns to the still
 resting pose without breathing or antenna sway. The detector initially selects
 the largest face and stays with that face while it remains nearby. It does not
 identify people or distinguish which person is speaking in a group. Camera frames
-remain in memory on Reachy and are not sent to Muse or saved. Muse knows that local
-tracking is active but cannot describe the camera scene through this feature.
+remain in memory on Reachy and are never saved. None is sent to Muse, except one photo
+per explicit spoken request with [`--photo-requests`](#photos-for-muse). Muse knows that
+local tracking is active but cannot describe the camera scene through this feature.
 
 The model's MIT license, pinned source and checksum are packaged alongside it.
 `--face-follow-model PATH` selects another compatible YuNet model and requires
@@ -959,6 +961,77 @@ the pipeline, so in companion mode Reachy's own fallback voice plays through the
 companion curve too. Other media backends and SDKs with their own speaker
 correction retain their own audio path. The voice remains Piper Lessac medium;
 synthesis of Lessac high was too slow on the tested Pi.
+
+## Photos for Muse
+
+Add `--photo-requests` to `muse-reachy run` to show Muse something through
+Reachy's camera. It is off by default. It needs `--mode on-robot` or
+`companion`, because Reachy must recognize your words itself, and OpenCV on the
+robot to encode the photo; startup stops if OpenCV cannot be imported.
+
+When Reachy hears you ask for a photo, it takes one photo and sends it to Muse
+with your words as one chat message: "Reachy took this photo with its camera
+just now because the user asked. The user's spoken request is: …". A short
+shutter sound plays once the photo is taken. Reachy says nothing else until
+Muse's answer, which it speaks in its own voice.
+
+These ask for a photo: "take a photo", "take a picture of this and tell me what
+it is", "send Muse a photo of the whiteboard", "what do you see?", "what am I
+holding?", "what's in front of you?" and "look at this and tell me what it
+says". As with device commands, a request may open with words such as "okay" or
+"Reachy", use a polite form such as "can you", and end with "please" or "now".
+The request must come first in what you say, so negated, quoted and reported
+forms, such as "don't take a photo" or "she said take a photo", and questions
+about photos, such as "can you take photos?", never take one. Neither does a
+request to share, keep or schedule the photo, such as "take a photo and send it
+to my wife", "take a photo for my wife" or "take a photo tomorrow". These
+phrases never go to the companion's command model, which could take "look at
+this" for face following. Without `--photo-requests`, they go to Muse as
+ordinary requests.
+
+- Only Reachy's own recognition of a turn it admitted can grant a photo, after
+  its echo filters, and only one: a single capture attempt uses the request up,
+  whatever happens. A request that waits more than 30 seconds after you stopped
+  speaking lapses. Muse has no camera command and cannot ask Reachy for a photo.
+  Only with the flag does Reachy's registration tell Muse how photos arrive.
+- A photo request heard while Muse works on another request, a briefing or
+  another photo gets "One at a time, please." and no photo.
+- The camera is in the head, so Reachy waits up to a second for its head to come
+  to rest, then holds the camera still until it has the frame. A gaze held on
+  another person ends first, as it does for any next request, so the photo shows
+  what Reachy faces afterwards, usually you.
+- In a [realtime call](#realtime-voice-calls), Muse hears the request too.
+  Reachy cuts off Muse's spoken answer, as it does for a device command, and
+  speaks Muse's answer to the photo in its own voice. The call stays open. A
+  request whose words miss the 250 ms deadline stays with Muse, which answers in
+  the call without a photo.
+
+| What goes wrong | Reachy says |
+| --- | --- |
+| The camera stays busy, gives no frame, or fails, or the photo cannot be encoded | "I couldn't take a photo." |
+| No JPEG of 150 KiB or less fits, even 640 pixels wide | "That photo was too large to send." |
+| Muse rejects the photo, or does not acknowledge it within 20 seconds | "Muse didn't get the photo." |
+| Muse does not answer within three minutes | "Muse didn't answer about the photo." |
+| The request waited more than 30 seconds | "Please ask me again for the photo." |
+
+The conversation, and any call, keeps running after each of these.
+
+One JPEG of at most 150 KiB and at most 1280 pixels wide, and your words, go to
+the Muse chat that Reachy talks in. The photo stays in that chat's history and
+may appear in the Muse app. Nothing from the camera goes to the companion. The
+frame, the JPEG and the request stay in memory and are never written to disk.
+Any voice that Reachy admits can ask for a photo, including a guest's or a
+television's while the microphone is open, and people in view are not asked. The
+shutter sound is the only notice.
+
+Each request logs one line, such as `Reachy photo outcome=sent path=chat
+width=1280 height=720 quality=80 bytes=98304 capture_ms=120 encode_ms=18
+upload_ms=640`. The outcome is `sent`, `busy`, `expired`, `camera_busy`,
+`no_frame`, `camera_failed`, `too_large`, `rejected`, `send_timeout`,
+`no_answer`, or `interrupted` when the turn ended another way. `capture_ms`
+includes the wait for a still head. In a call, the `Realtime command` line shows
+`outcome=PHOTO`. Logs never contain your words, Muse's answer, the image or its
+base64.
 
 ## Morning briefing
 
@@ -1044,18 +1117,20 @@ motion, so `--no-motion` is refused. It needs `--mode on-robot` or
 
 ### Privacy
 
-Camera frames stay in memory on Reachy. They are not saved and not sent to Muse
-or to the companion. Any person who walks in triggers the briefing. Reachy does
-not recognize faces or identify people. Muse receives only the briefing request,
-which carries nothing from the camera. Logs record the arrival time and how long
-the briefing took. During watching, one `Arrival stats` line per minute reports
-frame reads, frame errors, mean brightness from 0 to 255, motion triggers,
-detector runs, maximum person confidence, head pitch and yaw in degrees, and
-numeric sleep and camera-still states. Counts cover the preceding interval.
-Zero frames means brightness and confidence are also zero, not measured darkness.
-Start, stop, failure, and retry logs give the reason. Failed watchers retry at
-the next minute; individual frame-read errors retry at the normal sample rate.
-Logs never contain the briefing text, the request, or an image.
+Camera frames stay in memory on Reachy. They are not saved or sent to the
+companion, and none is sent to Muse, except one photo per explicit spoken
+request with [`--photo-requests`](#photos-for-muse). Any person who walks in
+triggers the briefing. Reachy does not recognize faces or identify people. Muse
+receives only the briefing request, which carries nothing from the camera. Logs
+record the arrival time and how long the briefing took. During watching, one
+`Arrival stats` line per minute reports frame reads, frame errors, mean
+brightness from 0 to 255, motion triggers, detector runs, maximum person
+confidence, head pitch and yaw in degrees, and numeric sleep and camera-still
+states. Counts cover the preceding interval. Zero frames means brightness and
+confidence are also zero, not measured darkness. Start, stop, failure, and retry
+logs give the reason. Failed watchers retry at the next minute; individual
+frame-read errors retry at the normal sample rate. Logs never contain the
+briefing text, the request, or an image.
 
 ### Test outside the window
 
@@ -1247,7 +1322,7 @@ The device registers as `Reachy Mini` with five commands:
 | Command | Behavior |
 | --- | --- |
 | `reachy.say` | Speaks a short message in the room through the normal speaker path. Required `text` is 1 to 240 UTF-8 bytes. Returns `spoken: true` after playback, otherwise `spoken: false` and a reason. |
-| `reachy.presence` | Fuses camera, face, voice and wave observations. Returns `present`, `last_seen_seconds`, `source`, `available` and the optional owner-configured `place`. Unknown values are null. No images or identity leave the robot. |
+| `reachy.presence` | Fuses camera, face, voice and wave observations. Returns `present`, `last_seen_seconds`, `source`, `available` and the optional owner-configured `place`. Unknown values are null. It returns no images or identity. |
 | `reachy.notify` | Queues or speaks a notification or suggestion using `id`, `text`, `mode` and `kind`, with optional `expires_in_s`. Returns `delivered`, `queued`, `expired` or `refused` with a reason. |
 | `reachy.expression` | Plays neutral, happy, sad, surprised, curious, nod, shake, listening, thinking, or error. An exact name from Pollen's official recorded emotions library loads that move on demand. The move crossfades in from the resting pose over 0.4 seconds while it plays, and back out over 0.4 seconds after it ends. Speech sway continues on top, and the result stays within the `reachy.move` limits. Sound effects stay off during Muse speech. |
 | `reachy.move` | Moves head translation, rotation, body yaw, and antennas smoothly within advertised limits. Invalid or nonfinite values are rejected. |

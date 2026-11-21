@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 
+from reachy_muse.contract.commands import PHOTO_REQUESTS
+
 MODEL_ID = "pollen-reachy-mini"
 MODEL_NAME = "Reachy Mini"
 MAX_GUIDE_BYTES = 4096
@@ -58,9 +60,13 @@ or say the same reply again. These commands grant no additional permissions.
 """
 
 
+PHOTO_GUIDE = f"\n## Photos\n\n{PHOTO_REQUESTS}\n"
+
+
 def owner_place(place: str | None) -> str:
     return "" if place is None else f"Owner-configured place: {json.dumps(place, ensure_ascii=False)}."
 
 
-def reachy_guide(place: str | None = None) -> str:
-    return REACHY_GUIDE + ("\n" + owner_place(place) + "\n" if place is not None else "")
+def reachy_guide(place: str | None = None, *, photos: bool = False) -> str:
+    guide = REACHY_GUIDE + (PHOTO_GUIDE if photos else "")
+    return guide + ("\n" + owner_place(place) + "\n" if place is not None else "")

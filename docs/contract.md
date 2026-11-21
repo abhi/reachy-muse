@@ -15,6 +15,14 @@ local controls. Ordinary requests contain only the user's words. The optional
 Reconnects and companion changes never add a voice context. The morning
 briefing request asks for its own 60 to 90 seconds, roughly 150 to 220 words.
 
+No camera image reaches Muse, except one photo per explicit spoken request with
+`--photo-requests`. That photo goes up with `send_image` as one chat message:
+the local-chat note if any, the words "Reachy took this photo with its camera
+just now because the user asked. The user's spoken request is: …", then one
+JPEG of at most 150 KiB named `reachy-photo.jpg`. Muse has no command that
+takes a photo. Only with the flag does the `reachy.say` description tell Muse
+how photos arrive; see [Registration size](#registration-size).
+
 ## Registered commands
 
 | Command | Parameters and result |
@@ -139,6 +147,14 @@ under the 8,192-byte cap. `commands_v2` occupies 5,272 bytes.
 The guide is 2,390 UTF-8 bytes, within its 4,096-byte limit. Configuring `office`
 makes the current SDK registration 5,588 bytes including its prefix. The worst
 escaped 64-byte place label makes it 5,838 bytes, still below 8,192.
+
+Only with `--photo-requests`, the `reachy.say` description ends with one more
+sentence: "When the user asks Reachy itself to take a photo or what it sees,
+Reachy sends you one photo with their words as a chat message and speaks your
+reply. You cannot ask Reachy for a photo." It makes that description 1,657 bytes
+and the registration 5,738 bytes including its prefix, or 6,024 bytes with the
+worst place label. The guide gains the same sentence under `## Photos`, for
+2,588 bytes. Without the flag, Muse is not told about photos.
 
 `tests/test_registration.py` compares the literal registration fixture and
 measures the actual SDK `encode_message` output, including the prefix. It also

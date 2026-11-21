@@ -36,6 +36,13 @@ or suspends local vision. See [microphone measurements](bench/microphone_budget.
 Keep screens showing people outside its view: a video of a
 waving person can also trigger it. See [wave measurements and limitations](bench/wave.md).
 
+Add `--photo-requests` in `on-robot` or `companion` mode to let you show Muse
+something. When you ask Reachy "what do you see?" or "take a photo of this and tell
+me what it is", it plays a shutter sound and sends Muse one photo with your words,
+then speaks Muse's answer. It is off by default and needs OpenCV on the robot.
+Only your spoken request takes a photo: Muse cannot ask for one, and no image is
+saved. See [Photos for Muse](docs/reachy-mini.md#photos-for-muse).
+
 ## Presence and notifications
 
 Add `--place office` to `muse-reachy run` to tell Muse where Reachy sits. The label
