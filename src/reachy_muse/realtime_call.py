@@ -595,7 +595,8 @@ class RealtimeCall:
             return False
         opened = [response for response in self._responses.values() if not response.done]
         latest = self._responses.get(self.latest_response)
-        if (latest is not None and latest.audio_bytes == 0 and now - latest.started_at >= RESPONSE_AUDIO_S
+        if (latest is not None and not latest.done and latest.audio_bytes == 0
+                and now - latest.started_at >= RESPONSE_AUDIO_S
                 and any(latest.started_at >= turn.speech_end_at for turn in self.pending)):
             return False
         return self.working or bool(opened)
