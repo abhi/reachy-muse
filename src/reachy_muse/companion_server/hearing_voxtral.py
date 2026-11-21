@@ -11,6 +11,7 @@ import asyncio
 import logging
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Sequence, TypeVar
 
@@ -31,6 +32,19 @@ VAD_CONTEXT = 64  # Silero expects the last 64 samples of the previous window in
 TURN_SECONDS = 8  # Smart Turn reads the last 8 s of the turn
 
 T = TypeVar("T")
+_timing = threading.local()
+
+
+@contextmanager
+def _stage(name: str):
+    started = time.perf_counter()
+    try:
+        yield
+        watchdog.progress()
+    finally:
+        stages = getattr(_timing, "stages", None)
+        if stages is not None:
+            stages[name] = stages.get(name, 0.0) + time.perf_counter() - started
 
 
 @dataclass(frozen=True)
@@ -65,7 +79,25 @@ class VoxtralHearing:
         self._models = await self.run(self._load)
 
     async def run(self, work: Callable[..., T], *args: Any) -> T:
-        return await asyncio.get_running_loop().run_in_executor(self._thread, work, *args)
+        return await asyncio.wrap_future(self._submit(work, *args))
+
+    def _submit(self, work, *args):
+        queued = time.perf_counter()
+
+        def timed():
+            started = time.perf_counter()
+            _timing.stages = {}
+            try:
+                return work(*args)
+            finally:
+                stages = _timing.stages
+                del _timing.stages
+                elapsed = time.perf_counter() - queued
+                if elapsed > 1.0:
+                    log.warning("hearing call=%s total=%.3fs queue=%.3fs stages=%s", work.__name__.lstrip("_"),
+                                elapsed, started - queued, " ".join(f"{name}:{seconds:.3f}s" for name, seconds in stages.items()))
+
+        return self._thread.submit(timed)
 
     def open(self, pre_roll_frames: int) -> _Session:
         # The pre-roll is transcribed like any other audio: it can hold the start of the request.
@@ -142,7 +174,7 @@ class _Session:
     async def close(self) -> None:
         self._closed.set()
         # Native work cannot be interrupted; release its arrays on the worker when it returns.
-        self.hearing._thread.submit(self._release)
+        self.hearing._submit(self._release)
 
     def _release(self) -> None:
         self.utterance = None
@@ -155,8 +187,8 @@ class _Utterance:
         self.models = models
         self.config = config
         self.cancelled = cancelled if cancelled is not None else threading.Event()
-        self.stream = models.voxtral.create_streaming_session(transcription_delay_ms=config.delay_ms)
-        watchdog.progress()
+        with _stage("voxtral_open"):
+            self.stream = models.voxtral.create_streaming_session(transcription_delay_ms=config.delay_ms)
         self.raw = ""
         self.audio: List[np.ndarray] = []
         self.unread = np.zeros(0, np.float32)
@@ -174,14 +206,14 @@ class _Utterance:
         """Return the final transcript when this audio ends the turn."""
         _check_open(self.cancelled)
         self.audio.append(samples)
-        self.stream.feed(samples)
-        watchdog.progress()
+        with _stage("voxtral_feed"):
+            self.stream.feed(samples)
         _check_open(self.cancelled)
-        for delta in self.stream.step(max_decode_tokens=16):
-            watchdog.progress()
-            _check_open(self.cancelled)
-            self.raw += delta
-        watchdog.progress()
+        with _stage("voxtral_step"):
+            for delta in self.stream.step(max_decode_tokens=16):
+                watchdog.progress()
+                _check_open(self.cancelled)
+                self.raw += delta
         _check_open(self.cancelled)
         return self.final() if self._turn_over(samples) else None
 
@@ -192,18 +224,20 @@ class _Utterance:
             from parakeet_mlx.audio import get_logmel
 
             parakeet = self.models.parakeet
-            mel = get_logmel(array(np.concatenate(self.audio)), parakeet.preprocessor_config)
-            watchdog.progress()
+            with _stage("parakeet_features"):
+                mel = get_logmel(array(np.concatenate(self.audio)), parakeet.preprocessor_config)
             _check_open(self.cancelled)
-            return parakeet.generate(mel)[0].text.strip()
-        self.stream.close()
+            with _stage("parakeet_final"):
+                return parakeet.generate(mel)[0].text.strip()
+        with _stage("voxtral_close"):
+            self.stream.close()
         while not self.stream.done:
             _check_open(self.cancelled)
-            for delta in self.stream.step(max_decode_tokens=64):
-                watchdog.progress()
-                _check_open(self.cancelled)
-                self.raw += delta
-            watchdog.progress()
+            with _stage("voxtral_final"):
+                for delta in self.stream.step(max_decode_tokens=64):
+                    watchdog.progress()
+                    _check_open(self.cancelled)
+                    self.raw += delta
         return self.text
 
     def _turn_over(self, samples: np.ndarray) -> bool:
@@ -228,18 +262,19 @@ class _Utterance:
     def _speech_probability(self, window: np.ndarray) -> float:
         framed = np.concatenate((self.context, window))[None, :]
         self.context = window[-VAD_CONTEXT:]
-        probability, self.vad_state = self.models.vad.run(None, {"input": framed, "state": self.vad_state, "sr": np.array(RATE, np.int64)})
-        watchdog.progress()
+        with _stage("vad"):
+            probability, self.vad_state = self.models.vad.run(None, {"input": framed, "state": self.vad_state, "sr": np.array(RATE, np.int64)})
         return float(probability[0][0])
 
     def turn_complete(self) -> bool:
         _check_open(self.cancelled)
         tail = np.concatenate(self.audio)[-TURN_SECONDS * RATE :]
         tail = np.pad(tail, (TURN_SECONDS * RATE - len(tail), 0))
-        features = self.models.features(tail, sampling_rate=RATE, return_tensors="np", padding="max_length", max_length=TURN_SECONDS * RATE, truncation=True, do_normalize=True)
-        watchdog.progress()
+        with _stage("turn_features"):
+            features = self.models.features(tail, sampling_rate=RATE, return_tensors="np", padding="max_length", max_length=TURN_SECONDS * RATE, truncation=True, do_normalize=True)
         _check_open(self.cancelled)
-        (probability,) = self.models.turn.run(None, {"input_features": features.input_features.astype(np.float32)})
+        with _stage("turn"):
+            (probability,) = self.models.turn.run(None, {"input_features": features.input_features.astype(np.float32)})
         return float(probability[0][0]) >= self.config.turn_threshold
 
 

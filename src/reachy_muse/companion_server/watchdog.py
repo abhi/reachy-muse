@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import faulthandler
 import os
+import resource
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -98,7 +100,14 @@ class Watchdog:
                     try:
                         os.write(2, message.encode())
                     finally:
-                        self._exit(EXIT_STATUS)
+                        try:
+                            faulthandler.dump_traceback(file=2, all_threads=True)
+                        finally:
+                            try:
+                                usage = resource.getrusage(resource.RUSAGE_SELF)
+                                os.write(2, f"companion watchdog: page faults: minor={usage.ru_minflt} major={usage.ru_majflt}\n".encode())
+                            finally:
+                                self._exit(EXIT_STATUS)
                     return
 
 

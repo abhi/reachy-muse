@@ -1,6 +1,8 @@
 """Exercise process death, including an engine whose asyncio waiter was cancelled. No models."""
 
 import asyncio
+import os
+import resource
 import subprocess
 import sys
 import threading
@@ -10,6 +12,58 @@ from types import SimpleNamespace
 import pytest
 
 from reachy_muse.companion_server.watchdog import EngineExecutor, Watchdog
+
+
+def test_hearing_hard_limit_dumps_all_threads_and_fault_counts_before_exit(monkeypatch, capfd):
+    now = [100.0]
+    entered, release, exited = threading.Event(), threading.Event(), threading.Event()
+    exits, usage_calls = [], []
+
+    def usage(who):
+        usage_calls.append(who)
+        return SimpleNamespace(ru_minflt=17, ru_majflt=3)
+
+    def exit_process(status):
+        exits.append(status)
+        os.write(2, b"INJECTED EXIT\n")
+        exited.set()
+
+    def blocked_hearing_for_dump():
+        private = "private-hearing-content"
+        entered.set()
+        assert release.wait(5)
+        return private
+
+    monkeypatch.setattr(resource, "getrusage", usage)
+    monitor = Watchdog(clock=lambda: now[0], loop_s=1000, check_s=.001, exit_process=exit_process)
+
+    async def scenario():
+        monitor.start()
+        try:
+            with EngineExecutor("hearing", monitor=monitor) as worker:
+                pending = worker.submit(blocked_hearing_for_dump)
+                try:
+                    assert await asyncio.to_thread(entered.wait, 2)
+                    now[0] = 219.9
+                    assert not await asyncio.to_thread(exited.wait, .02)
+                    now[0] = 220.0
+                    assert await asyncio.to_thread(exited.wait, 2)
+                finally:
+                    release.set()
+                assert pending.result() == "private-hearing-content"
+        finally:
+            monitor.stop()
+
+    asyncio.run(scenario())
+    output = capfd.readouterr().err
+    assert exits == [70]
+    assert "hearing made no progress for 120.0s (limit 120s)" in output
+    assert "blocked_hearing_for_dump" in output
+    assert "page faults: minor=17 major=3" in output
+    assert output.index("blocked_hearing_for_dump") < output.index("INJECTED EXIT")
+    assert output.index("page faults:") < output.index("INJECTED EXIT")
+    assert usage_calls == [resource.RUSAGE_SELF]
+    assert "private-hearing-content" not in output
 
 
 @pytest.mark.parametrize("blocked, reason", [
