@@ -80,12 +80,9 @@ class VoxtralHearing:
         self._models: Optional[_Models] = None
 
     async def load(self) -> None:
-        self._models = await self.run(self._load)
+        self._models = await asyncio.wrap_future(self._thread.submit(self._load))
 
     async def run(self, work: Callable[..., T], *args: Any) -> T:
-        return await asyncio.wrap_future(self._submit(work, *args))
-
-    def _submit(self, work, *args):
         queued = time.perf_counter()
 
         def timed():
@@ -101,7 +98,7 @@ class VoxtralHearing:
                     log.warning("hearing call=%s total=%.3fs queue=%.3fs stages=%s", work.__name__.lstrip("_"),
                                 elapsed, started - queued, " ".join(f"{name}:{seconds:.3f}s" for name, seconds in stages.items()))
 
-        return self._thread.submit(timed)
+        return await asyncio.wrap_future(self._thread.submit(timed))
 
     def open(self, pre_roll_frames: int) -> _Session:
         # The pre-roll is transcribed like any other audio: it can hold the start of the request.
@@ -181,7 +178,7 @@ class _Session:
     async def close(self) -> None:
         self.cancel()
         # Native work cannot be interrupted; release its arrays on the worker when it returns.
-        self.hearing._submit(self._release)
+        self.hearing._thread.submit(self._release)
 
     def _release(self) -> None:
         self.utterance = None
