@@ -54,6 +54,7 @@ def test_silent_call_acknowledges_retries_then_recovers_without_replaying(monkey
 
     monkeypatch.setattr(rig.hardware, "gesture", timed_gesture)
     endpoints = []
+    thinking_cues = []
 
     async def user():
         await speak_live(rig, wake=True)
@@ -64,7 +65,8 @@ def test_silent_call_acknowledges_retries_then_recovers_without_replaying(monkey
         for ordinal in (2, 3):
             before = len([state for state in rig.states() if state == "thinking"])
             await speak_live(rig)
-            assert len([state for state in rig.states() if state == "thinking"]) == before + 1
+            assert rig.states()[-1] == "thinking"
+            thinking_cues.append(len([state for state in rig.states() if state == "thinking"]) - before)
             assert [turn.ordinal for turn in call.pending] == list(range(2, ordinal + 1))
             endpoints.append(call.pending[-1].endpoint_at)
             if ordinal == 2:
@@ -87,6 +89,7 @@ def test_silent_call_acknowledges_retries_then_recovers_without_replaying(monkey
     events = run(rig, conversation, user, rest=("listening", "idle"), timeout=30)
     assert played(events).count(LOST) == 1
     assert sent_to_muse(events) == []
+    assert thinking_cues == [1, 0]
     assert [name for name, _ in gestures] == ["nod", "nod"]
     assert [4 <= at - endpoint < 4.3 for (_, at), endpoint in zip(gestures, endpoints)] == [True, True]
     assert stall_cues(caplog) == ["Realtime turn ordinal=2 cue=still_waiting", "Realtime turn ordinal=3 cue=still_waiting"]
@@ -580,20 +583,27 @@ def test_a_reply_the_sdk_holds_for_a_turn_muse_never_starts_is_not_an_answer(mon
     assert muse.links == 2
 
 
-def test_a_reply_the_sdk_drops_after_a_device_command_is_not_a_silent_answer(monkeypatch, caplog):
-    """A device command during Muse's work makes Reachy barge in, so the SDK drops Muse's next reply's words
-    and audio, and Reachy sees only its ResponseStarted and ResponseDone."""
+@pytest.mark.parametrize("muse_meanwhile", ["works", "calls a tool", "acknowledges the command while working"])
+def test_a_reply_the_sdk_drops_after_a_device_command_is_not_a_silent_answer(monkeypatch, caplog, muse_meanwhile):
+    """A device command during Muse's work makes Reachy barge in, so the SDK drops the words and audio of
+    every reply until the user speaks again, and Reachy sees only each reply's ResponseStarted and ResponseDone."""
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
 
     async def answer(sdk, emit, script):
         emit(sdk.Working(True))
+        if muse_meanwhile == "calls a tool":
+            emit(sdk.ResponseStarted("tool-call"))
+            emit(sdk.ResponseDone("tool-call", "completed"))
         while script.barge_ins == 0:
             await asyncio.sleep(.05)
+        if muse_meanwhile == "acknowledges the command while working":
+            emit(sdk.ResponseStarted("acknowledgement"))
+            emit(sdk.ResponseDone("acknowledgement", "completed"))
         await asyncio.sleep(1)
         emit(sdk.Working(False))
-        emit(sdk.ResponseStarted("r1"))
-        emit(sdk.ResponseDone("r1", "completed"))
+        emit(sdk.ResponseStarted("answer"))
+        emit(sdk.ResponseDone("answer", "completed"))
 
     calls = ScriptedCalls(answer=answer)
     conversation = realtime_service(rig, StreamingTranscripts("What's the weather?", "Volume up."), calls,
@@ -652,9 +662,10 @@ def test_muse_moving_reachy_answers_a_request_while_working_stays_on(monkeypatch
     assert NOD_COMMAND in events
 
 
-@pytest.mark.parametrize("working_after", [None, .3, 1.2],
-                         ids=["Working first", "Working just after", "Working after a quiet second"])
-def test_a_hung_tool_call_stays_pending_until_its_work_goes_stale(monkeypatch, caplog, working_after):
+@pytest.mark.parametrize("working_after, gestures", [(None, False), (None, True), (.3, False), (1.2, False)],
+                         ids=["Working first", "Muse gestures meanwhile", "Working just after",
+                              "Working after a quiet second"])
+def test_a_hung_tool_call_stays_pending_until_its_work_goes_stale(monkeypatch, caplog, working_after, gestures):
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
 
@@ -666,6 +677,8 @@ def test_a_hung_tool_call_stays_pending_until_its_work_goes_stale(monkeypatch, c
         if working_after is not None:
             await asyncio.sleep(working_after)
             emit(sdk.Working(True))
+        if gestures:
+            await asyncio.to_thread(conversation.run_command, "reachy.expression", {"name": "thinking"}, 5000)
 
     calls = ScriptedCalls(answer=answer)
     conversation = realtime_service(rig, StreamingTranscripts("Book a table for two."), calls, wake_timeout_s=10)
@@ -682,6 +695,7 @@ def test_a_hung_tool_call_stays_pending_until_its_work_goes_stale(monkeypatch, c
         await wait_for(rig, lambda: LOST in played(rig.recording.events))
 
     events = run(rig, conversation, user, rest=("listening", "idle"), timeout=45)
+    assert ({"robot": "command", "name": "reachy.expression", "params": {"name": "thinking"}} in events) == gestures
     assert poses == ["thinking"]
     assert recoveries(caplog) == ["Realtime recovery attempt=1 reason=working_stale"]
     assert [row["outcome"] for row in turn_outcomes(caplog)] == ["recovered"]

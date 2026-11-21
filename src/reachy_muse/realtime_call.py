@@ -555,6 +555,7 @@ class RealtimeCall:
         self.last_event_at: Optional[float] = None
         self._quiet_since: Optional[float] = None
         self._moved_at: Optional[float] = None
+        self._working_since: Optional[float] = None
         self._responses: dict[Optional[str], _Response] = {}
         self._response_count = 0
         self._audio_bytes = 0
@@ -600,17 +601,22 @@ class RealtimeCall:
 
     def _answered_silently(self, turn: PendingTurn, now: float) -> bool:
         """Whether Muse answered the turn by acting: a response begun after its last voiced sample completed
-        without audio, and Muse either moved Reachy since that sample, or began the response while working
-        and has since been quiet, neither working nor in a response, for ``QUIET_SETTLE_S``.
+        without audio, and either Muse moved Reachy since that sample, or the latest such response began while
+        Muse worked and Muse has since been quiet, neither working nor in a response, for ``QUIET_SETTLE_S``.
 
-        Without either sign, the response looks just like a spoken reply the SDK held or dropped.
+        Without either sign, the response looks just like a spoken reply the SDK held or dropped. Muse can
+        gesture while a tool call hangs, so a move made while Muse still works on the turn doesn't count;
+        Working stuck on from an earlier turn doesn't stop it.
         """
         silent = [response for response in self._responses.values()
                   if response.completed and not response.audio_bytes and response.started_at >= turn.speech_end_at]
-        if silent and self._moved_at is not None and self._moved_at >= turn.speech_end_at:
+        if not silent:
+            return False
+        if (self._moved_at is not None and self._moved_at >= turn.speech_end_at
+                and (not self.working or self._working_since < turn.speech_end_at)):
             return True
-        return (any(response.during_work for response in silent)
-                and self._quiet_since is not None and now - self._quiet_since >= QUIET_SETTLE_S)
+        latest = max(silent, key=lambda response: response.started_at)
+        return latest.during_work and self._quiet_since is not None and now - self._quiet_since >= QUIET_SETTLE_S
 
     def _outcome(self, turn: PendingTurn, outcome: str, replied_at: Optional[float] = None) -> None:
         self.outcomes[outcome] += 1
@@ -724,6 +730,8 @@ class RealtimeCall:
         elif kind == "PlaybackFlushed":
             self.speaker.flush_now()
         elif kind == "Working":
+            if event.working and not self.working:
+                self._working_since = self.last_event_at
             self.working = event.working
         elif kind == "ResponseStarted":
             self.latest_response = event.response_id

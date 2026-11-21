@@ -2613,8 +2613,7 @@ class VoiceConversation:
             await self._call_lost(call)
             return TurnOutcome.EMPTY
         if pending and not self._has_output():
-            self._moments.cue(Moment.THINKING)
-            await self._plan(plan.Working(output=False, user_speaking=self._playback.user_speaking))
+            await self._look_thoughtful()
         request.timeline.facts["path"] = "realtime"
         request.timeline.report()
         return TurnOutcome.ACCEPTED
@@ -2751,12 +2750,16 @@ class VoiceConversation:
             self._background(self._muse_quiet())
 
     async def _muse_works(self) -> None:
-        """Muse began working on a request: Reachy looks thoughtful unless it is speaking, hearing the user,
-        or already thinking."""
-        if self._has_output() or self._playback.user_speaking or self._planner.state is plan.State.THINKING:
+        """Muse began working on a request: Reachy looks thoughtful unless it is speaking or hearing the user."""
+        if not self._has_output() and not self._playback.user_speaking:
+            await self._look_thoughtful()
+
+    async def _look_thoughtful(self) -> None:
+        """Show the thinking pose unless it already shows: cueing the thinking moment again stops and replays it."""
+        if self._planner.state is plan.State.THINKING:
             return
         self._moments.cue(Moment.THINKING)
-        await self._plan(plan.Working(output=False, user_speaking=False))
+        await self._plan(plan.Working(output=False, user_speaking=self._playback.user_speaking))
 
     def _muse_replied(self, response_id: str | None) -> None:
         call = self.call
