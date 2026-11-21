@@ -209,6 +209,39 @@ def test_muse_commands_own_absolute_pose_then_gaze_returns(monkeypatch, command)
     assert samples[235]['pitch'] == pytest.approx(-4, abs=.1)
 
 
+def test_releasing_person_gaze_cannot_erase_a_newly_admitted_target(monkeypatch):
+    admitted = []
+
+    def action(controller, follower, tick):
+        if tick == 1:
+            controller._face_follower = None
+            controller.set_state('listening')
+            assert controller.look_at_person(math.radians(30), 0)
+        if tick == 40:
+            assert controller._person_hold
+            lock = controller._state_lock
+
+            class ReleasingLock:
+                def __enter__(self):
+                    lock.__enter__()
+                    self.releasing = controller._person_release
+
+                def __exit__(self, *args):
+                    consumed = self.releasing and not controller._person_release
+                    lock.__exit__(*args)
+                    if consumed and not admitted:
+                        admitted.append(controller.look_at_person(math.radians(-25), 0))
+
+            controller._state_lock = ReleasingLock()
+            controller.release_person_gaze()
+
+    controller, _, samples = drive(monkeypatch, action, style=MotionStyle(breathing=False))
+    assert admitted == [True]
+    assert controller._person_hold is True
+    assert samples[135]['yaw'] == pytest.approx(-25, abs=.1)
+    assert math.degrees(controller._robot.body_yaw) == pytest.approx(-5, abs=.1)
+
+
 @pytest.mark.parametrize('gesture', ['nod', 'shake', 'tilt'])
 def test_recorded_command_keeps_its_pose_when_a_listening_gesture_arrives(monkeypatch, gesture):
     from reachy_muse.hardware import _Command

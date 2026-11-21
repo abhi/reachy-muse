@@ -1281,23 +1281,21 @@ class ReachyController:
         return self._head(**coordinates)
 
     def _clear_speaker(self) -> None:
-        with self._state_lock:
-            self._speaker_pending = None
-            self._person_pending = None
-            if self._person_hold and self._face_follower is not None:
-                self._face_follower.hold_center(None)
-            self._person_hold = False
+        self._speaker_pending = None
+        self._person_pending = None
+        if self._person_hold and self._face_follower is not None:
+            self._face_follower.hold_center(None)
+        self._person_hold = False
         self._speaker_look = self._speaker_turn = None
 
     def _update_person(self, now: float, state: str) -> None:
         with self._state_lock:
             release = self._person_release or state == "sleeping"
             self._person_release = False
-        if release:
-            if self._person_hold or self._person_pending is not None:
-                self._clear_speaker()
-            return
-        with self._state_lock:
+            if release:
+                if self._person_hold or self._person_pending is not None:
+                    self._clear_speaker()
+                return
             pending = self._person_pending
             if pending is None:
                 return
@@ -1588,7 +1586,8 @@ class ReachyController:
                 else:
                     if ((state == "sleeping" and previous_state != "sleeping")
                             or (self._watching and state in ("idle", "sleeping", "error"))):
-                        self._clear_speaker()
+                        with self._state_lock:
+                            self._clear_speaker()
                     self._update_speaker(now, state, occupied=(
                         self._clip is not None or self._generated is not None
                         or self._deferred is not None or commanded or gesture_active and gesture != "wave"))
