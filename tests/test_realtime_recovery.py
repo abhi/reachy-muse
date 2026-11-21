@@ -1,8 +1,8 @@
 """Unanswered calls exercised through microphone capture, admission and playback."""
 
 import asyncio
-import re
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -261,6 +261,10 @@ def test_second_recovery_in_one_wake_sends_only_the_next_request_by_chat(monkeyp
 def test_reply_diagnostics_use_each_turns_last_voiced_sample(monkeypatch, caplog):
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
+    clock = SimpleNamespace(samples=0, reply_delay=0)
+    clock.monotonic = lambda: 100 + clock.samples / 16000 + clock.reply_delay
+    monkeypatch.setattr("reachy_muse.conversation.time", clock)
+    monkeypatch.setattr("reachy_muse.realtime_call.time", clock)
     emitters = []
 
     async def answer(sdk, emit, script):
@@ -269,45 +273,42 @@ def test_reply_diagnostics_use_each_turns_last_voiced_sample(monkeypatch, caplog
     calls = ScriptedCalls(answer=answer)
     conversation = realtime_service(rig, StreamingTranscripts("First question.", "Second question."), calls,
                                     wake_timeout_s=10)
-    marks = []
-    expected = []
-    latency_lines = []
+    is_speech = conversation.speech_gate.is_speech
+
+    def timed_speech(pcm, rate):
+        assert rate == 16000
+        clock.samples += len(pcm) // 2
+        return is_speech(pcm, rate)
+
+    monkeypatch.setattr(conversation.speech_gate, "is_speech", timed_speech)
 
     async def user():
         await speak_live(rig, wake=True)
-        voice = conversation._voice[1]
         await speak_live(rig)
-        assert [turn.ordinal for turn in voice.call.pending] == [1, 2]
-        marks.extend((turn.speech_end_at, turn.endpoint_at) for turn in voice.call.pending)
-        before = voice.call.feed.sent
+        assert clock.samples == 32000
+        assert len(calls.frames) == 49
         emitters[0]()
-        await wait_for(rig, lambda: len(turn_outcomes(caplog)) == 2)
-        replied = voice.call.speaker.reply_started
-        for index, (speech, endpoint) in enumerate(marks, 1):
-            expected.append((round((replied - speech) * 1000), round((replied - endpoint) * 1000)))
-            latency_lines.append(f"Muse's realtime reply started {replied - speech:.2f} s "
-                                 f"after turn {index}'s last voiced sample")
-        assert voice.call.feed.sent >= before
-        assert voice.call.pending == []
+        clock.reply_delay = .125
+        await rig.wait_until_or_timeout(lambda: len(turn_outcomes(caplog)) == 2)
+        assert conversation._voice[1].call.pending == []
 
     events = run(rig, conversation, user, rest=("listening", "idle"))
-    rows = turn_outcomes(caplog)
-    assert [(row["ordinal"], row["outcome"], row["words"], row["held"]) for row in rows] == [
-        ("1", "answered", "2", "no"), ("2", "answered", "2", "no")]
-    assert [(int(row["voice_to_reply_ms"]), int(row["endpoint_to_reply_ms"])) for row in rows] == expected
-    assert all(195 <= voice_ms - endpoint_ms <= 205 for voice_ms, endpoint_ms in expected)
-    assert all(int(row["feed_sent_delta"]) >= 0 and int(row["last_event_age_ms"]) < 100 for row in rows)
-    assert [line for line in caplog.messages if line.startswith("Muse's realtime reply started")] == latency_lines
+    assert [line for line in caplog.messages if line.startswith("Realtime turn ")] == [
+        "Realtime turn ordinal=1 outcome=answered words=2 voice_to_reply_ms=1625 endpoint_to_reply_ms=1425 "
+        "held=no feed_sent_delta=32 last_event_age_ms=125",
+        "Realtime turn ordinal=2 outcome=answered words=2 voice_to_reply_ms=625 endpoint_to_reply_ms=425 "
+        "held=no feed_sent_delta=7 last_event_age_ms=125"]
+    assert [line for line in caplog.messages if line.startswith("Muse's realtime reply started")] == [
+        "Muse's realtime reply started 1.62 s after turn 1's last voiced sample",
+        "Muse's realtime reply started 0.62 s after turn 2's last voiced sample"]
     assert [line for line in caplog.messages if line.startswith("Realtime event=")] == [
         "Realtime event=ResponseStarted ordinal=1",
         "Realtime event=ResponseDone ordinal=1 status=completed audio_bytes=14400"]
-    ready = [line for line in caplog.messages if line.startswith("Realtime call_ready ")]
-    assert len(ready) == 1
-    assert re.fullmatch(r"Realtime call_ready elapsed_ms=\d+ link=new queued_feed_frames=\d+", ready[0])
-    summaries = [line for line in caplog.messages if line.startswith("Realtime call_summary ")]
-    assert len(summaries) == 1
-    assert re.fullmatch(r"Realtime call_summary duration_ms=\d+ turns=2 answered=2 unanswered=0 recovered=0 "
-                        r"responses=1 audio_bytes=14400 feed_sent=\d+ feed_evictions=0 max_queue_age_ms=\d+", summaries[0])
+    assert [line for line in caplog.messages if line.startswith("Realtime call_ready ")] == [
+        "Realtime call_ready elapsed_ms=0 link=new queued_feed_frames=0"]
+    assert [line for line in caplog.messages if line.startswith("Realtime call_summary ")] == [
+        "Realtime call_summary duration_ms=2125 turns=2 answered=2 unanswered=0 recovered=0 "
+        "responses=1 audio_bytes=14400 feed_sent=49 feed_evictions=0 max_queue_age_ms=0"]
     assert stall_cues(caplog) == []
     assert set(played(events)) == {"muse"}
 
