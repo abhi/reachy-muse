@@ -57,6 +57,7 @@ ENDPOINT_WAIT_S = 1.5
 # Pongs prove the socket, not the voice. Measured loaded first audio peaks at 1.47 s and the
 # 06:12 incident's slowest line took 3.6 s; a voice silent for longer restarts on the robot.
 SPEECH_STALL_S = 6.0
+REMEMBERED_HEAR_STREAMS = 32
 _PIN = re.compile(r"sha256:([0-9a-f]{64})")
 _FATAL = (ErrorCode.AUTH, ErrorCode.VERSION, ErrorCode.INTERNAL, ErrorCode.MODEL)
 
@@ -101,6 +102,7 @@ class _Connection:
         self.ops = frozenset(ops)
         self.outbox: asyncio.Queue = asyncio.Queue()
         self.hearing: Dict[int, _HearStream] = {}
+        self.aborted_hearing: Dict[int, Tuple[float, Optional[CapabilityUnavailable]]] = {}
         self.speaking: Dict[int, asyncio.Queue] = {}
         self.narrations: Dict[int, asyncio.Future] = {}
         self.animations: Dict[int, asyncio.Future] = {}
@@ -153,9 +155,14 @@ class _HearStream:
             self.connection.send(encode_audio(AudioKind.MIC, self.id, self._seq, pcm[offset:offset + MAX_MIC_PCM_BYTES]))
             self._seq += 1
 
-    def close(self, how: CloseHow) -> None:
+    def close(self, how: CloseHow, *, remember_failure: bool = False) -> None:
         if how is CloseHow.ABORT:
-            self.connection.hearing.pop(self.id, None)
+            active = self.connection.hearing.pop(self.id, None)
+            if active is self and remember_failure and not self.connection.closed:
+                remembered = self.connection.aborted_hearing
+                remembered[self.id] = (time.monotonic(), None)
+                if len(remembered) > REMEMBERED_HEAR_STREAMS:
+                    del remembered[next(iter(remembered))]
         if not self.connection.closed:
             self.connection.send(HearClose(self.id, how))
 
@@ -454,6 +461,12 @@ class CompanionLink:
         failure = CapabilityUnavailable(f"companion {error.code.value}", link_down=False)
         if error.stream is not None and error.stream in connection.hearing:
             connection.hearing.pop(error.stream).fail(failure)
+        elif error.stream is not None and error.stream in connection.aborted_hearing:
+            closed_at, _ = connection.aborted_hearing[error.stream]
+            if time.monotonic() - closed_at < PING_TIMEOUT_S:
+                connection.aborted_hearing[error.stream] = (closed_at, failure)
+            else:
+                del connection.aborted_hearing[error.stream]
         elif error.stream is not None and error.stream in connection.speaking:
             connection.speaking.pop(error.stream).put_nowait(failure)
             connection.sequence.forget(error.stream)
@@ -472,9 +485,23 @@ class CompanionLink:
     def open_hear(self) -> _HearStream:
         connection = self._live(Op.HEAR)
         stream = _HearStream(connection, connection.stream_id(Op.HEAR))
+        connection.aborted_hearing.pop(stream.id, None)
         connection.send(HearOpen(stream.id, 0))
         connection.hearing[stream.id] = stream
         return stream
+
+    def take_hearing_failure(self) -> Optional[CapabilityUnavailable]:
+        if self._connection is None:
+            return None
+        remembered = self._connection.aborted_hearing
+        now = time.monotonic()
+        for stream, (closed_at, failure) in list(remembered.items()):
+            if now - closed_at >= PING_TIMEOUT_S:
+                del remembered[stream]
+            elif failure is not None:
+                del remembered[stream]
+                return failure
+        return None
 
     async def transcribe_wake(self, pcm: bytes) -> str:
         """One bounded wake clip; cancellation releases its private hearing stream."""
@@ -682,6 +709,10 @@ class CompanionHearingTurn:
             if self._ended:
                 return HeardAudio(self._ended.popleft())
             raise self._open.failure
+        if not self._ended:
+            failure = self._link.take_hearing_failure()
+            if failure is not None:
+                raise failure
         for event in self._recorder.take_audio_events():
             if isinstance(event, SpeechAudio):
                 if self._open is None:
@@ -697,7 +728,7 @@ class CompanionHearingTurn:
                     if event.accepted:
                         self._ended.append(_HeardTurn(Endpoint(_wav(bytes(stream.audio)), text),
                                                       self._recorder.last_truncated, end_sample))
-                    stream.close(CloseHow.ABORT)
+                    stream.close(CloseHow.ABORT, remember_failure=True)
                 elif event.accepted:
                     stream.finish()
                     self._ended.append(_FinishedTurn(stream, self._recorder.last_truncated,

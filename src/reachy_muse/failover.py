@@ -126,7 +126,8 @@ class _CompanionEnded:
             if not error.link_down:
                 self._rest.fail(type(error).__name__)
             return Endpoint(self._ended.wav, None)
-        self._rest.succeed()
+        if endpoint is not None and endpoint.text is not None:
+            self._rest.succeed()
         return endpoint
 
 

@@ -21,6 +21,85 @@ from reachy_muse.voice_audio import SpeechAudio, SpeechEnd
 np = pytest.importorskip("numpy")
 
 
+@pytest.mark.parametrize("replacement", [None, "commands", "full"])
+def test_late_overloads_after_command_speech_end_rest_hearing(monkeypatch, replacement):
+    from types import SimpleNamespace
+    from reachy_muse.companion_server import server as serving
+    from reachy_muse.companion_server.engines import EchoNarrator, ScriptedHearing, ToneVoice
+    from test_pins import Vad
+
+    now, stuck = [100.0], [True]
+    monkeypatch.setattr(reachy_muse.failover, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(serving, "watchdog", SimpleNamespace(stalled=lambda *args: stuck[0]))
+
+    async def scenario():
+        refused = asyncio.Queue()
+
+        class Link(CompanionLink):
+            def _error(self, connection, error):
+                super()._error(connection, error)
+                refused.put_nowait((error.code.value, error.stream))
+
+        engines = serving.Engines(hearing=ScriptedHearing(), voice=ToneVoice(), narrator=EchoNarrator())
+        async with serving.CompanionServer(engines, "test") as server:
+            link = Link(server.url.removesuffix("/v1"), token="test", out_rate=16000, insecure=True)
+            running = asyncio.create_task(link.run())
+            try:
+                await asyncio.wait_for(link.settled(), 2)
+                rest = CompanionRoute(link).hearing
+                hearing = FailoverHearing(CompanionHearing(link), LocalHearing(), rest)
+                options = dict(silence_s=.1, vad=Vad(), commands_only=True)
+                strikes = []
+                for stream_id in (1, 3, 5):
+                    turn = hearing.open_turn(16000, **options)
+                    turn.feed(np.full(8000, .25, np.float32))
+                    turn.feed(np.zeros(1600, np.float32))
+                    ended = turn.take().ended
+                    assert ended is not None
+                    assert link._connection.hearing == {}
+                    assert (await ended.endpoint()).text is None
+                    if replacement is not None:
+                        turn.abort()
+                        turn = hearing.open_turn(16000, **dict(options, commands_only=replacement == "commands"))
+                    assert await asyncio.wait_for(refused.get(), 2) == ("overloaded", stream_id)
+                    assert turn.take().ended is None
+                    strikes.append(rest._strikes)
+                    turn.abort()
+                assert strikes == [1, 2, 0]
+                assert rest.resting is True
+                assert link.up and link.can(Op.SPEAK)
+
+                now[0] = 159.9
+                local = hearing.open_turn(16000, **options)
+                local.feed(np.full(8000, .25, np.float32))
+                assert local.take().ended is None
+                local.feed(np.zeros(1600, np.float32))
+                endpoint = await local.take().ended.endpoint()
+                assert endpoint.text is None
+                with wave.open(io.BytesIO(endpoint.audio), "rb") as wav:
+                    assert wav.readframes(8000) == b"\0\x20" * 8000
+                assert link._connection._next_hear == 5
+                local.abort()
+
+                now[0] = 160.0
+                stuck[0] = False
+                retry = hearing.open_turn(16000, **options)
+                retry.feed(np.full(8000, .25, np.float32))
+                assert retry.take().ended is None
+                async with asyncio.timeout(2):
+                    while retry.partial is None:
+                        await asyncio.sleep(.01)
+                        retry.take()
+                assert retry.partial.text == "hello"
+                assert link._connection._next_hear == 7
+                retry.abort()
+            finally:
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("commands_only", [False, True])
 @pytest.mark.parametrize("speech_ended", [False, True])
 def test_three_overloaded_streams_rest_hearing_and_retry_after_cooldown(monkeypatch, commands_only, speech_ended):
@@ -312,6 +391,9 @@ class HearingLink:
         self._next += 2
         stream = self.connection.hearing[self._next] = _HearStream(self.connection, self._next)
         return stream
+
+    def take_hearing_failure(self):
+        return None
 
 
 class Recorder:
