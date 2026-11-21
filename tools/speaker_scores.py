@@ -6,10 +6,13 @@
         --other 2026-11-22T18:00 2026-11-22T19:30
 
 The companion logs one line for each request it labels: the seconds of speech it heard, the
-request's score against the owner's voice print, and the label it sent the robot. Each --owner
-span is a time when only the owner spoke to Reachy, and each --other span a time when only other
-people did. With both, the report shows how often each threshold would call the owner someone
-else (false other) and call someone else the owner (false owner). Standard library only.
+request's score against the owner's voice print, and the label it sent the robot. Scores against
+different prints do not compare, so the report covers the requests since the log's last
+enrollment. Each --owner span is a time when only the owner spoke to Reachy, and each --other span
+a time when only other people did. With both, the report shows how often each threshold would
+call the owner someone else (false other) and call someone else the owner (false owner).
+--min-speech leaves out shorter requests, whose single window makes their scores noisier.
+Standard library only.
 """
 
 from __future__ import annotations
@@ -23,8 +26,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable, List, Optional, Sequence, Tuple
 
-_LINE = re.compile(r"(?P<when>\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d)\S*\s.*?\bspeaker stream=\d+ "
-                   r"voiced_s=(?P<voiced>\d+(?:\.\d+)?) score=(?P<score>-?\d+(?:\.\d+)?|none) label=(?P<label>[a-z]+)")
+_WHEN = r"(?P<when>\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d)\S*\s.*?"
+_LINE = re.compile(_WHEN + r"\bspeaker stream=\d+ voiced_s=(?P<voiced>\d+(?:\.\d+)?) "
+                   r"score=(?P<score>-?\d+(?:\.\d+)?|none) label=(?P<label>[a-z]+)")
+_ENROLLED = re.compile(_WHEN + r"\bvoice print enrolled from ")
 THRESHOLDS = tuple(round(.3 + .05 * step, 2) for step in range(13))
 Span = Tuple[datetime, datetime]
 
@@ -37,14 +42,17 @@ class Request:
     label: str
 
 
-def parse(lines: Iterable[str]) -> List[Request]:
-    requests = []
+def parse(lines: Iterable[str]) -> Tuple[List[Request], Optional[datetime]]:
+    """The requests since the log's last enrollment, and when that was; None when the log has none."""
+    requests, enrolled = [], None
     for line in lines:
-        match = _LINE.search(line)
-        if match is not None:
+        if (match := _ENROLLED.search(line)) is not None:
+            requests, enrolled = [], datetime.fromisoformat(match["when"])
+        elif (match := _LINE.search(line)) is not None:
             score = None if match["score"] == "none" else float(match["score"])
-            requests.append(Request(datetime.fromisoformat(match["when"]), float(match["voiced"]), score, match["label"]))
-    return requests
+            when = datetime.fromisoformat(match["when"])
+            requests.append(Request(when, float(match["voiced"]), score, match["label"]))
+    return requests, enrolled
 
 
 def scores(requests: Iterable[Request], spans: Sequence[Span] = ()) -> List[float]:
@@ -57,10 +65,12 @@ def _rank(values: Sequence[float], fraction: float) -> float:
     return values[max(0, math.ceil(fraction * len(values)) - 1)]
 
 
-def report(requests: Sequence[Request], owner: Sequence[Span] = (), other: Sequence[Span] = ()) -> str:
+def report(requests: Sequence[Request], enrolled: Optional[datetime], owner: Sequence[Span] = (),
+           other: Sequence[Span] = ()) -> str:
     labels = Counter(request.label for request in requests)
-    lines = [f"{len(requests)} requests: {labels['owner']} owner, {labels['other']} other, "
-             f"{labels['unknown']} unknown (no print, or under 1 s of speech)"]
+    since = f"since the enrollment at {enrolled}" if enrolled is not None else "in the whole log, which has no enrollment"
+    lines = [f"{len(requests)} requests {since}: {labels['owner']} owner, {labels['other']} other, "
+             f"{labels['unknown']} unknown"]
     groups = [("scored", scores(requests))] + [(name, scores(requests, spans))
                                                for name, spans in (("owner", owner), ("other", other)) if spans]
     rows = [("", *(name for name, _ in groups)), ("count", *(str(len(values)) for _, values in groups))]
@@ -101,16 +111,19 @@ def main(argv=None) -> int:
         parser.add_argument(f"--{name}", nargs=2, action="append", default=[], metavar=("FROM", "TO"),
                             help=f"a span, in local ISO time, when only {'the owner' if name == 'owner' else 'others'} "
                                  "spoke to Reachy; repeat for more")
+    parser.add_argument("--min-speech", type=float, default=0.0, metavar="SECONDS",
+                        help="leave out requests with less speech than this")
     args = parser.parse_args(argv)
     try:
         owner, other = [_span(span) for span in args.owner], [_span(span) for span in args.other]
     except (ValueError, argparse.ArgumentTypeError) as error:
         parser.error(str(error))
-    requests = parse(args.log)
+    requests, enrolled = parse(args.log)
+    requests = [request for request in requests if request.voiced_s >= args.min_speech]
     if not requests:
         print("no speaker lines found", file=sys.stderr)
         return 1
-    sys.stdout.write(report(requests, owner, other))
+    sys.stdout.write(report(requests, enrolled, owner, other))
     return 0
 
 

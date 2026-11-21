@@ -161,9 +161,11 @@ reachy-companion enroll-voice
 
 The companion then takes the next five sentences Reachy hears, each with at least 2 seconds of speech, within 3 minutes.
 Ask ordinary questions, with no one else speaking. Reachy answers them as usual.
+The robot needs no update for this: the companion hears its sentences either way.
 The command reports each sentence it takes or skips.
 Five sentences give at least 10 seconds of speech in ten or more windows of 1 to 1.5 seconds, so the print is steadier than any single request.
-If one sentence does not sound like the others, the print does not change. Run the command again with only you speaking.
+Each sentence must score at least 0.5 against the print the other four make. If one does not, the print does not change. Run the command again with only you speaking.
+The companion's log records the five scores. They show how alike your own voice sounds to the model, which helps when you tune the threshold.
 
 Only the Mac user who runs the companion can start an enrollment.
 The command talks to the companion through `voice.sock` in the state directory, which only that user can open.
@@ -179,11 +181,15 @@ reachy-companion forget-voice
 ```
 
 The companion stops using the print at the next request. It does not need a restart.
+If an enrollment is running, `forget-voice` stops it, and it keeps nothing.
+If the companion is not running, the command deletes the print itself.
+Backups are out of its reach: Time Machine and APFS snapshots of your home folder can keep copies of the state directory.
+To keep the print out of them, run `tmutil addexclusion ~/.reachy-companion`.
 
 ### What the robot receives
 
 A robot that asks for the protocol's `speaker` op gets one `speaker_observation` after each request's endpoint: `owner`, `other` or `unknown`.
-`unknown` means there is no print, the request held less than 1 second of speech, or the check could not run.
+`unknown` means there is no print, the request held less than 1 second of speech, or the check could not run in time.
 The robot logs `Reachy speaker=owner` and adds `speaker=owner` to the turn's timeline line.
 A turn whose stream the robot aborts gets no label. During a realtime call, that is every turn.
 An older robot never asks for the op and receives nothing new. A newer robot works with an older companion as before.
@@ -193,6 +199,9 @@ An older robot never asks for the op and receives nothing new. A newer robot wor
 The check runs after the robot has the request's endpoint, on a thread of its own, so it never delays hearing.
 sherpa-onnx releases Python's global interpreter lock while it computes.
 Each request costs at most four windows, 6 seconds of speech. The benchmark measured 52 ms for a 1.5-second window on one M3 Ultra core.
+The voice detection and windowing around the model take under 3 ms for a 30-second request.
+The watchdog does not watch the check, because a restart would cost hearing far more than a missing label.
+If a check gets stuck, later requests are `unknown` until the companion restarts.
 The model file is 26.5 MB. Its memory in use is not measured yet: compare the companion's resident memory with and without `--speaker-model`.
 
 ### Measure accuracy
@@ -205,7 +214,9 @@ speaker stream=7 voiced_s=2.14 score=0.8123 label=owner
 
 `score` is the cosine similarity between the request and the print, from -1 to 1.
 A score at or above the threshold is `owner`.
-The default threshold, 0.74, is the benchmark's calibration for this model. It was measured on synthetic voices, so it is a starting point, not a measured error rate.
+The default threshold, 0.74, is the benchmark's calibration for this model, on synthetic voices and single 1.5-second windows.
+At 0.74, the benchmark rejected half of the synthetic owner's wake phrases and most of their requests.
+Expect many false `other` labels for you until you tune it. The companion averages several windows, which should help, but that is not measured.
 Before anything relies on the label, measure it with real voices:
 
 1. Use Reachy as usual. Note the times when only you talked to it, and the times when only other people did.
@@ -213,7 +224,8 @@ Before anything relies on the label, measure it with real voices:
 3. Pick the lowest threshold whose false-owner rate you accept, for example none in 100 requests from other people. Read its false-other rate from the same row.
 4. Set it with `serve --speaker-threshold`.
 
-Enrolling again changes every score, so measure within one enrollment.
+Enrolling again changes every score, so the script reports only the requests since the log's last enrollment.
+Short requests score less reliably: add `--min-speech 2` to see how the longer ones do on their own.
 
 ## Test
 

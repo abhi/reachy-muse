@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import stat
 import sys
@@ -411,22 +412,6 @@ def test_a_label_the_codec_refuses_goes_out_as_unknown_and_keeps_the_link(caplog
 
     serve(script, Backwards())
     assert "speaker check failed (stream=1): ProtocolError" in caplog.messages
-
-
-def test_no_log_holds_the_words_the_audio_or_an_embedding(state, speaker_thread, caplog, capfd):
-    caplog.set_level(logging.INFO)
-    enrolled(state, VOICES[SECRET])
-
-    async def script(companion):
-        ws = await robot(companion)
-        await say(ws, 1, voice(SECRET, 2))
-        assert (await heard(ws, 1))[-1] == SpeakerObservation(1, 0, 32000, SpeakerLabel.OWNER)
-
-    serve(script, owner_voice(state, speaker_thread))
-    logged = caplog.text + "".join(capfd.readouterr())
-    assert "speaker stream=1 voiced_s=2.00 score=1.0000 label=owner" in caplog.messages
-    for private in (WORDS, "6180339887", "7861513778", repr(np.full(320, SECRET, dtype="<i2").tobytes()[:8])[2:-1]):
-        assert private not in logged
 
 
 PRIVATE = "ignoring the voice print: it must be a private mode-600 file; run reachy-companion enroll-voice again"
@@ -920,3 +905,51 @@ def test_stopping_the_companion_ends_an_enrollment_at_once(private_state, speake
     serve(script, engine, control=private_state)
     assert not engine.enrolling
     assert capsys.readouterr().out.splitlines() == [LISTENING, "The companion stopped before it confirmed the enrollment."]
+
+
+ALLOWED_LOGS = tuple(re.compile(pattern) for pattern in (
+    r"robot 'test' connected from \('127\.0\.0\.1', \d+\) with ops \['hear', 'narrate', 'speaker'\]",
+    r"voice enrollment listens on \S+",
+    r"speaker stream=\d+ voiced_s=\d+\.\d\d score=(none|-?\d\.\d{4}) label=(owner|other|unknown)",
+    r"speaker check failed \(stream=\d+\): [A-Za-z]+",
+    r"voice print enrolled from \d+ utterances with \d+\.\d s of speech; agreement( -?\d\.\d{4})+",
+    r"voice enrollment refused: agreement( -?\d\.\d{4})+",
+))
+LEAKY = 4444
+
+
+def test_no_log_or_terminal_line_holds_words_audio_or_an_embedding(private_state, speaker_thread, caplog, capfd):
+    """Every line the feature logs has a fixed, content-free form, through enrollment, labels, failure and forgetting.
+
+    At the companion's INFO level; websockets' own DEBUG output shows whole frames, transcripts included.
+    """
+    caplog.set_level(logging.INFO)
+
+    class Leaky(Encoder):
+        def embed(self, samples, rate):
+            if round(float(np.mean(np.abs(samples))) * 32768) == LEAKY:
+                raise RuntimeError(f"embedding {VOICES[SECRET]} heard {WORDS}")
+            return super().embed(samples, rate)
+
+    engine = owner_voice(private_state, speaker_thread, Leaky())
+
+    async def script(companion):
+        ws = await robot(companion)
+        stream = iter(range(1, 999, 2))
+        for sentences in ((SECRET,) * 5, (SECRET, SECRET, OTHER, SECRET, SECRET)):
+            enrolling = await enroll_in_background(engine, private_state)
+            for level in sentences:
+                await label(ws, next(stream), voice(level, 2.4))
+            await enrolling
+        for level, seconds in ((SECRET, 2), (OTHER, 2), (SECRET, .5), (LEAKY, 2)):
+            await label(ws, next(stream), voice(level, seconds))
+        assert await asyncio.to_thread(command, private_state, "forget-voice") == 0
+        assert await label(ws, next(stream), voice(SECRET, 2)) is SpeakerLabel.UNKNOWN
+
+    serve(script, engine, control=private_state)
+    ours = [record.getMessage() for record in caplog.records if record.name.startswith("reachy_muse")]
+    assert [message for message in ours if not any(pattern.fullmatch(message) for pattern in ALLOWED_LOGS)] == []
+    assert "speaker check failed (stream=27): RuntimeError" in ours
+    shown = caplog.text + "".join(capfd.readouterr())
+    secrets = [WORDS, *(f(value) for value in VOICES[SECRET][:2] for f in (repr, lambda x: str(np.float32(x))))]
+    assert [secret for secret in secrets if secret in shown] == []

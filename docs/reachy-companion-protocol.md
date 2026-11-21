@@ -57,7 +57,7 @@ Fields marked optional may be absent. An optional string or integer may also be 
 |---|---|---|
 | `hello` | `versions` | list of 1 to 8 integers. Every version the robot supports. |
 | | `token` | string, 1 to 128 bytes |
-| | `ops` | list of `hear`, `speak`, `narrate`, `classify`, `animate`, `speaker`. The ops the robot wants. A receiver drops names it does not know. |
+| | `ops` | list of `hear`, `speak`, `narrate`, `classify`, `animate`, `speaker`. The ops the robot wants. A receiver drops names it does not know, but refuses a list of more than 8 names, known or not. |
 | | `out_rate` | integer, 8000 to 48000 Hz |
 | | `robot` | string, at most 64 bytes. A display name. |
 | `hear_open` | `stream` | odd integer, 1 to 65535 |
