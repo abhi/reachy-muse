@@ -216,20 +216,18 @@ class _FaceTracker:
 class FaceFollower:
     """A gated detector worker; the caller remains the sole motion writer.
 
-    ``read_head_angles`` supplies current yaw/pitch in radians. ``camera_matrix``
-    and ``distortion`` must describe the original frame returned by ``read_frame``.
-    Frames and detector inputs exist only during one worker iteration.
+    ``capture_frame(background=...)`` returns a ``FaceCapture`` with the head
+    angles and rotation at capture, or None. ``camera_matrix`` and ``distortion``
+    must describe its original frame. Frames and detector inputs exist only
+    during one worker iteration.
     """
 
-    def __init__(self, read_frame: Callable, model_path: Path | None = None, *,
-                 read_head_angles: Callable[[], tuple[float, float]], camera_matrix,
-                 distortion=None, sample_hz: float = 5.0, clock: Callable = time.monotonic,
-                 detector_factory: Callable | None = None, budget=None, capture_frame: Callable | None = None):
+    def __init__(self, capture_frame: Callable[..., FaceCapture | None], model_path: Path | None = None, *,
+                 camera_matrix, distortion=None, sample_hz: float = 5.0, clock: Callable = time.monotonic,
+                 detector_factory: Callable | None = None, budget=None):
         if not math.isfinite(sample_hz) or not 1 <= sample_hz <= 15:
             raise ValueError("Face tracking sample rate must be between 1 and 15 Hz")
         self._budget = budget
-        self._read_frame = read_frame
-        self._read_angles = read_head_angles
         self._capture_frame = capture_frame
         self._model = Path(model_path) if model_path is not None else default_face_model()
         self._matrix = camera_matrix
@@ -308,17 +306,6 @@ class FaceFollower:
             return request.snapshot
         return None
 
-    def _capture(self, *, background: bool) -> FaceCapture | None:
-        if self._capture_frame is not None:
-            return self._capture_frame(background=background)
-        frame = self._read_frame()
-        if frame is None:
-            return None
-        yaw, pitch = angles = self._read_angles()
-        cy, sy, cp, sp = math.cos(yaw), math.sin(yaw), math.cos(pitch), math.sin(pitch)
-        return FaceCapture(frame, angles, ((cy * cp, -sy, cy * sp),
-                                          (sy * cp, cy, sy * sp), (-sp, 0, cp)), self._clock())
-
     def close(self, timeout: float = 2.0) -> None:
         with self._condition:
             self._closed = True
@@ -357,7 +344,7 @@ class FaceFollower:
                         self._condition.wait(.1)
                     continue
                 try:
-                    capture = self._capture(background=request is None)
+                    capture = self._capture_frame(background=request is None)
                     if request is not None and self._clock() >= request.deadline:
                         capture = None
                     if (request is None and self._budget is not None

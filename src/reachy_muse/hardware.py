@@ -1192,12 +1192,10 @@ class ReachyController:
             from reachy_muse.local_face_tracking import FaceFollower
             factory = FaceFollower
         self._face_follower = factory(
-            self._read_camera_frame, self._face_follow_model,
-            read_head_angles=self._read_head_angles,
+            self._capture_faces, self._face_follow_model,
             camera_matrix=self._robot.media.camera.K,
             distortion=self._robot.media.camera.D,
             budget=self.vision_budget,
-            capture_frame=self._capture_faces,
         )
         self._face_follower.start()
         self._face_failure_logged = False

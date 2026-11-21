@@ -626,15 +626,15 @@ def test_camera_failure_disables_gaze_without_disabling_voice_or_motion(caplog):
 
 def test_face_follow_shares_motor_writer_and_yields_to_explicit_commands():
     robot = FakeRobot()
-    robot.media.get_frame = lambda: None
+    robot.media.get_frame = lambda: np.zeros((2, 2, 3), np.uint8)
     robot.media.camera = SimpleNamespace(K=np.eye(3), D=np.zeros(5))
     events = []
 
     class Follower:
         active = False
 
-        def __init__(self, read_frame, model_path, **options):
-            self.read_head_angles = options["read_head_angles"]
+        def __init__(self, capture_frame, model_path, **options):
+            self.capture_frame = capture_frame
             assert options["camera_matrix"] is robot.media.camera.K
 
         def start(self):
@@ -665,7 +665,7 @@ def test_face_follow_shares_motor_writer_and_yields_to_explicit_commands():
         while not follower.active and time.monotonic() < deadline:
             time.sleep(.01)
         time.sleep(.2)
-        assert follower.read_head_angles()[0] > .05
+        assert follower.capture_frame(background=False).angles[0] > .05
         original = controller._execute_motion
 
         def execute(request):

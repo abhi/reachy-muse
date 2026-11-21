@@ -8,9 +8,11 @@ import time
 import pytest
 
 from reachy_muse.local_face_tracking import (
-    FACE_LOSS_SECONDS, PITCH_LIMIT, YAW_LIMIT, FaceFollower, _Face, _FaceTracker,
+    FACE_LOSS_SECONDS, PITCH_LIMIT, YAW_LIMIT, FaceCapture, FaceFollower, _Face, _FaceTracker,
     default_face_model,
 )
+
+LEVEL = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
 
 
 def face(x=0.4, y=0.3, width=0.2, height=0.3, yaw=0, pitch=0):
@@ -103,8 +105,16 @@ class Detector:
         return [face(yaw=10)]
 
 
+def captures(read_frame, clock=time.monotonic):
+    """A camera owner's captures of ``read_frame`` with the head level and facing forward."""
+    def capture(*, background=True):
+        frame = read_frame()
+        return FaceCapture(frame, (0.0, 0.0), LEVEL, clock()) if frame is not None else None
+    return capture
+
+
 def follower(read_frame, **kwargs):
-    return FaceFollower(read_frame, read_head_angles=lambda: (0, 0),
+    return FaceFollower(captures(read_frame, kwargs.get('clock', time.monotonic)),
                         camera_matrix=None, sample_hz=15, detector_factory=Detector, **kwargs)
 
 
@@ -221,8 +231,7 @@ def test_detector_failure_does_not_retain_camera_frame_in_traceback():
         references.append(weakref.ref(frame))
         return frame
 
-    item = FaceFollower(read, read_head_angles=lambda: (0, 0), camera_matrix=None,
-                        detector_factory=FailedDetector)
+    item = FaceFollower(captures(read), camera_matrix=None, detector_factory=FailedDetector)
     item.start()
     item.set_active(True)
     wait_for(lambda: item.failure is not None)
@@ -236,7 +245,7 @@ def test_detector_failure_does_not_retain_camera_frame_in_traceback():
 def test_missing_camera_calibration_fails_before_worker_starts(tmp_path):
     np = pytest.importorskip('numpy')
     pytest.importorskip('cv2')
-    item = FaceFollower(lambda: None, read_head_angles=lambda: (0, 0), camera_matrix=None)
+    item = FaceFollower(captures(lambda: None), camera_matrix=None)
     with pytest.raises(ValueError, match='calibrated camera matrix'):
         item.start()
     assert item._thread is None
@@ -245,8 +254,7 @@ def test_missing_camera_calibration_fails_before_worker_starts(tmp_path):
 @pytest.mark.parametrize('rate', [0, 0.5, 16, float('inf'), float('nan')])
 def test_unbounded_detector_rate_is_rejected(rate):
     with pytest.raises(ValueError, match='sample rate'):
-        FaceFollower(lambda: None, read_head_angles=lambda: (0, 0), camera_matrix=None,
-                     sample_hz=rate)
+        FaceFollower(captures(lambda: None), camera_matrix=None, sample_hz=rate)
 
 
 def test_idle_sampling_uses_less_camera_work_and_wake_preserves_the_target():
@@ -286,9 +294,8 @@ def test_throttled_idle_gaze_keeps_the_same_face_between_samples():
         def detect(self, frame):
             return [first] if len(reads) == 1 else [other, first]
 
-    item = FaceFollower(lambda: reads.append(now[0]) or object(),
-                        read_head_angles=lambda: (0, 0), camera_matrix=None,
-                        detector_factory=People, clock=lambda: now[0],
+    item = FaceFollower(captures(lambda: reads.append(now[0]) or object(), lambda: now[0]),
+                        camera_matrix=None, detector_factory=People, clock=lambda: now[0],
                         budget=SimpleNamespace(delay=lambda: 3))
     try:
         item.start()
@@ -320,7 +327,7 @@ def test_slow_detection_keeps_target_while_next_inference_runs():
             now[0] = observed_at + .32
             return super().detect(frame)
 
-    item = FaceFollower(lambda: object(), read_head_angles=lambda: (0, 0),
+    item = FaceFollower(captures(lambda: object(), lambda: now[0]),
                         camera_matrix=None, detector_factory=SlowDetector,
                         clock=lambda: now[0])
     try:
@@ -413,8 +420,7 @@ def test_refresh_deadline_does_not_queue_more_inference_or_drop_old_snapshot():
                 assert release.wait(2)
             return [face()]
 
-    item = FaceFollower(lambda: object(), read_head_angles=lambda: (0, 0), camera_matrix=None,
-                        detector_factory=lambda *args: Detect())
+    item = FaceFollower(captures(lambda: object()), camera_matrix=None, detector_factory=lambda *args: Detect())
     item.start()
     try:
         first = item.refresh()
