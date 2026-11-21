@@ -1152,6 +1152,43 @@ async def room(rig, seconds):
         await asyncio.sleep(CHUNK / 16000)
 
 
+def test_unconfirmed_sound_crossing_the_deadline_does_not_hang_up_a_reply(monkeypatch, caplog):
+    caplog.set_level("INFO", logger="reachy_muse.conversation")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+
+    async def answer(sdk, emit, script):
+        reply_events(sdk, emit, "r1", REPLY, voiced(7.5))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, StreamingTranscripts("Tell me a story.", "Okay."), calls)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        await room(rig, voice._wake_deadline - time.monotonic() - .3)
+        for _ in range(15):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+        await room(rig, .5)
+        assert voice.call is call
+        assert call.audible
+        assert not call.done
+        await rig.wait_until_or_timeout(lambda: not call.audible, 8)
+        assert voice.call is call
+        assert not call.done
+        assert sum(len(chunk) for chunk in rig.hardware.played) / rig.hardware.output_sample_rate == pytest.approx(7.5, abs=.003)
+
+    events = run(rig, conversation, user)
+    assert calls.barge_ins == 0
+    assert len(calls.opened) == 1
+    assert set(played(events)) == {"muse"}
+    assert sent_to_muse(events) == []
+    assert "Realtime command transcript=arrived words=1 wake_prefix=none outcome=none drop=barge_in" in caplog.messages
+    assert "Reachy's wake window closed after empty recognition and inactivity" not in caplog.messages
+
+
 def test_while_muse_works_past_the_follow_up_window_the_room_stops_reaching_muse_but_the_call_stays(monkeypatch):
     rig = rig_for(monkeypatch)
     calls = ScriptedCalls(answer=keeps_working)

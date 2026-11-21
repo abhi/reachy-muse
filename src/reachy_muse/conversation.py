@@ -1430,7 +1430,8 @@ class VoiceConversation:
                             window = self.wake_timeout_s or (10.0 if outcome is TurnOutcome.WAKE_CUE else 0.0)
                             self._wake_deadline = time.monotonic() + window
                         elif (self._wake_deadline is not None
-                              and time.monotonic() >= self._wake_deadline and not recording_active()):
+                              and time.monotonic() >= self._wake_deadline and not recording_active()
+                              and not self._has_output() and not (self.call is not None and self.call.working)):
                             # False speech must not keep authorizing new audio forever.
                             # Already admitted WAVs retain their own wake boundary.
                             self._wake_deadline = None
