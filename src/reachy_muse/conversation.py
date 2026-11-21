@@ -25,17 +25,17 @@ from statistics import median
 from typing import Awaitable, Callable
 
 from reachy_muse import expression_plan as plan
-from musegadget.link_client import DeviceDescription, LinkSession, Outcome, acknowledgement
+from musegadget.link_client import DeviceDescription, LinkSession, Outcome, RequestRejected, acknowledgement
 from musegadget.muse_turn import AgentStatus, MuseTurn, ReplayScope, Reply, TaskFinished, TurnEvent
 from reachy_muse.contract.commands import parse_command
 from reachy_muse.contract.expressions import Expression
-from reachy_muse.contract.prompts import STOP_REQUEST, muse_request
+from reachy_muse.contract.prompts import STOP_REQUEST, muse_request, photo_message
 from reachy_muse.contract.replies import (ReplyProtocolError, ReplyRevisionError, ReplyStyle, SentenceStream,
                                           first_plain_sentence, spoken_reply)
 from reachy_muse.capabilities import EMOJI, MARKUP, WAKE_CUE, Backends, CapabilityUnavailable, EndedTurn, Endpoint, Heard, LocalReply, SpokenLine
 from reachy_muse.protocol import MAX_LINE_BYTES
 from reachy_muse.device_command import (COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow,
-                                       command_after_wake, executable, whole_command)
+                                       command_after_wake, executable, photo_requested, whole_command)
 from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, interrupts_playback, request_topic,
                                    too_short_for_follow_up, repeats_playback)
 from reachy_muse.contract.intent import Intent, maybe_chat
@@ -53,6 +53,9 @@ from reachy_muse.startup import StartupTimeline
 from reachy_muse.speaker_direction import DirectionDecision, DirectionSnapshot, WakeDirection, speaker_yaw
 from reachy_muse.presence import PresenceFusion
 from reachy_muse.person_gaze import PersonGaze
+from reachy_muse.photo import (PHOTO_CAPTURE_S, PHOTO_FAILURE_LINES, PHOTO_FILENAME, PHOTO_MIME_TYPE,
+                               PHOTO_SEND_TIMEOUT_S, PhotoCapture, PhotoLog, PhotoRequest, photo_allowed,
+                               shutter_cue)
 from reachy_muse.inbox import Inbox, outcome, owner_binding
 from reachy_muse.notifications import Notifications
 from reachy_muse.wake_policy import WakeContext
@@ -615,10 +618,11 @@ class VoiceConversation:
                  arbitration_shadow: bool = False,
                  audio_diagnostics: bool = False, short_utterance_silence_s: float | None = None,
                  morning: MorningRoutine | None = None, startup: StartupTimeline | None = None,
-                 realtime=None, presence: PresenceFusion | None = None) -> None:
+                 realtime=None, presence: PresenceFusion | None = None, photo_requests: bool = False) -> None:
         if not math.isfinite(wake_timeout_s) or wake_timeout_s < 0:
             raise ValueError("wake timeout must be a finite, nonnegative number")
         self.session = session
+        self.photo_requests = photo_requests
         self._startup = startup or StartupTimeline()
         self._ready = asyncio.Event()
         self.hardware = hardware
@@ -2014,6 +2018,12 @@ class VoiceConversation:
                     return TurnOutcome.ACCEPTED
                 if gaze_generation is not None:
                     await self._gaze.request(text, speaker_bearing, gaze_generation)
+                if self._photo_requested(text, timeline):
+                    outcome = await self._photo_turn(PhotoRequest(text, timeline.marks.get("endpoint", started)),
+                                                     wav, started=started, defer_playback=defer_playback,
+                                                     timeline=timeline)
+                    completed = True
+                    return outcome
             style = self.backends.reply_style()
             if text is not None and not self._has_output() and not self._playback.user_speaking:
                 heard = self._recent.heard(text, may_chat=self.local_chat and maybe_chat(text))
@@ -2091,6 +2101,88 @@ class VoiceConversation:
                                   stream_segment=index < len(reply.lines) - 1, on_start=on_start)
         self._recent.chatted(heard.text, " ".join(line.text for line in reply.lines))
         self._recent.asked(heard.text)
+
+    def _photo_requested(self, text: str | None, timeline: TurnTimeline) -> bool:
+        return self.photo_requests and text is not None and photo_requested(text) and photo_allowed(timeline)
+
+    async def _photo_turn(self, request: PhotoRequest, wav: bytes, *, started: float, defer_playback: bool,
+                          timeline: TurnTimeline) -> TurnOutcome:
+        """Take one photo for a spoken request and send it to Muse with the user's words.
+
+        This one attempt uses the request up, whatever its outcome. A failure gets one spoken line and
+        leaves the conversation, and any call, running.
+        """
+        report = PhotoLog(timeline.facts.get("path", "chat"))
+        try:
+            job = None
+            if request.expired(time.monotonic()):
+                report.outcome = "expired"
+            else:
+                job = await self._send_photo(request, wav, report, started=started,
+                                             defer_playback=defer_playback, timeline=timeline)
+            if job is not None:
+                try:
+                    outcome = await self._deliver(job)
+                except TimeoutError:
+                    if job.answered:
+                        raise
+                    report.outcome = "no_answer"
+                else:
+                    if job.dropped:
+                        self._moments.stop()
+                    else:
+                        self._moments.finish_turn(lambda: not self._has_output(),
+                                                  expression=lambda: job.last_expression)
+                    return outcome
+            self._moments.stop()
+            await self._announce(PHOTO_FAILURE_LINES[report.outcome], started=None, defer_playback=True)
+            return TurnOutcome.ACCEPTED
+        finally:
+            timeline.facts["photo"] = report.outcome
+            report.write()
+
+    async def _send_photo(self, request: PhotoRequest, wav: bytes, report: PhotoLog, *, started: float,
+                          defer_playback: bool, timeline: TurnTimeline) -> MuseJob | None:
+        """Capture the photo, then send it; the job Muse works on, or None with the reason in ``report``.
+
+        The JPEG goes out of scope when this returns.
+        """
+        try:
+            capture = await asyncio.wait_for(asyncio.to_thread(self.hardware.capture_photo, PHOTO_CAPTURE_S),
+                                             PHOTO_CAPTURE_S + .5)
+        except asyncio.TimeoutError:
+            capture = PhotoCapture("camera_busy")
+        except Exception as exc:
+            log.warning("Reachy's photo capture failed: %s", type(exc).__name__)
+            capture = PhotoCapture("camera_failed")
+        report.captured(capture)
+        if capture.failure is not None:
+            report.outcome = capture.failure
+            return None
+        self._shutter()
+        try:
+            job = await self._dispatch(wav, request.words, started=started, defer_playback=defer_playback,
+                                       timeline=timeline, photo=capture.jpeg)
+        except RequestRejected:
+            report.outcome = "rejected"
+            return None
+        except asyncio.TimeoutError:
+            report.outcome = "send_timeout"
+            return None
+        finally:
+            dispatched = timeline.marks.get("dispatch")
+            if dispatched is not None:
+                report.upload_ms = round((timeline.marks.get("muse_ack", time.monotonic()) - dispatched) * 1000)
+        timeline.facts["photo"] = report.outcome = "sent"
+        return job
+
+    def _shutter(self) -> None:
+        """Let everyone in the room hear that a photo was taken."""
+        if self._output_queue.full():
+            return
+        async def audio():
+            yield shutter_cue(self.hardware.output_sample_rate)
+        self._output_queue.put_nowait(_SpeechJob(None, "", prepared_stream=audio(), state="thinking", role="cue"))
 
     async def _announce(self, text: str, *, started: float | None, defer_playback: bool) -> None:
         if defer_playback:
@@ -2180,8 +2272,11 @@ class VoiceConversation:
 
     async def _dispatch(self, wav: bytes, text: str | None, *, started: float,
                         defer_playback: bool, timeline: TurnTimeline, opening=None,
-                        style: ReplyStyle | None = None) -> MuseJob:
-        """Send one request to Muse; the returned job is ``self.job`` until its answer is delivered."""
+                        style: ReplyStyle | None = None, photo: bytes | None = None) -> MuseJob:
+        """Send one request to Muse; the returned job is ``self.job`` until its answer is delivered.
+
+        A ``photo`` goes with the words as one chat message, and is not kept.
+        """
         style = style or self.backends.reply_style()
         job = self.job = MuseJob(
             text or "", style,
@@ -2203,7 +2298,12 @@ class VoiceConversation:
             opening.cancel()
         note, count = self._recent.chat_note() if text is not None else ("", 0)
         self._moments.cue(Moment.THINKING)
-        if text is not None:
+        if photo is not None:
+            timeline.mark("dispatch")
+            ack = await asyncio.wait_for(self.session.send_image(
+                photo, PHOTO_MIME_TYPE, self.session_id, message=photo_message(text, note=note),
+                filename=PHOTO_FILENAME, **options), PHOTO_SEND_TIMEOUT_S)
+        elif text is not None:
             message = muse_request(text, note=note)
             timeline.mark("dispatch")
             ack = await self.session.send_chat(message, self.session_id, **options)
@@ -2485,6 +2585,10 @@ class VoiceConversation:
                 self._say_hushed = False
             return None if COMMANDS[command].wake_window in (WakeWindow.DISMISSED, WakeWindow.ASLEEP) else held
         await self._gaze.request(text, request.speaker_bearing, request.gaze_generation)
+        if kind is FollowUp.NEW and self._photo_requested(text, request.timeline):
+            PhotoLog("chat", "busy").write()
+            await self._announce(BUSY_CUE, started=None, defer_playback=True)
+            return held
         if kind in (FollowUp.NEW, FollowUp.ADD_DETAIL) and text is not None and too_short_for_follow_up(text):
             log.info("Reachy ignored a one-word follow-up while Muse worked")
             return held
@@ -3467,6 +3571,7 @@ class ReachyService(PairedService):
     short_utterance_silence_s: float | None = None
     morning: MorningRoutine | None = None
     place: str | None = None
+    photo_requests: bool = False
     inbox: Inbox = field(default_factory=Inbox)
     _presence: PresenceFusion = field(default_factory=PresenceFusion, init=False, repr=False)
     startup: StartupTimeline | None = None
@@ -3705,7 +3810,8 @@ class ReachyService(PairedService):
                                       arbitration_shadow=self.arbitration_shadow,
                                       short_utterance_silence_s=self.short_utterance_silence_s,
                                       morning=self.morning, startup=startup,
-                                      realtime=self._realtime(vm, session_id), presence=self._presence)
+                                      realtime=self._realtime(vm, session_id), presence=self._presence,
+                                      photo_requests=self.photo_requests)
             voice.notifications = Notifications(self.inbox, self.presence_result, voice)
             voice._wake_window = WakeWindow.ASLEEP if self._asleep else WakeWindow.AWAKE
             voice._say_hushed = self._say_hushed

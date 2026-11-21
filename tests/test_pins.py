@@ -126,6 +126,12 @@ class PinSession(FakeSession):
                             "text": message})
         return self._acknowledge()
 
+    async def send_image(self, image, mime_type, session_id=None, *, message="", filename=None, **options):
+        self.recording.add({"muse": "send_image", "session_id": session_id, "options": options, "text": message,
+                            "mime_type": mime_type, "filename": filename, "jpeg": image.startswith(b"\xff\xd8\xff"),
+                            "bytes": len(image)})
+        return self._acknowledge()
+
     async def subscribe_chat(self, session_id):
         self.recording.add({"muse": "subscribe_chat", "session_id": session_id})
         async for event in super().subscribe_chat(session_id):

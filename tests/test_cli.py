@@ -713,6 +713,46 @@ def test_streaming_option_reaches_the_conversation_service(tmp_path, monkeypatch
                      'transcriber closed']
 
 
+@pytest.mark.parametrize('opencv', [None, SimpleNamespace()], ids=['without_opencv', 'with_opencv'])
+def test_photo_requests_reach_the_conversation_only_with_opencv(tmp_path, monkeypatch, capsys, opencv):
+    from musegadget.identity import Identity
+
+    captured = {}
+
+    class Service:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def stop(self):
+            pass
+
+        async def run(self):
+            pass
+
+    class Closing:
+        async def close(self):
+            pass
+
+    started = []
+    monkeypatch.setitem(sys.modules, 'cv2', opencv)
+    monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
+    monkeypatch.setattr(config, 'load_json', lambda *args: {'paired': True})
+    monkeypatch.setattr(reachy_muse.cli.identity, 'load_or_create', lambda: Identity('02:00:00:ab:cd:ef'))
+    monkeypatch.setattr(reachy_muse.cli, '_hardware', lambda *args: SimpleNamespace(
+        start=lambda: started.append('hardware'), close=lambda: None))
+    monkeypatch.setattr('reachy_muse.local_speech.PiperSpeech', lambda model, **kwargs: Closing())
+    monkeypatch.setattr('reachy_muse.speech_gate.SileroSpeechGate', object)
+    monkeypatch.setattr('reachy_muse.local_transcription.WhisperTranscriber', lambda model: Closing())
+    monkeypatch.setattr('reachy_muse.conversation.ReachyService', Service)
+    code = reachy_muse.cli.main(['--state-dir', str(tmp_path), 'run', '--mode', 'on-robot', '--photo-requests',
+                                 '--stt-model', str(tmp_path / 'whisper'), '--tts-model', str(tmp_path / 'voice.onnx')])
+    if opencv is None:
+        assert (code, captured, started) == (1, {}, [])
+        assert capsys.readouterr().err == 'Reachy: --photo-requests needs OpenCV (cv2) on the robot\n'
+    else:
+        assert (code, captured['photo_requests'], started) == (0, True, ['hardware'])
+
+
 @pytest.mark.parametrize('timeout', ['0', '-1', '301', 'nan', 'inf'])
 def test_invalid_wake_timeout_is_rejected_before_hardware(tmp_path, monkeypatch, capsys, timeout):
     monkeypatch.delenv(config.SDK_TOKEN_ENV, raising=False)
@@ -955,6 +995,7 @@ def test_missing_speech_gate_stops_before_capture_and_closes_prepared_resources(
      ['--tts-model needs --mode on-robot or companion', '--stream-replies needs --mode on-robot or companion']),
     (['--stt-backend', 'moonshine'], ['--stt-backend needs --mode on-robot or companion']),
     (['--wake-model', 'keywords'], ['--wake-model needs --mode on-robot or companion']),
+    (['--photo-requests'], ['--photo-requests needs --mode on-robot or companion']),
     (['--mode', 'on-robot'], ['--mode on-robot needs --stt-model', '--mode on-robot needs --tts-model']),
     (['--mode', 'on-robot', '--stt-model', 'whisper', '--wake-model', 'keywords'],
      ['--mode on-robot needs --tts-model']),
