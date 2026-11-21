@@ -718,10 +718,11 @@ uses chat. Muse hears everything said after the wake word until the follow-up
 window closes, so Reachy's local chat does not answer greetings in a call.
 
 - Reachy uses streaming words only to detect sleep, stop talking, volume, face
-  following and, with `--photo-requests`, a [photo request](#photos-for-muse).
-  Local recognition does not create other requests or conversational cues. It
-  never runs Whisper during a call or waits for the companion's final
-  endpoint. A local streaming final has a 250 ms deadline.
+  following, a cancel of a request that Muse is answering by chat and, with
+  `--photo-requests`, a [photo request](#photos-for-muse). Local recognition does
+  not create other requests or conversational cues. It never runs Whisper during
+  a call or waits for the companion's final endpoint. A local streaming final has
+  a 250 ms deadline.
 - During playback, an interruption needs 300 ms of speech and distinct words
   for at least 120 ms. Two words are required, except for stop commands. Reply
   transcript deltas filter echo, including single words and quoted stop commands.
@@ -1004,7 +1005,8 @@ they go to Muse as ordinary requests.
   what Reachy faces afterwards, usually you.
 - In a [realtime call](#realtime-voice-calls), Muse hears the request too.
   Reachy cuts off Muse's spoken answer, as it does for a device command, and
-  speaks Muse's answer to the photo in its own voice. The call stays open. A
+  speaks Muse's answer to the photo in its own voice. The call stays open.
+  "Never mind" said in the call while Muse still works on the photo drops it. A
   request whose words miss the 250 ms deadline stays with Muse, which answers in
   the call without a photo.
 

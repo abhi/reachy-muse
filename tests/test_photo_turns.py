@@ -563,3 +563,43 @@ def test_a_photo_request_releases_a_held_person_gaze_and_shows_what_reachy_faces
     assert played(events)[-1] == "tts:A desk and a lamp."
     assert [line for line in caplog.messages if line.startswith("Reachy gaze request")] == [
         "Reachy gaze request outcome=turned source=fresh faces=2"]
+
+
+@realtime
+def test_never_mind_in_a_call_drops_the_photo_muse_is_still_answering(monkeypatch, caplog):
+    from reachy_muse.contract.prompts import STOP_REQUEST
+
+    caplog.set_level(logging.INFO)
+    rig = call_rig(monkeypatch, [PHOTO])
+
+    async def muse(session, request):
+        if request == 1:
+            await rig.wait_until_or_timeout(lambda: session.requests == 2, 3)
+            await session.answer(request, "A red mug.")
+        else:
+            await session.answer(request, "Okay, I stopped.")
+
+    asked_again = asyncio.Event()
+
+    async def answers_the_cancel(sdk, emit, script):
+        await asked_again.wait()
+        reply_events(sdk, emit, "r2", "Okay, never mind.", voiced(.4))
+
+    calls = ScriptedCalls(answer=answers_the_cancel)
+    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, what am I holding?", "Never mind."), calls,
+                                    muse=muse, photo_requests=True, wake_timeout_s=5)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.quiet("thinking")
+        frames = len(calls.frames)
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: len(calls.frames) > frames + 20, 3)
+        asked_again.set()
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+
+    events = run(rig, conversation, user, rest=("listening", "idle"))
+    assert [(event["muse"], event["text"]) for event in sent(events)] == [
+        ("send_image", PHOTO_MESSAGE.format("what am I holding?")), ("send_chat", STOP_REQUEST)]
+    assert played(events) == ["shutter", "muse"]
+    assert [fields(line)["outcome"] for line in photo_lines(caplog)] == ["sent"]

@@ -2714,6 +2714,11 @@ class VoiceConversation:
             return TurnOutcome.ACCEPTED
         if photo:
             return await self._photo_in_call(endpoint, request, text, follow_up=follow_up)
+        running = self.job
+        if (follow_up and running is not None and running.request is not None and not running.dropped
+                and classify_follow_up(text) in (FollowUp.CANCEL, FollowUp.SILENCE)):
+            # Muse answers the cancel in the call; the request it works on by chat, such as a photo, is dropped.
+            await self._drop(running)
         await self._gaze.request(text, request.speaker_bearing, request.gaze_generation)
         call = request.call
         # The turn's speech_end mark can be later than the last voiced chunk's processing time when processing lags.
