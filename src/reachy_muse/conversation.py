@@ -2649,8 +2649,18 @@ class VoiceConversation:
             self._moments.cue(Moment.THINKING)
 
     def _muse_working(self, working: bool) -> None:
-        if not working and self.call is not None and not self.call.audible:
+        if working:
+            self._background(self._muse_works())
+        elif self.call is not None and not self.call.audible:
             self._background(self._muse_quiet())
+
+    async def _muse_works(self) -> None:
+        """Muse began working on a request: Reachy looks thoughtful unless it is speaking, hearing the user,
+        or already thinking."""
+        if self._has_output() or self._playback.user_speaking or self._planner.state is plan.State.THINKING:
+            return
+        self._moments.cue(Moment.THINKING)
+        await self._plan(plan.Working(output=False, user_speaking=False))
 
     def _muse_replied(self, response_id: str | None) -> None:
         call = self.call

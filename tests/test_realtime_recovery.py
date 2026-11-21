@@ -689,6 +689,37 @@ def test_a_hung_tool_call_stays_pending_until_its_work_goes_stale(monkeypatch, c
     assert played(events) == [LOST]
 
 
+def test_muse_starting_work_after_its_spoken_acknowledgement_brings_back_the_thinking_pose(monkeypatch, caplog):
+    rig = rig_for(monkeypatch)
+
+    async def answer(sdk, emit, script):
+        reply_events(sdk, emit, "r1", "Sure, one moment.", voiced(1.0))
+        await asyncio.sleep(2)
+        emit(sdk.Working(True))
+        await asyncio.sleep(2)
+        emit(sdk.Working(False))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, StreamingTranscripts("Book me a table for two."), calls, wake_timeout_s=10)
+    poses = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await wait_for(rig, lambda: "muse" in played(rig.recording.events) and not call.audible, 4)
+        await room(rig, .3)
+        poses.append(rig.states()[-1])
+        await wait_for(rig, lambda: call.working, 3)
+        await room(rig, .3)
+        poses.append(rig.states()[-1])
+        await wait_for(rig, lambda: not call.working, 3)
+        await room(rig, .3)
+        poses.append(rig.states()[-1])
+
+    run(rig, conversation, user, rest=("listening",))
+    assert poses == ["listening", "thinking", "listening"]
+
+
 def test_second_recovery_in_one_wake_sends_only_the_next_request_by_chat(monkeypatch, caplog):
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
