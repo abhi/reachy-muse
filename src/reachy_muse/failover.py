@@ -237,6 +237,8 @@ class FailoverHearingTurn:
 
     def _switch(self, *, on_companion: bool) -> None:
         options = dict(self._options, recorder=self._turn.recorder) if on_companion else self._options
+        if not on_companion and self._turn.active:
+            options = dict(options, utterance_id=self._turn.utterance_id)
         self._turn.abort()
         if not on_companion:
             self._kept.clear()

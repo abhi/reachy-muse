@@ -73,7 +73,9 @@ class TurnRecorder:
     voiced audio, while ``max_s`` caps the whole WAV, including its silence.
     ``last_truncated`` reports whether the last returned turn hit that cap.
     ``utterance_id`` is unique to the latest turn started, by any recorder. It
-    changes even when one call ends a rejected turn and starts the next.
+    changes even when one call ends a rejected turn and starts the next. A
+    recorder that replays an utterance another recorder started is given that
+    utterance's id, which its first turn keeps.
     ``initial_min_s`` can temporarily lower the threshold for invocation audio;
     call ``finish_initial_capture`` once that initial capture has been admitted.
 
@@ -97,6 +99,7 @@ class TurnRecorder:
         initial_min_s: float | None = None,
         stream_audio: bool = False,
         short_utterance_silence_s: float | None = None,
+        utterance_id: int = 0,
     ):
         if not isinstance(input_rate, int) or input_rate <= 0:
             raise ValueError("input_rate must be a positive integer")
@@ -132,7 +135,7 @@ class TurnRecorder:
         self._stream_audio = stream_audio
         self._audio_events: list[SpeechAudio | SpeechEnd] = []
         self.last_truncated = False
-        self.utterance_id = 0
+        self.utterance_id = self._replayed_id = utterance_id
         self.reset()
 
     @classmethod
@@ -232,7 +235,7 @@ class TurnRecorder:
                 if self._voice_run < 3:
                     continue
                 self._turn = [audio for audio, _ in self._history]
-                self.utterance_id = next(_UTTERANCE_IDS)
+                self.utterance_id, self._replayed_id = self._replayed_id or next(_UTTERANCE_IDS), 0
                 if self._stream_audio:
                     self._audio_events.append(SpeechAudio(b"".join(self._turn)))
                 self._voiced_frames = sum(speech for _, speech in self._history)

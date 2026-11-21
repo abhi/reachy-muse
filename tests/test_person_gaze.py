@@ -381,6 +381,56 @@ def test_an_ended_utterance_never_supplies_the_next_speakers_bearing(people, cap
         assert any('capture lost continuity' in line for line in caplog.messages)
 
 
+@pytest.mark.parametrize('companion_fails', [False, True])
+def test_a_companion_failure_in_the_endpoint_silence_keeps_the_speakers_bearing(people, caplog, companion_fails):
+    from musegadget.identity import Identity
+    from reachy_muse.capabilities import Mode
+    from reachy_muse.companion_client import CompanionHearing, CompanionLink, LinkState, _Connection
+    from reachy_muse.conversation import ReachyService
+    from reachy_muse.failover import CompanionRoute, FailoverHearing
+    from reachy_muse.local_backends import backends_for
+    from reachy_muse.protocol import Op
+    from test_pins import PinSession, Transcripts, Vad
+
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    link = CompanionLink('ws://localhost:9', token='test', out_rate=16000, insecure=True)
+    link._connection = _Connection(None, (Op.HEAR,))
+    link._set(LinkState.UP)
+
+    async def muse(session, request):
+        await session.answer(request, 'Hello there.')
+
+    def backends(session):
+        bundle = backends_for(Mode.ON_ROBOT, session, speech=rig.voice(), progress_speech=rig.voice('progress_tts'),
+                              transcriber=Transcripts('Say hi to my friend.'))
+        return replace(bundle, hearing=FailoverHearing(CompanionHearing(link), bundle.hearing,
+                                                       CompanionRoute(link).hearing))
+
+    async def prepare_chat(session, vm):
+        return 'robot-chat'
+
+    rig.session = PinSession(rig.recording, muse)
+    service = ReachyService(identity=Identity('02:00:00:ab:cd:ef'), executor=rig.hardware, silence_s=.2,
+                            speech_gate=Vad(), backends=backends, prepare_chat=prepare_chat, owns_chat=True)
+
+    async def user():
+        for _ in range(35):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(.02)
+        await room(rig, .06)
+        if companion_fails:
+            link._connection.fail('disconnected')
+            link._set(LinkState.DOWN)
+        await room(rig, .6)
+        await rig.wait_until_or_timeout(lambda: any(line.startswith('Reachy gaze request') for line in caplog.messages), 5)
+
+    events = run(rig, service, user)
+    assert sent_to_muse(events) == ['Say hi to my friend.']
+    assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+        'Reachy gaze request outcome=turned source=fresh faces=2']
+
+
 @pytest.mark.parametrize('case, text, expected', [
     ('single', 'Say hi to my friend.', 'no_other source=fresh faces=1'),
     ('empty', 'Greet my guest.', 'no_faces source=fresh faces=0'),
