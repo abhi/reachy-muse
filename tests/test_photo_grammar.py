@@ -14,7 +14,7 @@ REQUESTS = [
     "Could you snap a quick photo?", "take a photo of this and tell me what it is", "take a photo then read the label",
     "take a photo of my plant and tell me if it needs water", "take a selfie", "please take a picture of the room",
     "What do you see?", "what can you see right now", "what do you see on the table", "What's in front of you?",
-    "What am I holding?", "what is this I'm holding", "can you see this?", "do you see that",
+    "What am I holding?", "what is this I'm holding", "can you see this?", "do you see this",
     "tell me what you see", "look at this and tell me what it is",
     "take a look at this and tell me what kind of bird it is", "send Muse a photo of this",
     "send a picture of the whiteboard to Muse", "I want you to take a photo", "Go ahead and take a photo",
@@ -24,12 +24,12 @@ REQUESTS = [
     "take a photo of what's on my desk", "take a picture of my screen and tell me what the error says",
     "take a photo of this text message and read it to me", "What am I pointing at?",
     # Natural forms
-    "What is this?", "What's that?", "What's in my hand?", "What am I holding up?", "Can you see me?",
+    "What is this?", "What's this?", "What's in my hand?", "What am I holding up?", "Can you see me?",
     "Take a photo for Muse", "Take a picture and send it to Muse", "Take a picture, what do you see?",
     "Look at this, what is it?", "Show this to Muse", "Photograph this", "Take a photo of my morning coffee.",
     "Take a photo of the kids' drawing.", "Take a picture of the evening sky.", "Show Muse this.",
     "Send this to Muse.", "Take a photo and ask Muse what it is.", "What kind of plant is this?",
-    "What breed is this dog?", "Read this label.", "What does that sign say?", "Identify this bird.",
+    "What breed is this dog?", "Read this label.", "What does this sign say?", "Identify this.",
     "Can you see my face?", "Do you see the dog?", "What's on the table?", "How do I look?", "Do I look okay?",
     "Describe the room.", "How many fingers am I holding up?", "What do you think of my outfit?",
     "What can you see from where you are?", "Photograph the whiteboard.",
@@ -73,6 +73,12 @@ NOT_REQUESTS = [
     "What's on my plate?", "Photograph of the Eiffel Tower.", "Look at that, what a mess.",
     "Look at this, how cute.", "Check this out.", "Take a look.", "Capture this.", "Take a shot of this.",
     "Is this a good idea?", "Say 'take photos' and smile.",
+    # "That" and "it" refer back to something said; "this" points at what Reachy can see
+    "do you see that", "What's that?", "What is that?", "What does that sign say?", "Can you see it?",
+    "Look at that and tell me what it says.", "Tell me what that is.", "What kind of bird is that?",
+    "Show that to Muse.",
+    # Things in the user's apps rather than in front of Reachy
+    "Identify this bird.", "Read this note.", "Read this list.", "Can you see my photo?", "Can you see my screen?",
     # Device commands, gaze and local chat
     "look at me", "look over here", "keep looking at me", "watch me", "say hi to someone else",
     "look at the other person", "greet my guest", "look at him", "look at this", "what's up", "go to sleep",
@@ -210,7 +216,30 @@ def test_room_and_television_speech_never_takes_a_photo():
     assert len(BACKGROUND) == 96
     assert [text for text in BACKGROUND if decider._photo_requested(text, TurnTimeline())] == []
     assert sum(decider._photo_requested(text, after_a_wake()) for text in BACKGROUND) == sum(
-        map(photo_requested, BACKGROUND)) == 72
+        map(photo_requested, BACKGROUND)) == 64
+
+
+# Questions a user asks Muse about their own things, naming it, as an assistant is asked.
+ADDRESSED_QUESTIONS = [
+    "Muse, can you see my calendar?", "Muse, can you see my email?", "Muse, can you see my messages?",
+    "Muse, can you see my last message?", "Muse, do you see the file?", "Muse, can you see my location?",
+    "Muse, can you see the weather?", "Muse, can you see my notifications?", "Muse, can you see my schedule?",
+    "Muse, can you see my shopping list?", "Muse, can you see my reminders?", "Muse, can you see my account?",
+    "Muse, can you see my package?", "Muse, can you see my order?", "Muse, can you see my flight?",
+    "Muse, can you see the chat?", "Muse, do you see my texts?", "Muse, can you see my history?",
+    "Muse, can you see my steps?", "Muse, can you see my contacts?", "Muse, can you see the document?",
+    "Muse, what's that?", "Muse, what is that?", "Muse, tell me what that is.", "Muse, what does that say?",
+    "Muse, what kind of bird is that?", "Muse, identify this bird.", "Muse, read this note.",
+    "Muse, read this list.", "Can you see my calendar, Muse?", "What's that, Muse?",
+    "Hey Muse, can you see my inbox?", "Muse, can you see my photos?", "Muse, can you see my pictures?",
+    "Muse, what is this called in French?", "Muse, what's this weather like?",
+]
+
+
+def test_questions_spoken_to_muse_about_the_user_s_own_things_never_take_a_photo():
+    decider = photo_decider()
+    assert len(ADDRESSED_QUESTIONS) == 36 and all(map(names_reachy, ADDRESSED_QUESTIONS))
+    assert [text for text in ADDRESSED_QUESTIONS if decider._photo_requested(text, TurnTimeline())] == []
 
 
 # Natural requests a user makes of Reachy.
@@ -240,6 +269,7 @@ NATURAL = [
 def test_most_natural_requests_take_a_photo_and_the_rest_are_refused_on_purpose():
     assert len(NATURAL) == 74
     assert [text for text in NATURAL if not photo_requested(text)] == [
+        "What's that?", "What is that?",      # "that" usually refers back to something said
         "Who is this?",                       # also a song's singer or a caller
         "What does it say?",                  # "it" refers back, often to a message
         "Is this ripe?",                      # "is this" asks too much that is not seen

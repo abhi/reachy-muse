@@ -1118,3 +1118,16 @@ def test_a_wave_and_its_yes_do_not_make_the_next_request_spoken_to_reachy(monkey
     events = run(rig, conversation, user, rest=("listening", "idle"))
     assert [(event["muse"], event["text"]) for event in sent(events)] == [("send_chat", "What do you see?")]
     assert (rig.hardware.captures, photo_lines(caplog)) == ([], [])
+
+
+@pytest.mark.parametrize("words", ["Muse, can you see my calendar?", "Muse, can you see my package?",
+                                   "Can you see my last message, Reachy?", "Muse, what's that?"])
+def test_an_addressed_question_about_the_user_s_own_things_takes_no_photo(monkeypatch, words):
+    rig = photo_rig(monkeypatch, [PHOTO])
+    conversation = service(rig, answers("You have two meetings."), Transcripts(words), photo_requests=True)
+
+    async def user():
+        rig.say()
+
+    events = run(rig, conversation, user)
+    assert (rig.hardware.captures, [event["muse"] for event in sent(events)]) == ([], ["send_chat"])

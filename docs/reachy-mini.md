@@ -994,9 +994,13 @@ request may open with words such as "okay", use a polite form such as "can
 you", and end with "please" or "now". The request must come first in what you
 say, so negated, quoted and reported forms, such as "don't take a photo" or "she
 said take a photo", and questions about photos, such as "can you take photos?",
-never take one. "Look at this" alone takes none: it asks Muse nothing. Words
-that often refer back or are about sound, such as "what does it say?", "read that
-again", "who is this?" or "what kind of music is this?", are ordinary requests.
+never take one. "Look at this" alone takes none: it asks Muse nothing. "This"
+points at what Reachy can see, while "that" and "it" usually refer back to
+something said, so "what's that?", "can you see it?" and "read that again" are
+ordinary requests. So are questions about your own things, such as "can you see
+my calendar?" or "read this note", and about sound, such as "who is this?" or
+"what kind of music is this?". "Can you see my …" takes a photo only of a thing
+in view, such as your face, hair, outfit, hand, pet, plant or desk.
 
 Muse is the one place a photo may go: "take a photo for Muse" and "take a
 picture and send it to Muse" take one. Reachy refuses a request that would share,
