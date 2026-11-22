@@ -751,30 +751,33 @@ def capture_held_until(released):
     return started, capture
 
 
-@pytest.mark.parametrize("cancel", ["Never mind.", "Stop talking."])
-def test_a_cancel_heard_while_the_photo_is_taken_keeps_it_home(monkeypatch, caplog, cancel):
+@pytest.mark.parametrize("cancel, reply, rest", [
+    ("Never mind.", "Okay, I'll drop that.", "listening"), ("Stop talking.", "Okay, I'll drop that.", "listening"),
+    ("Go to sleep.", "Good night.", "sleeping")])
+def test_a_cancel_heard_while_the_photo_is_taken_keeps_it_home(monkeypatch, caplog, cancel, reply, rest):
     import threading
+    from test_pins import Wake
 
     caplog.set_level(logging.INFO)
     released = threading.Event()
     capturing, capture = capture_held_until(released)
     rig = photo_rig(monkeypatch, [capture])
-    conversation = service(rig, answers("A red mug."), Transcripts("Reachy, what am I holding?", cancel),
-                           photo_requests=True)
+    conversation = service(rig, answers("A red mug."), Transcripts("Hey Muse, what am I holding?", cancel),
+                           wake_detector=Wake(), wake_timeout_s=30, photo_requests=True)
 
     async def user():
-        rig.say()
+        rig.say(wake=True)
         await rig.wait_until_or_timeout(capturing.is_set, 5)
         rig.say()
-        await rig.wait_until_or_timeout(lambda: "tts:Okay, I'll drop that." in played(rig.recording.events), 5)
+        await rig.wait_until_or_timeout(lambda: f"tts:{reply}" in played(rig.recording.events), 5)
         released.set()
 
     try:
-        events = run(rig, conversation, user)
+        events = run(rig, conversation, user, rest=(rest,))
     finally:
         released.set()
     assert sent(events) == []
-    assert played(events) == ["tts:Okay, I'll drop that."]
+    assert played(events) == [f"tts:{reply}"]
     assert [fields(line)["outcome"] for line in photo_lines(caplog)] == ["cancelled"]
 
 
