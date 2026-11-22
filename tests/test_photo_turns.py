@@ -1158,3 +1158,36 @@ def test_reachy_s_own_hey_muse_heard_back_never_makes_the_next_request_spoken_to
     assert [(event["muse"], event["text"]) for event in sent(events)] == [
         ("send_chat", "how do I wake you?"), ("send_chat", "Take a picture of us.")]
     assert (rig.hardware.captures, photo_lines(caplog)) == ([], [])
+
+
+def test_a_photo_request_the_companion_ends_while_the_user_still_talks_takes_no_photo(monkeypatch, caplog):
+    from dataclasses import replace
+    from reachy_muse.companion_client import CompanionHearing, CompanionLink, LinkState, _Connection
+    from reachy_muse.protocol import HearEndpoint, Op, encode
+    from test_pins import CHUNK, VOICE_SAMPLE
+
+    caplog.set_level(logging.INFO)
+    rig = photo_rig(monkeypatch, [PHOTO])
+    link = CompanionLink("ws://localhost:9", token="test", out_rate=16000, insecure=True)
+    link._connection = connection = _Connection(None, (Op.HEAR,))
+    link._set(LinkState.UP)
+    conversation = service(rig, answers("A desk.", "Okay."), None, photo_requests=True)
+    backends = conversation.backends
+    conversation.backends = lambda session: replace(backends(session), hearing=CompanionHearing(link))
+    streams = []
+
+    async def user():
+        for index in range(60):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            streams.extend(stream for stream in list(connection.hearing) if stream not in streams)
+            if index == 25:
+                link._receive(connection, encode(HearEndpoint(streams[0], "Muse, take a photo", False)))
+        rig.say(voiced_s=0)
+        await rig.wait_until_or_timeout(lambda: len(streams) > 1, 3)
+        link._receive(connection, encode(HearEndpoint(streams[1], "and send it to my wife", True)))
+        await rig.wait_until_or_timeout(lambda: sent(rig.recording.events), 5)
+
+    events = run(rig, conversation, user, rest=("listening", "idle"))
+    assert (rig.hardware.captures, photo_lines(caplog)) == ([], [])
+    assert [(event["muse"], event["text"]) for event in sent(events)][0] == ("send_chat", "Muse, take a photo")

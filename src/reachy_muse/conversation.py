@@ -2121,14 +2121,16 @@ class VoiceConversation:
         The request must address Reachy: the first request after the wake phrase opened or refreshed the
         window, whether said in the same breath or after Reachy's "Yes?", or words that open with the wake
         phrase or open or close by naming Muse or Reachy. A later unnamed request, such as a television's,
-        never does, and neither does a wave. The user must also have finished speaking, or the request's end
-        may still be coming.
+        never does, and neither does a wave. The user must also have finished speaking, with a pause before
+        the endpoint, or the request's end may still be coming.
         """
         if not (self.photo_requests and text is not None and photo_requested(text)):
             return False
         addressed = ("wake" in timeline.marks or timeline.facts.get("wake_request") == "first"
                      or timeline.facts.get("wake_phrase") == "said" or names_reachy(text))
-        return addressed and not self._recording_active() and photo_allowed(timeline)
+        # Speech that ran right up to the endpoint was cut off, as by a companion's endpoint while the user talked.
+        cut_off = "endpoint" in timeline.marks and timeline.marks.get("speech_end") == timeline.marks["endpoint"]
+        return addressed and not cut_off and not self._recording_active() and photo_allowed(timeline)
 
     def _note_wake_phrase(self, prefix: str, timeline: TurnTimeline | None) -> None:
         """Remember that this utterance opened with the wake phrase, which stripping removes from its words."""
