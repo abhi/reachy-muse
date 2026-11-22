@@ -424,6 +424,39 @@ def test_muse_asking_before_reachys_own_end_of_the_request_hears_about_it(people
     assert_allowed(rig.session.results, caplog)
 
 
+def test_a_request_muse_s_reply_ends_and_one_over_that_reply_each_belong_to_their_own_response(people, caplog):
+    """The owner asks, and Muse's reply starts before Reachy's own end of the request, which ends there. A guest then
+    talks over that reply and cuts it off, and Muse asks who made the request it answers next: the guest, admitted
+    after the first reply began, not the owner, whose request ended where it began."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    rig.hardware.echo_cancelled_input = True
+    fake = companion(SpeakerLabel.OWNER)
+
+    async def answer(sdk, emit, calls):
+        ordinal = len(calls.answering)
+        if ordinal == 2:
+            await rig.session.invoke("reachy.people")
+        reply_events(sdk, emit, f"r{ordinal}", REPLY, voiced(3) if ordinal == 1 else REPLY_AUDIO)
+
+    async def user(voice):
+        await say_live(rig, wake=True, paced_silence_s=.3)
+        while not (voice.call is not None and voice.call.audible):
+            await room(rig, .04)
+        fake.speaker = SpeakerLabel.OTHER
+        await say_live(rig, voiced_s=.8, paced_silence_s=.4)
+        for _ in range(150):
+            if rig.session.results:
+                break
+            await room(rig, .04)
+
+    calls = ScriptedCalls(answer=answer, every_turn=True)
+    converse(rig, calls, fake, user, silence_s=1.2, wake_timeout_s=10)
+    assert calls.barge_ins == 1
+    assert [result["payload"]["speaker"] for result in rig.session.results] == ["someone_else"]
+    assert_allowed(rig.session.results, caplog)
+
+
 def test_muses_own_voice_heard_back_never_stands_for_the_user(people, caplog):
     """While Muse's reply plays, its echo reaches the microphone and the companion labels it someone else.
     Reachy never admits that echo as a request, so the owner's request is still the one Muse hears about."""
