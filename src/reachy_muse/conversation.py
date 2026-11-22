@@ -2115,9 +2115,9 @@ class VoiceConversation:
     def _photo_requested(self, text: str | None, timeline: TurnTimeline) -> bool:
         """Whether this turn asks Reachy for a photo it may take.
 
-        The request must address Reachy: the first request after a wake, or words that open with the wake
-        phrase or open or close by naming Muse or Reachy. A room's or a television's words never do. And the
-        user must have finished speaking, or the request's end may still be coming.
+        The request must address Reachy in its own words: the utterance whose wake phrase woke Reachy, or words
+        that open with the wake phrase or open or close by naming Muse or Reachy. A room's or a television's
+        words never do. And the user must have finished speaking, or the request's end may still be coming.
         """
         return (self.photo_requests and text is not None and photo_requested(text)
                 and ("wake" in timeline.marks or timeline.facts.get("wake_phrase") == "said" or names_reachy(text))
