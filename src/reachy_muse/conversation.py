@@ -1186,7 +1186,7 @@ class VoiceConversation:
             if heard.ended is not None or not (recorder.active or recorder.speech_active):
                 utterance = None
             bearing = None
-            if heard.ended is not None:
+            if heard.ended is not None or heard.transcript_lost and current is not None:
                 bearing = latched_bearing(current)
                 self._gaze.requested(current.generation, bearing)
             for _ in range(heard.failures):
@@ -3676,8 +3676,8 @@ class ReachyService(PairedService):
                   deadline: float, session: LinkSession | None):
         """``ask`` this session's conversation on its loop, or ``absent()`` while it has none.
 
-        ``ask`` answers by ``deadline`` itself, then has a second for its last step, such as a camera pass.
-        Raises CommandTimeout if it has not answered by then, without asking if ``deadline`` already passed.
+        ``ask`` answers by ``deadline`` itself. Raises CommandTimeout if it has not, without asking if
+        ``deadline`` already passed.
         """
         active = self._voice
         if active is None or session is not None and active[1].session is not session:
@@ -3693,7 +3693,7 @@ class ReachyService(PairedService):
             work.close()
             return absent()
         try:
-            return future.result(remaining + 1)
+            return future.result(remaining)
         except CommandCancelled:
             return absent()
         except CommandTimeout:

@@ -22,6 +22,7 @@ _REMEMBERED_S = 30.0
 _SPEAKER_ARC = math.radians(20)
 _VISIBLE_MAX_AGE_S = 10.0
 _LABEL_WAIT_S = 1.0
+_HANDOFF_S = .1                       # left before Muse's deadline for an answer to reach the SDK
 _HEARD_KEPT = 16
 _SPEAKERS = {"owner": "owner", "other": "someone_else"}
 
@@ -142,7 +143,7 @@ class PersonGaze:
         Their known labels must agree; a request labeled unknown, or not labeled by then, counts for nothing.
         """
         asked_at = time.monotonic()
-        until = min(asked_at + _LABEL_WAIT_S, deadline)
+        until = min(asked_at + _LABEL_WAIT_S, deadline - _HANDOFF_S)
         snapshot = self.hardware.face_snapshot()
         looking = (None if _within(snapshot, _VISIBLE_MAX_AGE_S)
                    else asyncio.ensure_future(self._fresh_pass(min(_FRESH_PASS_S, until - asked_at))))
@@ -162,10 +163,10 @@ class PersonGaze:
     async def look_at(self, target: str, deadline: float, activity: MuseActivity | None,
                       chat: dict[str, str] | None) -> str:
         """Face the speaker of the latest request Muse is answering, or someone else as a request to greet them
-        does.
+        does, with any camera pass done by ``deadline``.
 
-        As with Muse's other motion commands, a person turn that is still being chosen, queued or moving
-        makes it busy.
+        As with Muse's other motion commands, sleep, motion turned off, or a person turn that is still being
+        chosen, queued or moving makes it busy.
         """
         requests = self._answering(time.monotonic(), activity, chat)
         bearing = requests[-1].speaker_bearing() if requests else None
@@ -175,7 +176,8 @@ class PersonGaze:
             return "busy"
         generation = self._admitted_generation
         if target == "other":
-            outcome, _, _ = await self._look_at_other(bearing, generation)
+            outcome, _, _ = await self._look_at_other(bearing, generation,
+                                                      deadline - _HANDOFF_S - time.monotonic())
             return outcome
         if not self.hardware.face_speaker(bearing):
             return "busy"
@@ -209,8 +211,10 @@ class PersonGaze:
             return
         self._log(*await self._look_at_other(speaker_bearing, generation))
 
-    async def _look_at_other(self, speaker_bearing: float | None, generation: int) -> tuple[str, str, int]:
-        """Face the person who is not speaking, preferring faces in view to faces seen recently.
+    async def _look_at_other(self, speaker_bearing: float | None, generation: int,
+                             within_s: float = _FRESH_PASS_S) -> tuple[str, str, int]:
+        """Face the person who is not speaking, preferring faces in view to faces seen recently; a camera pass
+        takes at most ``within_s``.
 
         Returns the outcome, the source of the faces used and how many were in view. A remembered
         bearing that the current view covered is dropped: the camera just looked there.
@@ -224,7 +228,7 @@ class PersonGaze:
                 return "busy", "none", 0
             self._choosing = True
             try:
-                view, source = await self._fresh_pass(_FRESH_PASS_S), "fresh"
+                view, source = await self._fresh_pass(min(_FRESH_PASS_S, within_s)), "fresh"
             finally:
                 self._choosing = False
         if generation != self._admitted_generation:

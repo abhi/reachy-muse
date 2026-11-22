@@ -130,7 +130,8 @@ an earlier one when it only goes on with an earlier answer. Between responses,
 Muse is answering the requests admitted since its latest response, or else the
 ones that response answered; while it works, a remark made meanwhile counts too,
 because the call cannot tell it from part of the request. In chat, it is the
-request Muse was sent. A request still being spoken counts. A sound that never
+request Muse was sent. A request still being spoken counts, and so does one
+whose words Reachy failed to transcribe, since Muse heard it. A sound that never
 becomes a request, such as a cough, and anything Reachy admits after Muse asks
 never count. The command waits up to a second for the companion's labels of
 those requests, which come at the companion's end of each one's speech, and does
@@ -144,8 +145,9 @@ gives its rounded age, when that snapshot is at most 10 seconds old. Face
 detection pauses while anyone speaks, so in a call the snapshot is often older;
 then the command takes the same bounded camera pass as `reachy.look_at` with
 `other`, at most 300 ms, while it waits for the labels and within the same
-second. If that pass does not finish, both fields are null. The command never
-moves Reachy. It logs one line with fixed words, such as
+second. If that pass does not finish, both fields are null. The wait and the
+pass end early enough for the answer to reach Muse within its `timeout_ms`. The
+command never moves Reachy. It logs one line with fixed words, such as
 `Reachy people speaker=owner visible=2`.
 
 `reachy.look_at` uses the bearing latched for the latest of those requests, or,
@@ -155,12 +157,14 @@ toward the speaker, as a wake turn does, so the next request does not undo it,
 and motion commands are refused only while it moves, as for any person turn.
 With `other`, it runs the selector and hold of a local request to greet someone
 else, without the words: it reports the same outcomes, and the next request
-releases the hold. Either target fades clips and the thinking motion first. Like
-Muse's other motion commands, it reports `busy` only while a person turn is being
-chosen, queued or still moving, or while another motion command runs. In a call,
-a turn counts as Muse acting on the request, so a response without words still
-answers it, and Reachy's own closing expression gives way, also after a later
-response to the same request. It logs one line, such as
+releases the hold. Either target fades clips and the thinking motion first. A
+camera pass for `other` ends early enough for the answer to reach Muse within
+its `timeout_ms`. Like Muse's other motion commands, it reports `busy` while
+Reachy is asleep or its motion is off, while a person turn is being chosen,
+queued or still moving, or while another motion command runs. In a call, a turn
+counts as Muse acting on the request, so a response without words still answers
+it, and Reachy's own closing expression gives way, also after a later response
+to the same request. It logs one line, such as
 `Reachy look_at target=other outcome=turned`.
 
 ## Registration size

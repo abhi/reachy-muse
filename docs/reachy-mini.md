@@ -548,9 +548,10 @@ reply; like a wake turn, it lasts until a motion command or sleep. Target
 `other` runs the same selection and hold as a spoken request to greet someone
 else, and the next request releases it. Muse gets only the outcome: `turned`,
 `no_other`, `no_faces`, `no_speaker_bearing`, `stale` or `busy`. It is `busy`
-while a person turn is still being chosen, queued or moving, whether Reachy
-started it by itself for "say hi to my friend" or Muse asked for it. The log line
-names only the target and outcome, as in `Reachy look_at target=other outcome=turned`.
+while Reachy is asleep or its motion is off, and while a person turn is still
+being chosen, queued or moving, whether Reachy started it by itself for "say hi
+to my friend" or Muse asked for it. The log line names only the target and
+outcome, as in `Reachy look_at target=other outcome=turned`.
 
 With `--wave-wake`, a wave also turns Reachy toward the person before face
 tracking takes over. The detected person's position takes priority over recent

@@ -22,7 +22,8 @@ from reachy_muse import companion_client
 from reachy_muse.companion_client import CompanionHearing, CompanionLink
 from reachy_muse.failover import CompanionRoute, FailoverHearing
 from reachy_muse.hardware import SPEAKER_TURN_S
-from reachy_muse.protocol import HearClose, HearOpen, Op, Sender, SpeakerLabel, decode
+from reachy_muse.protocol import ErrorCode, HearClose, HearOpen, Op, Sender, SpeakerLabel, decode
+from reachy_muse.streaming_transcription import StreamingWorkerError
 from test_device_command_turns import never_asked, played, service as chat_service
 from test_person_gaze import people, say_live  # noqa: F401  # people is the fixture shared with people1's tests
 from test_pins import CHUNK, VOICE_SAMPLE, PinSession
@@ -58,11 +59,13 @@ class InvokedSession(PinSession):
     async def send(self, message):
         self._waiting.pop(message["id"]).set_result(message)
 
-    async def invoke(self, command, params=None):
+    async def invoke(self, command, params=None, timeout_ms=None):
         id = f"invoke-{next(self._ids)}"
         result = self._waiting[id] = asyncio.get_running_loop().create_future()
-        LinkSession._handle(self, {"method": "link.invoke", "id": id, "command": command,
-                                   "params": {} if params is None else params})
+        message = {"method": "link.invoke", "id": id, "command": command, "params": {} if params is None else params}
+        if timeout_ms is not None:
+            message["timeout_ms"] = timeout_ms
+        LinkSession._handle(self, message)
         self.results.append(await asyncio.wait_for(result, 8))
         return self.results[-1]
 
@@ -85,14 +88,15 @@ def companion(speaker=SpeakerLabel.OWNER, request=REQUEST, *, ops=(Op.HEAR, Op.S
     return FakeCompanion(ops=ops, partials=(request,), speaker=speaker, **knobs)
 
 
-def converse(rig, calls, fake, user, *, silence_s=None, wake_timeout_s=2, muse=never_asked):
+def converse(rig, calls, fake, user, *, silence_s=None, wake_timeout_s=2, muse=never_asked, transcripts=None):
     """Reachy in a realtime call with ``calls``, or in chat with ``muse`` when ``calls`` is None, that hears
-    through ``fake``, from rest until ``user(voice)`` is done and it rests again."""
+    through ``fake``, or through ``transcripts`` on the robot when the companion cannot, from rest until
+    ``user(voice)`` is done and it rests again."""
+    transcripts = transcripts or StreamingTranscripts()
     if calls is None:
-        service = chat_service(rig, muse, StreamingTranscripts(), wake_detector=TimedWake(),
-                               wake_timeout_s=wake_timeout_s)
+        service = chat_service(rig, muse, transcripts, wake_detector=TimedWake(), wake_timeout_s=wake_timeout_s)
     else:
-        service = realtime_service(rig, StreamingTranscripts(), calls, wake_timeout_s=wake_timeout_s)
+        service = realtime_service(rig, transcripts, calls, wake_timeout_s=wake_timeout_s)
     if silence_s is not None:
         service.silence_s = silence_s
     rig.session = InvokedSession(rig.recording, muse)
@@ -506,6 +510,53 @@ def test_without_voice_labels_reachy_people_answers_at_once(people, caplog):
     assert_allowed(rig.session.results, caplog)
 
 
+def test_a_request_whose_words_reachy_lost_is_still_the_one_muse_answers(people, caplog):
+    """The owner at +30 degrees asks and Muse answers. A guest at -30 asks next while the companion is overloaded,
+    and Reachy's own recognizer fails on it, so Reachy has no words for it; Muse heard it and answers it. The
+    owner's label does not stand for it, and Muse's turn toward the speaker faces the guest."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    fake = companion()
+
+    class LosesItsWords(StreamingTranscripts):
+        def open_turn(self):
+            turn = super().open_turn()
+
+            def feed(pcm):
+                if not np.any(np.frombuffer(pcm, "<i2")[-320:]):
+                    raise StreamingWorkerError("command worker stopped")
+            turn.feed = feed
+            return turn
+
+    async def answer(sdk, emit, calls):
+        ordinal = len(calls.answering)
+        if ordinal == 2:
+            await until(rig, lambda: "Reachy could not transcribe a turn Muse heard in its call; Muse answers it"
+                        in caplog.messages)
+            await room(rig, .4)
+            await rig.session.invoke("reachy.people")
+            await rig.session.invoke("reachy.look_at", {"target": "speaker"})
+        if ordinal <= 2:
+            reply_events(sdk, emit, f"r{ordinal}", REPLY, REPLY_AUDIO)
+
+    async def user(voice):
+        await say_live(rig, wake=True)
+        await replied(rig, voice)
+        await room(rig, .5)
+        fake.hear_error, scene.doa = ErrorCode.OVERLOADED, 2 * math.pi / 3
+        await say_live(rig)
+        await replied(rig, voice, 2)
+        await until(rig, lambda: facing(controller, robot) == (-30, -10))
+
+    converse(rig, ScriptedCalls(answer=answer, every_turn=True), fake, user, wake_timeout_s=10,
+             transcripts=LosesItsWords())
+    assert logged(caplog, "Reachy speaker=") == ["Reachy speaker=owner"]
+    assert [result["payload"].get("speaker", result["payload"].get("outcome"))
+            for result in rig.session.results] == ["unknown", "turned"]
+    assert facing(controller, robot) == (-30, -10)
+    assert_allowed(rig.session.results, caplog)
+
+
 def test_an_aside_while_muse_prepares_its_answer_never_stands_for_the_guest(people, caplog):
     """A guest asks; while Muse prepares its answer, the owner says something aside, and Muse asks who made the
     request it is answering. Muse heard both before answering, and their labels disagree."""
@@ -866,6 +917,37 @@ def test_nothing_beyond_the_allowed_fields_reaches_muse_or_the_log(people, caplo
         "Reachy look_at target=other outcome=turned",
         "Reachy look_at target=other outcome=busy",
     ]
+    assert_allowed(rig.session.results, caplog)
+
+
+@pytest.mark.parametrize("command, params", [("reachy.look_at", {"target": "other"}), ("reachy.people", {})])
+def test_a_slow_camera_pass_ends_in_time_for_muses_timeout(people, caplog, command, params):
+    """Muse allows 250 ms here. Reachy's view is stale and its camera slower than that, so the camera pass gives
+    up early enough for the answer to reach Muse before its timeout."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    took = []
+
+    async def ask(ordinal):
+        await heard(rig, caplog)
+        await labeled(rig, caplog, SpeakerLabel.OWNER)
+        scene.age = 11
+        assert len((await asyncio.to_thread(controller.refresh_faces)).faces) == 2
+        scene.age, scene.before_capture = 0, lambda: time.sleep(1)
+        started = time.monotonic()
+        await rig.session.invoke(command, params, timeout_ms=250)
+        took.append(time.monotonic() - started)
+        scene.before_capture = None
+
+    muse = Muse(ask)
+
+    async def user(voice):
+        await say_live(rig, wake=True)
+        await replied(rig, voice)
+
+    converse(rig, muse.calls, companion(), user)
+    assert [result["ok"] for result in rig.session.results] == [True]
+    assert len(took) == 1 and took[0] < .25
     assert_allowed(rig.session.results, caplog)
 
 
