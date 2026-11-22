@@ -507,7 +507,10 @@ motion, or photo owns the head. It waits only as long as the utterance goes on,
 and never turns for it afterwards. Each decision logs one line, such as
 `Reachy follows speaker outcome=turned delta_deg=-55`. The outcome is `turned`,
 `same`, `too_soon`, `unknown`, `off`, `held` or `busy`, and `delta_deg` is how
-far the gaze would turn, or `none` when Reachy did not weigh a turn.
+far the gaze would turn, or `none` when Reachy did not weigh a turn. When a
+motion command, a turn toward a person or sleep takes over before a turn
+starts, Reachy logs `Reachy follows speaker outcome=preempted` instead of
+turning, and does not try again.
 
 With face following enabled, requests such as "say hi to my friend", "greet
 someone else" or "look at the other person" also turn Reachy toward another

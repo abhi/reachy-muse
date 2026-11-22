@@ -595,7 +595,7 @@ class ReachyController:
                 return False
             self._person_pending = turn
             self._person_release = False
-            self._speaker_pending = None
+            self._drop_speaker_pending()
             self._pending_motion = None
             return True
 
@@ -1513,10 +1513,16 @@ class ReachyController:
         return self._head(**coordinates)
 
     def _clear_speaker(self) -> None:
-        self._speaker_pending = None
+        self._drop_speaker_pending()
         self._person_pending = None
         self._end_person_hold()
         self._speaker_look = self._speaker_turn = None
+
+    def _drop_speaker_pending(self) -> None:
+        """Forget a turn toward a speaker that has not started; a turn toward a later speaker logs that it never came."""
+        pending, self._speaker_pending = self._speaker_pending, None
+        if pending is not None and pending.follow:
+            log.info("Reachy follows speaker outcome=preempted")
 
     def _end_person_hold(self) -> _PersonHold | None:
         hold, self._person_hold = self._person_hold, None
@@ -1821,7 +1827,8 @@ class ReachyController:
                             self._command_active = True
                         if request is not None or commanded:
                             self._end_person_hold()
-                            self._speaker_pending = self._speaker_look = self._speaker_turn = None
+                            self._drop_speaker_pending()
+                            self._speaker_look = self._speaker_turn = None
                             self._sentences.cancel()
                             self._sentence_active = False
                             self._sentence_terminal = None

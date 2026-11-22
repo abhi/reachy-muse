@@ -588,6 +588,31 @@ def test_a_later_speaker_waits_while_a_person_turn_or_other_motion_owns_the_head
     assert (round(final["yaw"]), round(final["body_yaw"])) == faced
 
 
+@pytest.mark.parametrize("preempt, faced", [
+    (lambda c: c._commands.put_nowait(_Command("reachy.move", {"yaw": 10, "duration": .2, "hold": 0}, 1010)), (0, 0)),
+    (lambda c: c.look_at_person(math.radians(-60), 0), (-35, -15)),
+    (lambda c: c.set_state("sleeping"), (0, 0)),
+], ids=["command", "person_turn", "sleep"])
+def test_a_turn_toward_a_later_speaker_says_so_when_other_motion_takes_over_first(monkeypatch, caplog, preempt,
+                                                                                  faced):
+    """A command still in the queue, a turn toward a person or sleep takes over before the turn starts."""
+    caplog.set_level("INFO", logger="reachy_muse.hardware")
+    results = []
+    follow = follow_from(-25, results)
+
+    def follow_then_preempt(controller):
+        follow(controller)
+        preempt(controller)
+
+    controller, robot, clock = simulate(monkeypatch, {5: listen_to_speaker_at_30, 60: follow_then_preempt},
+                                        ticks=200)
+    assert results == [("turned", pytest.approx(-55))]
+    assert [record.message for record in caplog.records if record.message.startswith("Reachy follows speaker")] == [
+        "Reachy follows speaker outcome=preempted"]
+    final = pose_at(controller, robot, clock.now)
+    assert (round(final["yaw"]), round(final["body_yaw"])) == faced
+
+
 def test_a_later_speaker_gets_a_turn_through_a_nod(monkeypatch):
     results = []
     controller, robot, clock = simulate(monkeypatch, {
