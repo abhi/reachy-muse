@@ -208,13 +208,15 @@ def test_speech_callback_arrives_before_recognition_and_never_for_silence(model,
 
 def test_stalled_batch_warmup_is_reaped_and_next_turn_retries(model, worker, monkeypatch):
     monkeypatch.setenv("WHISPER_TEST_MODE", "startup_stall")
-    monkeypatch.setattr("reachy_muse.local_backends.RECOGNITION_TIMEOUT_S", .2, raising=False)
 
     async def scenario():
         transcriber = WhisperTranscriber(model)
         hearing = LocalHearing(transcriber)
         try:
-            await asyncio.wait_for(hearing.start(), 1)
+            # Only the stalled warm-up gets 0.2 s. The retry starts a fresh worker, which can take longer under load.
+            with monkeypatch.context() as warmup:
+                warmup.setattr("reachy_muse.local_backends.RECOGNITION_TIMEOUT_S", .2)
+                await asyncio.wait_for(hearing.start(), 1)
             assert len(worker[1]) == 1
             assert worker[1][0].returncode == -9
             monkeypatch.setenv("WHISPER_TEST_MODE", "normal")
