@@ -1691,6 +1691,59 @@ def test_a_command_ended_by_muse_s_reply_is_obeyed_on_its_last_partial_if_the_co
     assert heard == [1, (done, True)]
 
 
+@pytest.mark.parametrize("command, done", [("Stop listening.", "dismissed"), ("Volume down.", [-10])])
+def test_a_command_ended_by_muse_s_reply_is_obeyed_on_its_last_partial_if_reachy_s_recognizer_never_ends_it(
+        monkeypatch, command, done):
+    """As with the companion, on Reachy's own streaming recognition: the user says a device command over Muse's
+    reply, which cuts the reply off, and Muse starts its next reply before Reachy's endpoint for the turn. The
+    recognizer never brings the turn's final words, so the command's latest partial stands in."""
+    from reachy_muse.companion_client import ENDPOINT_WAIT_S
+    from reachy_muse.device_command import WakeWindow
+
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    next_reply = []
+
+    async def answer(sdk, emit, script):
+        next_reply.append(lambda: reply_events(sdk, emit, "r2", "Okay.", voiced(2)))
+        reply_events(sdk, emit, "r1", REPLY, voiced(7.5))
+
+    class NoFinal(StreamingTranscripts):
+        def open_turn(self):
+            turn = super().open_turn()
+            if turn.partial.text == command:
+                turn.finish = lambda: asyncio.get_running_loop().create_future()
+            return turn
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, NoFinal("Hey Muse, tell me about trains.", command), calls,
+                                    wake_timeout_s=30)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, .5)
+        for _ in range(30):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+        heard.append(calls.barge_ins)
+
+        def outcome():
+            return "dismissed" if voice._wake_window is WakeWindow.DISMISSED else rig.hardware.volume_steps
+
+        replied = time.monotonic()
+        next_reply[0]()
+        while outcome() != done and time.monotonic() < replied + ENDPOINT_WAIT_S + 2:
+            await room(rig, .02)
+        heard.append((outcome(), ENDPOINT_WAIT_S <= time.monotonic() - replied < ENDPOINT_WAIT_S + .5))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking", "sleeping"), timeout=30)
+    assert heard == [1, (done, True)]
+
+
 # The reviewer's repros of the open turn ending where Muse's next reply starts, with the companion sending words
 # said after that start on a stream opened after it, and answering a finish with a forced endpoint.
 

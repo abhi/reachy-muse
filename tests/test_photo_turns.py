@@ -1286,6 +1286,65 @@ def test_a_photo_request_muse_s_reply_ends_needs_its_final_words_and_a_silent_us
     assert realtime_command_lines(caplog)[-1].endswith("outcome=PHOTO drop=none" if photo else "outcome=none drop=none")
 
 
+@realtime
+@pytest.mark.parametrize("final_s, photo", [(1, True), (None, False)], ids=["final words", "no final words"])
+def test_a_photo_request_muse_s_reply_ends_on_reachy_s_own_recognition_needs_its_final_words(
+        monkeypatch, caplog, final_s, photo):
+    """As with the companion, on Reachy's own streaming recognition, which brings the request's final words a
+    second after Muse's reply ends it, or never. Without them, its latest partial stands in and takes no photo."""
+    from test_pins import CHUNK, VOICE_SAMPLE, WAKE_SAMPLE
+    from test_realtime_turns import room
+
+    caplog.set_level(logging.INFO)
+    rig = call_rig(monkeypatch, [PHOTO])
+    rig.hardware.echo_cancelled_input = True
+    next_reply = []
+
+    async def answer(sdk, emit, script):
+        next_reply.append(lambda: reply_events(sdk, emit, "r2", "Let me look.", voiced(1)))
+        reply_events(sdk, emit, "r1", "Sure.", voiced(.3))
+
+    class SlowFinal(StreamingTranscripts):
+        def open_turn(self):
+            turn = super().open_turn()
+            text = turn.partial.text
+
+            def finish():
+                final = asyncio.get_running_loop().create_future()
+                if final_s is not None:
+                    asyncio.get_running_loop().call_later(final_s, lambda: final.done() or final.set_result(text))
+                return final
+
+            if "photo" in text:
+                turn.finish = finish
+            return turn
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, SlowFinal("What's the weather?", "Reachy, take a photo."), calls,
+                                    muse=answers("A red mug."), photo_requests=True, wake_timeout_s=5)
+    conversation.silence_s = 1.2
+
+    async def say(samples):
+        for sample in samples:
+            rig.hardware.samples.put(np.full(CHUNK, sample, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+
+    async def user():
+        await say([WAKE_SAMPLE] + [VOICE_SAMPLE] * 25 + [0] * 25)
+        voice = conversation._voice[1]
+        while not ("muse" in played(rig.recording.events) and not voice.call.audible):
+            await say([0] * 2)
+        await say([VOICE_SAMPLE] * 25 + [0] * 10)
+        next_reply[0]()
+        await room(rig, 2.5)
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=30)
+    assert rig.hardware.captures == ([2.0] if photo else [])
+    outcome = "PHOTO" if photo else "none"
+    assert [line.split(" words=")[1] for line in realtime_command_lines(caplog)] == [
+        "3 wake_prefix=none outcome=none drop=none", f"4 wake_prefix=none outcome={outcome} drop=none"]
+
+
 def queued_turns(caplog):
     return sum(message.startswith("Reachy queued a voice turn") for message in caplog.messages)
 

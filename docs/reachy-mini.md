@@ -754,9 +754,9 @@ window closes, so Reachy's local chat does not answer greetings in a call.
   companion's final endpoint, except for a request that Muse's reply ended.
 - With verified hardware echo cancellation, a request still open when Muse's
   reply starts ends there, since Muse has decided it is over. Muse is already
-  answering it, so Reachy waits up to 1.5 s for the companion's final words and
-  otherwise takes its latest partial. Speech after the reply starts is a new turn
-  over the reply.
+  answering it, so Reachy waits up to 1.5 s for its final words, from the
+  companion or local streaming recognition, and otherwise takes its latest
+  partial. Speech after the reply starts is a new turn over the reply.
 - During playback, an interruption needs 300 ms of speech and distinct words
   for at least 120 ms. Two words are required, except for stop commands. Reply
   transcript deltas filter echo, including single words and quoted stop commands.
