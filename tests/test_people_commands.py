@@ -803,12 +803,14 @@ def test_in_chat_muse_hears_about_the_request_it_was_sent_not_one_said_while_it_
 # ---- reachy.look_at
 
 
-@pytest.mark.parametrize("target, turned, held", [("speaker", (30, 10), False), ("other", (-25, -5), True)])
+@pytest.mark.parametrize("target, turned, held", [("speaker", (15, 0), False), ("other", (-25, -5), True)])
 def test_muse_turns_reachy_to_the_speaker_or_holds_it_on_someone_else(people, caplog, target, turned, held):
-    """The speaker stands at +30 degrees and a friend at -25. Only a look at the friend is held, and the next
-    request ends it, as a spoken greeting's does, for Reachy to face whoever makes it."""
+    """The speaker stands at +15 degrees, near enough to straight ahead that Reachy does not turn toward them by
+    itself, and a friend at -25. Only a look at the friend is held, and the next request ends it, as a spoken
+    greeting's does, for Reachy to face whoever makes it."""
     rig, controller, robot, scene = people
     caplog.set_level("INFO")
+    scene.doa = math.radians(75)
     seen = {}
 
     async def ask(ordinal):
@@ -834,7 +836,7 @@ def test_muse_turns_reachy_to_the_speaker_or_holds_it_on_someone_else(people, ca
                                     "payload": {"outcome": "turned"}}]
     assert logged(caplog, "Reachy look_at") == [f"Reachy look_at target={target} outcome=turned"]
     assert logged(caplog, "Reachy gaze request") == []
-    assert seen == {"after_the_reply": (turned, held), "after_the_next_request": (30, 10)}
+    assert seen == {"after_the_reply": (turned, held), "after_the_next_request": (15, 0)}
     assert muse.calls.barge_ins == 0
     assert_allowed(rig.session.results, caplog)
 
