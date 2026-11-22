@@ -63,8 +63,8 @@ class PeopleHardware(CallHardware):
     def __init__(self, recording, controller):
         super().__init__(recording)
         self.controller = controller
-        for name in ('face_snapshot', 'refresh_faces', 'recent_faces', 'look_at_speaker', 'look_at_person',
-                     'face_speaker', 'release_person_gaze', 'allow_face_tracking'):
+        for name in ('face_snapshot', 'refresh_faces', 'recent_faces', 'look_at_speaker', 'follow_speaker',
+                     'look_at_person', 'face_speaker', 'release_person_gaze', 'allow_face_tracking'):
             setattr(self, name, getattr(controller, name))
 
     def set_state(self, state, **kwargs):
@@ -326,7 +326,8 @@ def test_buffered_greeting_excludes_its_speaker_after_wake_verification(people, 
         scene.speech = False
         await room(rig, .9)
         await rig.wait_until_or_timeout(lambda: controller._person_hold)
-        assert controller.wake_gaze_bearing == pytest.approx(math.pi / 3)
+        assert [line for line in caplog.messages if line.startswith('Speaker gaze')][:1] == [
+            'Speaker gaze yaw=30.0 body_yaw=10.0 decision=turn']
         assert controller._person_hold
         assert controller._speaker_look.head == pytest.approx(30)
         await rig.wait_until_or_timeout(lambda: abs(math.degrees(controller.head_yaw) - 30) < .2)
@@ -552,7 +553,7 @@ def test_a_turn_ended_where_muse_s_reply_starts_keeps_its_speakers_bearing(peopl
 
 @pytest.mark.parametrize('seen_s, remembered, current, expected, facing', [
     (10, [(30, .35), (-40, .12)], [(30, .35)], 'turned source=memory faces=1', (-35, -15)),
-    (40, [(30, .35), (-40, .12)], [(30, .35)], 'no_other source=fresh faces=1', (0, 0)),
+    (40, [(30, .35), (-40, .12)], [(30, .35)], 'no_other source=fresh faces=1', (30, 10)),
     (10, [(30, .35), (-5, .12)], [(30, .35), (-25, .12)], 'turned source=fresh faces=2', (-25, -5)),
 ])
 def test_a_friend_seen_recently_but_out_of_view_is_remembered(people, caplog, seen_s, remembered, current,
@@ -676,7 +677,7 @@ def test_a_remembered_friend_standing_above_the_view_is_still_found(people, capl
 
 @pytest.mark.parametrize('text', ['Say hi to the camera.', 'Say hi to Bob in the email.',
                                   'Say hi to everyone on the team.', 'Say hello to Alexa.'])
-def test_greetings_for_no_one_in_the_room_leave_the_head_alone(people, caplog, text):
+def test_greetings_for_no_one_in_the_room_keep_reachy_on_the_speaker(people, caplog, text):
     rig, controller, robot, scene = people
     caplog.set_level('INFO')
     calls = ScriptedCalls(reply='Sure.', reply_s=.1)
@@ -693,7 +694,7 @@ def test_greetings_for_no_one_in_the_room_leave_the_head_alone(people, caplog, t
     assert calls.barge_ins == 0
     assert set(played(events)) == {'muse'}
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == []
-    assert seen['facing'] == 0
+    assert seen['facing'] == 30
     assert controller._person_hold is None
 
 

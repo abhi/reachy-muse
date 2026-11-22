@@ -233,7 +233,7 @@ def test_releasing_person_gaze_cannot_erase_a_newly_admitted_target(monkeypatch)
                         admitted.append(controller.look_at_person(math.radians(-25), 0))
 
             controller._state_lock = ReleasingLock()
-            controller.release_person_gaze()
+            controller.release_person_gaze(turn_back=True)
 
     controller, _, samples = drive(monkeypatch, action, style=MotionStyle(breathing=False))
     assert admitted == [True]

@@ -206,13 +206,24 @@ class _Utterance:
     generation: int                # PersonGaze token
     open_mic: bool = False         # it began past the wake window, heard only because Muse kept the microphone open
     doa: dict[float, float] = field(default_factory=dict)
+    voiced_until: float = -math.inf  # capture clock of its latest voiced audio
+    voiced_s: float = 0.0          # how much of it the voice detector heard as speech
 
-    def observe(self, direction: WakeDirection | None, voiced_until: float) -> None:
+    def observe(self, direction: WakeDirection | None, voiced_until: float, voiced_s: float) -> None:
+        """Take in one more chunk of it: its latest voiced audio ends at ``voiced_until``, and ``voiced_s`` of the
+        chunk was speech."""
+        self.voiced_until = voiced_until
+        self.voiced_s += voiced_s
         if direction is not None:
             self.doa.update(direction.samples_between(self.started_at, voiced_until))
 
     def bearing(self) -> float | None:
         return median(self.doa.values()) if self.doa else None
+
+    def direction(self) -> DirectionDecision:
+        """Where its speaker is, from its own latest speech, decided by the rules a wake's direction follows."""
+        samples = tuple(sorted(self.doa.items()))
+        return DirectionSnapshot(samples, self.voiced_until, "too_few").decide(self.voiced_until)
 
 
 @dataclass(frozen=True)
@@ -1156,6 +1167,7 @@ class VoiceConversation:
         turn_open = False
         utterance: _Utterance | None = None
         self._heard_now = lambda: utterance.generation if utterance is not None else None
+        follows_speaker = callable(getattr(self.hardware, "follow_speaker", None))
 
         def latched_bearing(spoken: _Utterance) -> float | None:
             """The speaker's bearing for an utterance: its speech's DoA, or else the wake gaze from this window."""
@@ -1250,7 +1262,8 @@ class VoiceConversation:
             current = utterance
             if current is not None:
                 voiced_until = min(captured_at - quiet_s, reply_cut) if reply_began else captured_at - quiet_s
-                current.observe(self._wake_direction, voiced_until)
+                current.observe(self._wake_direction, voiced_until,
+                                len(sample) / self.hardware.sample_rate if voicing else 0.0)
             if heard.ended is not None or not (recorder.active or recorder.speech_active):
                 utterance = None
             bearing = None
@@ -1327,6 +1340,8 @@ class VoiceConversation:
                     and (self.call is not None or not heard_over
                          or partial is not None and interrupts_playback(partial.text, tuple(heard_over)))):
                 self._gaze.admit(current.generation)
+            if current is not None and follows_speaker and self._wake_direction is not None:
+                self._gaze.follow(current.generation, current.voiced_s, current.direction)
             if wave_greeting is not None and (speaking or heard.ended is not None):
                 wave_greeting.cancel()
             if speaking:

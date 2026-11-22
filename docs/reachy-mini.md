@@ -482,6 +482,36 @@ face tracking can take over; without a face, Reachy holds the gaze. Sleep and
 explicit motion commands release it. With `--no-motion`, Reachy neither samples nor turns.
 Direction logs contain only angles and decisions.
 
+While the listening window is open, Reachy also turns toward whoever speaks.
+Once it has admitted an utterance as the user's speech and heard 0.5 seconds of
+voice in it, it places the speaker from that utterance's own DoA readings, by
+the rules of the wake decision; a shorter request is placed at its end, and a
+sound too short to be a request never turns Reachy. If the speaker is
+more than 20 degrees from where Reachy looks, meaning the speaker or face it
+faces, or where a turn under way ends, rather than the swing of an expression,
+Reachy turns as a wake turn does.
+The face follower then starts on the face nearest the new gaze, and head
+gestures go on through the turn. After such a turn, Reachy keeps the new gaze
+for at least 2 seconds, so two people trading quick remarks do not swing it
+back and forth. Such a turn ends the wake gaze, so a later request without a
+bearing of its own has none, rather than the bearing of whoever woke Reachy.
+
+Reachy decides once per utterance, and never for speech it did not admit: its
+own voice or Muse's heard back, or unconfirmed sound over Muse's reply. Without
+a bearing, or with dispersed readings, it stays where it is. It does not follow
+anyone while face tracking is switched off, as after "stop looking at me". It
+waits while a turn toward a person is still chosen, pending or moving, or holds
+Reachy on someone else, while a turn Muse asked for during that utterance
+stands, and while a motion command, clip, generated motion such as the thinking
+motion, or photo owns the head. It waits only as long as the utterance goes on,
+and never turns for it afterwards. Each decision logs one line, such as
+`Reachy follows speaker outcome=turned delta_deg=-55`. The outcome is `turned`,
+`same`, `too_soon`, `unknown`, `off`, `held` or `busy`, and `delta_deg` is how
+far the gaze would turn, or `none` when Reachy did not weigh a turn. When a
+motion command, a turn toward a person or sleep takes over before a turn
+starts, Reachy logs `Reachy follows speaker outcome=preempted` instead of
+turning, and does not try again.
+
 With face following enabled, requests such as "say hi to my friend", "greet
 someone else" or "look at the other person" also turn Reachy toward another
 person's face while Muse answers normally. As with device commands, a request
@@ -515,9 +545,11 @@ camera just covered, since it saw no one else there. A friend standing above the
 frame is still found. Faces in view take priority over remembered ones.
 The person turn fades competing clips and thinking motion, then re-centers the
 follower on the selected direction. It holds through the reply. The next request,
-including a stop command, or the end of the listening window releases it, and
-Reachy turns back to the gaze it replaced, usually toward the speaker. Sleep
-releases it to the sleep pose. An explicit motion command returns an error only
+including a stop command, releases it where Reachy faces that person, and Reachy
+then turns toward whoever made that request, as above: when the friend answers,
+it stays on them. The end of the listening window releases it, and Reachy turns
+back to the gaze it replaced, usually toward the speaker. Sleep releases it to
+the sleep pose. An explicit motion command returns an error only
 while Reachy is still turning toward the person. Once Reachy faces them, the
 command runs and releases this gaze, as commands release the wake gaze. Reachy
 skips its own closing expression for a reply while it holds this gaze. Logs
