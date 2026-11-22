@@ -519,7 +519,7 @@ def test_a_later_speaker_gets_a_wake_turn_and_the_follower_starts_on_them(monkey
     turned = pose_at(controller, robot, clock.now)
     assert (turned["yaw"], turned["body_yaw"]) == pytest.approx(faced, abs=.01)
     assert follower.centers == [pytest.approx(math.radians(center))]
-    assert controller.wake_gaze_bearing == pytest.approx(math.pi / 3)
+    assert controller.wake_gaze_bearing is None
     assert [record.message for record in caplog.records if record.message.startswith("Speaker gaze")] == [
         "Speaker gaze yaw=30.0 body_yaw=10.0 decision=turn",
         f"Speaker gaze yaw={faced[0]:.1f} body_yaw={faced[1]:.1f} decision=turn"]

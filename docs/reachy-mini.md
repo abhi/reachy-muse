@@ -493,8 +493,8 @@ Reachy turns as a wake turn does.
 The face follower then starts on the face nearest the new gaze, and head
 gestures go on through the turn. After such a turn, Reachy keeps the new gaze
 for at least 2 seconds, so two people trading quick remarks do not swing it
-back and forth. A request without a bearing of its own still falls back to the
-wake's gaze, not to these turns.
+back and forth. Such a turn ends the wake gaze, so a later request without a
+bearing of its own has none, rather than the bearing of whoever woke Reachy.
 
 Reachy decides once per utterance, and never for speech it did not admit: its
 own voice or Muse's heard back, or unconfirmed sound over Muse's reply. Without

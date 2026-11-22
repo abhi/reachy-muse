@@ -326,7 +326,8 @@ def test_buffered_greeting_excludes_its_speaker_after_wake_verification(people, 
         scene.speech = False
         await room(rig, .9)
         await rig.wait_until_or_timeout(lambda: controller._person_hold)
-        assert controller.wake_gaze_bearing == pytest.approx(math.pi / 3)
+        assert [line for line in caplog.messages if line.startswith('Speaker gaze')][:1] == [
+            'Speaker gaze yaw=30.0 body_yaw=10.0 decision=turn']
         assert controller._person_hold
         assert controller._speaker_look.head == pytest.approx(30)
         await rig.wait_until_or_timeout(lambda: abs(math.degrees(controller.head_yaw) - 30) < .2)

@@ -1578,7 +1578,8 @@ class ReachyController:
 
     def _update_speaker(self, now: float, state: str, *, occupied: bool, gesturing: bool) -> None:
         """Start a pending turn toward a speaker, or drop it while other motion holds the head. A wake turn also
-        waits out head gestures; a turn toward a later speaker goes on through one."""
+        waits out head gestures; a turn toward a later speaker goes on through one, and ends the wake gaze that
+        stands in for the bearing of a request without one."""
         with self._state_lock:
             pending = self._speaker_pending
             if pending is not None and (state != "sleeping" or now > pending.deadline):
@@ -1591,8 +1592,7 @@ class ReachyController:
                         else "stale" if now > pending.deadline else "turn")
             log.info("Speaker gaze yaw=%.1f body_yaw=%.1f decision=%s", target.head, target.body, decision)
             if decision == "turn":
-                if not pending.follow:
-                    self.wake_gaze_bearing = pending.bearing
+                self.wake_gaze_bearing = None if pending.follow else pending.bearing
                 with self._state_lock:
                     self._end_person_hold()
                     self._turn_toward(target, now)

@@ -252,6 +252,41 @@ def test_the_friend_answering_a_greeting_keeps_reachy_on_them_until_the_owner_sp
     assert followed(caplog) == ["outcome=same delta_deg=0", "outcome=same delta_deg=0", "outcome=turned delta_deg=55"]
 
 
+def test_after_reachy_follows_the_friend_their_request_without_a_bearing_never_turns_it_to_the_owner(people,
+                                                                                                    caplog):
+    """The owner woke Reachy; the friend then talks, and Reachy turns to them. Their next request comes without a
+    bearing, and Muse asks Reachy to face its speaker."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    service, _, answered = muse_answers(rig, "realtime", ("What's the weather?", "And tomorrow?", "Who's there?"),
+                                        wake_detector=DelayedWake())
+    seen = {}
+
+    async def user():
+        scene.doa = bearing(OWNER)
+        for _ in range(30):
+            rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+        await until(rig, lambda: facing(controller, robot) == (30, 10))
+        await speak_from(rig, scene, OWNER)
+        await answered(1)
+        await room(rig, 1.5)
+        await speak_from(rig, scene, FRIEND)
+        await answered(2)
+        await room(rig, 1.5)
+        await speak_from(rig, scene, None)
+        seen["look_at"] = await asyncio.to_thread(service.run_command, "reachy.look_at", {"target": "speaker"}, 5000)
+        await answered(3)
+        await asyncio.sleep(1.0)
+        seen["after"] = facing(controller, robot)
+
+    run(rig, service, user)
+    assert seen["look_at"] == {"ok": True, "payload": {"outcome": "no_speaker_bearing"}}
+    assert seen["after"] == (-25, -5)
+    assert followed(caplog) == ["outcome=same delta_deg=0", "outcome=turned delta_deg=-55",
+                                "outcome=unknown delta_deg=none"]
+
+
 @pytest.mark.parametrize("heard", ["Sure thing, it will be sunny all day.", "Okay."])
 def test_echo_and_unconfirmed_sound_over_muse_s_reply_turn_reachy_toward_no_one(people, caplog, heard):
     """What the microphone hears over Muse's reply runs on past it, from the friend's side, but never confirms:
