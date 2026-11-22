@@ -14,8 +14,12 @@ import time
 from typing import Callable
 
 from reachy_muse.device_command import gaze_requested
+from reachy_muse.speaker_direction import DirectionDecision
 
 log = logging.getLogger(__name__)
+# Voiced speech Reachy hears of an utterance before it turns toward the speaker: about two DoA readings, so the
+# bearing is steady, while the speaker is still talking.
+_FOLLOW_AFTER_S = .5
 _SNAPSHOT_MAX_AGE_S = 2.0
 _FRESH_PASS_S = .3
 _REMEMBERED_S = 30.0
@@ -47,6 +51,7 @@ class _Heard:
     request: bool = False               # it ended as a request
     bearing: float | None = None        # its speaker's bearing, latched at that end
     facts: dict[str, str] | None = None  # its timeline facts once queued, where its speaker label lands too
+    followed: bool = False              # Reachy decided whether to turn toward its speaker
 
     @property
     def label(self) -> str | None:
@@ -136,6 +141,34 @@ class PersonGaze:
             self._holding = False
             self.hardware.release_person_gaze()
         return True
+
+    def follow(self, generation: int, voiced_s: float, direction: Callable[[], DirectionDecision]) -> None:
+        """Turn toward whoever is speaking in the utterance ``generation`` once Reachy has admitted it, decided once
+        per utterance: after ``_FOLLOW_AFTER_S`` of its voiced speech with a steady bearing, or at its end if it
+        ends as a request first. ``direction`` decides that bearing from the speech heard so far.
+
+        While the user has switched face tracking off, a person turn is chosen or holds Reachy, a turn Muse asked
+        for since Reachy admitted the utterance stands, other motion owns the head, or Reachy turned toward a later
+        speaker moments ago, it waits as long as the utterance goes on, and never turns for it later. Each decision
+        logs one line.
+        """
+        heard = self._heard.get(generation)
+        if (heard is None or heard.followed or generation != self._admitted_generation
+                or voiced_s < _FOLLOW_AFTER_S and not heard.request):
+            return
+        angle = direction().angle
+        if angle is None:
+            outcome, delta = "unknown", None
+        elif self._choosing:
+            outcome, delta = "held", None
+        elif self._facing:
+            outcome, delta = "busy", None
+        else:
+            outcome, delta = self.hardware.follow_speaker(angle)
+        if outcome not in ("turned", "same") and not heard.request:
+            return
+        heard.followed = True
+        log.info("Reachy follows speaker outcome=%s delta_deg=%s", outcome, "none" if delta is None else round(delta))
 
     async def people(self, deadline: float, activity: MuseActivity | None, chat: dict[str, str] | None) -> dict:
         """Who made the requests Muse is answering, waiting up to a second for the companion's labels of them,
