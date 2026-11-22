@@ -486,9 +486,17 @@ def test_real_sdk_posts_text_to_main_chat_and_closes_reply_subscription(tmp_path
 
 
 @pytest.mark.parametrize("foreign_turn", ["earlier", "later"])
-def test_real_sdk_parentless_replies_follow_the_acknowledged_user(tmp_path, foreign_turn):
-    async def check():
-        session, vm, stop, connection = await registered_session()
+def test_real_sdk_parentless_replies_follow_the_acknowledged_user(tmp_path, monkeypatch, foreign_turn):
+    read = []
+    feed = introduction._IntroductionTurn.feed
+
+    def reading(turn, chat_event):
+        read.append(chat_event["payload"].get("message_id") or chat_event["payload"].get("task_id"))
+        return feed(turn, chat_event)
+
+    monkeypatch.setattr(introduction._IntroductionTurn, "feed", reading)
+
+    async def check(session, vm, stop):
         task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=stop))
 
         async def publish(*events):
@@ -509,8 +517,11 @@ def test_real_sdk_parentless_replies_follow_the_acknowledged_user(tmp_path, fore
                 event("task.status", task_id="phone-task", status="completed", reply_to_message_id=None))
             await vm.send_frame(ServiceFrame.response(post.stream_id, ApplicationResponse(
                 status=200, body=b'{"session_id":"main-chat","message_id":"intro-user"}', end_body=True)))
-            await asyncio.sleep(0.15)
-            assert not task.done(), "another user's reply closed the introduction subscription"
+            # Reachy records the introduction as sent once it has applied Muse's acknowledgement, so the
+            # introduction judges the phone's reply before its own reply arrives.
+            receipts = tmp_path / introduction.INTRODUCTION_STATE_FILE
+            while json.loads(receipts.read_text())["receipts"][0]["status"] != "sent":
+                await asyncio.sleep(0.005)
             if foreign_turn == "earlier":
                 await publish(event("message.user", message_id="intro-user", reply_to_message_id=None))
             parent = None if foreign_turn == "earlier" else "intro-user"
@@ -522,12 +533,20 @@ def test_real_sdk_parentless_replies_follow_the_acknowledged_user(tmp_path, fore
             await task
             reset = await vm.next_frame()
             assert reset.kind == "reset" and reset.stream_id == subscribe.stream_id
+            assert "intro-reply" in read, "another user's reply closed the introduction subscription"
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def scenario():
+        session, vm, stop, connection = await registered_session()
+        try:
+            await asyncio.wait_for(check(session, vm, stop), 3)
         finally:
             stop.set()
-            task.cancel()
-            await asyncio.gather(task, connection, return_exceptions=True)
+            await asyncio.gather(connection, return_exceptions=True)
 
-    asyncio.run(asyncio.wait_for(check(), 3))
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
