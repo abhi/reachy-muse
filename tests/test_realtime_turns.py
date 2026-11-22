@@ -1260,12 +1260,13 @@ def echo_of(rig, seconds):
     ("cough", .16, "", False, []),
     ("echo", .5, "it will be sunny tomorrow", False,
      ["Realtime command transcript=arrived words=5 wake_prefix=none outcome=none drop=barge_in"]),
+    ("uncancelled echo", .5, "it will be sunny tomorrow", False, []),
 ])
 def test_while_muse_talks_past_the_wake_deadline_only_confirmed_speech_reaches_it(
         monkeypatch, caplog, sound, seconds, words, reached, diagnostics):
     caplog.set_level("INFO", logger="reachy_muse.conversation")
     rig = rig_for(monkeypatch)
-    rig.hardware.echo_cancelled_input = True
+    rig.hardware.echo_cancelled_input = sound != "uncancelled echo"
 
     async def answer(sdk, emit, script):
         reply_events(sdk, emit, "r1", REPLY, voiced(7.5))
@@ -1282,17 +1283,19 @@ def test_while_muse_talks_past_the_wake_deadline_only_confirmed_speech_reaches_i
         assert call.audible
         caplog.clear()
         before = len(calls.frames)
-        audio = echo_of(rig, seconds) if sound == "echo" else np.full(round(seconds * 16000), VOICE_SAMPLE, np.float32)
+        audio = (echo_of(rig, seconds) if sound.endswith("echo")
+                 else np.full(round(seconds * 16000), VOICE_SAMPLE, np.float32))
         for start in range(0, len(audio), CHUNK):
             rig.hardware.samples.put(audio[start:start + CHUNK])
             await asyncio.sleep(CHUNK / 16000)
         await room(rig, .5)
-        heard.append((voiced_ms(calls.frames[before:]), calls.barge_ins, voice.call is call and not call.done))
+        heard.append((voiced_ms(calls.frames[before:]), echo_frames(calls.frames[before:]), calls.barge_ins,
+                      voice.call is call and not call.done))
         await rig.wait_until_or_timeout(lambda: not call.audible, 8)
         heard.append(sum(len(chunk) for chunk in rig.hardware.played) / rig.hardware.output_sample_rate)
 
     events = run(rig, conversation, user, rest=("listening", "idle", "thinking"))
-    assert heard[0] == (500 if reached else 0, int(reached), True)
+    assert heard[0] == (500 if reached else 0, 0, int(reached), True)
     assert (heard[1] < 7) if reached else (heard[1] == pytest.approx(7.5, abs=.003))
     assert [line for line in caplog.messages if line.startswith("Realtime command ")] == diagnostics
     assert set(played(events)) == {"muse"}
