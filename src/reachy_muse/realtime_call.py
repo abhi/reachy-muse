@@ -551,7 +551,7 @@ class RealtimeCall:
         self.working = False
         self.pending: list[PendingTurn] = []
         self.turns = 0
-        self.outcomes = {"answered": 0, "silent": 0, "unanswered": 0, "recovered": 0}
+        self.outcomes = {"answered": 0, "silent": 0, "unanswered": 0, "recovered": 0, "not_awaited": 0}
         self.latest_response: Optional[str] = None
         self.muse_moved = False
         self.reason: Optional[str] = None
@@ -572,7 +572,7 @@ class RealtimeCall:
         self._closing = False
         self._transcripts: dict[Optional[str], str] = {}
 
-    def accept_turn(self, *, endpoint_at: float, speech_end_at: float, words: int) -> bool:
+    def accept_turn(self, *, endpoint_at: float, speech_end_at: float, words: int, awaits_answer: bool = True) -> bool:
         self.turns += 1
         turn = PendingTurn(self.turns, endpoint_at, speech_end_at, words, self.feed.sent, endpoint_at)
         replied_at = self.speaker.reply_started
@@ -584,6 +584,9 @@ class RealtimeCall:
             return False
         if self.done:
             self._outcome(turn, "unanswered")
+            return False
+        if not awaits_answer:
+            self._outcome(turn, "not_awaited")
             return False
         self.pending.append(turn)
         return True
@@ -816,10 +819,10 @@ class RealtimeCall:
             await asyncio.gather(*tasks, return_exceptions=True)
             self.finish_pending("unanswered")
             log.info("Realtime call_summary duration_ms=%d turns=%d answered=%d silent=%d unanswered=%d recovered=%d "
-                     "responses=%d audio_bytes=%d feed_sent=%d feed_evictions=%d max_queue_age_ms=%d",
+                     "not_awaited=%d responses=%d audio_bytes=%d feed_sent=%d feed_evictions=%d max_queue_age_ms=%d",
                      round((time.monotonic() - self.opened_at) * 1000), self.turns,
                      self.outcomes["answered"], self.outcomes["silent"], self.outcomes["unanswered"],
-                     self.outcomes["recovered"],
+                     self.outcomes["recovered"], self.outcomes["not_awaited"],
                      self._response_count, self._audio_bytes, self.feed.sent, self.feed.evictions,
                      round(self.feed.max_queue_age_s * 1000))
 

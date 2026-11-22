@@ -37,7 +37,7 @@ from reachy_muse.protocol import MAX_LINE_BYTES
 from reachy_muse.device_command import (COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow,
                                        command_after_wake, executable, whole_command)
 from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, interrupts_playback, request_topic,
-                                   too_short_for_follow_up, repeats_playback)
+                                   too_short_for_follow_up, repeats_playback, word_count)
 from reachy_muse.contract.intent import Intent, maybe_chat
 from reachy_muse.morning_briefing import MorningRoutine, briefing_lines
 from reachy_muse.recent import Recent
@@ -2653,8 +2653,10 @@ class VoiceConversation:
         call = request.call
         # The turn's speech_end mark can be later than the last voiced chunk's processing time when processing lags.
         self._call_last_voice_at = max(self._call_last_voice_at, request.timeline.marks["speech_end"])
+        # A short remark over Muse's reply, such as "okay, thanks", can cut it off but asks for no answer.
         pending = call.accept_turn(endpoint_at=request.timeline.marks["endpoint"],
-                                   speech_end_at=request.timeline.marks["speech_end"], words=len(text.split()))
+                                   speech_end_at=request.timeline.marks["speech_end"], words=len(text.split()),
+                                   awaits_answer=not (request.heard_over and word_count(text) <= 2))
         if call.failed:
             await self._call_lost(call)
             return TurnOutcome.EMPTY

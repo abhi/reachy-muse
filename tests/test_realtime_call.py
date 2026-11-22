@@ -1018,7 +1018,7 @@ def test_calls_open_with_reachy_s_identity_thread_and_duplex_and_reuse_one_voice
         "Realtime call_ready elapsed_ms=0 link=new queued_feed_frames=0",
         "Realtime call_ready elapsed_ms=0 link=reused queued_feed_frames=0"]
     assert [line for line in caplog.messages if line.startswith("Realtime call_summary ")] == [
-        "Realtime call_summary duration_ms=0 turns=0 answered=0 silent=0 unanswered=0 recovered=0 "
+        "Realtime call_summary duration_ms=0 turns=0 answered=0 silent=0 unanswered=0 recovered=0 not_awaited=0 "
         "responses=0 audio_bytes=0 feed_sent=0 feed_evictions=0 max_queue_age_ms=0"] * 2
 
 

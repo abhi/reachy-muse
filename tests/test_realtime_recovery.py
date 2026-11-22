@@ -364,6 +364,37 @@ def test_a_call_that_dies_while_muse_works_is_recovered_with_the_remark_heard_me
     assert sent_to_muse(events) == []
 
 
+def test_a_short_remark_that_cuts_off_a_long_reply_is_not_waited_on(monkeypatch, caplog):
+    """Late in a long reply, past the wake deadline, "Okay, thanks." cuts Muse off, and Muse leaves it unanswered."""
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+
+    async def answer(sdk, emit, script):
+        reply_events(sdk, emit, "r1", REPLY, voiced(20))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, StreamingTranscripts("Tell me a long story.", "Okay, thanks."), calls,
+                                    wake_timeout_s=10)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        await room(rig, voice._wake_deadline - time.monotonic() + 2)
+        assert voice.call.audible
+        said = time.monotonic()
+        await speak_live(rig)
+        await wait_for(rig, lambda: LOST in played(rig.recording.events) or time.monotonic() > said + 18, 20)
+
+    events = run(rig, conversation, user, rest=("listening", "idle"), timeout=60)
+    assert calls.barge_ins == 1
+    assert [(row["ordinal"], row["outcome"], row["words"]) for row in turn_outcomes(caplog)] == [
+        ("1", "answered", "5"), ("2", "not_awaited", "2")]
+    assert stall_cues(caplog) == []
+    assert recoveries(caplog) == []
+    assert LOST not in played(events)
+
+
 @pytest.mark.parametrize("working, delay, reason", [(False, 15, "no_events"), (True, 30, "working_stale")])
 def test_an_eventless_pending_turn_recovers_at_its_limit(monkeypatch, caplog, working, delay, reason):
     caplog.set_level("INFO")
@@ -853,7 +884,7 @@ def test_reply_diagnostics_use_each_turns_last_voiced_sample(monkeypatch, caplog
     assert [line for line in caplog.messages if line.startswith("Realtime call_ready ")] == [
         "Realtime call_ready elapsed_ms=0 link=new queued_feed_frames=0"]
     assert [line for line in caplog.messages if line.startswith("Realtime call_summary ")] == [
-        "Realtime call_summary duration_ms=2125 turns=2 answered=2 silent=0 unanswered=0 recovered=0 "
+        "Realtime call_summary duration_ms=2125 turns=2 answered=2 silent=0 unanswered=0 recovered=0 not_awaited=0 "
         "responses=1 audio_bytes=14400 feed_sent=49 feed_evictions=0 max_queue_age_ms=0"]
     assert stall_cues(caplog) == []
     assert set(played(events)) == {"muse"}
