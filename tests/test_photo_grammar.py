@@ -32,7 +32,8 @@ REQUESTS = [
     "What breed is this dog?", "Read this label.", "What does this sign say?", "Identify this.",
     "Can you see my face?", "Do you see the dog?", "What's on the table?", "How do I look?", "Do I look okay?",
     "Describe the room.", "How many fingers am I holding up?", "What do you think of my outfit?",
-    "What can you see from where you are?", "Photograph the whiteboard.",
+    "What can you see from where you are?", "Photograph the whiteboard.", "What kind of flowers are these?",
+    "What color is this shirt?", "How many people can you see?", "Take a photo of my screen.",
 ]
 
 NOT_REQUESTS = [
@@ -79,6 +80,8 @@ NOT_REQUESTS = [
     "Show that to Muse.",
     # Things in the user's apps rather than in front of Reachy
     "Identify this bird.", "Read this note.", "Read this list.", "Can you see my photo?", "Can you see my screen?",
+    "What's on my screen?", "What do you see in the picture?", "How many emails do you see?",
+    "What kind of leave is this?", "What kind of bug is this?", "What kind of rock is this?", "Can you see the table?",
     # Device commands, gaze and local chat
     "look at me", "look over here", "keep looking at me", "watch me", "say hi to someone else",
     "look at the other person", "greet my guest", "look at him", "look at this", "what's up", "go to sleep",
@@ -216,7 +219,7 @@ def test_room_and_television_speech_never_takes_a_photo():
     assert len(BACKGROUND) == 96
     assert [text for text in BACKGROUND if decider._photo_requested(text, TurnTimeline())] == []
     assert sum(decider._photo_requested(text, after_a_wake()) for text in BACKGROUND) == sum(
-        map(photo_requested, BACKGROUND)) == 64
+        map(photo_requested, BACKGROUND)) == 61
 
 
 # Questions a user asks Muse about their own things, naming it, as an assistant is asked.
@@ -240,6 +243,38 @@ def test_questions_spoken_to_muse_about_the_user_s_own_things_never_take_a_photo
     decider = photo_decider()
     assert len(ADDRESSED_QUESTIONS) == 36 and all(map(names_reachy, ADDRESSED_QUESTIONS))
     assert [text for text in ADDRESSED_QUESTIONS if decider._photo_requested(text, TurnTimeline())] == []
+
+
+# More of them, about the user's screen, inbox, files and counts, with a few that do ask about what is in view.
+MORE_ADDRESSED_QUESTIONS = [
+    "Muse, how many emails do you see?", "Muse, how many unread messages can you see?",
+    "Muse, how many notifications do you see?", "Muse, how many meetings can you see?",
+    "Muse, how many tabs do you see?", "Muse, how many files can you see?", "Muse, how many tasks do you see?",
+    "Muse, what's on my screen?", "Muse, what is on the page?", "Muse, what's on my page?",
+    "Muse, what do you see on my screen?", "Muse, what do you see in my photo?", "Muse, what do you see in the picture?",
+    "Muse, what can you see in my photo?", "Muse, what do you see on the page?", "Muse, what do you see in my book?",
+    "Muse, can you see my board?", "Muse, can you see the board?", "Muse, can you see my window?",
+    "Muse, can you see the table?", "Muse, can you see my book?", "Muse, can you see my box?",
+    "Muse, what kind of email is this?", "Muse, what type of file is this?", "Muse, what sort of message is this?",
+    "Muse, what kind of account is this?", "Muse, what does this email say?", "Muse, read this email.",
+    "Muse, read this message.", "Muse, read this to me.", "Muse, what is this?", "Muse, identify this.",
+    "Muse, can you see my calendar?", "Muse, can you see my last message?", "Muse, what's that?",
+    "Muse, can you see it?", "Muse, how many people do you see?", "Muse, what's in my cart?",
+    "Muse, what's in my inbox?", "Muse, what is on my calendar?", "Muse, what's on my list?",
+    "Muse, what's on my plate today?", "Muse, what's on the agenda?", "Muse, describe my day.",
+    "Muse, how do I look today?", "Muse, take a look at this and tell me if it's spam.",
+]
+
+
+def test_of_more_questions_spoken_to_muse_only_those_about_what_is_in_view_take_a_photo():
+    decider = photo_decider()
+    assert len(MORE_ADDRESSED_QUESTIONS) == 46 and all(map(names_reachy, MORE_ADDRESSED_QUESTIONS))
+    assert [text for text in MORE_ADDRESSED_QUESTIONS if decider._photo_requested(text, TurnTimeline())] == [
+        "Muse, what do you see in my book?",  # a book held up; "my book" is not data the way a screen is
+        "Muse, read this to me.", "Muse, what is this?", "Muse, identify this.",  # "this" points
+        "Muse, how many people do you see?",  # people and fingers are counted by eye
+        "Muse, take a look at this and tell me if it's spam.",  # "this", held up to the camera
+    ]
 
 
 # Natural requests a user makes of Reachy.

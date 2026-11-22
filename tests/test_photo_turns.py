@@ -1275,3 +1275,16 @@ def test_an_um_after_hey_muse_and_yes_leaves_the_next_request_spoken_to_reachy(m
     assert [(event["muse"], event["text"]) for event in sent(events)] == [
         ("send_chat", "Um."), ("send_image", PHOTO_MESSAGE.format("What do you see?"))]
     assert rig.hardware.captures == [2.0]
+
+
+@pytest.mark.parametrize("words", ["Muse, how many emails do you see?", "Muse, what's on my screen?",
+                                   "Muse, what do you see in my photo?"])
+def test_an_addressed_question_about_the_user_s_screen_or_inbox_takes_no_photo(monkeypatch, words):
+    rig = photo_rig(monkeypatch, [PHOTO])
+    conversation = service(rig, answers("Three unread."), Transcripts(words), photo_requests=True)
+
+    async def user():
+        rig.say()
+
+    events = run(rig, conversation, user)
+    assert (rig.hardware.captures, [event["muse"] for event in sent(events)]) == ([], ["send_chat"])

@@ -154,28 +154,25 @@ _PHOTO_QUESTION = (r"(?:tell me|describe|what|what's|whats|who|who's|which|how|h
 _LOOK_QUESTION = (r"(?:tell me|describe|read|identify|explain|what(?! an? )|what's|whats|who|who's|which"
                   r"|is (?:it|this|that)|are (?:these|those)|does (?:it|this|that)|can you|could you"
                   r"|how (?:many|much|old|big|long|do|does|is|are))\b.*")
-_IN_VIEW = (r"(?:table|desk|counter|shelf|floor|wall|window|screen|whiteboard|board|plate|bowl|box|bag|hand|hands"
-            r"|book|page|room|kitchen|picture|photo|fridge)")
+# Places a thing is shown. A screen, page, picture or photo of the user's is as often on a phone.
+_IN_VIEW = (r"(?:table|desk|counter|shelf|floor|wall|window|whiteboard|board|plate|bowl|box|bag|hand|hands"
+            r"|book|room|kitchen|fridge)")
 # "What's on my plate" or "on the board" is often a to-do list; these are places a thing is shown.
-_ON_VIEW = r"(?:table|desk|counter|shelf|floor|wall|window|screen|whiteboard|page)"
-# Seeing or naming these is hearing or understanding, as in "what kind of music is this".
-_NOT_IN_VIEW = (r"(?:point|points|problem|problems|issue|issues|difference|irony|appeal|future|past|reason|logic"
-                r"|humor|humour|joke|jokes|connection|pattern|sense|meaning|value|benefit|risk|answer|solution|end"
-                r"|light|truth|way|side|funny|bigger|big|perspective|position|reasoning|thinking|concern|concerns"
-                r"|worry|situation|plan|plans|idea|ideas|vision|mistake|mistakes|question|questions|game|show|movie"
-                r"|film|news|song|songs|music|sound|sounds|noise|tune|track|voice|accent|language|singer|artist|band"
-                r"|podcast|station|channel|story|word|words|name|person|attitude|argument|excuse)")
-_SEEN_WORD = rf"(?!{_NOT_IN_VIEW}\b){_PHOTO_WORD}"
+_ON_VIEW = r"(?:table|desk|counter|shelf|floor|wall|window|whiteboard)"
 _LOOKS = r"(?:outfit|hair|haircut|shirt|dress|look|shoes|glasses|jacket|tie|makeup|sweater|hat)"
-# "Can you see my calendar?" asks about the user's data, so only these things are seen. A picture, photo, page
-# or screen of the user's is as often on a phone as in front of Reachy.
-_SEEN_THING = (rf"(?:{_LOOKS}|face|eyes|hand|hands|cat|dog|puppy|kitten|plant|plants|table|desk|counter|shelf"
-               r"|floor|wall|window|whiteboard|board|plate|bowl|box|bag|book|room|kitchen|fridge)")
+# "Can you see my calendar?" asks about the user's data, so only these things are seen; a board, window, table,
+# book or box also names data.
+_SEEN_THING = (rf"(?:{_LOOKS}|face|eyes|hand|hands|cat|dog|puppy|kitten|plant|plants|desk|counter|shelf|floor|wall"
+               r"|whiteboard|plate|bowl|bag|room|kitchen|fridge)")
+# Kinds of things seen rather than read or heard: animals, plants, food and objects. "What kind of email is
+# this?" is not one, and neither is a bird, a bug, a shell, a tool, a coin or a rock, which also name sounds or data.
+_SEEN_KIND = (r"(?:(?:animal|dog|cat|puppy|kitten|fish|insect|spider|snake|lizard|frog|butterfly|beetle|plant"
+              r"|flower|tree|mushroom|weed|cactus|fruit|vegetable|nut|food|dish|cheese|bread|cake|stone|crystal"
+              r"|car|bike|shoe|hat|shirt|dress|jacket|fabric|wood|toy|cup|mug|bottle|chair|lamp)(?:s|es)?"
+              r"|leaf|leaves|berry|berries)")
 # Things read off what Reachy is shown; a note, list, letter or page is as often in the user's apps.
 _READABLE = r"(?:label|sign|menu|receipt|bottle|box|package|ingredients|poster|tag|price|book|paper|whiteboard)"
 _KIND = r"(?:color|colour|kind|type|sort|breed|brand|make|species|size|shape)"
-# Words the user says to Reachy about what is in front of it. "This" points; "that" and "it" usually refer back to
-# something said, as in "Muse, what's that?".
 _ASK_TO_SEE = (
     r"what (?:do|can) you see(?: (?:here|there|in front of you|from here|from there|from where you are"
     rf"|(?:on|in|under|behind|near|next to|over) (?:the|my|this|your) {_IN_VIEW}))?"
@@ -185,7 +182,7 @@ _ASK_TO_SEE = (
     r"|what (?:do i have|have i got|i've got) in my hands?"
     rf"|what(?:'s| is) (?:on|under|behind|next to) (?:the|my|this|your) {_ON_VIEW}"
     r"|what(?:'s| is) this"
-    rf"|what {_KIND}(?: of {_SEEN_WORD}(?: {_SEEN_WORD})?)? (?:is this|are these)(?: {_SEEN_WORD})?"
+    rf"|what {_KIND}(?: of (?:{_PHOTO_WORD} )?{_SEEN_KIND})? (?:is this|are these)(?: {_SEEN_KIND})?"
     rf"|what does this(?: {_READABLE})? say|read this(?: {_READABLE})?(?: out loud| aloud| to me)?"
     r"|tell me what this (?:is|says)|identify this"
     rf"|(?:can|do) you see (?:this|me|us|what i'm holding|what i am holding|(?:my|the) {_SEEN_THING})"
@@ -193,7 +190,7 @@ _ASK_TO_SEE = (
     r"|describe (?:this|me|us|the room|what's in front of you|what is in front of you)"
     rf"|how do i look|do i look (?:okay|ok|good|alright|all right|fine|nice|presentable|ready)"
     rf"|what do you think (?:of|about) (?:my|this) {_LOOKS}"
-    rf"|how many {_PHOTO_WORD}(?: {_PHOTO_WORD})? (?:am i holding(?: up)?|do you see|can you see)")
+    rf"|how many {_PHOTO_WORD}(?: {_PHOTO_WORD})? am i holding(?: up)?|how many (?:fingers|people) (?:do|can) you see")
 _TAKE_PHOTO = (rf"(?:take|snap|grab) {_ONE_PHOTO}|photograph (?!of\b){_SUBJECT}|send muse {_ONE_PHOTO}"
                rf"|send {_ONE_PHOTO} to muse")
 _SHOW_MUSE = r"show this to muse|show muse this|send this to muse|send muse this"

@@ -1028,9 +1028,13 @@ never take one. "Look at this" alone takes none: it asks Muse nothing. "This"
 points at what Reachy can see, while "that" and "it" usually refer back to
 something said, so "what's that?", "can you see it?" and "read that again" are
 ordinary requests. So are questions about your own things, such as "can you see
-my calendar?" or "read this note", and about sound, such as "who is this?" or
-"what kind of music is this?". "Can you see my …" takes a photo only of a thing
-in view, such as your face, hair, outfit, hand, pet, plant or desk.
+my calendar?", "what's on my screen?", "how many emails do you see?" or "read
+this note", and about sound, such as "who is this?" or "what kind of music is
+this?". "Can you see my …" takes a photo only of a thing in view, such as your
+face, hair, outfit, hand, pet, plant or desk; "what kind of … is this?" only of
+an animal, plant, food or object; and "how many … do you see?" only of fingers or
+people. To show Reachy a screen or a page, ask for the photo: "take a photo of my
+screen".
 
 Muse is the one place a photo may go: "take a photo for Muse" and "take a
 picture and send it to Muse" take one. Reachy refuses a request that would share,
