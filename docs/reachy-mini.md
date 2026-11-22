@@ -1013,10 +1013,13 @@ they go to Muse as ordinary requests.
   what Reachy faces afterwards, usually you.
 - In a [realtime call](#realtime-voice-calls), Muse hears the request too.
   Reachy cuts off Muse's spoken answer, as it does for a device command, and
-  speaks Muse's answer to the photo in its own voice. The call stays open.
-  "Never mind" said in the call while Muse still works on the photo drops it. A
+  speaks Muse's answer to the photo in its own voice. The call stays open. A
   request whose words miss the 250 ms deadline stays with Muse, which answers in
   the call without a photo.
+- "Never mind", "stop talking", "go to sleep" or "stop listening", said while
+  Reachy takes the photo, keeps it home: nothing is sent and no shutter plays.
+  Once the photo is on its way it is not called back, and "never mind" then
+  stops Muse's answer instead.
 
 | What goes wrong | Reachy says |
 | --- | --- |
@@ -1041,10 +1044,10 @@ Each request logs one line, such as `Reachy photo outcome=sent path=chat
 width=1280 height=720 quality=80 bytes=98304 capture_ms=120 encode_ms=18
 upload_ms=640`. The outcome is `sent`, `busy`, `expired`, `camera_busy`,
 `no_frame`, `camera_failed`, `too_large`, `rejected`, `send_timeout`,
-`no_answer`, or `interrupted` when the turn ended another way. `capture_ms`
-includes the wait for a still head. In a call, the `Realtime command` line shows
-`outcome=PHOTO`. Logs never contain your words, Muse's answer, the image or its
-base64.
+`no_answer`, `cancelled`, or `interrupted` when the turn ended another way.
+`capture_ms` includes the wait for a still head. In a call, the `Realtime
+command` line shows `outcome=PHOTO`. Logs never contain your words, Muse's
+answer, the image or its base64.
 
 ## Morning briefing
 

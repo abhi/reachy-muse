@@ -736,3 +736,75 @@ def test_in_a_call_a_photo_phrase_not_spoken_to_reachy_stays_with_muse(monkeypat
     assert [line.split(" outcome=")[1] for line in realtime_command_lines(caplog)] == [
         "none drop=none", "none drop=none"]
     assert photo_lines(caplog) == []
+
+
+def capture_held_until(released):
+    """A capture that lasts, as a slow head settle does, until ``released``; and when it began."""
+    import threading
+
+    started = threading.Event()
+
+    def capture():
+        started.set()
+        released.wait(5)
+        return PHOTO
+    return started, capture
+
+
+@pytest.mark.parametrize("cancel", ["Never mind.", "Stop talking."])
+def test_a_cancel_heard_while_the_photo_is_taken_keeps_it_home(monkeypatch, caplog, cancel):
+    import threading
+
+    caplog.set_level(logging.INFO)
+    released = threading.Event()
+    capturing, capture = capture_held_until(released)
+    rig = photo_rig(monkeypatch, [capture])
+    conversation = service(rig, answers("A red mug."), Transcripts("Reachy, what am I holding?", cancel),
+                           photo_requests=True)
+
+    async def user():
+        rig.say()
+        await rig.wait_until_or_timeout(capturing.is_set, 5)
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: "tts:Okay, I'll drop that." in played(rig.recording.events), 5)
+        released.set()
+
+    try:
+        events = run(rig, conversation, user)
+    finally:
+        released.set()
+    assert sent(events) == []
+    assert played(events) == ["tts:Okay, I'll drop that."]
+    assert [fields(line)["outcome"] for line in photo_lines(caplog)] == ["cancelled"]
+
+
+@realtime
+@pytest.mark.parametrize("cancel, command", [
+    ("Never mind.", "none"), ("Go to sleep.", "SLEEP"), ("Stop listening.", "STOP_LISTENING")])
+def test_a_cancel_said_in_a_call_while_the_photo_is_taken_keeps_it_home(monkeypatch, caplog, cancel, command):
+    import threading
+
+    caplog.set_level(logging.INFO)
+    released = threading.Event()
+    capturing, capture = capture_held_until(released)
+    rig = call_rig(monkeypatch, [capture])
+    calls = ScriptedCalls(reply=None)
+    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, what am I holding?", cancel), calls,
+                                    muse=answers("A red mug."), photo_requests=True, wake_timeout_s=5)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(capturing.is_set, 5)
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: len(realtime_command_lines(caplog)) == 2, 5)
+        released.set()
+        await rig.wait_until_or_timeout(lambda: photo_lines(caplog), 5)
+
+    try:
+        events = run(rig, conversation, user, rest=("listening", "idle", "sleeping", "thinking"))
+    finally:
+        released.set()
+    assert sent(events) == []
+    assert "shutter" not in played(events)
+    assert realtime_command_lines(caplog)[1].endswith(f"outcome={command} drop=none")
+    assert [fields(line)["outcome"] for line in photo_lines(caplog)] == ["cancelled"]

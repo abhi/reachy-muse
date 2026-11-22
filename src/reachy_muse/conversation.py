@@ -624,6 +624,8 @@ class VoiceConversation:
             raise ValueError("wake timeout must be a finite, nonnegative number")
         self.session = session
         self.photo_requests = photo_requests
+        # While a photo turn runs: set by a cancel heard before the photo is sent, which then stays home.
+        self._photo_cancel: asyncio.Event | None = None
         self._startup = startup or StartupTimeline()
         self._ready = asyncio.Event()
         self.hardware = hardware
@@ -1592,7 +1594,8 @@ class VoiceConversation:
                     turn_task = asyncio.create_task(self._collect_briefing(self._briefing_slots.popleft()))
                 if (turn_task is not None and follow_up_task is None and pending_turns
                         and (pending_turns[0].call is not None
-                             or self.job is not None and self.job.turn.acknowledged)):
+                             or self.job is not None and self.job.turn.acknowledged
+                             or self._photo_cancel is not None)):
                     follow_up_task = asyncio.create_task(follow_up(pending_turns.popleft(), held))
                 if not ready and turn_task is None:
                     log.info("Reachy speech yield ready: microphone priority, ordered background replies")
@@ -2129,6 +2132,7 @@ class VoiceConversation:
         leaves the conversation, and any call, running.
         """
         report = PhotoLog(timeline.facts.get("path", "chat"))
+        self._photo_cancel = asyncio.Event()
         try:
             job = None
             if request.expired(time.monotonic()):
@@ -2151,9 +2155,11 @@ class VoiceConversation:
                                                   expression=lambda: job.last_expression)
                     return outcome
             self._moments.stop()
-            await self._announce(PHOTO_FAILURE_LINES[report.outcome], started=None, defer_playback=True)
+            if report.outcome != "cancelled":
+                await self._announce(PHOTO_FAILURE_LINES[report.outcome], started=None, defer_playback=True)
             return TurnOutcome.ACCEPTED
         finally:
+            self._photo_cancel = None
             timeline.facts["photo"] = report.outcome
             report.write()
 
@@ -2175,6 +2181,9 @@ class VoiceConversation:
         if capture.failure is not None:
             report.outcome = capture.failure
             return None
+        if self._photo_cancel.is_set():
+            report.outcome = "cancelled"
+            return None
         await self._shutter()
         try:
             job = await self._dispatch(wav, request.words, started=started, defer_playback=defer_playback,
@@ -2191,6 +2200,10 @@ class VoiceConversation:
                 report.upload_ms = round((timeline.marks.get("muse_ack", time.monotonic()) - dispatched) * 1000)
         timeline.facts["photo"] = report.outcome = "sent"
         return job
+
+    def _cancel_photo(self) -> None:
+        if self._photo_cancel is not None:
+            self._photo_cancel.set()
 
     async def _shutter(self) -> None:
         """Let everyone in the room hear that a photo was taken."""
@@ -2617,6 +2630,8 @@ class VoiceConversation:
             self._hush()
         elif kind in (FollowUp.CANCEL, FollowUp.ADD_DETAIL):
             self._say_hushed = False
+        if kind is FollowUp.CANCEL:
+            self._cancel_photo()
         if kind is FollowUp.SILENCE and running is not None and running.answered:
             await self._drop(running)
             return held
@@ -2731,6 +2746,8 @@ class VoiceConversation:
             return TurnOutcome.ACCEPTED
         if photo:
             return await self._photo_in_call(endpoint, request, text, follow_up=follow_up)
+        if follow_up and classify_follow_up(text) in (FollowUp.CANCEL, FollowUp.SILENCE):
+            self._cancel_photo()
         running = self.job
         if (follow_up and running is not None and running.request is not None and not running.dropped
                 and classify_follow_up(text) in (FollowUp.CANCEL, FollowUp.SILENCE)):
@@ -2966,6 +2983,7 @@ class VoiceConversation:
                 log.info("Muse moved Reachy during its realtime reply; Reachy's own expressions wait")
 
     def _hush(self) -> None:
+        self._cancel_photo()
         self._gaze.release()
         self._moments.stop()
         self._hush_floor = next(_SPEECH_SERIALS)
