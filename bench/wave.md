@@ -47,8 +47,10 @@ also checks the generation after draining camera work; breathing stays suspended
 through that handoff. The quiet-rearm latch survives these resets. Three seconds
 of observed quiet are required before another cue. Self-motion is rejected for
 the gesture's duration plus at least 0.5 seconds and normal pose settling.
-Content-free transitions read `Wave gaze: follow`,
-`Wave gaze: settled`, and `Wave gaze: wave watching`.
+Content-free transitions log at DEBUG as `Wave gaze: follow`,
+`Wave gaze: settled`, and `Wave gaze: wave watching`. The wave stats line adds
+`watching_s`, the seconds the head held still enough to watch, and `flips`, the
+number of times it settled, since the previous stats line.
 
 For eligible frames, camera calibration and the observed head rotation project the
 image into the first frame's orientation. The motion gate, gesture detector and

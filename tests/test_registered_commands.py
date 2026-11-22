@@ -804,6 +804,75 @@ def test_registered_presence_returns_only_the_coarse_result_and_logs_the_outcome
         "Reachy command name=reachy.presence outcome=present"]
 
 
+def snapshot(faces, age):
+    from reachy_muse.local_face_tracking import FaceSnapshot, ObservedFace
+
+    seen = time.monotonic() - age
+    return FaceSnapshot(tuple(ObservedFace(0.0, 0.0, (.4, .3, .2, .3), .9, seen) for _ in range(faces)), seen,
+                        0.0, 0.0, (.6, .4))
+
+
+@pytest.mark.parametrize("command, params, payload, line", [
+    ("reachy.people", {}, {"speaker": "unknown", "people_visible": 1, "seen_s_ago": 4},
+     "Reachy people speaker=unknown visible=1"),
+    ("reachy.look_at", {"target": "speaker"}, {"outcome": "no_speaker_bearing"},
+     "Reachy look_at target=speaker outcome=no_speaker_bearing"),
+    ("reachy.look_at", {"target": "other"}, {"outcome": "no_speaker_bearing"},
+     "Reachy look_at target=other outcome=no_speaker_bearing"),
+])
+@pytest.mark.parametrize("conversation", [True, False], ids=["before_any_request", "without_a_conversation"])
+def test_people_commands_with_no_request_know_no_speaker(monkeypatch, caplog, command, params, payload, line,
+                                                         conversation):
+    caplog.set_level(logging.INFO)
+
+    async def check():
+        service, _, _ = command_device()
+        service.executor.face_snapshot = lambda: snapshot(1, 4)
+        if not conversation:
+            service._voice = None
+            return await asyncio.to_thread(service.run_command, command, params)
+        async with registered_device(service, monkeypatch) as (session, vm, voice):
+            await vm.send_message({"method": "link.invoke", "id": "command-1", "command": command, "params": params})
+            return await asyncio.wait_for(vm.next_message(), 2)
+
+    result = asyncio.run(check())
+    assert result == ({"method": "link.result", "id": "command-1", "ok": True, "payload": payload} if conversation
+                      else {"ok": True, "payload": payload})
+    assert [record.message for record in caplog.records
+            if record.message.startswith(("Reachy people", "Reachy look_at"))] == [line]
+
+
+@pytest.mark.parametrize("command, params, line", [
+    ("reachy.people", {}, "Reachy people outcome=timeout"),
+    ("reachy.look_at", {"target": "other"}, "Reachy look_at target=other outcome=timeout"),
+])
+def test_people_commands_that_outwait_their_deadline_in_the_sdk_queue_time_out(monkeypatch, caplog, command, params,
+                                                                               line):
+    caplog.set_level(logging.INFO)
+    now = [100.0]
+    monkeypatch.setattr("reachy_muse.conversation.time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    async def check():
+        service, _, _ = command_device()
+        service.executor.face_snapshot = lambda: None
+        async with registered_device(service, monkeypatch) as (session, vm, _):
+            for _ in range(4):
+                await session._invokes.acquire()
+            try:
+                await vm.send_message({"method": "link.invoke", "id": "expired", "command": command, "params": params,
+                                       "timeout_ms": 20})
+                await wait_until(lambda: bool(session._invokes._waiters))
+                now[0] += .08
+            finally:
+                for _ in range(4):
+                    session._invokes.release()
+            return await asyncio.wait_for(vm.next_message(), 2)
+
+    assert asyncio.run(check()) == {"method": "link.result", "id": "expired", "ok": False, "error": "timeout"}
+    assert [record.message for record in caplog.records
+            if record.message.startswith(("Reachy people", "Reachy look_at"))] == [line]
+
+
 def test_stalled_presence_checks_release_sdk_slots_across_reconnects():
     async def check():
         stalled, resume, invoked = threading.Event(), threading.Event(), threading.Event()

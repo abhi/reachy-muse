@@ -17,14 +17,16 @@ def test_exact_sdk_registration_and_byte_budget():
     assert message == expected
     assert message["params"]["display_name"] == "Reachy Mini"
     commands = message["params"]["commands_v2"]
-    assert set(commands) == {"reachy.say", "reachy.presence", "reachy.notify", "reachy.expression", "reachy.move"}
+    assert set(commands) == {"reachy.say", "reachy.presence", "reachy.notify", "reachy.expression", "reachy.move",
+                             "reachy.people", "reachy.look_at"}
     assert REACHY_PERSONA in commands["reachy.say"]["description"]
     assert {name: len(spec["description"].encode("utf-8")) for name, spec in commands.items()} == {
         "reachy.say": 1471, "reachy.presence": 537, "reachy.notify": 475, "reachy.expression": 446, "reachy.move": 388,
+        "reachy.people": 514, "reachy.look_at": 657,
     }
     wire = encode_message(message)
-    assert int.from_bytes(wire[:4], "little") == len(wire[4:]) == 5548
-    assert len(wire) == 5552
+    assert int.from_bytes(wire[:4], "little") == len(wire[4:]) == 6942
+    assert len(wire) == 6946
     assert len(wire) < 8192
 
 
@@ -32,7 +34,7 @@ def test_longest_escaped_owner_place_stays_within_registration_budget():
     service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=object(),
                            backends=lambda _: None, place='"' * 64)
     message = service.describe().register_message("00000000-0000-0000-0000-000000000000")
-    assert len(encode_message(message)) == 5838
+    assert len(encode_message(message)) == 7232
     assert len(encode_message(message)) < 8192
 
 
@@ -49,5 +51,5 @@ def test_photo_requests_tell_muse_how_photos_arrive_within_the_byte_budget():
             " When the user asks Reachy itself to take a photo or what it sees, Reachy sends you one photo with "
             "their words as a chat message and speaks your reply. You cannot ask Reachy for a photo.")}}
     assert len(photos["params"]["commands_v2"]["reachy.say"]["description"].encode("utf-8")) == 1657
-    assert len(encode_message(photos)) == 5738
-    assert len(encode_message(registration(photo_requests=True, place='"' * 64))) == 6024 < 8192
+    assert len(encode_message(photos)) == 7132
+    assert len(encode_message(registration(photo_requests=True, place='"' * 64))) == 7418 < 8192

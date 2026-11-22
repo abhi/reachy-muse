@@ -122,6 +122,33 @@ COMMAND_SPECS = {
         },
         "timeout_ms": 15000,
     },
+    "reachy.people": {
+        "description": (
+            "Call reachy.people before answering when it matters whether you're talking to Reachy's owner or "
+            "someone else, or how many people are present. Returns speaker: owner, someone_else or unknown, "
+            "from a voice match on the request you're answering; a match is not proof of identity, and unknown "
+            "means Reachy can't tell, so don't guess. people_visible counts the faces in Reachy's latest camera "
+            "look, or is null if it hasn't looked in about 10 seconds; seen_s_ago is that look's age in seconds. "
+            "Names are never available."
+        ),
+        "required": {},
+        "optional": {},
+        "timeout_ms": 5000,
+    },
+    "reachy.look_at": {
+        "description": (
+            "Turn Reachy's head and body toward a person in the room, also during a voice call while you speak. "
+            "target=speaker faces whoever made the request you're answering; target=other faces someone else, the "
+            "nearest face that isn't the speaker's, and holds that look through your reply. Call reachy.look_at "
+            "with target=other when the user asks you to greet, address or look at someone else in the room. "
+            "Returns outcome: turned, no_other (no one else in view), no_faces, no_speaker_bearing (Reachy didn't "
+            "hear where the speaker is), stale (no recent view) or busy (Reachy is still turning or moving). Names "
+            "are never available, so Reachy can't find a person by name."
+        ),
+        "required": {"target": {"type": "string", "description": "speaker or other."}},
+        "optional": {},
+        "timeout_ms": 5000,
+    },
 }
 
 
@@ -177,6 +204,9 @@ def parse_command(name: str, params: object, *, antenna_mode: str = "both",
                 checked[key] = _number(params, key, 0, low, high)
         checked["duration"] = _number(params, "duration", 0.8, 0.2, 5)
         checked["hold"] = _number(params, "hold", 0.5, 0, 5)
+    elif name == "reachy.look_at":
+        if params.get("target") not in ("speaker", "other"):
+            raise ValueError("target must be speaker or other")
     elif name in ("reachy.say", "reachy.notify"):
         text = params.get("text")
         if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > 240:

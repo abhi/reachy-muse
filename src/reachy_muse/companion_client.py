@@ -773,6 +773,11 @@ class CompanionHearingTurn:
     def quiet_s(self) -> float:
         return self._recorder.quiet_s
 
+    @property
+    def speaker(self) -> Optional[_SpeakerSlot]:
+        stream = self._open
+        return stream.speaker if stream is not None and Op.SPEAKER in stream.connection.ops else None
+
     def feed(self, samples) -> None:
         self._fed += len(samples)
         if self._recorder.feed(samples) is not None:

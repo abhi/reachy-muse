@@ -313,13 +313,15 @@ class CallHardware(SpeakerHardware):
 class ScriptedCalls:
     """Stands in for the SDK ``VoiceCall``: once the microphone frames it receives show the user
     spoke and then paused, it plays ``answer`` (by default ``reply``'s transcript, audio and
-    lifecycle events). ``hang_up`` ends the call with an error from inside an answer."""
+    lifecycle events), for the first request only unless ``every_turn``. ``hang_up`` ends the
+    call with an error from inside an answer."""
 
     def __init__(self, *, reply=REPLY, reply_s=1.0, fail=None, fail_after_frames=0, answer_early=False,
-                 answer=None):
+                 answer=None, every_turn=False):
         self.reply = reply
         self.reply_s = reply_s
         self.answer_early = answer_early
+        self.every_turn = every_turn
         self.answer = answer or (answers(reply, reply_s) if reply is not None else None)
         self.loud_after_reply = 0
         self.fail = fail
@@ -411,9 +413,12 @@ class _Call:
                 raise self.script.fail
             due = paused == (2 if self.script.answer_early else 5)
             if due and not answered and self.script.answer is not None:
-                answered = True
                 self.script.answering.append(
                     asyncio.create_task(self.script.answer(sdk, self.on_event, self.script)))
+                if self.script.every_turn:
+                    loud = paused = 0
+                else:
+                    answered = True
         await asyncio.Event().wait()
 
     async def barge_in(self):

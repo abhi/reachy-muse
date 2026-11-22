@@ -137,15 +137,15 @@ def gaze_sequence(monkeypatch, *, during_motion=False, after_settle=True, arriva
 
 
 def test_idle_person_is_followed_then_a_real_wave_is_admitted(monkeypatch, caplog):
-    caplog.set_level("INFO", logger="reachy_muse.hardware")
+    caplog.set_level("DEBUG", logger="reachy_muse.hardware")
     cues, reads, following, samples = gaze_sequence(monkeypatch)
     assert following == [True, True, True]
     assert samples[100]["yaw"] == pytest.approx(8, abs=.01)
     assert samples[100]["pitch"] == pytest.approx(-4, abs=.01)
     assert cues == [(6.425, True, True)]
     assert min(reads) >= 1
-    assert [r.message for r in caplog.records if r.message.startswith("Wave gaze:")] == [
-        "Wave gaze: follow", "Wave gaze: settled", "Wave gaze: wave watching"]
+    assert [(r.levelname, r.message) for r in caplog.records if r.message.startswith("Wave gaze:")] == [
+        ("DEBUG", "Wave gaze: follow"), ("DEBUG", "Wave gaze: settled"), ("DEBUG", "Wave gaze: wave watching")]
 
 
 def test_wave_during_face_motion_is_ignored(monkeypatch):

@@ -66,6 +66,8 @@ class _LocalEndedTurn:
 class LocalHearingTurn:
     """One TurnRecorder, fed to a streaming recognizer while the user speaks."""
 
+    speaker = None
+
     def __init__(self, recorder, recognizer=None, transcribe=None, *, commands_only=False):
         self._recorder = recorder
         self._recognizer = recognizer

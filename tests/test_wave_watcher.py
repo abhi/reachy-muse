@@ -344,7 +344,7 @@ def test_wave_stats_never_exceed_one_line_per_minute_across_repeated_drains(capl
     caplog.set_level("INFO", logger="reachy_muse.wave_wake")
     now = [0.0]
     watcher = wave.WaveWatcher(lambda: np.zeros((120, 160, 3), np.uint8), lambda: True,
-                               clock=lambda: now[0])
+                               clock=lambda: now[0], read_watching=lambda: (now[0] / 2, int(now[0] / 10)))
     try:
         for tick in range(481):
             now[0] = tick / 4
@@ -356,9 +356,9 @@ def test_wave_stats_never_exceed_one_line_per_minute_across_repeated_drains(capl
     finally:
         watcher.close()
     assert [r.message for r in caplog.records] == [
-        "Wave stats frames=1 detector_runs=0 cues=0 max_score=0.000 frame_errors=0",
-        "Wave stats frames=240 detector_runs=0 cues=0 max_score=0.000 frame_errors=0",
-        "Wave stats frames=240 detector_runs=0 cues=0 max_score=0.000 frame_errors=0",
+        "Wave stats frames=1 detector_runs=0 cues=0 max_score=0.000 frame_errors=0 watching_s=0.0 flips=0",
+        "Wave stats frames=240 detector_runs=0 cues=0 max_score=0.000 frame_errors=0 watching_s=30.0 flips=6",
+        "Wave stats frames=240 detector_runs=0 cues=0 max_score=0.000 frame_errors=0 watching_s=30.0 flips=6",
     ]
 
 

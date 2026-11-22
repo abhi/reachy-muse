@@ -69,3 +69,23 @@ def test_photo_requests_add_a_photos_section_to_the_guide():
         '\nOwner-configured place: "office".\n')
     assert len(reachy_description("homelink-abcdef", GuidedDescription, place="x" * 64, photos=True)
                .guide.encode()) <= 4096
+
+
+def test_the_people_trigger_reaches_muse_with_or_without_the_guide_and_promises_no_names():
+    description = COMMAND_SPECS["reachy.people"]["description"]
+    trigger = ("Call reachy.people before answering when it matters whether you're talking to Reachy's owner or "
+               "someone else, or how many people are present.")
+    assert trigger in description
+    assert trigger.replace("reachy.people", "`reachy.people`") in " ".join(REACHY_GUIDE.split())
+    for text in (description, REACHY_GUIDE):
+        assert "Names are never available." in text
+
+
+def test_the_look_at_trigger_reaches_muse_with_or_without_the_guide_and_promises_no_names():
+    description = COMMAND_SPECS["reachy.look_at"]["description"]
+    trigger = ("Call reachy.look_at with target=other when the user asks you to greet, address or look at someone "
+               "else in the room.")
+    assert trigger in description
+    assert ("Call `reachy.look_at` with target `other` when the user asks you to greet, address or look at someone "
+            "else in the room;") in " ".join(REACHY_GUIDE.split())
+    assert "Names are never available" in description

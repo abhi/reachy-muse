@@ -118,6 +118,7 @@ class HearingTurn(Protocol):
     quiet_s: float                 # seconds since the robot's voice detector last heard speech
     supports_partials: bool
     partial: Optional[Partial]     # the open utterance's transcript so far; never sent to Muse
+    speaker: object                # the companion's label slot for the open utterance's voice, if it labels voices
 
     def feed(self, samples: np.ndarray) -> None: ...
     async def drain(self) -> None: ...
