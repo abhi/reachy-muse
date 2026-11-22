@@ -35,7 +35,8 @@ from reachy_muse.contract.replies import (ReplyProtocolError, ReplyRevisionError
 from reachy_muse.capabilities import EMOJI, MARKUP, WAKE_CUE, Backends, CapabilityUnavailable, EndedTurn, Endpoint, Heard, LocalReply, SpokenLine
 from reachy_muse.protocol import MAX_LINE_BYTES
 from reachy_muse.device_command import (COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow,
-                                       command_after_wake, executable, photo_requested, whole_command)
+                                       command_after_wake, executable, names_reachy, photo_requested,
+                                       whole_command)
 from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, interrupts_playback, request_topic,
                                    too_short_for_follow_up, repeats_playback)
 from reachy_muse.contract.intent import Intent, maybe_chat
@@ -1983,7 +1984,8 @@ class VoiceConversation:
     async def turn(self, wav: bytes | None, *, wake_strip_required: bool | None = None,
                    recognized_text: str | None = None, defer_playback: bool = False,
                    timeline: TurnTimeline | None = None, heard_over: tuple[str, ...] = (),
-                   speaker_bearing: float | None = None, gaze_generation: int | None = None) -> TurnOutcome:
+                   speaker_bearing: float | None = None, gaze_generation: int | None = None,
+                   photo: PhotoRequest | None = None) -> TurnOutcome:
         if wav is None:
             return TurnOutcome.EMPTY
         self._turn_active = True
@@ -2003,7 +2005,8 @@ class VoiceConversation:
             text = None
             if wav is not None:
                 text = await self._hear(wav, recognized_text, wake_strip_required, started=started,
-                                        defer_playback=defer_playback, heard_over=heard_over, woken=woken)
+                                        defer_playback=defer_playback, heard_over=heard_over, woken=woken,
+                                        timeline=timeline)
                 if isinstance(text, TurnOutcome):
                     completed = True
                     return text
@@ -2018,9 +2021,10 @@ class VoiceConversation:
                     return TurnOutcome.ACCEPTED
                 if gaze_generation is not None:
                     await self._gaze.request(text, speaker_bearing, gaze_generation)
-                if self._photo_requested(text, timeline):
-                    outcome = await self._photo_turn(PhotoRequest(text, timeline.marks.get("endpoint", started)),
-                                                     wav, started=started, defer_playback=defer_playback,
+                if photo is None and self._photo_requested(text, timeline):
+                    photo = PhotoRequest(text, timeline.marks.get("endpoint", started))
+                if photo is not None:
+                    outcome = await self._photo_turn(photo, wav, started=started, defer_playback=defer_playback,
                                                      timeline=timeline)
                     completed = True
                     return outcome
@@ -2103,7 +2107,19 @@ class VoiceConversation:
         self._recent.asked(heard.text)
 
     def _photo_requested(self, text: str | None, timeline: TurnTimeline) -> bool:
-        return self.photo_requests and text is not None and photo_requested(text) and photo_allowed(timeline)
+        """Whether this turn asks Reachy for a photo it may take.
+
+        The request must address Reachy: the first request after a wake, or words that open with the wake
+        phrase or open or close by naming Muse or Reachy. A room's or a television's words never do.
+        """
+        return (self.photo_requests and text is not None and photo_requested(text)
+                and ("wake" in timeline.marks or timeline.facts.get("wake_phrase") == "said" or names_reachy(text))
+                and photo_allowed(timeline))
+
+    def _note_wake_phrase(self, prefix: str, timeline: TurnTimeline | None) -> None:
+        """Remember that this utterance opened with the wake phrase, which stripping removes from its words."""
+        if self.photo_requests and prefix == "exact" and timeline is not None:
+            timeline.facts["wake_phrase"] = "said"
 
     async def _photo_turn(self, request: PhotoRequest, wav: bytes, *, started: float, defer_playback: bool,
                           timeline: TurnTimeline) -> TurnOutcome:
@@ -2191,7 +2207,8 @@ class VoiceConversation:
     async def _hear(self, wav: bytes, recognized_text: str | None, wake_strip_required: bool | None, *,
                     started: float, defer_playback: bool,
                     heard_over: tuple[str, ...] = (), woken: bool = False,
-                    held: _HeldRequest | None = None, quiet: bool = False) -> str | None | TurnOutcome:
+                    held: _HeldRequest | None = None, quiet: bool = False,
+                    timeline: TurnTimeline | None = None) -> str | None | TurnOutcome:
         """The request's words with the wake phrase removed; None when Muse hears only the audio.
 
         The wake phrase alone gets "Yes?", or the wake-up greeting when it just woke Reachy, unless
@@ -2218,6 +2235,7 @@ class VoiceConversation:
             return TurnOutcome.EMPTY
         if self.wake_detector is not None:
             text, prefix, _ = self._wake_prefix(text, strip_required)
+            self._note_wake_phrase(prefix, timeline)
             if strip_required:
                 # The wake detector confirms the acoustic trigger, but ASR must identify its boundary.
                 question = text if prefix == "exact" else None
@@ -2570,7 +2588,7 @@ class VoiceConversation:
         """
         text = await self._hear(endpoint.audio, endpoint.text, request.wake_strip_required,
                                 started=time.monotonic(), defer_playback=True, heard_over=request.heard_over,
-                                held=held)
+                                held=held, timeline=request.timeline)
         if isinstance(text, TurnOutcome):
             return held
         self._gaze.admit(request.gaze_generation)
@@ -2696,7 +2714,8 @@ class VoiceConversation:
         if self._wake_window is WakeWindow.WOKEN:
             self._wake_window = WakeWindow.AWAKE
         decision = self._wake_prefix(endpoint.text or "", request.wake_strip_required)
-        text, _, _ = decision
+        text, prefix, _ = decision
+        self._note_wake_phrase(prefix, request.timeline)
         if request.heard_over and (not text.strip() or repeats_playback(text, request.heard_over)):
             if request.timeline.facts.get("command_transcript") != "deadline":
                 self._log_realtime_command(endpoint.text, decision,
@@ -2747,7 +2766,8 @@ class VoiceConversation:
             await self._announce(BUSY_CUE, started=None, defer_playback=True)
             return TurnOutcome.ACCEPTED
         return await self.turn(endpoint.audio, wake_strip_required=False, recognized_text=text, defer_playback=True,
-                               timeline=request.timeline, gaze_generation=request.gaze_generation)
+                               timeline=request.timeline, gaze_generation=request.gaze_generation,
+                               photo=PhotoRequest(text, request.timeline.marks["endpoint"]))
 
     def _pending_call_decision(self) -> bool:
         return bool(self.call is not None and self.call.pending)

@@ -4,7 +4,9 @@ import asyncio
 
 import pytest
 
-from reachy_muse.device_command import Commands, DeviceCommand, gaze_requested, photo_requested, whole_command
+from reachy_muse.device_command import (Commands, DeviceCommand, gaze_requested, names_reachy, photo_requested,
+                                       whole_command)
+from reachy_muse.turn_timeline import TurnTimeline
 from test_device_command import FakeModel
 
 REQUESTS = [
@@ -110,3 +112,79 @@ def test_other_looking_words_still_reach_the_command_model():
     assert asyncio.run(Commands(model).recognize("Could you look this way?", frozenset(DeviceCommand))) is (
         DeviceCommand.FACE_TRACKING_ON)
     assert [text for text, _ in model.asked] == ["Could you look this way?"]
+
+
+NAMED = [
+    "Muse, take a photo.", "Hey Reachy, what do you see?", "OK Muse, what am I holding?", "Okay, Reachy, look at this.",
+    "What am I holding, Reachy?", "What's this, Muse, please?", "What do you see, Reachy, right now?",
+    "Take a photo of this, Reachy, thank you.",
+]
+NOT_NAMED = [
+    "What do you see?", "Hey, take a picture of this.", "Take a picture and send it to Muse.", "Show this to Muse.",
+    "Send a picture of the whiteboard to Muse.", "Take a photo of Reachy.", "Take a photo for Muse.",
+    "Ask Reachy what it sees.", "Muse's answer was wrong.", "",
+]
+
+
+@pytest.mark.parametrize("text, named", [(text, True) for text in NAMED] + [(text, False) for text in NOT_NAMED])
+def test_words_name_reachy_only_when_they_open_or_close_by_speaking_to_it(text, named):
+    assert names_reachy(text) is named
+
+
+# Lines a television, a phone or video call, or people in the room say to each other, not to Reachy.
+BACKGROUND = [
+    "What do you see?", "What can you see?", "Do you see that?", "Do you see it?", "Can you see it?",
+    "Can you see this?", "Can you see that?", "Can you see it now?", "Can you see this now?",
+    "Do you see this?", "Can you see me?", "Can you see me now?", "Do you see what I'm holding?",
+    "Can you see what I'm holding?", "Tell me what you see.", "Describe what you see.",
+    "Tell me what you can see.", "What are you seeing?", "What do you see there?", "What do you see here?",
+    "What do you see now?", "What do you see in front of you?", "What's in front of you?",
+    "What is in front of you?", "What do you see in the picture?", "What do you see on the screen?",
+    "What do you see on the board?", "What can you see from there?", "What can you see in the photo?",
+    "What do you see when you look at me?", "Look at this and tell me what it is.",
+    "Look at that and tell me what it says.", "Take a look at this and tell me what you think.",
+    "Have a look at this and tell me if it's broken.", "Look at it and tell me the truth.",
+    "What am I holding?", "What am I wearing?", "What am I wearing today?", "What am I pointing at?",
+    "What am I showing you?", "What is this I'm holding?", "What's this I'm holding?",
+    "What's that I'm holding?",
+    "Take a picture.", "Take a photo.", "Take a picture!", "Take a photo of me.", "Take a picture of us.",
+    "Take a picture of this.", "Take a photo of this.", "Can you take a picture of us?",
+    "Could you take a photo of us please?", "Take a selfie!", "Take a quick photo.", "Snap a photo.",
+    "Grab a pic.", "Take another picture.", "Take one more picture.", "Okay take a picture now.",
+    "Take a picture, it'll last longer.", "Take a picture of the menu.",
+    "Can you take a picture of the receipt?", "Take a photo of the license plate.",
+    "Take a picture of my outfit.", "Please take a photo of us.", "Will you take a photo of us?",
+    "Hey, take a picture of this.", "So, take a picture.", "Now take a picture.", "Well, take a picture.",
+    "Um, take a picture.", "Okay, what do you see?", "So what do you see?", "Now what do you see?",
+    "Well, what do you see?", "Alright, what am I holding?",
+    "I see what you mean.", "See you later.", "What do you think?", "What did you see?",
+    "Did you see that?", "Did you see the game?", "What do you see in him?", "What do you want?",
+    "Look at this!", "Look at that!", "Look at me.", "Picture this.", "Say cheese!",
+    "Smile for the camera.", "Let me take a picture.", "I'll take a picture.", "Let's take a selfie.",
+    "Who wants to take a picture?", "Can I take a picture?", "Should I take a picture?",
+]
+
+
+def photo_decider():
+    from reachy_muse.capabilities import Mode
+    from reachy_muse.conversation import VoiceConversation
+    from reachy_muse.local_backends import backends_for
+    from test_conversation import FakeHardware, FakeSession
+
+    session = FakeSession()
+    return VoiceConversation(session, FakeHardware(), backends=backends_for(Mode.MUSE_VOICE, session),
+                             photo_requests=True)
+
+
+def after_a_wake():
+    timeline = TurnTimeline()
+    timeline.mark("wake")
+    return timeline
+
+
+def test_room_and_television_speech_never_takes_a_photo():
+    decider = photo_decider()
+    assert len(BACKGROUND) == 96
+    assert [text for text in BACKGROUND if decider._photo_requested(text, TurnTimeline())] == []
+    assert sum(decider._photo_requested(text, after_a_wake()) for text in BACKGROUND) == sum(
+        map(photo_requested, BACKGROUND)) == 69

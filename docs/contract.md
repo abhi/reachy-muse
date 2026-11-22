@@ -15,8 +15,8 @@ local controls. Ordinary requests contain only the user's words. The optional
 Reconnects and companion changes never add a voice context. The morning
 briefing request asks for its own 60 to 90 seconds, roughly 150 to 220 words.
 
-No camera image reaches Muse, except one photo per explicit spoken request with
-`--photo-requests`. That photo goes up with `send_image` as one chat message:
+No camera image reaches Muse, except one photo per explicit spoken request to
+Reachy with `--photo-requests`. That photo goes up with `send_image` as one chat message:
 the local-chat note if any, the words "Reachy took this photo with its camera
 just now because the user asked. The user's spoken request is: …", then one
 JPEG of at most 150 KiB named `reachy-photo.jpg`. Muse has no command that

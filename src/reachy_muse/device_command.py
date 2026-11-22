@@ -283,6 +283,25 @@ def photo_requested(text: str) -> bool:
     return match is not None and _PHOTO_SHARED.isdisjoint((match["question"] or match["look"] or "").split())
 
 
+_NAMES = frozenset(("muse", "reachy"))
+_NAME_OPENERS = frozenset(("oh", "okay", "ok", "alright", "hey", "hi", "um", "uh", "so", "now", "well"))
+_NAME_CLOSERS = frozenset(("please", "now", "right", "thanks", "thank", "you"))
+# A closing name after these is who the words are about or for, as in "send it to Muse", not who they are said to.
+_NAME_OBJECT = frozenset(("to", "for", "of", "at", "about", "with", "from", "like", "send", "show", "ask", "tell", "call"))
+
+
+def names_reachy(text: str) -> bool:
+    """Whether the words open or close by naming Muse or Reachy, as in "Muse, take a photo" or "what's this, Reachy?"."""
+    words = _words(text)
+    while words and words[0] in _NAME_OPENERS:
+        words = words[1:]
+    if words and words[0] in _NAMES:
+        return True
+    while words and words[-1] in _NAME_CLOSERS:
+        words = words[:-1]
+    return len(words) > 1 and words[-1] in _NAMES and words[-2] not in _NAME_OBJECT
+
+
 def worth_asking(text: str, asked: FrozenSet[DeviceCommand]) -> bool:
     if gaze_requested(text) or photo_requested(text):
         return False

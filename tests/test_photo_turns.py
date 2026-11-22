@@ -93,7 +93,7 @@ def answers(*replies):
 def test_a_spoken_photo_request_sends_one_photo_with_the_words_and_speaks_the_answer(monkeypatch, caplog):
     caplog.set_level(logging.DEBUG)
     rig = photo_rig(monkeypatch, [PHOTO])
-    conversation = service(rig, answers("A red mug with a cat on it."), Transcripts("What am I holding?"),
+    conversation = service(rig, answers("A red mug with a cat on it."), Transcripts("Reachy, what am I holding?"),
                            photo_requests=True)
 
     async def user():
@@ -102,7 +102,7 @@ def test_a_spoken_photo_request_sends_one_photo_with_the_words_and_speaks_the_an
     events = run(rig, conversation, user)
     assert sent(events) == [{
         "muse": "send_image", "session_id": "robot-chat", "options": {},
-        "text": PHOTO_MESSAGE.format("What am I holding?"), "mime_type": "image/jpeg",
+        "text": PHOTO_MESSAGE.format("Reachy, what am I holding?"), "mime_type": "image/jpeg",
         "filename": "reachy-photo.jpg", "jpeg": True, "bytes": 120_000}]
     assert rig.hardware.captures == [2.0]
     assert played(events) == ["shutter", "tts:A red mug with a cat on it."]
@@ -126,8 +126,8 @@ def test_the_controller_takes_the_photo_mid_turn_and_muse_gets_a_jpeg_within_its
         get_frame=lambda: reads.append(1) or np.zeros((720, 1280, 3), dtype=np.uint8)))
     rig.hardware.vision_budget = controller.vision_budget
     rig.hardware.capture_photo = controller.capture_photo
-    conversation = service(rig, answers("A blank wall."), Transcripts("Take a photo, then tell me what you see."),
-                           photo_requests=True)
+    conversation = service(rig, answers("A blank wall."),
+                           Transcripts("Muse, take a photo, then tell me what you see."), photo_requests=True)
 
     async def user():
         rig.say()
@@ -142,13 +142,13 @@ def test_the_controller_takes_the_photo_mid_turn_and_muse_gets_a_jpeg_within_its
 def test_without_the_flag_a_photo_request_is_an_ordinary_request(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     rig = photo_rig(monkeypatch, [PHOTO])
-    conversation = service(rig, answers("I can't see anything."), Transcripts("What do you see?"))
+    conversation = service(rig, answers("I can't see anything."), Transcripts("Reachy, what do you see?"))
 
     async def user():
         rig.say()
 
     events = run(rig, conversation, user)
-    assert sent_to_muse(events) == ["What do you see?"]
+    assert sent_to_muse(events) == ["Reachy, what do you see?"]
     assert rig.hardware.captures == []
     assert photo_lines(caplog) == []
 
@@ -158,7 +158,7 @@ def test_a_voice_other_than_the_owner_s_may_still_ask_for_a_photo(monkeypatch, c
     monkeypatch.setattr("reachy_muse.local_backends._LocalEndedTurn.note_speaker",
                         lambda self, facts: facts.update(speaker="other"))
     rig = photo_rig(monkeypatch, [PHOTO])
-    conversation = service(rig, answers("A plant."), Transcripts("What do you see?"), photo_requests=True)
+    conversation = service(rig, answers("A plant."), Transcripts("What do you see, Reachy?"), photo_requests=True)
 
     async def user():
         rig.say()
@@ -176,7 +176,8 @@ def test_a_second_photo_request_while_muse_answers_the_first_gets_the_busy_line(
         await rig.wait_until_or_timeout(lambda: "tts:One at a time, please." in played(rig.recording.events), 10)
         await session.answer(request, "A red mug.")
 
-    conversation = service(rig, muse, Transcripts("What am I holding?", "Take a photo."), photo_requests=True)
+    conversation = service(rig, muse, Transcripts("Reachy, what am I holding?", "Reachy, take a photo."),
+                           photo_requests=True)
 
     async def user():
         rig.say()
@@ -198,7 +199,7 @@ def test_a_photo_request_while_muse_works_on_another_request_gets_the_busy_line(
         await rig.wait_until_or_timeout(lambda: "tts:One at a time, please." in played(rig.recording.events), 10)
         await session.answer(request, "Sunny tomorrow.")
 
-    conversation = service(rig, muse, Transcripts("What's the weather tomorrow?", "What do you see?"),
+    conversation = service(rig, muse, Transcripts("What's the weather tomorrow?", "Reachy, what do you see?"),
                            photo_requests=True)
 
     async def user():
@@ -267,7 +268,7 @@ def test_each_failure_gets_one_line_and_the_conversation_goes_on(monkeypatch, ca
         if not (case == "no_answer" and request == 1):
             await session.answer(request, "It's noon.")
 
-    conversation = service(rig, muse, Transcripts("What do you see?", "What time is it?"), photo_requests=True)
+    conversation = service(rig, muse, Transcripts("Reachy, what do you see?", "What time is it?"), photo_requests=True)
     if case in ("rejected", "unacknowledged", "send_timeout"):
         rig.session = {"rejected": RejectsPhotos, "unacknowledged": PhotosUnacknowledged,
                        "send_timeout": PhotosNeverArrive}[case](rig.recording, muse)
@@ -289,7 +290,7 @@ def test_each_failure_gets_one_line_and_the_conversation_goes_on(monkeypatch, ca
 def test_a_photo_turn_writes_no_file(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     rig = photo_rig(monkeypatch, [PHOTO])
-    conversation = service(rig, answers("A desk."), Transcripts("What do you see?"), photo_requests=True)
+    conversation = service(rig, answers("A desk."), Transcripts("Reachy, what do you see?"), photo_requests=True)
 
     async def user():
         rig.say()
@@ -426,7 +427,7 @@ def test_a_second_photo_request_in_a_call_gets_the_busy_line(monkeypatch, caplog
         await session.answer(request, "A red mug.")
 
     calls = ScriptedCalls(reply=None)
-    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, what am I holding?", "Take a photo."),
+    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, what am I holding?", "Reachy, take a photo."),
                                     calls, muse=muse, photo_requests=True, wake_timeout_s=5)
 
     async def user():
@@ -572,7 +573,7 @@ def test_a_photo_request_releases_a_held_person_gaze_and_shows_what_reachy_faces
 
     calls = ScriptedCalls(answer=greets)
     conversation = service(rig, answers("A desk and a lamp."), StreamingTranscripts("Say hi to my friend.",
-                                                                                     "What do you see?"),
+                                                                                     "What do you see, Reachy?"),
                            wake_detector=DelayedWake(), wake_timeout_s=5, muse_path="realtime",
                            voice_link=calls.link, voice_call=calls, photo_requests=True)
     conversation.silence_s = .8
@@ -609,8 +610,8 @@ def test_reachy_s_own_words_heard_back_never_take_a_photo(monkeypatch, caplog):
     rig = photo_rig(monkeypatch, [PHOTO])
     rig.hardware.chunk_s = .1
     rig.hardware.echo_cancelled_input = True
-    conversation = service(rig, answers("I can't tell from here. What do you see?"),
-                           Transcripts("Is it sunny outside?", "What do you see?"),
+    conversation = service(rig, answers("I can't tell from here. Ask me: Reachy, what do you see?"),
+                           Transcripts("Is it sunny outside?", "Reachy, what do you see?"),
                            voice=LongVoice(rig.recording, chunks=20), photo_requests=True)
 
     async def user():
@@ -637,7 +638,7 @@ def test_a_photo_turn_cut_short_when_the_session_ends_still_logs_its_one_line(mo
         return PHOTO
 
     rig = photo_rig(monkeypatch, [until_the_session_ends])
-    conversation = service(rig, answers("A lamp."), Transcripts("What do you see?"), photo_requests=True)
+    conversation = service(rig, answers("A lamp."), Transcripts("Reachy, what do you see?"), photo_requests=True)
 
     async def user():
         rig.say()
@@ -687,3 +688,51 @@ def test_never_mind_in_a_call_drops_the_photo_muse_is_still_answering(monkeypatc
         ("send_image", PHOTO_MESSAGE.format("what am I holding?")), ("send_chat", STOP_REQUEST)]
     assert played(events) == ["shutter", "muse"]
     assert [fields(line)["outcome"] for line in photo_lines(caplog)] == ["sent"]
+
+
+@pytest.mark.parametrize("said, photo_words", [
+    ("What do you see?", None),
+    ("Hey Muse, what do you see?", "what do you see?"),
+    ("What do you see, Reachy?", "What do you see, Reachy?"),
+])
+def test_inside_an_open_window_only_words_spoken_to_reachy_take_a_photo(monkeypatch, said, photo_words):
+    from test_pins import Wake
+
+    rig = photo_rig(monkeypatch, [PHOTO])
+    conversation = service(rig, answers("Sunny tomorrow.", "A desk."),
+                           Transcripts("Hey Muse, what's the weather tomorrow?", said),
+                           wake_detector=Wake(), wake_timeout_s=30, photo_requests=True)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "tts:Sunny tomorrow." in played(rig.recording.events), 5)
+        await rig.quiet("listening")
+        rig.say()
+
+    events = run(rig, conversation, user, rest=("listening",))
+    second = ("send_image", PHOTO_MESSAGE.format(photo_words)) if photo_words else ("send_chat", said)
+    assert [(event["muse"], event["text"]) for event in sent(events)] == [
+        ("send_chat", "what's the weather tomorrow?"), second]
+    assert rig.hardware.captures == ([2.0] if photo_words else [])
+
+
+@realtime
+def test_in_a_call_a_photo_phrase_not_spoken_to_reachy_stays_with_muse(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    rig = call_rig(monkeypatch, [PHOTO])
+    calls = ScriptedCalls(reply=None)
+    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, tell me a joke.", "What do you see?"), calls,
+                                    photo_requests=True, wake_timeout_s=5)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: len(realtime_command_lines(caplog)) == 1, 5)
+        await rig.quiet("thinking", "listening")
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: len(realtime_command_lines(caplog)) == 2, 5)
+
+    events = run(rig, conversation, user, rest=("thinking", "listening", "idle"))
+    assert (rig.hardware.captures, sent(events), calls.barge_ins) == ([], [], 0)
+    assert [line.split(" outcome=")[1] for line in realtime_command_lines(caplog)] == [
+        "none drop=none", "none drop=none"]
+    assert photo_lines(caplog) == []

@@ -970,11 +970,17 @@ Reachy's camera. It is off by default. It needs `--mode on-robot` or
 `companion`, because Reachy must recognize your words itself, and OpenCV on the
 robot to encode the photo; startup stops if OpenCV cannot be imported.
 
-When Reachy hears you ask for a photo, it takes one photo and sends it to Muse
-with your words as one chat message: "Reachy took this photo with its camera
-just now because the user asked. The user's spoken request is: …". A short
-shutter sound plays once the photo is taken. Reachy says nothing else until
-Muse's answer, which it speaks in its own voice.
+When you ask Reachy for a photo, it takes one photo and sends it to Muse with
+your words as one chat message: "Reachy took this photo with its camera just now
+because the user asked. The user's spoken request is: …". A short shutter sound
+plays once the photo is taken. Reachy says nothing else until Muse's answer,
+which it speaks in its own voice.
+
+Ask Reachy itself: as the first request after the wake phrase or a wave, or with
+Muse's or Reachy's name at the start or the end, as in "Hey Muse, what do you
+see?", "Reachy, take a photo" or "What am I holding, Reachy?". Inside an open
+listening window, a plain "what do you see?", from you, a guest or a television,
+takes no photo: it is an ordinary request, and Muse answers it.
 
 These ask for a photo: "take a photo", "take a picture of this and tell me what
 it is", "send Muse a photo of the whiteboard", "what do you see?", "what am I
@@ -1026,9 +1032,10 @@ One JPEG of at most 150 KiB and at most 1280 pixels wide, and your words, go to
 the Muse chat that Reachy talks in. The photo stays in that chat's history and
 may appear in the Muse app. Nothing from the camera goes to the companion. The
 frame, the JPEG and the request stay in memory and are never written to disk.
-Any voice that Reachy admits can ask for a photo, including a guest's or a
-television's while the microphone is open, and without a wake word it is always
-open. People in view are not asked. The shutter sound is the only notice.
+Any voice that Reachy admits can ask for a photo by speaking to Reachy, a
+guest's included. Speech not spoken to Reachy, such as a television's, takes no
+photo unless it names Muse or Reachy. People in view are not asked. The shutter
+sound is the only notice.
 
 Each request logs one line, such as `Reachy photo outcome=sent path=chat
 width=1280 height=720 quality=80 bytes=98304 capture_ms=120 encode_ms=18
