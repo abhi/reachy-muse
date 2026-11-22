@@ -1003,6 +1003,9 @@ they go to Muse as ordinary requests.
   whatever happens. A request lapses 30 seconds after Reachy decided your turn
   had ended. Muse has no camera command and cannot ask Reachy for a photo.
   Only with the flag does Reachy's registration tell Muse how photos arrive.
+- Reachy decides on the whole request. If you are already speaking again, or in
+  a call the companion has sent only a partial transcript, which can lack the
+  end of what you said, the request is an ordinary one and takes no photo.
 - A photo request heard while Muse is still answering another request, such as
   the morning briefing's or another photo, gets "One at a time, please." and no
   photo. So does one heard in a call while Reachy still handles your previous

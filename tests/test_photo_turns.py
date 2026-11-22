@@ -808,3 +808,91 @@ def test_a_cancel_said_in_a_call_while_the_photo_is_taken_keeps_it_home(monkeypa
     assert "shutter" not in played(events)
     assert realtime_command_lines(caplog)[1].endswith(f"outcome={command} drop=none")
     assert [fields(line)["outcome"] for line in photo_lines(caplog)] == ["cancelled"]
+
+
+# What the user said, and the companion's partial at the robot's endpoint, which lacks the tail.
+LAGGING = [
+    ("take a photo of me in five minutes", "take a photo of me"),
+    ("take a photo and send it to my wife", "take a photo"),
+    ("take a picture of this for my landlord", "take a picture of this"),
+    ("take a photo, no wait, don't", "take a photo"),
+]
+
+
+def test_each_lagging_partial_would_take_a_photo_that_the_whole_request_refuses():
+    from reachy_muse.device_command import photo_requested
+
+    assert [(photo_requested(said), photo_requested(partial)) for said, partial in LAGGING] == [(False, True)] * 4
+
+
+@realtime
+@pytest.mark.parametrize("said, partial", LAGGING)
+def test_a_call_photo_needs_the_companion_s_final_not_a_lagging_partial(monkeypatch, caplog, said, partial):
+    from dataclasses import replace
+    from reachy_muse.companion_client import CompanionHearing, CompanionLink, LinkState, _Connection
+    from reachy_muse.protocol import HearEndpoint, HearPartial, Op, encode
+
+    caplog.set_level(logging.INFO)
+    rig = call_rig(monkeypatch, [PHOTO])
+    calls = ScriptedCalls(reply=None)
+    link = CompanionLink("ws://localhost:9", token="test", out_rate=16000, insecure=True)
+    link._connection = connection = _Connection(None, (Op.HEAR,))
+    link._set(LinkState.UP)
+    opened = link.open_hear
+
+    def open_hear(outcomes=None):
+        stream = opened(outcomes)
+        link._receive(connection, encode(HearPartial(stream.id, 0, partial)))
+        finish = stream.finish
+
+        def finish_with_the_final():
+            finish()
+            asyncio.get_running_loop().call_later(
+                .3, lambda: link._receive(connection, encode(HearEndpoint(stream.id, said, True))))
+        stream.finish = finish_with_the_final
+        return stream
+
+    link.open_hear = open_hear
+    conversation = realtime_service(rig, None, calls, muse=answers("A face."), photo_requests=True, wake_timeout_s=5)
+    backends = conversation.backends
+    conversation.backends = lambda session: replace(backends(session), hearing=CompanionHearing(link))
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: realtime_command_lines(caplog), 5)
+        await asyncio.sleep(1)
+
+    events = run(rig, conversation, user, rest=("thinking", "listening", "idle"))
+    assert (rig.hardware.captures, sent(events), photo_lines(caplog)) == ([], [], [])
+    assert realtime_command_lines(caplog)[0].endswith("outcome=none drop=none")
+
+
+def test_a_photo_request_decided_while_the_user_still_speaks_is_an_ordinary_request(monkeypatch):
+    from test_pins import CHUNK, VOICE_SAMPLE
+
+    waiting, released = asyncio.Event(), asyncio.Event()
+
+    class FirstWordsLate(Transcripts):
+        async def transcribe(self, wav):
+            if len(self.texts) == 2:
+                waiting.set()
+                await released.wait()
+            return await super().transcribe(wav)
+
+    rig = photo_rig(monkeypatch, [PHOTO])
+    conversation = service(rig, answers("I can't see it.", "Okay."),
+                           FirstWordsLate("Reachy, what do you see?", "It is on the table."), photo_requests=True)
+
+    async def user():
+        rig.say()
+        await asyncio.wait_for(waiting.wait(), 5)
+        for index in range(40):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            if index == 20:
+                released.set()
+        rig.say(voiced_s=0)
+
+    events = run(rig, conversation, user)
+    assert rig.hardware.captures == []
+    assert [(event["muse"], event["text"]) for event in sent(events)][0] == ("send_chat", "Reachy, what do you see?")

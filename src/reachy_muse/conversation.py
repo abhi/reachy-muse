@@ -669,6 +669,7 @@ class VoiceConversation:
         self._stop_sent_at: float | None = None
         # True while the user is mid-utterance or Reachy is still acting on what they said.
         self._hearing_open: Callable[[], bool] = lambda: False
+        self._recording_active: Callable[[], bool] = lambda: False
         self._seen_sequences: set[int] = set()
         self._sequence_order = deque()
         self._muted = False
@@ -1259,6 +1260,8 @@ class VoiceConversation:
 
         def recording_active():
             return recorder.active or (voice_gate is not None and voice_gate.active)
+
+        self._recording_active = recording_active
 
         async def record(sample, *, captured_at, send_to_call=True):
             if voice_gate is None:
@@ -1868,7 +1871,7 @@ class VoiceConversation:
             for ended in turns_awaiting_transcript:
                 ended.cancel()
             self._wake_direction = None
-            self._hearing_open = lambda: False
+            self._hearing_open = self._recording_active = lambda: False
 
             async def cleanup():
                 try:
@@ -2113,11 +2116,12 @@ class VoiceConversation:
         """Whether this turn asks Reachy for a photo it may take.
 
         The request must address Reachy: the first request after a wake, or words that open with the wake
-        phrase or open or close by naming Muse or Reachy. A room's or a television's words never do.
+        phrase or open or close by naming Muse or Reachy. A room's or a television's words never do. And the
+        user must have finished speaking, or the request's end may still be coming.
         """
         return (self.photo_requests and text is not None and photo_requested(text)
                 and ("wake" in timeline.marks or timeline.facts.get("wake_phrase") == "said" or names_reachy(text))
-                and photo_allowed(timeline))
+                and not self._recording_active() and photo_allowed(timeline))
 
     def _note_wake_phrase(self, prefix: str, timeline: TurnTimeline | None) -> None:
         """Remember that this utterance opened with the wake phrase, which stripping removes from its words."""
@@ -2738,7 +2742,7 @@ class VoiceConversation:
             return TurnOutcome.EMPTY
         self._presence.mark("voice", started)
         command = await self._obey(text, started, request.timeline) if text.strip() else None
-        photo = command is None and self._photo_requested(text, request.timeline)
+        photo = command is None and not endpoint.partial and self._photo_requested(text, request.timeline)
         if request.timeline.facts.get("command_transcript") != "deadline":
             self._log_realtime_command(endpoint.text, decision, transcript=request.timeline.facts.get("command_transcript"),
                                        outcome=command.name if command is not None else "PHOTO" if photo else "none")

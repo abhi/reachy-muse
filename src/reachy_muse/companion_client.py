@@ -800,12 +800,14 @@ class CompanionHearingTurn:
                 stream, self._open = self._open, None
                 if self._commands_only:
                     text = self.partial.text if self.partial is not None else None
+                    final = False
                     for message in stream.inbox:
-                        text = message.text
+                        text, final = message.text, isinstance(message, HearEndpoint)
                     end_sample = self._vad_ends.popleft() if self._vad_ends else self._fed
                     if event.accepted:
-                        self._ended.append(_HeardTurn(stream.speaker, Endpoint(_wav(bytes(stream.audio)), text),
-                                                      self._recorder.last_truncated, end_sample))
+                        endpoint = Endpoint(_wav(bytes(stream.audio)), text, partial=not final)
+                        self._ended.append(_HeardTurn(stream.speaker, endpoint, self._recorder.last_truncated,
+                                                      end_sample))
                         stream.abort_command()
                     else:
                         stream.close(CloseHow.ABORT)
