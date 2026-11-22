@@ -130,17 +130,19 @@ an earlier one when it only goes on with an earlier answer. Between responses,
 Muse is answering the requests admitted since its latest response, or else the
 ones that response answered; while it works, a remark made meanwhile counts too,
 because the call cannot tell it from part of the request. In chat, it is the
-request Muse was sent. A request still being spoken counts, and the command waits
-up to three seconds for Reachy's own end of it. A sound that never becomes a
-request, such as a cough, and anything Reachy admits after Muse asks never count.
-If the requests' labels disagree, or none has one, it reports `unknown`; a
-request labeled `unknown` counts for nothing. It also reports `unknown` after
-Reachy lets its requests go: when the listening window closes, Reachy sleeps or
-is hushed, or the call to Muse drops. A label is a voice match, not proof of
-identity, and nothing is gated on it. `people_visible` counts the faces in the
-latest face snapshot and `seen_s_ago` gives its rounded age, when that snapshot
-is at most 10 seconds old. The command never moves Reachy or reads the camera.
-It logs one line with fixed words, such as `Reachy people speaker=owner visible=2`.
+request Muse was sent. A request still being spoken counts. A sound that never
+becomes a request, such as a cough, and anything Reachy admits after Muse asks
+never count. The command waits up to a second for the companion's labels of
+those requests, which come at the companion's end of each one's speech, and does
+not wait when the companion labels no voices. If the labels disagree, or none
+has come, it reports `unknown`; a request labeled `unknown` counts for nothing.
+It also reports `unknown` after Reachy lets its requests go: when the listening
+window closes, Reachy sleeps or is hushed, or the call to Muse drops. A label is
+a voice match, not proof of identity, and nothing is gated on it.
+`people_visible` counts the faces in the latest face snapshot and `seen_s_ago`
+gives its rounded age, when that snapshot is at most 10 seconds old. The command
+never moves Reachy or reads the camera. It logs one line with fixed words, such
+as `Reachy people speaker=owner visible=2`.
 
 `reachy.look_at` uses the bearing latched for the latest of those requests, or,
 for one still being spoken, the bearing heard so far, without waiting. With

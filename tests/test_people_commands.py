@@ -11,16 +11,18 @@ import itertools
 import math
 import re
 import threading
+import time
 
 import numpy as np
 import pytest
 from musegadget.link_client import MAX_CONCURRENT_INVOKES, LinkSession
 
-from fake_companion import TOKEN, FakeCompanion
+from fake_companion import END_OF_SPEECH_FRAMES, TOKEN, FakeCompanion
+from reachy_muse import companion_client
 from reachy_muse.companion_client import CompanionHearing, CompanionLink
 from reachy_muse.failover import CompanionRoute, FailoverHearing
 from reachy_muse.hardware import SPEAKER_TURN_S
-from reachy_muse.protocol import Op, SpeakerLabel
+from reachy_muse.protocol import HearClose, HearOpen, Op, Sender, SpeakerLabel, decode
 from test_device_command_turns import never_asked, played, service as chat_service
 from test_person_gaze import people, say_live  # noqa: F401  # people is the fixture shared with people1's tests
 from test_pins import CHUNK, VOICE_SAMPLE, PinSession
@@ -78,8 +80,9 @@ class Muse:
         self.calls = ScriptedCalls(answer=answer, every_turn=True)
 
 
-def companion(speaker=SpeakerLabel.OWNER, request=REQUEST):
-    return FakeCompanion(ops=(Op.HEAR, Op.SPEAK, Op.NARRATE, Op.SPEAKER), partials=(request,), speaker=speaker)
+def companion(speaker=SpeakerLabel.OWNER, request=REQUEST, *, ops=(Op.HEAR, Op.SPEAK, Op.NARRATE, Op.SPEAKER),
+              **knobs):
+    return FakeCompanion(ops=ops, partials=(request,), speaker=speaker, **knobs)
 
 
 def converse(rig, calls, fake, user, *, silence_s=None, wake_timeout_s=2, muse=never_asked):
@@ -111,7 +114,7 @@ def converse(rig, calls, fake, user, *, silence_s=None, wake_timeout_s=2, muse=n
             serving = asyncio.create_task(service.serve(rig.session, {"vm_id": "vm-1"}, stop))
             try:
                 await asyncio.wait_for(link.settled(), 2)
-                assert link.can(Op.SPEAKER)
+                assert link.can(Op.SPEAKER) == (Op.SPEAKER in fake.ops)
                 await rig.quiet()
                 await user(service._voice[1])
                 await rig.quiet()
@@ -148,6 +151,26 @@ async def replied(rig, voice, count=1):
     """Until Muse's ``count``-th reply has played out."""
     await until(rig, lambda: sum(map(len, rig.hardware.played)) == count * len(REPLY_AUDIO) // 2
                 and (voice.call is None or not voice.call.audible))
+
+
+def label_arrivals(monkeypatch):
+    """When each speaker label reaches Reachy."""
+    arrived = []
+    original = companion_client._SpeakerSlot.arrived
+
+    def arrived_at(slot, label):
+        arrived.append(time.monotonic())
+        original(slot, label)
+
+    monkeypatch.setattr(companion_client._SpeakerSlot, "arrived", arrived_at)
+    return arrived
+
+
+def closed_by_reachy(fake):
+    """Of the hear streams Reachy opened, in order, whether Reachy closed each itself."""
+    messages = [decode(frame, sender=Sender.ROBOT) for frame in fake.received if isinstance(frame, str)]
+    closed = {message.stream for message in messages if isinstance(message, HearClose)}
+    return [message.stream in closed for message in messages if isinstance(message, HearOpen)]
 
 
 def rest_of_reply(sdk, emit, response_id, text, pcm):
@@ -196,6 +219,7 @@ def assert_allowed(results, caplog, *, words=(REQUEST, REPLY, "Sarah")):
     (None, "unknown"),
 ])
 def test_muse_learns_whether_its_owner_asked_and_how_many_people_reachy_sees(people, caplog, label, speaker):
+    """Without a label, Reachy waits its full second for one, so the snapshot taken just before is a second old."""
     rig, controller, robot, scene = people
     caplog.set_level("INFO")
 
@@ -213,8 +237,8 @@ def test_muse_learns_whether_its_owner_asked_and_how_many_people_reachy_sees(peo
         await replied(rig, voice)
 
     converse(rig, muse.calls, companion(label), user)
-    assert rig.session.results == [{"method": "link.result", "id": "invoke-1", "ok": True,
-                                    "payload": {"speaker": speaker, "people_visible": 2, "seen_s_ago": 0}}]
+    assert rig.session.results == [{"method": "link.result", "id": "invoke-1", "ok": True, "payload": {
+        "speaker": speaker, "people_visible": 2, "seen_s_ago": 1 if label is None else 0}}]
     assert logged(caplog, "Reachy people") == [f"Reachy people speaker={speaker} visible=2"]
     assert logged(caplog, "Reachy speaker=") == ([f"Reachy speaker={label.value}"] if label is not None else [])
     assert set(played(rig.recording.events)) == {"muse"}
@@ -286,7 +310,7 @@ def test_a_label_from_a_closed_listening_window_is_unknown(people, caplog):
 ])
 def test_the_owners_label_never_stands_for_a_later_request(people, caplog, asked, speaker):
     """The owner asks first, then someone else does. Asked while that request is still spoken, Reachy waits
-    up to three seconds for it; a request without a label, or still unfinished by then, is unknown."""
+    up to a second for its label; a request without a label, or still unfinished by then, is unknown."""
     rig, controller, robot, scene = people
     caplog.set_level("INFO")
     fake = companion()
@@ -310,7 +334,7 @@ def test_the_owners_label_never_stands_for_a_later_request(people, caplog, asked
         if asked == "after_an_unlabeled_request":
             await say_live(rig)
         else:
-            speaking = asyncio.create_task(say_live(rig, voiced_s=1.2 if asked == "while_the_next_request_is_spoken"
+            speaking = asyncio.create_task(say_live(rig, voiced_s=.5 if asked == "while_the_next_request_is_spoken"
                                                     else 4.5))
             await until(rig, lambda: voice._playback.user_speaking)
             started = asyncio.get_running_loop().time()
@@ -323,7 +347,7 @@ def test_the_owners_label_never_stands_for_a_later_request(people, caplog, asked
     assert [result["payload"]["speaker"] for result in rig.session.results] == ["owner", speaker]
     assert len(logged(caplog, "Realtime command ")) == 2
     if asked == "while_a_long_request_is_spoken":
-        assert len(waited) == 1 and 2.9 <= waited[0][0] < 5 and waited[0][1] is True
+        assert len(waited) == 1 and .95 <= waited[0][0] < 1.5 and waited[0][1] is True
     assert_allowed(rig.session.results, caplog)
 
 
@@ -406,6 +430,63 @@ def test_muses_own_voice_heard_back_never_stands_for_the_user(people, caplog):
     assert [result["payload"]["speaker"] for result in rig.session.results] == ["owner"]
     assert logged(caplog, "Realtime command ")[1].endswith(" drop=barge_in")
     assert calls.barge_ins == 0
+    assert_allowed(rig.session.results, caplog)
+
+
+@pytest.mark.parametrize("ended_by", ["reachy", "companion_before_the_label", "companion_after_the_label"])
+def test_reachy_people_answers_as_soon_as_the_label_lands(people, caplog, monkeypatch, ended_by):
+    """Reachy ends a request after 2 s of silence, as on the robot. The companion labels it at its own end of
+    speech plus its speaker check, 0.65 s after the voice. Most requests end at the companion's endpoint, about
+    0.94 s after the voice; an endpoint can also come before the label, or a slow final pass leaves the end to
+    Reachy. Muse asks at its own end of speech and hears as soon as the label lands, whatever ends the request;
+    it replies once the request has ended."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    arrived = label_arrivals(monkeypatch)
+    answered = []
+    endpoint_quiet_frames = {"reachy": None, "companion_before_the_label": END_OF_SPEECH_FRAMES + 10,
+                             "companion_after_the_label": 47}[ended_by]
+    fake = companion(endpoint_quiet_frames=endpoint_quiet_frames, speaker_check_s=.55)
+
+    async def ask(ordinal):
+        await rig.session.invoke("reachy.people")
+        answered.append(time.monotonic())
+        await heard(rig, caplog)
+
+    muse = Muse(ask)
+
+    async def user(voice):
+        await say_live(rig, wake=True, paced_silence_s=2.6)
+        await replied(rig, voice)
+
+    converse(rig, muse.calls, fake, user, silence_s=2.0)
+    assert [result["payload"]["speaker"] for result in rig.session.results] == ["owner"]
+    assert closed_by_reachy(fake) == [ended_by == "reachy"]
+    assert len(arrived) == 1 and 0 <= answered[0] - arrived[0] < .3
+    assert_allowed(rig.session.results, caplog)
+
+
+def test_without_voice_labels_reachy_people_answers_at_once(people, caplog):
+    """A companion that labels no voices, as in production today: Muse, asking before Reachy's own end of the
+    request, hears unknown at once."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    waited = []
+
+    async def ask(ordinal):
+        started = time.monotonic()
+        await rig.session.invoke("reachy.people")
+        waited.append(time.monotonic() - started)
+
+    muse = Muse(ask)
+
+    async def user(voice):
+        await say_live(rig, wake=True, paced_silence_s=2.6)
+        await replied(rig, voice)
+
+    converse(rig, muse.calls, companion(ops=(Op.HEAR, Op.SPEAK, Op.NARRATE)), user, silence_s=2.0)
+    assert [result["payload"]["speaker"] for result in rig.session.results] == ["unknown"]
+    assert len(waited) == 1 and waited[0] < .3
     assert_allowed(rig.session.results, caplog)
 
 

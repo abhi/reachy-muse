@@ -1178,7 +1178,8 @@ class VoiceConversation:
             if utterance is None and (recorder.speech_active or heard.ended is not None):
                 utterance = _Utterance(recorder.utterance_id, captured_at - len(sample) / self.hardware.sample_rate,
                                        self._gaze.begin())
-                self._gaze.opened(utterance.generation, lambda spoken=utterance: latched_bearing(spoken))
+                self._gaze.opened(utterance.generation, recorder.speaker,
+                                  lambda spoken=utterance: latched_bearing(spoken))
             current = utterance
             if current is not None:
                 current.observe(self._wake_direction, captured_at - quiet_s)

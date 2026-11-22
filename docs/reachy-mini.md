@@ -531,11 +531,12 @@ comes from the companion's voice labels for the requests Muse is answering: in a
 call, the ones its current response or work is about, and in chat, the request
 it was sent. A remark made while Muse prepares or gives its answer never stands
 for that request. When the labels disagree, the speaker is `unknown`, as it is
-without a label or after the listening window closes. In a call, Muse often asks
-before Reachy's own end of the request, so Reachy waits up to three seconds for
-it; a cough or another sound too short to be a request does not count. The count
-comes from the latest face snapshot if it is at most 10 seconds old; the command
-takes no picture. It logs one line, such as `Reachy people speaker=owner visible=2`.
+without a label or after the listening window closes. Muse often asks before the
+companion has labeled the request, so Reachy waits up to a second for the label,
+and not at all when the companion labels no voices; a cough or another sound too
+short to be a request does not count. The count comes from the latest face
+snapshot if it is at most 10 seconds old; the command takes no picture. It logs
+one line, such as `Reachy people speaker=owner visible=2`.
 
 Muse can also turn Reachy with `reachy.look_at`. Target `speaker` turns toward
 the bearing latched for the latest request Muse is answering, or the bearing

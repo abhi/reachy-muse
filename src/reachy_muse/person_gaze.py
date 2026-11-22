@@ -21,8 +21,7 @@ _FRESH_PASS_S = .3
 _REMEMBERED_S = 30.0
 _SPEAKER_ARC = math.radians(20)
 _VISIBLE_MAX_AGE_S = 10.0
-# The robot's longest end-of-turn silence: an utterance becomes a request within it once its words end.
-_HEARD_OUT_S = 3.0
+_LABEL_WAIT_S = 1.0
 _HEARD_KEPT = 16
 _SPEAKERS = {"owner": "owner", "other": "someone_else"}
 
@@ -40,15 +39,22 @@ class MuseActivity:
 class _Heard:
     """One utterance, as Muse's people commands see it."""
 
+    speaker: object | None              # the companion's label slot for its voice, if the link labels voices
     bearing_so_far: Callable[[], float | None]
     admitted_at: float | None = None
     request: bool = False               # it ended as a request
     bearing: float | None = None        # its speaker's bearing, latched at that end
-    facts: dict[str, str] | None = None  # its timeline facts once queued, where its speaker label lands
+    facts: dict[str, str] | None = None  # its timeline facts once queued, where its speaker label lands too
 
     @property
     def label(self) -> str | None:
+        if self.speaker is not None and self.speaker.label is not None:
+            return self.speaker.label.value
         return self.facts.get("speaker") if self.facts is not None else None
+
+    @property
+    def awaiting_label(self) -> bool:
+        return self.speaker is not None and self.speaker.label is None
 
     def speaker_bearing(self) -> float | None:
         return self.bearing if self.request else self.bearing_so_far()
@@ -98,9 +104,10 @@ class PersonGaze:
         self._heard.clear()
         self.admit(self.begin())
 
-    def opened(self, generation: int, bearing_so_far: Callable[[], float | None]) -> None:
-        """An utterance began; ``bearing_so_far`` gives its speaker's bearing from the speech heard so far."""
-        self._heard[generation] = _Heard(bearing_so_far)
+    def opened(self, generation: int, speaker, bearing_so_far: Callable[[], float | None]) -> None:
+        """An utterance began: ``speaker`` is the companion's label slot for its voice, if the link labels voices,
+        and ``bearing_so_far`` gives its speaker's bearing from the speech heard so far."""
+        self._heard[generation] = _Heard(speaker, bearing_so_far)
         while len(self._heard) > _HEARD_KEPT:
             del self._heard[min(self._heard)]
 
@@ -128,15 +135,15 @@ class PersonGaze:
         return True
 
     async def people(self, deadline: float, activity: MuseActivity | None, chat: dict[str, str] | None) -> dict:
-        """Who made the requests Muse is answering, once one still being heard has ended, and the faces Reachy
-        saw last.
+        """Who made the requests Muse is answering, waiting up to a second for the companion's labels of them,
+        and the faces Reachy saw last.
 
-        Their known labels must agree; a request labeled unknown, or not labeled, counts for nothing.
+        Their known labels must agree; a request labeled unknown, or not labeled by then, counts for nothing.
         """
         asked_at = time.monotonic()
-        until = min(asked_at + _HEARD_OUT_S, deadline)
+        until = min(asked_at + _LABEL_WAIT_S, deadline)
         requests = self._answering(asked_at, activity, chat)
-        while not all(heard.request for heard in requests) and time.monotonic() < until:
+        while any(heard.awaiting_label for heard in requests) and time.monotonic() < until:
             await asyncio.sleep(.05)
             requests = self._answering(asked_at, activity, chat)
         labels = {heard.label for heard in requests}.intersection(_SPEAKERS)
@@ -172,7 +179,7 @@ class PersonGaze:
         the call's requests by what Muse did in it, among those admitted by ``asked_at``."""
         if chat is not None:
             return [heard for heard in self._heard.values() if heard.facts is chat] or [
-                _Heard(lambda: None, request=True, facts=chat)]
+                _Heard(None, lambda: None, request=True, facts=chat)]
         if activity is None:
             return []
         hearing = self._hearing()
