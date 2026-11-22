@@ -37,7 +37,7 @@ from reachy_muse.protocol import MAX_LINE_BYTES
 from reachy_muse.device_command import (COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow,
                                        command_after_wake, executable, whole_command)
 from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, interrupts_playback, request_topic,
-                                   too_short_for_follow_up, repeats_playback, spoken_words, word_count, words_after)
+                                   too_short_for_follow_up, repeats_playback, word_count)
 from reachy_muse.contract.intent import Intent, maybe_chat
 from reachy_muse.morning_briefing import MorningRoutine, briefing_lines
 from reachy_muse.recent import Recent
@@ -78,9 +78,6 @@ BUSY_CUE = "One at a time, please."
 CALL_LOST_CUE = "I lost my line to Muse. Please say that again."
 # A user whose voice has been quiet this long has paused.
 USER_PAUSE_S = 0.7
-# The companion's transcript trails the voice by about 480 ms: what it adds this soon after Muse's next reply
-# starts still belongs to the user's turn that the reply ended.
-TRANSCRIPT_LAG_S = 0.8
 CALL_PENDING_EXTENSION_S = 10.0
 CALL_COMMAND_DEADLINE_S = 0.25
 CLOSING_CLIPS = {Moment.CELEBRATION: ("success1", "happy"), Moment.APOLOGY: ("sad",)}
@@ -222,22 +219,7 @@ class _RecordedTurn:
     call_input: object
     speaker_bearing: float | None
     gaze_generation: int
-    text: str | None = None        # the turn's own words, when its transcript ran on after Muse's reply ended it
     over_muse: bool = False        # Muse's reply was audible while the user spoke
-
-
-@dataclass
-class _CutTurn:
-    """The user's turn that was still open when Muse's next reply began: for Reachy, it ended there.
-
-    Its transcript keeps catching up for ``TRANSCRIPT_LAG_S``. Words recognized after that are a new
-    utterance over the reply, which the reply's own gate weighs.
-    """
-
-    at: float                      # when the reply began to play
-    words: str                     # the turn's transcript, caught up for the lag
-    gate: object                   # the CallInput that held the turn's audio before the reply
-    ran_on: bool = False           # the transcript grew after the lag
 
 
 @dataclass(frozen=True)
@@ -1159,17 +1141,17 @@ class VoiceConversation:
         call_pre_roll = None
         # Until then, a user who talked on through a call turn's endpoint stays admitted while their next turn opens.
         speech_continues_until = 0.0
-        cut: _CutTurn | None = None
-        reply_seen = 0.0
+        # When the latest of Muse's replies to end the user's open turn started.
+        reply_cut = 0.0
 
         def make_recorder(*, reset_admission=True, **options):
             nonlocal gap_quiet_samples, turn_open, recorder_for_call, utterance, call_pre_roll, speech_continues_until
-            nonlocal cut, over_muse
+            nonlocal reply_cut, over_muse
             turn_open = False
             utterance = None
             call_pre_roll = None
             speech_continues_until = 0.0
-            cut = None
+            reply_cut = time.monotonic()
             heard_over.clear()
             over_muse = False
             if reset_admission:
@@ -1197,10 +1179,18 @@ class VoiceConversation:
         last_slow_feed = 0.0
         async def record_admitted(sample, *, captured_at, send_to_call=True):
             nonlocal last_slow_feed, gap_quiet_samples, turn_open, utterance, call_pre_roll, speech_continues_until
-            nonlocal cut, reply_seen, over_muse
+            nonlocal reply_cut, over_muse
+            # Muse has decided the user's turn is over once it starts a reply, so the turn ends there: the audio taken
+            # from then on starts afresh, and none of the reply's echo reaches the turn. Without echo-cancelled input,
+            # Reachy stops listening while Muse's audio plays instead, which drops the open turn as before.
+            reply_began = (self.call is not None and self._muse_began_at > reply_cut
+                           and getattr(self.hardware, "echo_cancelled_input", False) is True)
+            if reply_began:
+                reply_cut = self._muse_began_at
             # Keep VAD ahead of transcription/TTS work in the shared executor.
             started = time.monotonic()
-            feed = asyncio.get_running_loop().run_in_executor(recorder_worker, recorder.feed, sample)
+            feed = asyncio.get_running_loop().run_in_executor(recorder_worker, recorder.feed, sample,
+                                                              0 if reply_began else None)
             try:
                 await asyncio.shield(feed)
             except asyncio.CancelledError:
@@ -1225,7 +1215,8 @@ class VoiceConversation:
                                        self._gaze.begin())
             current = utterance
             if current is not None:
-                current.observe(self._wake_direction, captured_at - quiet_s)
+                voiced_until = min(captured_at - quiet_s, reply_cut) if reply_began else captured_at - quiet_s
+                current.observe(self._wake_direction, voiced_until)
             if heard.ended is not None or not (recorder.active or recorder.speech_active):
                 utterance = None
             for _ in range(heard.failures):
@@ -1244,25 +1235,15 @@ class VoiceConversation:
             speaking = recorder.speech_active
             call_input = None
             speech_end_at = endpoint_at - quiet_s
-            turn_text = None
             if self.call is not None:
                 call = self.call
-                if self._muse_began_at > reply_seen:
-                    reply_seen = self._muse_began_at
-                    if (cut is None and current is not None and current.started_at < reply_seen
-                            and (recorder.active or heard.ended is not None)):
-                        # Muse has decided the user's turn is over, so it ends here; the reply gets its own gate.
-                        cut = _CutTurn(reply_seen, partial.text if partial else "", call.input)
-                        self._renew_call_input()
-                    elif call.input.confirmed:
-                        # A confirmed interruption covered only the reply it cut off.
-                        self._renew_call_input()
-                text = partial.text if partial else ""
-                if cut is not None:
-                    if endpoint_at < cut.at + TRANSCRIPT_LAG_S:
-                        cut.words = text
-                    text = words_after(text, spoken_words(cut.words))
-                    cut.ran_on = cut.ran_on or bool(spoken_words(text))
+                gate = call.input                  # a turn that ends here keeps the gate that held its audio
+                if reply_began:
+                    # The reply answers the user's turn, which keeps its gate. What follows is speech over the reply,
+                    # weighed by a gate of its own with no pre-roll from before.
+                    speech_end_at = min(speech_end_at, reply_cut)
+                    call_pre_roll = None
+                    self._renew_call_input()
                 playback = call.audible or endpoint_at < self._echo_until or bool(heard_over)
                 streaming = (send_to_call and self._wake_window not in (WakeWindow.DISMISSED, WakeWindow.ASLEEP)
                              and self._wake_deadline is not None)
@@ -1273,7 +1254,8 @@ class VoiceConversation:
                         call.input.push(call_pre_roll, speaking=False, text="", playback=playback,
                                         heard_over=tuple(heard_over))
                         call_pre_roll = None
-                    call.input.push(sample, speaking=speaking and quiet_s == 0, text=text, playback=playback,
+                    call.input.push(sample, speaking=speaking and quiet_s == 0,
+                                    text=partial.text if partial else "", playback=playback,
                                     heard_over=tuple(heard_over), quiet_s=quiet_s)
                     speaking = speaking and (not playback or call.input.confirmed)
                     if call.audible and call.input.confirmed and not confirmed_before:
@@ -1285,20 +1267,14 @@ class VoiceConversation:
                 elif not streaming:
                     call_pre_roll = None
                 if heard.ended is not None or heard.transcript_lost:
-                    call_input = call.input if playback else None
-                    if cut is not None:
-                        # Muse answered this turn with the reply that ended it.
-                        call_input, speech_end_at = cut.gate, min(speech_end_at, cut.at)
-                        turn_text = cut.words if cut.ran_on else None
-                        cut = None
-                    # A turn the user talks straight through keeps its gate, so the rest of the utterance flows on.
+                    call_input = gate if playback else None
+                    # A turn the user talks straight through keeps its gate, so the rest of the utterance flows on,
+                    # unless Muse's reply ended it.
                     speech_continues_until = endpoint_at + USER_PAUSE_S if voicing else 0.0
-                    if not voicing:
+                    if not voicing and not reply_began:
                         self._renew_call_input()
                 elif recorder.active:
                     speech_continues_until = 0.0
-                elif cut is not None:
-                    cut = None
                 elif quiet_s >= USER_PAUSE_S or endpoint_at >= speech_continues_until > 0:
                     speech_continues_until = 0.0
                     if call.input.heard_speech:
@@ -1348,7 +1324,7 @@ class VoiceConversation:
             if bearing is None and self._wake_has_gaze:
                 bearing = self.hardware.wake_gaze_bearing
             return _RecordedTurn(heard.ended, endpoint_at, speech_end_at, over, call_input,
-                                 bearing, current.generation, turn_text, over_reply)
+                                 bearing, current.generation, over_reply)
 
         def recording_active():
             return (recorder.active or time.monotonic() < speech_continues_until
@@ -1464,8 +1440,11 @@ class VoiceConversation:
 
             recognition = asyncio.create_task(recorded.ended.endpoint())
             try:
-                remaining = recorded.endpoint_at + CALL_COMMAND_DEADLINE_S - time.monotonic()
-                done, _ = await asyncio.wait({recognition}, timeout=max(0.0, remaining))
+                # Once Muse is answering the turn, a command in it costs nothing to wait for.
+                answered = self._muse_began_at >= recorded.speech_end_at
+                remaining = None if answered else max(
+                    0.0, recorded.endpoint_at + CALL_COMMAND_DEADLINE_S - time.monotonic())
+                done, _ = await asyncio.wait({recognition}, timeout=remaining)
                 if not done and (call.audio_sent or not call.failed):
                     timeline.facts["command_transcript"] = "deadline"
                     raise asyncio.TimeoutError
@@ -1478,8 +1457,6 @@ class VoiceConversation:
                 if not recognition.done():
                     recognition.cancel()
                 await asyncio.gather(recognition, return_exceptions=True)
-            if recorded.text is not None and endpoint is not None:
-                endpoint = replace(endpoint, text=recorded.text)
             gate = recorded.call_input
             if gate is not None and not gate.sent_speech:
                 text = (endpoint.text or "") if endpoint is not None else ""

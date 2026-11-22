@@ -316,15 +316,34 @@ def gaps_ms(frames):
     return [round((end - start) * 1000 / RATE) for start, end in zip(changes[::2], changes[1::2])]
 
 
-def companion_hearing(conversation):
-    """Route the conversation's hearing through a companion link whose replies the test sends; returns the link."""
+def companion_hearing(conversation, *, forced_endpoints=False):
+    """Route the conversation's hearing through a companion link whose replies the test sends; returns the link.
+
+    With ``forced_endpoints``, the link also answers each stream the robot finishes as the companion does: with a
+    forced endpoint holding the stream's latest partial."""
     from dataclasses import replace
     from reachy_muse.companion_client import CompanionHearing, CompanionLink, LinkState, _Connection
-    from reachy_muse.protocol import Op
+    from reachy_muse.protocol import CloseHow, HearClose, HearEndpoint, HearPartial, Op, Sender, decode, encode
 
     link = CompanionLink("ws://localhost:9", token="test", out_rate=16000, insecure=True)
-    link._connection = _Connection(None, (Op.HEAR,))
+    link._connection = connection = _Connection(None, (Op.HEAR,))
     link._set(LinkState.UP)
+    if forced_endpoints:
+        partials, receive, send = {}, link._receive, connection.send
+
+        def received(on, frame):
+            message = decode(frame, sender=Sender.COMPANION)
+            if isinstance(message, HearPartial):
+                partials[message.stream] = message.text
+            receive(on, frame)
+
+        def sent(frame):
+            send(frame)
+            if isinstance(frame, HearClose) and frame.how is CloseHow.FINISH:
+                endpoint = HearEndpoint(frame.stream, partials.get(frame.stream, ""), True)
+                asyncio.get_running_loop().call_soon(received, connection, encode(endpoint))
+
+        link._receive, connection.send = received, sent
     backends = conversation.backends
     conversation.backends = lambda session: replace(backends(session), hearing=CompanionHearing(link))
     return link
@@ -1343,6 +1362,42 @@ def test_back_channel_sounds_over_muse_s_reply_never_cut_it_off(monkeypatch, cap
         for sound in BACK_CHANNELS]
 
 
+def test_a_remark_that_never_interrupted_muse_is_dropped_when_muse_s_next_reply_ends_it(monkeypatch, caplog):
+    """The user says "mm-hmm" over the end of Muse's reply, which it never interrupts, and Muse's next reply follows
+    long before Reachy's own end of the turn: that reply ends the remark's turn, which is dropped as on main and is
+    not counted as a turn the reply answers."""
+    caplog.set_level("INFO", logger="reachy_muse.conversation")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    next_reply = []
+
+    async def answer(sdk, emit, script):
+        next_reply.append(lambda: reply_events(sdk, emit, "r2", REPLY, voiced(1)))
+        reply_events(sdk, emit, "r1", REPLY, voiced(1))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, StreamingTranscripts("Tell me a story.", "Mm-hmm."), calls,
+                                    wake_timeout_s=30)
+    conversation.silence_s = 1.2
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        caplog.clear()
+        for _ in range(25):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+        next_reply[0]()
+        await room(rig, .8)
+        heard.append((calls.barge_ins, call.turns,
+                      [line for line in caplog.messages if line.startswith("Realtime command ")]))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=30)
+    assert heard == [(0, 1, ["Realtime command transcript=arrived words=1 wake_prefix=none outcome=none drop=barge_in"])]
+
+
 @pytest.mark.parametrize("muse, barge_ins, pending", [("works", 0, [1, 2, 3]), ("talks", 1, [2, 3]),
                                                      ("has finished", 0, [2, 3])])
 def test_speech_that_runs_on_past_a_companion_endpoint_reaches_muse_without_a_gap(monkeypatch, muse, barge_ins, pending):
@@ -1461,17 +1516,16 @@ def test_after_a_barge_in_muse_s_next_reply_never_streams_back_into_muse(monkeyp
     assert heard == [(1, turn_ends == "mid-speech", 0, True, True)]
 
 
-@pytest.mark.parametrize("partial_at_reply, echo_heard_after", [
-    ("Actually, I love your voice, tell me about tra", 10), ("Actually, I love your voice", 10),
-    ("Actually, I love your voice, tell me about trains.", 45),
-], ids=["mid-word", "a word behind", "caught up, echo after the lag"])
-def test_a_transcript_still_catching_up_when_muse_answers_never_lets_the_echo_in(
-        monkeypatch, partial_at_reply, echo_heard_after):
+@pytest.mark.parametrize("partial_at_reply", [
+    "Actually, I love your voice, tell me about tra", "Actually, I love your voice"], ids=["mid-word", "a word behind"])
+def test_a_transcript_still_catching_up_when_muse_answers_gets_the_whole_turn_and_no_echo(
+        monkeypatch, caplog, partial_at_reply):
     """The user talks over Muse until Reachy cuts the reply off, stops, and Muse answers at once. The companion's
-    transcript of the user's turn has not caught up with the voice when the answer starts; it catches up three
-    frames later and then, ``echo_heard_after`` frames in, grows with the echo of the answer."""
-    from reachy_muse.protocol import HearPartial, encode
+    transcript of the user's turn has not caught up with the voice when the answer starts: its forced endpoint, a
+    moment later, holds the whole turn. The echo of the answer is transcribed on a stream opened after it starts."""
+    from reachy_muse.protocol import HearEndpoint, HearPartial, encode
 
+    caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
     rig.hardware.echo_cancelled_input = True
     words = "Actually, I love your voice, tell me about trains."
@@ -1501,6 +1555,7 @@ def test_a_transcript_still_catching_up_when_muse_answers_never_lets_the_echo_in
                 link._receive(link._connection, encode(HearPartial(stream, 1, partial_at_reply)))
         next_reply[0]()
         await rig.wait_until_or_timeout(lambda: call.audible, 1)
+        caplog.clear()
         before = len(calls.frames)
         echo = muse_heard(1.2)
         for frame, start in enumerate(range(0, len(echo), CHUNK)):
@@ -1508,14 +1563,18 @@ def test_a_transcript_still_catching_up_when_muse_answers_never_lets_the_echo_in
             await asyncio.sleep(CHUNK / 16000)
             if frame == 3:
                 link._receive(link._connection, encode(HearPartial(streams[0], 2, words)))
-            if frame == echo_heard_after:
+                link._receive(link._connection, encode(HearEndpoint(streams[0], words, True)))
+            for stream in [stream for stream in link._connection.hearing if stream not in streams]:
+                streams.append(stream)
                 link._receive(link._connection, encode(HearPartial(
-                    streams[0], 3, words + " Great news, it will be sunny tomorrow!")))
+                    stream, 1, "Great news, it will be sunny tomorrow!")))
         await room(rig, .5)
         heard.append((calls.barge_ins, echo_frames(calls.frames[before:]), voice.call is call))
 
     run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=30)
     assert heard == [(1, 0, True)]
+    assert [line for line in caplog.messages if line.startswith("Realtime command ")][0] == (
+        "Realtime command transcript=arrived words=9 wake_prefix=none outcome=none drop=none")
 
 
 def test_saying_it_again_over_muse_s_next_reply_interrupts_that_reply_too(monkeypatch):
@@ -1568,10 +1627,12 @@ def test_saying_it_again_over_muse_s_next_reply_interrupts_that_reply_too(monkey
 
 @pytest.mark.parametrize("command, replies, done", [
     ("Stop listening.", 1, "dismissed"), ("Volume down.", 1, [-10]), ("Stop listening.", 2, "dismissed")])
-def test_a_command_said_over_muse_is_obeyed_when_muse_answers_before_reachy_ends_the_turn(
+def test_a_command_ended_by_muse_s_reply_is_obeyed_on_its_last_partial_if_the_companion_never_ends_it(
         monkeypatch, command, replies, done):
     """The user says a device command over Muse's reply, which cuts the reply off, and Muse starts ``replies``
-    more before Reachy's endpoint for the turn: Muse's own endpoint usually comes first."""
+    more before Reachy's endpoint for the turn: Muse's own endpoint usually comes first, and the first of them ends
+    the turn. The companion never answers the turn's finish, so the command's latest partial stands in."""
+    from reachy_muse.companion_client import ENDPOINT_WAIT_S
     from reachy_muse.device_command import WakeWindow
     from reachy_muse.protocol import HearPartial, encode
 
@@ -1607,12 +1668,177 @@ def test_a_command_said_over_muse_is_obeyed_when_muse_answers_before_reachy_ends
                 streams.append(stream)
                 link._receive(link._connection, encode(HearPartial(stream, 1, command)))
         heard.append(calls.barge_ins)
+
+        def outcome():
+            return "dismissed" if voice._wake_window is WakeWindow.DISMISSED else rig.hardware.volume_steps
+
+        replied = time.monotonic()
+        next_reply[0]()
+        while outcome() != done and time.monotonic() < replied + ENDPOINT_WAIT_S + 2:
+            await room(rig, .02)
+        heard.append((outcome(), ENDPOINT_WAIT_S <= time.monotonic() - replied < ENDPOINT_WAIT_S + .5))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking", "sleeping"), timeout=30)
+    assert heard == [1, (done, True)]
+
+
+# The reviewer's repros of the open turn ending where Muse's next reply starts, with the companion sending words
+# said after that start on a stream opened after it, and answering a finish with a forced endpoint.
+
+ECHO = muse_heard(1.0)
+
+
+@pytest.mark.parametrize("command, outcome", [("Stop listening.", "dismissed"), ("Volume down.", [-10])])
+def test_a_command_said_over_muse_is_obeyed_even_if_muse_answers_before_the_turn_ends(monkeypatch, command, outcome):
+    """The user says a device command over Muse's reply, which cuts the reply; Muse starts its next reply before
+    Reachy's endpoint for that turn. Reachy must still obey the command, as on main."""
+    from reachy_muse.device_command import WakeWindow
+    from reachy_muse.protocol import HearPartial, encode
+
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    next_reply = []
+
+    async def answer(sdk, emit, script):
+        next_reply.append(lambda: reply_events(sdk, emit, "r2", "Okay.", voiced(2)))
+        reply_events(sdk, emit, "r1", REPLY, voiced(7.5))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=30)
+    link = companion_hearing(conversation, forced_endpoints=True)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, .5)
+        streams = []
+        for _ in range(30):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            for stream in [stream for stream in link._connection.hearing if stream not in streams]:
+                streams.append(stream)
+                link._receive(link._connection, encode(HearPartial(stream, 1, command)))
+        assert calls.barge_ins == 1
         next_reply[0]()
         await room(rig, 1.0)
         heard.append("dismissed" if voice._wake_window is WakeWindow.DISMISSED else rig.hardware.volume_steps)
 
     run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking", "sleeping"), timeout=30)
-    assert heard == [1, done]
+    assert heard == [outcome]
+
+
+def test_a_short_afterthought_said_as_muse_starts_answering_reaches_muse(monkeypatch):
+    """The user talks over Muse until Reachy cuts the reply, keeps talking as Muse starts its next reply, and adds
+    "and boats too" in that reply's first 0.3 s. Those words come as partials of a stream opened after it starts."""
+    from reachy_muse.protocol import HearPartial, encode
+
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    next_reply = []
+
+    async def answer(sdk, emit, script):
+        next_reply.append(lambda: reply_events(sdk, emit, "r2", REPLY, voiced(4)))
+        reply_events(sdk, emit, "r1", REPLY, voiced(7.5))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=30)
+    conversation.silence_s = 1.2               # Reachy's end of turn with a companion, later than its words
+    link = companion_hearing(conversation)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, .5)
+        streams = []
+        for _ in range(40):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            for stream in [stream for stream in link._connection.hearing if stream not in streams]:
+                streams.append(stream)
+                link._receive(link._connection, encode(HearPartial(stream, 1, "Actually, tell me about trains")))
+        assert calls.barge_ins == 1
+        next_reply[0]()
+        await rig.wait_until_or_timeout(lambda: call.audible, 1)
+        before = len(calls.frames)
+        for frame in range(40):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE if frame < 15 else 0, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            if frame == 25:
+                for stream in [stream for stream in link._connection.hearing if stream not in streams]:
+                    link._receive(link._connection, encode(HearPartial(stream, 2, "and boats too")))
+        await room(rig, .5)
+        heard.append(voiced_ms(calls.frames[before:]) >= 250)
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=30)
+    assert heard == [True]
+
+
+def test_after_a_second_interruption_muse_s_third_reply_never_streams_back_into_muse(monkeypatch):
+    """The user cuts Muse off, talks on over its next reply until that is cut too, stops, and Muse answers at once.
+    Words said after a reply starts, and the echo of the third, come as partials of streams opened after it."""
+    from reachy_muse.protocol import HearPartial, encode
+
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    first = "Actually, tell me about trains."
+    more = first + " No, wait, I mean boats, the big ones."
+    replies = []
+
+    async def answer(sdk, emit, script):
+        replies.append(lambda: reply_events(sdk, emit, "r2", REPLY, voiced(4)))
+        replies.append(lambda: reply_events(sdk, emit, "r3", REPLY, voiced(3)))
+        reply_events(sdk, emit, "r1", REPLY, voiced(7.5))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=30)
+    link = companion_hearing(conversation)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, .5)
+        streams = []
+        for _ in range(40):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            for stream in [stream for stream in link._connection.hearing if stream not in streams]:
+                streams.append(stream)
+                link._receive(link._connection, encode(HearPartial(stream, 1, first)))
+        replies[0]()
+        for frame in range(100):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            if frame == 50:
+                for stream in [stream for stream in link._connection.hearing if stream not in streams]:
+                    link._receive(link._connection, encode(HearPartial(stream, 2, more.removeprefix(first).lstrip())))
+            if calls.barge_ins == 2 and frame > 60:
+                break
+        heard.append(calls.barge_ins)
+        replies[1]()
+        await rig.wait_until_or_timeout(lambda: call.audible, 1)
+        before = len(calls.frames)
+        echo = ECHO[:16000]
+        for frame, start in enumerate(range(0, len(echo), CHUNK)):
+            rig.hardware.samples.put(echo[start:start + CHUNK].copy())
+            await asyncio.sleep(CHUNK / 16000)
+            if frame == 10:
+                for stream in [stream for stream in link._connection.hearing if stream not in streams]:
+                    link._receive(link._connection, encode(HearPartial(
+                        stream, 3, "Great news, it will be sunny tomorrow!")))
+        await room(rig, .5)
+        heard.append((calls.barge_ins, echo_frames(calls.frames[before:])))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=30)
+    assert heard == [2, (2, 0)]
 
 
 def test_room_noise_after_a_turn_the_user_talked_through_does_not_hold_the_window_open(monkeypatch):

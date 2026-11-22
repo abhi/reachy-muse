@@ -69,22 +69,6 @@ def word_count(text: str) -> int:
     return count
 
 
-def words_after(text: str, said: List[str]) -> str:
-    """``text`` past its longest opening run of the words in ``said``, as ``spoken_words`` gives them.
-
-    The last word of ``said`` can be a fragment of a word the recognizer had not finished, so it also matches
-    as the start of a longer word in its place.
-    """
-    spans = list(_WORD.finditer(text.replace("’", "'")))
-    run = 0
-    while run < min(len(spans), len(said)):
-        word = spans[run].group().casefold()
-        if word != said[run] and not (run == len(said) - 1 and word.startswith(said[run])):
-            break
-        run += 1
-    return text[spans[run - 1].end():] if run else text
-
-
 def classify_follow_up(text: str) -> FollowUp:
     words = spoken_words(text)
     rest = words
