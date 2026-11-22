@@ -480,3 +480,103 @@ def test_sleep_releases_person_gaze(monkeypatch):
     assert (turned['yaw'], turned['body_yaw'], turned['pitch']) == pytest.approx((35, 15, -20), abs=.1)
     assert not controller._person_hold
     assert pose_at(controller, robot, clock.now)['yaw'] == pytest.approx(0, abs=.1)
+
+
+class CenteringFollower:
+    """A face follower that sees no face, and records where Reachy centers it."""
+
+    failure = None
+    active = False
+
+    def __init__(self):
+        self.centers = []
+
+    def set_active(self, active, *, idle=False):
+        self.active = active
+
+    def target(self):
+        return None
+
+    def hold_center(self, yaw):
+        self.centers.append(yaw)
+
+
+def follow_from(yaw, results):
+    """A later speaker at head yaw ``yaw`` in degrees; the outcome of Reachy's turn toward them lands in ``results``."""
+    return lambda controller: results.append(controller.follow_speaker(math.radians(90 - yaw)))
+
+
+@pytest.mark.parametrize("speaker, delta, faced, center", [(-25, -55, (-25, -5), 0), (-60, -65, (-35, -15), -25)])
+def test_a_later_speaker_gets_a_wake_turn_and_the_follower_starts_on_them(monkeypatch, caplog, speaker, delta, faced,
+                                                                         center):
+    caplog.set_level("INFO", logger="reachy_muse.hardware")
+    follower, results = CenteringFollower(), []
+    controller, robot, clock = simulate(monkeypatch, {5: listen_to_speaker_at_30, 60: follow_from(speaker, results)},
+                                        follower=follower)
+    assert results == [("turned", pytest.approx(delta))]
+    halfway = pose_at(controller, robot, clock.times[60] + .325)
+    assert (halfway["yaw"], halfway["body_yaw"]) == pytest.approx(((30 + faced[0]) / 2, (10 + faced[1]) / 2), abs=.01)
+    turned = pose_at(controller, robot, clock.now)
+    assert (turned["yaw"], turned["body_yaw"]) == pytest.approx(faced, abs=.01)
+    assert follower.centers == [pytest.approx(math.radians(center))]
+    assert controller.wake_gaze_bearing == pytest.approx(math.pi / 3)
+    assert [record.message for record in caplog.records if record.message.startswith("Speaker gaze")] == [
+        "Speaker gaze yaw=30.0 body_yaw=10.0 decision=turn",
+        f"Speaker gaze yaw={faced[0]:.1f} body_yaw={faced[1]:.1f} decision=turn"]
+
+
+def test_a_speaker_the_head_faces_or_one_right_after_a_turn_gets_no_turn(monkeypatch):
+    results = []
+    controller, robot, clock = simulate(monkeypatch, {
+        5: listen_to_speaker_at_30, 60: follow_from(15, results), 61: follow_from(-25, results),
+        100: follow_from(30, results), 150: follow_from(30, results),
+    }, ticks=200)
+    assert results == [("same", pytest.approx(-15)), ("turned", pytest.approx(-55)), ("too_soon", pytest.approx(55)),
+                       ("turned", pytest.approx(55))]
+    waited = pose_at(controller, robot, clock.times[149])
+    assert (waited["yaw"], waited["body_yaw"]) == pytest.approx((-25, -5), abs=.01)
+    turned = pose_at(controller, robot, clock.now)
+    assert (turned["yaw"], turned["body_yaw"]) == pytest.approx((30, 10), abs=.01)
+
+
+def greet_friend_at_minus_30(controller):
+    assert controller.look_at_person(math.radians(-30), 0) is True
+
+
+@pytest.mark.parametrize("owner, outcome, faced", [
+    ("tracking_off", "off", (0, 0)),
+    ("greeting", "held", (-30, -10)),
+    ("greeting_pending", "held", (-30, -10)),
+    ("muse_turn", "busy", (-30, -10)),
+    ("command", "busy", (0, 0)),
+    ("thinking_motion", "busy", (12, 0)),
+    ("sleep", "busy", (0, 0)),
+])
+def test_a_later_speaker_waits_while_a_person_turn_or_other_motion_owns_the_head(monkeypatch, owner, outcome, faced):
+    """A later speaker stands at +60 degrees, where the head would turn to 35."""
+    results = []
+    follow = follow_from(60, results)
+    move = _Command("reachy.move", {"yaw": -30, "duration": .3, "hold": .4}, 1010)
+    controller, robot, clock = simulate(monkeypatch, {
+        "tracking_off": {2: lambda c: c.allow_face_tracking(False), 30: follow},
+        "greeting": {10: greet_friend_at_minus_30, 40: follow},
+        "greeting_pending": {40: lambda c: (greet_friend_at_minus_30(c), follow(c))},
+        "muse_turn": {10: lambda c: c.face_speaker(math.radians(120)), 15: follow},
+        "command": {10: lambda c: c._commands.put_nowait(move), 20: follow},
+        "thinking_motion": {2: play_thinking("generated"), 30: follow},
+        "sleep": {2: lambda c: c.set_state("sleeping"), 30: follow},
+    }[owner], ticks=200)
+    assert results == [(outcome, None)]
+    final = pose_at(controller, robot, clock.now)
+    assert (round(final["yaw"]), round(final["body_yaw"])) == faced
+
+
+def test_a_later_speaker_gets_a_turn_through_a_nod(monkeypatch):
+    results = []
+    controller, robot, clock = simulate(monkeypatch, {
+        5: listen_to_speaker_at_30, 50: lambda c: c.gesture("nod"), 55: follow_from(-25, results),
+    }, ticks=160)
+    assert results == [("turned", pytest.approx(-55))]
+    turned = pose_at(controller, robot, clock.now)
+    assert (turned["yaw"], turned["body_yaw"]) == pytest.approx((-25, -5), abs=.01)
+
