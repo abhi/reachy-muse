@@ -1273,8 +1273,9 @@ class VoiceConversation:
                 call = self.call
                 gate = call.input                  # a turn that ends here keeps the gate that held its audio
                 if reply_began:
-                    # The reply answers the user's turn, which keeps its gate. What follows is speech over the reply,
-                    # weighed by a gate of its own with no pre-roll from before.
+                    # The reply answers the user's turn, which ends at its start and keeps its gate: a user talking on
+                    # there was cut off. What follows is speech over the reply, weighed by a gate of its own with no
+                    # pre-roll from before.
                     speech_end_at = min(speech_end_at, reply_cut)
                     call_pre_roll = None
                     self._renew_call_input()
@@ -1354,8 +1355,8 @@ class VoiceConversation:
             over, over_reply = tuple(sorted(heard_over)), over_muse
             heard_over.clear()
             over_muse = False
-            return _RecordedTurn(heard.ended, endpoint_at, speech_end_at, over, call_input,
-                                 bearing, current.generation, over_reply)
+            return _RecordedTurn(heard.ended, reply_cut if reply_began else endpoint_at, speech_end_at, over,
+                                 call_input, bearing, current.generation, over_reply)
 
         def recording_active():
             return (recorder.active or time.monotonic() < speech_continues_until

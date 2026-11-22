@@ -1193,6 +1193,66 @@ def test_a_photo_request_the_companion_ends_while_the_user_still_talks_takes_no_
     assert [(event["muse"], event["text"]) for event in sent(events)][0] == ("send_chat", "Muse, take a photo")
 
 
+@realtime
+@pytest.mark.parametrize("words, talked_on, photo", [("final", False, True), ("final", True, False),
+                                                     ("partial", False, False)],
+                         ids=["final words from a silent user", "final words, user talked on", "partial words"])
+def test_a_photo_request_muse_s_reply_ends_needs_its_final_words_and_a_silent_user(
+        monkeypatch, caplog, words, talked_on, photo):
+    """Muse starts a reply before Reachy's own end of a photo request, which ends the request there. Reachy takes
+    the photo only on the companion's final words, a second later, and only if the user had stopped talking."""
+    from reachy_muse.protocol import CloseHow, HearClose, HearEndpoint, HearPartial, encode
+    from test_pins import CHUNK, VOICE_SAMPLE, WAKE_SAMPLE
+    from test_realtime_turns import companion_hearing, room
+
+    caplog.set_level(logging.INFO)
+    rig = call_rig(monkeypatch, [PHOTO])
+    rig.hardware.echo_cancelled_input = True
+    next_reply = []
+
+    async def answer(sdk, emit, script):
+        next_reply.append(lambda: reply_events(sdk, emit, "r2", "Let me look.", voiced(1)))
+        reply_events(sdk, emit, "r1", "Sure.", voiced(.3))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, muse=answers("A red mug."), photo_requests=True,
+                                    wake_timeout_s=5)
+    conversation.silence_s = 1.2
+    link = companion_hearing(conversation)
+    connection, send, said, heard = link._connection, link._connection.send, [
+        "What's the weather?", "Reachy, take a photo."], {}
+
+    def finished(frame):
+        send(frame)
+        if words == "final" and isinstance(frame, HearClose) and frame.how is CloseHow.FINISH:
+            final = encode(HearEndpoint(frame.stream, heard.get(frame.stream, ""), True))
+            asyncio.get_running_loop().call_later(1, link._receive, connection, final)
+
+    connection.send = finished
+
+    async def say(samples):
+        for sample in samples:
+            rig.hardware.samples.put(np.full(CHUNK, sample, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            for stream in [stream for stream in connection.hearing if stream not in heard]:
+                heard[stream] = said.pop(0)
+                link._receive(connection, encode(HearPartial(stream, 1, heard[stream])))
+
+    async def user():
+        await say([WAKE_SAMPLE] + [VOICE_SAMPLE] * 25 + [0] * 25)
+        voice = conversation._voice[1]
+        while not ("muse" in played(rig.recording.events) and not voice.call.audible):
+            await say([0] * 2)
+        await say([VOICE_SAMPLE] * 25 + [0] * (0 if talked_on else 10))
+        next_reply[0]()
+        await say([VOICE_SAMPLE] * (2 if talked_on else 0))
+        await room(rig, 2)
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=30)
+    assert rig.hardware.captures == ([2.0] if photo else [])
+    assert realtime_command_lines(caplog)[-1].endswith("outcome=PHOTO drop=none" if photo else "outcome=none drop=none")
+
+
 def queued_turns(caplog):
     return sum(message.startswith("Reachy queued a voice turn") for message in caplog.messages)
 

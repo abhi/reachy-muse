@@ -770,7 +770,7 @@ class _CutCommand(_FinishedTurn):
         try:
             return await super().endpoint()
         except CapabilityUnavailable:
-            return Endpoint(self.wav, self._partial)
+            return Endpoint(self.wav, self._partial, partial=True)
 
 
 class CompanionHearingTurn:
