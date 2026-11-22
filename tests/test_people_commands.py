@@ -433,6 +433,35 @@ def test_muse_turns_reachy_to_the_speaker_or_holds_it_on_someone_else(people, ca
     assert_allowed(rig.session.results, caplog)
 
 
+@pytest.mark.parametrize("looked", [True, False])
+def test_reachys_own_closing_keeps_the_turn_toward_the_speaker_muse_asked_for(people, caplog, looked):
+    """Muse turns Reachy toward the speaker in a response of its own, then replies in another. Without companion
+    motion, Reachy closes a reply with a recorded clip, a motion command that would end that turn; it closes
+    with one only when Muse did not turn it."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    rig.hardware.run_command = controller.run_command
+
+    async def answer(sdk, emit, calls):
+        await heard(rig, caplog)
+        if looked:
+            emit(sdk.ResponseStarted("tool"))
+            await rig.session.invoke("reachy.look_at", {"target": "speaker"})
+            emit(sdk.ResponseDone("tool", "completed"))
+        reply_events(sdk, emit, "r1", REPLY, voiced(.6))
+
+    async def user(voice):
+        await say_live(rig, wake=True)
+        await until(rig, lambda: "muse" in played(rig.recording.events) and not voice.call.audible)
+        await until(rig, lambda: not voice._call_tasks)
+
+    converse(rig, ScriptedCalls(answer=answer), companion(), user)
+    assert [result["payload"] for result in rig.session.results] == ([{"outcome": "turned"}] if looked else [])
+    assert [line for line in caplog.messages if line.startswith("Reachy closed Muse's realtime reply")] == (
+        [] if looked else ["Reachy closed Muse's realtime reply with happy"])
+    assert facing(controller, robot) == ((30, 10) if looked else (0, 0))
+
+
 @pytest.mark.parametrize("target, case, outcome", [
     ("other", "only_the_speaker", "no_other"),
     ("other", "no_faces", "no_faces"),

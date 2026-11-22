@@ -147,8 +147,8 @@ motion first. Like Muse's other motion commands, it reports `busy` only while a
 person turn is being chosen, queued or still moving, or while another motion
 command runs. In a call, a turn counts as Muse acting on the request, so a
 response without words still answers it, and Reachy's own closing expression
-gives way. It logs one line, such as
-`Reachy look_at target=other outcome=turned`.
+gives way, also after a later response to the same request. It logs one line,
+such as `Reachy look_at target=other outcome=turned`.
 
 ## Registration size
 

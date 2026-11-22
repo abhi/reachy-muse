@@ -536,7 +536,8 @@ face snapshot if it is at most 10 seconds old; the command takes no picture. It
 logs one line, such as `Reachy people speaker=owner visible=2`.
 
 Muse can also turn Reachy with `reachy.look_at`. Target `speaker` turns toward
-the bearing latched for that latest request and keeps facing that way. Target
+the bearing latched for that latest request and keeps facing that way through
+Muse's reply; like a wake turn, it lasts until a motion command or sleep. Target
 `other` runs the same selection and hold as a spoken request to greet someone
 else, and the next request releases it. Muse gets only the outcome: `turned`,
 `no_other`, `no_faces`, `no_speaker_bearing`, `stale` or `busy`. Asked before

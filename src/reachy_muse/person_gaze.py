@@ -59,14 +59,17 @@ class PersonGaze:
         self._admitted_generation = 0
         self._released_generation = 0
         self._holding = False
+        self._facing = False           # Muse turned Reachy toward the speaker since the latest admission
         self._choosing = False         # a turn toward someone else waits for its camera pass
         self._admitted: set[int] = set()
         self._requests: dict[int, _Request] = {}
 
     @property
     def holding(self) -> bool:
-        """A gaze this conversation started is still shown; a command or wake turn can end it first."""
-        return self._holding and self.hardware.person_gaze_held
+        """A look this conversation chose still stands, so Reachy's own closing must not end it: a hold on
+        someone else until a command or wake turn ends it, or the speaker Muse turned Reachy toward, until the
+        next request begins."""
+        return self._holding and self.hardware.person_gaze_held or self._facing
 
     def begin(self) -> int:
         self._generation += 1
@@ -86,6 +89,7 @@ class PersonGaze:
             return generation == self._admitted_generation
         self._admitted_generation = generation
         self._admitted.add(generation)
+        self._facing = False
         self._forget_older()
         if self._holding:
             self._holding = False
@@ -114,7 +118,7 @@ class PersonGaze:
             return outcome
         if not self.hardware.face_speaker(request.bearing):
             return "busy"
-        self._holding = False
+        self._holding, self._facing = False, True
         return "turned"
 
     async def _heard_out(self, deadline: float) -> _Request | None:
