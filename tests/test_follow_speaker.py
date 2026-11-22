@@ -363,18 +363,18 @@ def test_after_stop_looking_at_me_reachy_turns_toward_no_one_who_speaks(people, 
     assert followed(caplog) == ["outcome=turned delta_deg=30", "outcome=off delta_deg=none"]
 
 
-def test_quick_remarks_from_two_people_do_not_swing_reachy_back_and_forth(people, caplog, monkeypatch):
+def test_quick_remarks_from_two_people_do_not_swing_reachy_back_and_forth(people, caplog):
+    """The friend's remark ends about 1.2 s after Reachy turned to the owner, within the 2 s dwell."""
     rig, controller, robot, scene = people
     caplog.set_level("INFO")
-    monkeypatch.setattr("reachy_muse.hardware.FOLLOW_DWELL_S", 4.0)
     done = asyncio.Event()
     service = realtime_service(rig, StreamingTranscripts("Is it raining?", "No.", "Are you sure?"),
                                answering_after(done), wake_timeout_s=5)
     heads = []
 
     async def user():
-        heads.extend(await speak_from(rig, scene, OWNER, wake=True, quiet_s=.3))
-        heads.extend(await speak_from(rig, scene, FRIEND, quiet_s=.3))
+        heads.extend(await speak_from(rig, scene, OWNER, wake=True, quiet_s=.2))
+        heads.extend(await speak_from(rig, scene, FRIEND, voiced_s=.6, quiet_s=.3))
         heads.extend(await speak_from(rig, scene, OWNER, quiet_s=.3))
         done.set()
 
