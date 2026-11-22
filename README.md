@@ -39,9 +39,10 @@ waving person can also trigger it. See [wave measurements and limitations](bench
 Add `--photo-requests` in `on-robot` or `companion` mode to let you show Muse
 something. When you ask Reachy, right after "Hey Muse" or by its name, "what do you
 see?" or "take a photo of this and tell me what it is", it plays a shutter sound and
-sends Muse one photo with your words, then speaks Muse's answer. It is off by default and needs OpenCV on the robot.
-Only your spoken request takes a photo: Muse cannot ask for one, and no image is
-saved. See [Photos for Muse](docs/reachy-mini.md#photos-for-muse).
+sends Muse one photo with your words, then speaks Muse's answer. It is off by
+default and needs OpenCV on the robot. Only a spoken request that Reachy hears takes
+a photo: Muse cannot ask for one, and no image is saved.
+See [Photos for Muse](docs/reachy-mini.md#photos-for-muse).
 
 ## Presence and notifications
 
