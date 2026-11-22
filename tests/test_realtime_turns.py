@@ -1493,11 +1493,13 @@ async def answers_and_leaves_working_on(sdk, emit, script):
     reply_events(sdk, emit, "r1", REPLY, voiced(1.0))
 
 
-def test_working_left_on_without_events_stops_holding_the_microphone_open(monkeypatch):
+@pytest.mark.parametrize("after_s", [12, 20])
+def test_working_left_on_holds_the_microphone_no_longer_than_muse_s_finish_and_the_follow_up_timeout(
+        monkeypatch, after_s):
     rig = rig_for(monkeypatch)
     calls = ScriptedCalls(answer=answers_and_leaves_working_on)
-    transcripts = StreamingTranscripts("What's the weather?", "And tomorrow?")
-    conversation = realtime_service(rig, transcripts, calls)
+    transcripts = StreamingTranscripts("What's the weather?", "So, the neighbours are coming at six.")
+    conversation = realtime_service(rig, transcripts, calls, wake_timeout_s=10)
     heard = []
 
     async def user():
@@ -1506,13 +1508,14 @@ def test_working_left_on_without_events_stops_holding_the_microphone_open(monkey
         call = voice.call
         while not ("muse" in played(rig.recording.events) and not call.audible):
             await room(rig, .04)
-        await room(rig, call.last_event_at + 30.2 - time.monotonic())
+        finished = time.monotonic()
+        await room(rig, finished + after_s - time.monotonic())
         before = calls.loud_after_reply
         await speak_live(rig)
         heard.append((call.working, calls.loud_after_reply - before, transcripts.texts, voice.call is call))
 
-    run(rig, conversation, user, rest=("thinking",), timeout=45)
-    assert heard == [(True, 0, ["And tomorrow?"], True)]
+    run(rig, conversation, user, rest=("thinking", "idle", "listening"), timeout=45)
+    assert heard == [(True, 0, ["So, the neighbours are coming at six."], True)]
 
 
 def test_speech_admitted_before_the_wake_deadline_can_finish_after_it(monkeypatch):

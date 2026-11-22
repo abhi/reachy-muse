@@ -699,6 +699,7 @@ class VoiceConversation:
         self._barging: asyncio.Task | None = None
         self._call_recoveries = 0
         self._call_last_voice_at = 0.0
+        self._muse_finished_at = 0.0
         self.muse_moving = 0
         self.notifications: Notifications | None = None
 
@@ -745,8 +746,13 @@ class VoiceConversation:
                 or (self.call is not None and self.call.audible))
 
     def _muse_holds_window(self) -> bool:
-        """In an open call, output that is still playing or queued, or Muse still at work, admits speech without a wake."""
-        return self.call is not None and (self._has_output() or self.call.at_work)
+        """In an open call, output that is still playing or queued, or Muse still at work, admits speech without a wake.
+
+        Work counts only once an SDK event follows Muse's last finish, since the robot's SDK can leave Working on.
+        """
+        call = self.call
+        return call is not None and (self._has_output()
+                                     or call.at_work and call.last_event_at > self._muse_finished_at)
 
     def _renew_call_input(self, *, said_before: str = "") -> None:
         """Gate the call's microphone afresh; a turn that holds the old gate keeps it."""
@@ -2778,6 +2784,7 @@ class VoiceConversation:
         await asyncio.to_thread(self.hardware.set_state, "speaking")
 
     async def _muse_quiet(self) -> None:
+        self._muse_finished_at = time.monotonic()
         working = self.call is not None and (self.call.working or bool(self.call.pending))
         if self._wake_deadline is not None:
             self._wake_deadline = time.monotonic() + (self.wake_timeout_s or 10.0)
