@@ -395,6 +395,33 @@ def test_a_short_remark_that_cuts_off_a_long_reply_is_not_waited_on(monkeypatch,
     assert LOST not in played(events)
 
 
+def test_a_short_retry_said_over_reachy_s_lost_line_cue_is_waited_on_by_the_fresh_call(monkeypatch, caplog):
+    """A two-word retry over Reachy's own "I lost my line to Muse" is no remark over Muse's reply."""
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    calls = ScriptedCalls(reply=None)
+    conversation = realtime_service(rig, StreamingTranscripts("One request.", "First retry.", "You there?"), calls,
+                                    wake_timeout_s=10)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        await wait_for(rig, lambda: any(turn.cued_at is not None for turn in call.pending))
+        await speak_live(rig)
+        await wait_for(rig, lambda: LOST in played(rig.recording.events), 8)
+        await speak_live(rig)
+        await wait_for(rig, lambda: voice.call is not call and voice.call.turns == 1, 3)
+        heard.append([turn.ordinal for turn in voice.call.pending])
+
+    run(rig, conversation, user, rest=("thinking", "listening", "idle"), timeout=40)
+    assert heard == [[1]]
+    assert [(row["ordinal"], row["outcome"]) for row in turn_outcomes(caplog)] == [
+        ("1", "recovered"), ("2", "recovered"), ("1", "unanswered")]
+
+
 @pytest.mark.parametrize("working, delay, reason", [(False, 15, "no_events"), (True, 30, "working_stale")])
 def test_an_eventless_pending_turn_recovers_at_its_limit(monkeypatch, caplog, working, delay, reason):
     caplog.set_level("INFO")
