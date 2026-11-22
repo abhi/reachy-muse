@@ -95,6 +95,16 @@ def too_short_for_follow_up(text: str) -> bool:
     return len(words) < 2 and not (words and words[0] in FOLLOW_UP_WORDS)
 
 
+FILLER_WORDS = frozenset(("um", "umm", "uh", "uhh", "uhm", "er", "erm", "hmm", "hm", "mm", "mmm", "mhm", "ah",
+                          "eh", "oh"))
+
+
+def only_fillers(text: str) -> bool:
+    """Whether the words only hesitate, as "um" or "uh, hmm" do, and ask nothing."""
+    words = spoken_words(text)
+    return bool(words) and all(word in FILLER_WORDS for word in words)
+
+
 def is_echo(text: str, heard_over: Tuple[str, ...]) -> bool:
     """Whether an utterance repeats a contiguous phrase from a recently spoken line."""
     words = spoken_words(text)

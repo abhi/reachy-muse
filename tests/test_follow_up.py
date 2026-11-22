@@ -57,3 +57,13 @@ def test_classify_follow_up(utterance, expected):
 ])
 def test_request_topic_uses_only_the_requests_words(request_text, expected):
     assert request_topic(request_text) == expected
+
+
+@pytest.mark.parametrize("text, fillers", [
+    ("Um.", True), ("Uh, hmm.", True), ("Oh.", True), ("Um, what do you see?", False), ("Thanks.", False),
+    ("", False),
+])
+def test_only_fillers_hesitate_and_ask_nothing(text, fillers):
+    from reachy_muse.follow_up import only_fillers
+
+    assert only_fillers(text) is fillers

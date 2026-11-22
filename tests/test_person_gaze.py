@@ -64,7 +64,7 @@ class PeopleHardware(CallHardware):
         super().__init__(recording)
         self.controller = controller
         for name in ('face_snapshot', 'refresh_faces', 'recent_faces', 'look_at_speaker', 'look_at_person',
-                     'release_person_gaze', 'allow_face_tracking'):
+                     'face_speaker', 'release_person_gaze', 'allow_face_tracking'):
             setattr(self, name, getattr(controller, name))
 
     def set_state(self, state, **kwargs):
@@ -86,6 +86,10 @@ class PeopleHardware(CallHardware):
     @property
     def person_gaze_held(self):
         return self.controller.person_gaze_held
+
+    @property
+    def person_turning(self):
+        return self.controller.person_turning
 
 
 class DelayedWake(TimedWake):

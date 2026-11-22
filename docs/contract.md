@@ -15,6 +15,14 @@ local controls. Ordinary requests contain only the user's words. The optional
 Reconnects and companion changes never add a voice context. The morning
 briefing request asks for its own 60 to 90 seconds, roughly 150 to 220 words.
 
+No camera image reaches Muse, except one photo per explicit spoken request to
+Reachy with `--photo-requests`. That photo goes up with `send_image` as one chat message:
+the local-chat note if any, the words "Reachy took this photo with its camera
+just now because the user asked. The user's spoken request is: …", then one
+JPEG of at most 150 KiB named `reachy-photo.jpg`. Muse has no command that
+takes a photo. Only with the flag does the `reachy.say` description tell Muse
+how photos arrive; see [Registration size](#registration-size).
+
 ## Registered commands
 
 | Command | Parameters and result |
@@ -24,6 +32,8 @@ briefing request asks for its own 60 to 90 seconds, roughly 150 to 220 words.
 | `reachy.notify` | Required `id` (1 to 128 UTF-8 bytes), `text` (1 to 240 UTF-8 bytes), `mode` (`now` or `when_present`) and `kind` (`notification` or `suggestion`). Optional `expires_in_s`, default 14400, range 0 to 86400. Returns `{"ok": true, "payload": {"status": "queued", "reason": "awaiting_presence"}}`. Status is `delivered`, `queued`, `expired` or `refused`. |
 | `reachy.expression` | Required expression `name`, optional `intensity` and `duration`. Built-in or recorded motions remain bounded and serialized. |
 | `reachy.move` | Optional head, body, and antenna coordinates, plus `duration` and `hold`. At least one coordinate is required. `POSE_LIMITS` defines the bounds. |
+| `reachy.people` | No parameters. Returns `{"ok": true, "payload": {"speaker": "owner", "people_visible": 2, "seen_s_ago": 0}}`. `speaker` is `owner`, `someone_else` or `unknown`; the other two fields are null without a recent face snapshot. Never names, bearings, images, scores or embeddings. |
+| `reachy.look_at` | Required `target`, `speaker` or `other`. Returns `{"ok": true, "payload": {"outcome": "turned"}}`. The outcome is `turned`, `no_other`, `no_faces`, `no_speaker_bearing`, `stale` or `busy`. |
 
 `reachy.say` refuses while asleep, hushed, handling a user turn, or before voice
 readiness. It waits for the current line otherwise, then checks again before
@@ -121,12 +131,60 @@ gaze through Muse's reply. It does not consume the voice turn. A motion command
 returns an error only while Reachy is still turning toward that person. After
 that, the command runs and ends the gaze.
 
+`reachy.people` reports the companion's voice labels for the requests Muse is
+answering, with `other` reported as `someone_else`. In a call, while Muse works
+on a turn, those are the requests admitted since the response before the work
+began, and any remark made during the work, which the call cannot tell from part
+of the request; responses Muse starts meanwhile, such as an acknowledgement,
+belong to the work. Otherwise a response that is still open, or that finished
+without audio as one calling a tool does, made the command: it answers the
+requests before it, back past the response before it, which may have been an
+acknowledgement. Between responses, Muse is answering the requests admitted
+since its latest response, or else the ones that response answered. In chat, it
+is the request Muse was sent. A request still being spoken counts, and so does
+one whose words Reachy failed to transcribe, since Muse heard it. A sound that
+never becomes a request, such as a cough, and anything Reachy admits after Muse
+asks never count. The command waits up to a second for the companion's labels of
+those requests, which come at the companion's end of each one's speech, and does
+not wait when the companion labels no voices. If the labels disagree, or any of
+those requests has none by then, it reports `unknown`; a request the companion
+labeled `unknown`, such as a short tail split off another, counts for nothing.
+It also reports `unknown` after Reachy lets its requests go: when the listening
+window closes, Reachy sleeps or is hushed, or the call to Muse drops. A label is
+a voice match, not proof of identity, and nothing is gated on it.
+`people_visible` counts the faces in the latest face snapshot and `seen_s_ago`
+gives its rounded age, when that snapshot is at most 10 seconds old. Face
+detection pauses while anyone speaks, so in a call the snapshot is often older;
+then the command takes the same bounded camera pass as `reachy.look_at` with
+`other`, at most 300 ms, and shares it when both need one at once, while it
+waits for the labels and within the same second. If that pass does not finish,
+both fields are null. The wait and the pass end early enough for the answer to
+reach Muse within its `timeout_ms`. The command never moves Reachy. It logs one
+line with fixed words, such as `Reachy people speaker=owner visible=2`.
+
+`reachy.look_at` uses the bearing latched for the latest of those requests, or,
+for one still being spoken, the bearing heard so far, without waiting. With
+`speaker`, Reachy turns head and body toward it; the turn becomes its gaze
+toward the speaker, as a wake turn does, so the next request does not undo it,
+and motion commands are refused only while it moves, as for any person turn.
+With `other`, it runs the selector and hold of a local request to greet someone
+else, without the words: it reports the same outcomes, and the next request
+releases the hold. Either target fades clips and the thinking motion first. A
+camera pass for `other` ends early enough for the answer to reach Muse within
+its `timeout_ms`. Like Muse's other motion commands, it reports `busy` while
+Reachy is asleep or its motion is off, while a person turn is being chosen,
+queued or still moving, or while another motion command runs. In a call, a turn
+counts as Muse acting on the request, so a response without words still answers
+it, and Reachy's own closing expression gives way, also after a later response
+to the same request. It logs one line, such as
+`Reachy look_at target=other outcome=turned`.
+
 ## Registration size
 
 `tests/pins/registration.json` pins the entire SDK registration with a fixed
 36-character request ID and the SDK's 15-character node ID. The compact JSON
-is **5,548 bytes**, or **5,552 bytes** including the four-byte length prefix,
-under the 8,192-byte cap. `commands_v2` occupies 5,272 bytes.
+is **6,942 bytes**, or **6,946 bytes** including the four-byte length prefix,
+under the 8,192-byte cap. `commands_v2` occupies 6,666 bytes.
 
 | Command description | UTF-8 bytes |
 | --- | ---: |
@@ -135,10 +193,21 @@ under the 8,192-byte cap. `commands_v2` occupies 5,272 bytes.
 | `reachy.notify` | 475 |
 | `reachy.expression` | 446 |
 | `reachy.move` | 388 |
+| `reachy.people` | 514 |
+| `reachy.look_at` | 657 |
 
-The guide is 2,390 UTF-8 bytes, within its 4,096-byte limit. Configuring `office`
-makes the current SDK registration 5,588 bytes including its prefix. The worst
-escaped 64-byte place label makes it 5,838 bytes, still below 8,192.
+The guide is 3,046 UTF-8 bytes, within its 4,096-byte limit. Configuring `office`
+makes the current SDK registration 6,982 bytes including its prefix. The worst
+escaped 64-byte place label makes it 7,232 bytes, still below 8,192.
+
+Only with `--photo-requests`, the `reachy.say` description ends with one more
+sentence: "When the user asks Reachy itself to take a photo or what it sees,
+Reachy sends you one photo with their words as a chat message and speaks your
+reply. You cannot ask Reachy for a photo." It makes that description 1,657 bytes
+and the registration 7,132 bytes including its prefix, or 7,418 bytes with the
+worst place label. An SDK that also registers the model and the guide makes them
+7,320 and 7,606 bytes, still below 8,192. The guide gains the same sentence under
+`## Photos`, for 3,244 bytes. Without the flag, Muse is not told about photos.
 
 `tests/test_registration.py` compares the literal registration fixture and
 measures the actual SDK `encode_message` output, including the prefix. It also

@@ -137,8 +137,9 @@ The robot then trusts only this certificate and sends the token when it connects
 ## Recognize the owner's voice
 
 The companion can label each request's voice as the owner's, someone else's or unknown.
-The label is only an observation. The robot logs it, and nothing depends on it yet. Muse is not told.
-The voice print and its enrollment stay on this Mac.
+The label is only an observation. The robot logs it, and nothing is gated on it. Muse learns it only by
+asking with `reachy.people`, which answers `owner`, `someone_else` or `unknown` for the requests Muse is
+answering. The voice print and its enrollment stay on this Mac.
 
 The companion uses the robot's speaker model, `wespeaker_en_voxceleb_resnet34.onnx`, on one CPU core.
 [The voice verification benchmark](../bench/voice_verify.md) explains where to download it and its license.

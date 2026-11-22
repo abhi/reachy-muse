@@ -288,7 +288,7 @@ def test_command_and_person_gaze_cannot_both_claim_motion(monkeypatch, gaze_firs
     assert request.done.is_set()
     if gaze_first:
         assert admitted == [True]
-        assert request.result == {'ok': False, 'error': 'Reachy is still turning toward another person'}
+        assert request.result == {'ok': False, 'error': 'Reachy is still turning toward a person'}
         assert controller._person_hold is not None
         assert samples[90]['yaw'] == pytest.approx(-25, abs=.1)
     else:

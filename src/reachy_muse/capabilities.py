@@ -51,6 +51,7 @@ class Endpoint:
     audio: bytes                   # the turn as a 16 kHz mono PCM16 WAV
     text: Optional[str]            # None: not transcribed here; "": nothing intelligible
     forced: bool = False
+    partial: bool = False          # the words are a streaming partial, which can lack the utterance's tail
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,7 @@ class HearingTurn(Protocol):
     quiet_s: float                 # seconds since the robot's voice detector last heard speech
     supports_partials: bool
     partial: Optional[Partial]     # the open utterance's transcript so far; never sent to Muse
+    speaker: object                # the companion's label slot for the open utterance's voice, if it labels voices
 
     def feed(self, samples: np.ndarray, turn_ends_at: Optional[int] = None) -> None: ...
     async def drain(self) -> None: ...

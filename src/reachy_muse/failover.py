@@ -174,6 +174,10 @@ class FailoverHearingTurn:
     def partial(self):
         return self._turn.partial
 
+    @property
+    def speaker(self):
+        return self._turn.speaker
+
     def feed(self, samples, turn_ends_at: Optional[int] = None) -> None:
         self._fed += len(samples)
         self._keep(samples)

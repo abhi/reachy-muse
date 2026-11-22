@@ -144,6 +144,20 @@ def test_wave_bearing_uses_current_head_pose_and_survives_camera_drain(monkeypat
     assert controller.wave_direction is None
 
 
+def test_wave_watching_totals_add_each_settled_stretch_until_watching_stops():
+    controller = ReachyController(wave_wake=True)
+    controller._np, controller._robot = np, FakeRobot()
+    controller._wave_watching = True
+    still = [False]
+    controller._wave_still = lambda: still[0]
+    for now, settled in [(10.0, False), (10.5, True), (11.0, True), (12.25, False), (13.0, True)]:
+        still[0] = settled
+        controller._update_wave_gaze(now, np.zeros(9), eligible=True)
+    controller._wave_watching = False
+    controller._update_wave_gaze(13.5, np.zeros(9), eligible=True)
+    assert controller._wave_watching_totals() == (2.25, 2)
+
+
 def test_head_motion_during_camera_drain_invalidates_the_claimed_wave():
     controller = ReachyController(wave_wake=True)
     controller._wave_watcher = SimpleNamespace(take_wave=lambda: True, wave_position=None)

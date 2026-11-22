@@ -811,6 +811,11 @@ class CompanionHearingTurn:
     def quiet_s(self) -> float:
         return self._recorder.quiet_s
 
+    @property
+    def speaker(self) -> Optional[_SpeakerSlot]:
+        stream = self._open
+        return stream.speaker if stream is not None and Op.SPEAKER in stream.connection.ops else None
+
     def feed(self, samples, turn_ends_at: Optional[int] = None) -> None:
         self._fed += len(samples)
         if turn_ends_at is not None:
@@ -840,8 +845,9 @@ class CompanionHearingTurn:
                 stream, self._open = self._open, None
                 if self._commands_only:
                     text = self.partial.text if self.partial is not None else None
+                    final = False
                     for message in stream.inbox:
-                        text = message.text
+                        text, final = message.text, isinstance(message, HearEndpoint)
                     end_sample = self._vad_ends.popleft() if self._vad_ends else self._fed
                     if not event.accepted:
                         stream.close(CloseHow.ABORT)
@@ -849,8 +855,9 @@ class CompanionHearingTurn:
                         stream.finish_command()
                         self._ended.append(_CutCommand(stream, self._recorder.last_truncated, end_sample, text))
                     else:
-                        self._ended.append(_HeardTurn(stream.speaker, Endpoint(_wav(bytes(stream.audio)), text),
-                                                      self._recorder.last_truncated, end_sample))
+                        endpoint = Endpoint(_wav(bytes(stream.audio)), text, partial=not final)
+                        self._ended.append(_HeardTurn(stream.speaker, endpoint, self._recorder.last_truncated,
+                                                      end_sample))
                         stream.abort_command()
                 elif event.accepted:
                     stream.finish()

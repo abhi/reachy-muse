@@ -18,7 +18,7 @@ def deterministic_vad(monkeypatch):
 
 
 @pytest.mark.parametrize("mode,inflight", [("off", False), ("soft", False), ("strict", False), ("strict", True)])
-def test_verified_paused_command_fits_cli_streaming_queue(handoff, model, worker, monkeypatch, mode, inflight):
+def test_verified_paused_command_fits_cli_streaming_queue(handoff, model, worker, monkeypatch, tmp_path, mode, inflight):
     from musegadget import config
     from musegadget.identity import Identity
     from reachy_muse import cli, streaming_transcription
@@ -87,6 +87,7 @@ def test_verified_paused_command_fits_cli_streaming_queue(handoff, model, worker
 
             await handoff(run, verifier=self.options["voice_verifier"], hearing=hearing)
 
+    monkeypatch.setenv(config.STATE_DIR_ENV, str(tmp_path))
     monkeypatch.setattr(config, "load_json", lambda *args: {"paired": True})
     monkeypatch.setattr(config, "sdk_token", lambda: None)
     monkeypatch.setattr(cli.identity, "load_or_create", lambda: Identity("02:00:00:ab:cd:ef"))

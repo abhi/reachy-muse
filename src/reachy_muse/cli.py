@@ -257,7 +257,7 @@ class ModeFlags:
 
 MODE_FLAGS = {
     Mode.MUSE_VOICE: ModeFlags(forbids=("--stt-model", "--stt-backend", "--tts-model",
-                                        "--stream-replies", "--wake-model")),
+                                        "--stream-replies", "--wake-model", "--photo-requests")),
     Mode.ON_ROBOT: ModeFlags(requires=("--stt-model", "--tts-model")),
     # The on-robot models answer whenever the companion can't.
     Mode.COMPANION: ModeFlags(requires=("--stt-model", "--tts-model")),
@@ -341,6 +341,9 @@ def parser() -> argparse.ArgumentParser:
                                    "pauses during sleep and arrival watching; requires --face-follow")
             item.add_argument("--face-follow-model", type=Path,
                               help="YuNet ONNX detector override; requires --face-follow")
+            item.add_argument("--photo-requests", action="store_true",
+                              help="Let a spoken request such as 'what do you see?' send Muse one photo with the "
+                                   "user's words; Muse cannot ask for photos and none is saved; needs OpenCV")
             item.add_argument("--stt-model", type=Path,
                               help="Local model directory for the selected speech recognition backend")
             item.add_argument("--stt-backend", choices=("whisper", "moonshine", "sherpa-streaming"),
@@ -564,6 +567,17 @@ def realtime_path(args) -> str:
     return "realtime"
 
 
+def photo_requests(args) -> bool:
+    """Whether a spoken request may send Muse a photo; Reachy encodes it with OpenCV."""
+    if not args.photo_requests:
+        return False
+    try:
+        import cv2  # noqa: F401
+    except ImportError:
+        raise ValueError("--photo-requests needs OpenCV (cv2) on the robot") from None
+    return True
+
+
 def end_of_turn_silence(mode: Mode, given: float | None) -> float:
     """The robot's end-of-turn silence: ``--silence`` when given, else the mode's default."""
     if given is not None:
@@ -676,6 +690,7 @@ async def run(args) -> int:
             or not 0 < args.wake_candidate_threshold <= args.wake_threshold <= 1 or args.wake_score <= 0):
         raise ValueError("Wake settings need 0 < candidate threshold <= threshold <= 1 and a positive boost")
     verifier = await asyncio.to_thread(voice_verifier, args)
+    photos = await asyncio.to_thread(photo_requests, args)
     muse_path = realtime_path(args)
     if args.realtime_stt_model is not None and args.muse_path != "realtime":
         raise ValueError("--realtime-stt-model needs --muse-path realtime")
@@ -753,6 +768,7 @@ async def run(args) -> int:
                                 command_transcriber=command_transcriber)
         service = ReachyService(identity=ident, executor=robot, sdk_token=config.sdk_token(),
                                display_name="Reachy Mini", session_id=session_id, place=args.place,
+                               photo_requests=photos,
                                prepare_chat=dedicated_chat.prepare if dedicated_chat else None,
                                owns_chat=dedicated_chat is not None,
                                introduce_to_muse=args.introduce_to_muse,

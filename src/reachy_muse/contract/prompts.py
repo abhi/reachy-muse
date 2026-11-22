@@ -72,6 +72,13 @@ def muse_request(text: str, *, note: str = "") -> str:
     return f"{note}\nThe user's spoken request is: {text}" if note else text
 
 
+def photo_message(text: str, *, note: str = "") -> str:
+    """The words sent with a photo Reachy took because the user asked for it."""
+    request = ("Reachy took this photo with its camera just now because the user asked. "
+               f"The user's spoken request is: {text}")
+    return f"{note}\n{request}" if note else request
+
+
 MORNING_BRIEFING_REQUEST = (
     "This is Reachy's scheduled morning briefing, not a user speech transcript. "
     "It will be spoken aloud to the user as they walk into the room. It is {when}. "

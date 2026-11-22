@@ -31,6 +31,7 @@ from reachy_muse.motion.reply_alignment import SAMPLE_RATE
 from reachy_muse.motion.reply_motion import Mark, ReplyMotion
 from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlayback
 from reachy_muse.follow_up import FollowUp, classify_follow_up, repeats_playback, word_count
+from reachy_muse.person_gaze import MuseActivity
 
 log = logging.getLogger(__name__)
 
@@ -705,6 +706,17 @@ class RealtimeCall:
     def audible_transcripts(self, tail_s: float) -> tuple[str, ...]:
         return tuple(self._transcripts[reply] for reply in self.speaker.audible_responses(tail_s)
                      if reply in self._transcripts)
+
+    def activity(self) -> MuseActivity:
+        """When Muse's responses began, whether the latest is open or finished without audio, and when the work
+        it is busy with began. Muse that has sent nothing for WORKING_STALE_S is neither in a response nor at
+        work."""
+        recent = self.last_event_at is not None and time.monotonic() - self.last_event_at < WORKING_STALE_S
+        latest = self._responses.get(self.latest_response) if recent else None
+        return MuseActivity(tuple(sorted(response.started_at for response in self._responses.values())),
+                            latest is not None and not latest.done,
+                            latest is not None and latest.completed and not latest.audio_bytes,
+                            self._working_since if recent and self.working else None)
 
     def on_event(self, event) -> None:
         """The SDK's event callback: it runs on the event loop and an exception here would end the call."""
