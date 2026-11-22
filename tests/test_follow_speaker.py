@@ -218,14 +218,12 @@ def test_the_waker_s_request_heard_during_the_wake_turn_gets_no_second_turn(peop
     assert followed(caplog) == ["outcome=same delta_deg=0"]
 
 
-def test_the_friend_answering_a_greeting_keeps_reachy_on_them_until_the_owner_speaks(people, caplog):
+@pytest.mark.parametrize("path", ["realtime", "chat"])
+def test_the_friend_answering_a_greeting_keeps_reachy_on_them_until_the_owner_speaks(people, caplog, path):
     rig, controller, robot, scene = people
     caplog.set_level("INFO")
-    calls = answering()
-    service = make_service(rig, never_asked, StreamingTranscripts("Say hi to my friend.", "Hi Reachy!",
-                                                                  "What time is it?"),
-                           wake_detector=DelayedWake(), wake_timeout_s=5, muse_path="realtime",
-                           voice_link=calls.link, voice_call=calls)
+    service, _, answered = muse_answers(rig, path, ("Say hi to my friend.", "Hi Reachy!", "What time is it?"),
+                                        wake_detector=DelayedWake())
     seen = {}
 
     async def user():
@@ -236,9 +234,11 @@ def test_the_friend_answering_a_greeting_keeps_reachy_on_them_until_the_owner_sp
         await until(rig, lambda: facing(controller, robot) == (30, 10))
         await speak_from(rig, scene, OWNER)
         await until(rig, lambda: facing(controller, robot) == (-25, -5))
-        await replied(rig, service, 1)
+        await answered(1)
+        await room(rig, .5)
         seen["friend"] = await speak_from(rig, scene, FRIEND)
-        await replied(rig, service, 2)
+        await answered(2)
+        await room(rig, .5)
         seen["answered"] = facing(controller, robot), controller.person_gaze_held
         seen["owner"] = await speak_from(rig, scene, OWNER)
         await until(rig, lambda: facing(controller, robot) == (30, 10))
