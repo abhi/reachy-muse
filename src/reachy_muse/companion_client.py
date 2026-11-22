@@ -157,10 +157,11 @@ class _Connection:
 
     def settle(self, number: int = 0) -> None:
         """Call commands aborted before hear stream ``number`` opened were heard. Tell the waiting
-        outcomes in stream order, up to the first command that a late error can still fail. Only aborted
-        call commands hold later outcomes back, not a finished turn still waiting for its endpoint."""
+        outcomes in stream order, up to the first command that a late error can still fail. Only call
+        commands hold later outcomes back: an aborted one, and one finished at Muse's reply start until
+        its own endpoint. A finished turn still waiting for its endpoint does not."""
         for stream in sorted(self.waiting.values(), key=lambda waiting: waiting.number):
-            if stream.held is None and stream.aborted_before > number:
+            if stream.held is None and (stream.finished_at is not None or stream.aborted_before > number):
                 return
             del self.waiting[stream.id]
             stream.report(stream.held)
@@ -233,6 +234,22 @@ class _HearStream:
         if self.endpoint is not None:
             self.settled.set()
         self.close(CloseHow.FINISH)
+
+    def finish_command(self) -> None:
+        """End a call command at Muse's reply start; the companion's forced endpoint brings its words. Like an
+        aborted command, it holds later outcomes back, but only its own endpoint or failure settles it."""
+        connection = self.connection
+        if connection.hearing.get(self.id) is self and not connection.closed:
+            connection.waiting[self.id] = self
+        self.finish()
+
+    def release(self) -> None:
+        """A call command finished at Muse's reply start stops holding later outcomes back: its endpoint
+        came, or the robot dropped it."""
+        connection = self.connection
+        if self.held is None and connection.waiting.get(self.id) is self:
+            del connection.waiting[self.id]
+            connection.settle()
 
     def fail(self, failure: CapabilityUnavailable) -> None:
         self.failure = self.held = failure
@@ -511,6 +528,7 @@ class CompanionLink:
                 if isinstance(message, HearEndpoint):
                     del connection.hearing[message.stream]
                     stream.report(None)
+                    stream.release()
                 if stream.finished_at is None:
                     stream.inbox.append(message)
                 elif isinstance(message, HearEndpoint):
@@ -736,12 +754,32 @@ class _FinishedTurn:
         return Endpoint(self.wav, stream.endpoint.text, stream.endpoint.forced)
 
 
+class _CutCommand(_FinishedTurn):
+    """A call command the robot ended where Muse's reply began. Muse is already answering, so its words can wait
+    for the companion's forced endpoint, as a finished turn's do; when that fails, its latest partial stands in."""
+
+    def __init__(self, stream: _HearStream, truncated: bool, end_sample: int, partial: Optional[str]):
+        super().__init__(stream, truncated, end_sample)
+        self._partial = partial
+
+    def cancel(self) -> None:
+        super().cancel()
+        self._stream.release()
+
+    async def endpoint(self) -> Optional[Endpoint]:
+        try:
+            return await super().endpoint()
+        except CapabilityUnavailable:
+            return Endpoint(self.wav, self._partial)
+
+
 class CompanionHearingTurn:
     """Robot VAD opens each hear stream; the earlier of the companion's endpoint and the robot's ends it.
 
     When the robot's VAD ends an utterance first, the stream closes with ``finish`` and the
-    turn ends at once; its words follow with the companion's forced endpoint. Liveness of
-    the link never holds a turn open.
+    turn ends at once; its words follow with the companion's forced endpoint. A call command,
+    which cannot wait, is aborted instead and keeps its latest partial, unless the robot cut it
+    off where Muse's reply began. Liveness of the link never holds a turn open.
     """
 
     supports_partials = True
@@ -773,8 +811,10 @@ class CompanionHearingTurn:
     def quiet_s(self) -> float:
         return self._recorder.quiet_s
 
-    def feed(self, samples) -> None:
+    def feed(self, samples, turn_ends_at: Optional[int] = None) -> None:
         self._fed += len(samples)
+        if turn_ends_at is not None:
+            self._recorder.end_turn_at(turn_ends_at)
         if self._recorder.feed(samples) is not None:
             self._vad_ends.append(self._fed)
 
@@ -803,12 +843,15 @@ class CompanionHearingTurn:
                     for message in stream.inbox:
                         text = message.text
                     end_sample = self._vad_ends.popleft() if self._vad_ends else self._fed
-                    if event.accepted:
+                    if not event.accepted:
+                        stream.close(CloseHow.ABORT)
+                    elif event.cut:
+                        stream.finish_command()
+                        self._ended.append(_CutCommand(stream, self._recorder.last_truncated, end_sample, text))
+                    else:
                         self._ended.append(_HeardTurn(stream.speaker, Endpoint(_wav(bytes(stream.audio)), text),
                                                       self._recorder.last_truncated, end_sample))
                         stream.abort_command()
-                    else:
-                        stream.close(CloseHow.ABORT)
                 elif event.accepted:
                     stream.finish()
                     self._ended.append(_FinishedTurn(stream, self._recorder.last_truncated,

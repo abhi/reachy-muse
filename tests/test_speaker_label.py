@@ -207,6 +207,29 @@ def test_a_label_still_in_flight_when_the_robot_aborts_reaches_the_turn(caplog):
     assert speaker_logs(caplog) == ["Reachy speaker=owner"]
 
 
+def test_a_call_command_cut_off_where_muse_s_reply_began_keeps_its_label_and_final_words(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="reachy_muse.companion_client")
+    enrolled(tmp_path)
+
+    async def run():
+        async with companion_engines(tmp_path, hearing=ScriptedHearing(("stop listening",))) as url, \
+                linked(url) as link:
+            turn = CompanionHearing(link).open_turn(16000, silence_s=.3, vad=Vad(), commands_only=True)
+            turn.feed(np.full(32000, OWNER_LEVEL, dtype=np.float32))
+            assert turn.take().ended is None
+            turn.feed(np.full(320, OWNER_LEVEL, dtype=np.float32), turn_ends_at=0)
+            ended = turn.take().ended
+            timeline = TurnTimeline()
+            ended.note_speaker(timeline.facts)
+            endpoint = await ended.endpoint()
+            await until(lambda: "speaker" in timeline.facts)
+            turn.abort()
+            return endpoint.text, endpoint.forced, timeline.facts
+
+    assert asyncio.run(asyncio.wait_for(run(), 10)) == ("stop listening", True, {"speaker": "owner"})
+    assert speaker_logs(caplog) == ["Reachy speaker=owner"]
+
+
 # ---- realtime calls: the robot aborts each command stream at its own end of speech
 
 

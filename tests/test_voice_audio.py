@@ -137,6 +137,57 @@ def test_streaming_recorder_reset_discards_pending_audio_and_short_turns():
     assert not recorder.active
 
 
+def levels(frames):
+    """``frames`` 20 ms frames, each at a level of its own, so a recording shows which frames it holds."""
+    return np.repeat((np.arange(frames, dtype=np.float32) + 1) / 256, 320)
+
+
+def pcm(audio):
+    return np.round(audio * 32768).astype("<i2")
+
+
+def streamed(recorder):
+    return np.frombuffer(b"".join(event.pcm for event in recorder.take_audio_events()), dtype="<i2")
+
+
+@pytest.mark.parametrize("end", [10 * 320, 10 * 320 + 100], ids=["at a frame", "inside a frame"])
+def test_a_turn_ended_at_a_sample_holds_the_audio_before_its_frame_and_the_next_turn_starts_there(end):
+    """Speech runs on through the sample a turn is ended at. The turn ends before the frame holding that sample,
+    and the speech from that frame on opens the next turn with no pre-roll from before."""
+    kept = 30
+    audio = levels(45)
+    recorder = TurnRecorder(16000, vad=ScriptVad([False] * 5 + [True] * 40), stream_audio=True)
+    assert recorder.feed(audio[:20 * 320]) is None
+    recorder.take_audio_events()
+    recorder.end_turn_at(end)
+
+    np.testing.assert_array_equal(read_wav(recorder.feed(audio[20 * 320:])), pcm(audio[:kept * 320]))
+    assert recorder.take_audio_events()[-1] == SpeechEnd(accepted=True, cut=True)
+    assert recorder.feed(audio[:0]) is None
+    assert recorder.active
+    np.testing.assert_array_equal(streamed(recorder), pcm(audio[kept * 320:]))
+
+
+def test_a_turn_ended_inside_the_last_part_of_a_frame_fed_ends_in_that_feed():
+    audio = levels(46)
+    recorder = TurnRecorder(16000, vad=ScriptVad([False] * 5 + [True] * 41), stream_audio=True)
+    assert recorder.feed(audio[:20 * 320]) is None
+    recorder.end_turn_at(25 * 320 + 50)
+
+    np.testing.assert_array_equal(read_wav(recorder.feed(audio[20 * 320:45 * 320 + 100])), pcm(audio[:45 * 320]))
+
+
+def test_a_turn_ended_before_any_speech_leaves_the_next_turn_no_pre_roll_from_before():
+    audio = levels(11)
+    recorder = TurnRecorder(16000, vad=ScriptVad([False] * 6 + [True] * 5), stream_audio=True)
+    assert recorder.feed(audio[:6 * 320]) is None
+    recorder.end_turn_at(0)
+
+    assert recorder.feed(audio[6 * 320:]) is None
+    assert recorder.active
+    np.testing.assert_array_equal(streamed(recorder), pcm(audio[6 * 320:]))
+
+
 @pytest.mark.parametrize("input_rate", [16_000, 24_000, 44_100, 48_000])
 def test_resampling_and_framing_are_identical_across_arbitrary_chunks(input_rate):
     script = [False] * 20 + [True] * 25 + [False] * 40

@@ -106,7 +106,9 @@ class LocalHearingTurn:
             return None
         return self._turn.partial
 
-    def feed(self, samples) -> None:
+    def feed(self, samples, turn_ends_at: Optional[int] = None) -> None:
+        if turn_ends_at is not None:
+            self._recorder.end_turn_at(turn_ends_at)
         self._wav = self._recorder.feed(samples)
 
     async def drain(self) -> None:

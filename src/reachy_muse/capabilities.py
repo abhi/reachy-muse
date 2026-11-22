@@ -108,7 +108,9 @@ class HearingTurn(Protocol):
     """One listening window, which may hold several user turns.
 
     The robot decides when the window opens and closes; the implementation decides where
-    each user turn inside it ends. ``feed`` may run off the event loop; ``take`` may not.
+    each user turn inside it ends, unless the robot ends one itself with ``turn_ends_at``,
+    the sample of a feed that the open turn ends before. ``feed`` may run off the event loop;
+    ``take`` may not.
     """
 
     active: bool                   # inside a user turn that has not ended yet
@@ -118,7 +120,7 @@ class HearingTurn(Protocol):
     supports_partials: bool
     partial: Optional[Partial]     # the open utterance's transcript so far; never sent to Muse
 
-    def feed(self, samples: np.ndarray) -> None: ...
+    def feed(self, samples: np.ndarray, turn_ends_at: Optional[int] = None) -> None: ...
     async def drain(self) -> None: ...
     def take(self) -> HeardAudio: ...
     def finish_initial_capture(self) -> None: ...

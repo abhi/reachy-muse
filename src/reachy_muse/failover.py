@@ -174,13 +174,16 @@ class FailoverHearingTurn:
     def partial(self):
         return self._turn.partial
 
-    def feed(self, samples) -> None:
+    def feed(self, samples, turn_ends_at: Optional[int] = None) -> None:
         self._fed += len(samples)
         self._keep(samples)
         if self._replay is not None:
             import numpy as np
+            replayed = sum(len(chunk) for chunk in self._replay)
             samples, self._replay = np.concatenate([*self._replay, samples]), None
-        self._turn.feed(samples)
+            if turn_ends_at is not None:
+                turn_ends_at += replayed
+        self._turn.feed(samples, turn_ends_at=turn_ends_at)
 
     async def drain(self) -> None:
         await self._turn.drain()
