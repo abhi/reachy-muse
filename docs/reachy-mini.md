@@ -484,8 +484,9 @@ Direction logs contain only angles and decisions.
 
 While the listening window is open, Reachy also turns toward whoever speaks.
 Once it has admitted an utterance as the user's speech and heard 0.5 seconds of
-it, it places the speaker from that utterance's own DoA readings, by the rules
-of the wake decision; a shorter request is placed at its end. If the speaker is
+voice in it, it places the speaker from that utterance's own DoA readings, by
+the rules of the wake decision; a shorter request is placed at its end, and a
+sound too short to be a request never turns Reachy. If the speaker is
 more than 20 degrees from where Reachy looks, meaning the speaker or face it
 faces rather than the swing of an expression, Reachy turns as a wake turn does.
 The face follower then starts on the face nearest the new gaze, and head

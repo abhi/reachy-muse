@@ -81,19 +81,21 @@ async def replied(rig, service, count):
                 and not voice.call.audible)
 
 
-@pytest.mark.parametrize("path", ["realtime", "chat"])
-def test_reachy_faces_each_of_two_people_as_they_take_turns(people, caplog, path):
-    rig, controller, robot, scene = people
-    caplog.set_level("INFO")
-    texts = ("What's the weather?", "And tomorrow?", "Thanks!")
+def muse_answers(rig, path, texts, *, wake_detector=None):
+    """Reachy hearing ``texts`` in turn, in a realtime call or in chat, and Muse answering each with a short reply.
+
+    Returns the service, the scripted calls, and ``answered(count)``, which waits until Muse's ``count``-th answer
+    has played out."""
+    calls = answering()
+    wake_detector = wake_detector or TimedWake()
     if path == "realtime":
-        service = realtime_service(rig, StreamingTranscripts(*texts), answering(), wake_timeout_s=5)
+        service = make_service(rig, never_asked, StreamingTranscripts(*texts), wake_detector=wake_detector,
+                               wake_timeout_s=5, muse_path="realtime", voice_link=calls.link, voice_call=calls)
     else:
         async def muse(session, request):
             await session.answer(request, "Sure.")
 
-        service = make_service(rig, muse, Transcripts(*texts), wake_detector=TimedWake(), wake_timeout_s=5)
-    seen = []
+        service = make_service(rig, muse, Transcripts(*texts), wake_detector=wake_detector, wake_timeout_s=5)
 
     async def answered(count):
         if path == "realtime":
@@ -102,6 +104,16 @@ def test_reachy_faces_each_of_two_people_as_they_take_turns(people, caplog, path
             voice = service._voice[1]
             await until(rig, lambda: played(rig.recording.events).count("tts:Sure.") >= count
                         and not voice._has_output())
+
+    return service, calls, answered
+
+
+@pytest.mark.parametrize("path", ["realtime", "chat"])
+def test_reachy_faces_each_of_two_people_as_they_take_turns(people, caplog, path):
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    service, _, answered = muse_answers(rig, path, ("What's the weather?", "And tomorrow?", "Thanks!"))
+    seen = []
 
     async def user():
         for count, (yaw, wake) in enumerate([(OWNER, True), (FRIEND, False), (OWNER, False)], 1):
@@ -114,6 +126,45 @@ def test_reachy_faces_each_of_two_people_as_they_take_turns(people, caplog, path
     assert seen == [(30, 10), (-25, -5), (30, 10)]
     assert followed(caplog) == ["outcome=turned delta_deg=30", "outcome=turned delta_deg=-55",
                                 "outcome=turned delta_deg=55"]
+
+
+async def sounds(rig, scene, yaw, chunks=(3, 2, 2, 2), apart=9):
+    """Short sounds from someone at head yaw ``yaw``, of ``chunks`` voiced 20 ms chunks each with ``apart`` quiet chunks
+    between, at real-time pace."""
+    scene.doa = bearing(yaw)
+    for index, voiced_chunks in enumerate(chunks):
+        if index:
+            await room(rig, apart * CHUNK / 16000)
+        for _ in range(voiced_chunks):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+
+
+@pytest.mark.parametrize("path", ["realtime", "chat"])
+def test_a_sound_too_short_to_be_a_request_never_turns_reachy(people, caplog, path):
+    """Four short sounds from the friend's side, such as a laugh: 180 ms of voice in all, too little for a request,
+    over 0.68 s."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    service, calls, answered = muse_answers(rig, path, ("What's the weather?", "", "And tomorrow?"))
+    seen = {}
+
+    async def user():
+        await speak_from(rig, scene, OWNER, wake=True)
+        await answered(1)
+        await room(rig, 1.5)
+        await sounds(rig, scene, FRIEND)
+        await room(rig, 1.0)
+        seen["after"] = facing(controller, robot)
+
+    run(rig, service, user)
+    assert seen["after"] == (30, 10)
+    if path == "realtime":
+        assert len(calls.answering) == 1
+    else:
+        assert [line for line in caplog.messages if line.startswith("Reachy queued a voice turn")] == [
+            "Reachy queued a voice turn; 1 pending"]
+    assert followed(caplog) == ["outcome=turned delta_deg=30"]
 
 
 def test_the_friend_answering_a_greeting_keeps_reachy_on_them_until_the_owner_speaks(people, caplog):

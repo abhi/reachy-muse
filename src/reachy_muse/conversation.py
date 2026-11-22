@@ -207,15 +207,15 @@ class _Utterance:
     open_mic: bool = False         # it began past the wake window, heard only because Muse kept the microphone open
     doa: dict[float, float] = field(default_factory=dict)
     voiced_until: float = -math.inf  # capture clock of its latest voiced audio
+    voiced_s: float = 0.0          # how much of it the voice detector heard as speech
 
-    def observe(self, direction: WakeDirection | None, voiced_until: float) -> None:
+    def observe(self, direction: WakeDirection | None, voiced_until: float, voiced_s: float) -> None:
+        """Take in one more chunk of it: its latest voiced audio ends at ``voiced_until``, and ``voiced_s`` of the
+        chunk was speech."""
         self.voiced_until = voiced_until
+        self.voiced_s += voiced_s
         if direction is not None:
             self.doa.update(direction.samples_between(self.started_at, voiced_until))
-
-    @property
-    def voiced_s(self) -> float:
-        return self.voiced_until - self.started_at
 
     def bearing(self) -> float | None:
         return median(self.doa.values()) if self.doa else None
@@ -1262,7 +1262,8 @@ class VoiceConversation:
             current = utterance
             if current is not None:
                 voiced_until = min(captured_at - quiet_s, reply_cut) if reply_began else captured_at - quiet_s
-                current.observe(self._wake_direction, voiced_until)
+                current.observe(self._wake_direction, voiced_until,
+                                len(sample) / self.hardware.sample_rate if voicing else 0.0)
             if heard.ended is not None or not (recorder.active or recorder.speech_active):
                 utterance = None
             bearing = None
