@@ -283,7 +283,7 @@ def test_a_photo_waits_until_the_head_has_turned_back_from_another_person():
         assert controller.look_at_person(math.radians(-25), 0.0)
         until(lambda: round(math.degrees(controller.head_yaw)) == -25 and controller._speaker_turn is None)
         assert round(math.degrees(controller.head_yaw)) == -25
-        controller.release_person_gaze()
+        controller.release_person_gaze(turn_back=True)
         photo = controller.capture_photo()
     finally:
         controller.close()

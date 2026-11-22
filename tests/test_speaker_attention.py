@@ -380,7 +380,7 @@ def look_at_friend(controller):
 @pytest.mark.parametrize('source', ['generated', 'clip'])
 def test_person_turn_fades_motion_holds_and_releases(monkeypatch, source):
     controller, robot, clock = simulate(monkeypatch, {
-        2: play_thinking(source), 25: look_at_friend, 130: lambda c: c.release_person_gaze(),
+        2: play_thinking(source), 25: look_at_friend, 130: lambda c: c.release_person_gaze(turn_back=True),
     }, ticks=230)
     turned = pose_at(controller, robot, clock.times[100])
     assert (turned['yaw'], turned['body_yaw'], turned['pitch']) == pytest.approx((-30, -10, 6), abs=.2)
@@ -401,15 +401,15 @@ def listen_to_speaker_at_30(controller):
 @pytest.mark.parametrize('replacement', ['same_tick', 'after_release'])
 def test_a_second_person_gaze_still_turns_back_to_the_first_speaker(monkeypatch, replacement):
     def replace_now(controller):
-        controller.release_person_gaze()
+        controller.release_person_gaze(turn_back=True)
         assert controller.look_at_person(math.radians(-10), 0)
 
     events = {5: listen_to_speaker_at_30, 60: lambda c: c.look_at_person(math.radians(-30), 0),
-              180: lambda c: c.release_person_gaze()}
+              180: lambda c: c.release_person_gaze(turn_back=True)}
     if replacement == 'same_tick':
         events[120] = replace_now
     else:
-        events[120] = lambda c: c.release_person_gaze()
+        events[120] = lambda c: c.release_person_gaze(turn_back=True)
         events[125] = lambda c: c.look_at_person(math.radians(-10), 0)
     controller, robot, clock = simulate(monkeypatch, events, ticks=260)
     assert round(pose_at(controller, robot, clock.times[175])['yaw']) == -10
@@ -420,7 +420,7 @@ def test_a_second_person_gaze_still_turns_back_to_the_first_speaker(monkeypatch,
 def test_a_wake_turn_during_a_person_gaze_ends_it(monkeypatch):
     controller, robot, clock = simulate(monkeypatch, {
         5: listen_to_speaker_at_30, 60: lambda c: c.look_at_person(math.radians(-30), 0),
-        120: lambda c: c.look_at_speaker(math.radians(110)), 180: lambda c: c.release_person_gaze(),
+        120: lambda c: c.look_at_speaker(math.radians(110)), 180: lambda c: c.release_person_gaze(turn_back=True),
     }, ticks=260)
     assert round(pose_at(controller, robot, clock.times[175])['yaw']) == -20
     assert controller._person_hold is None
@@ -461,7 +461,7 @@ def test_a_turn_toward_the_speaker_refuses_commands_only_while_it_moves_and_hold
 
     controller, robot, clock = simulate(monkeypatch, {
         2: play_thinking(source), 25: face_the_speaker_at_30, 55: command_mid_turn,
-        110: lambda c: seen.append(('turning', c.person_turning)), 130: lambda c: c.release_person_gaze(),
+        110: lambda c: seen.append(('turning', c.person_turning)), 130: lambda c: c.release_person_gaze(turn_back=True),
     }, ticks=230)
     assert turning.result == {'ok': False, 'error': 'Reachy is still turning toward a person'}
     assert seen == [('moving', True), ('turning', False)]
