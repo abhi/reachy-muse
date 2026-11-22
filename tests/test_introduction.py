@@ -30,6 +30,22 @@ def event(name, **payload):
     return {"type": "event", "event": name, "payload": payload}
 
 
+def run_registered(check):
+    """Runs ``check(session, vm, stop)`` within 3 s on a real SDK session registered with the fake VM.
+
+    Registration stays outside the 3 s: its Noise handshake, when a worker's first, also loads the crypto backend.
+    """
+    async def scenario():
+        session, vm, stop, connection = await registered_session()
+        try:
+            await asyncio.wait_for(check(session, vm, stop), 3)
+        finally:
+            stop.set()
+            await asyncio.gather(connection, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
 class Session:
     def __init__(self, *, ack=None, reply=True):
         self.registered = asyncio.Event()
@@ -289,8 +305,7 @@ def test_standalone_introduction_preserves_running_device_registration(tmp_path,
     monkeypatch.setattr(introduction.muse_api, "fetch_vms_with_status", lambda *args: ([
         {"vm_id": "vm 1&x", "is_default": True, "vm_auth_token": "fake-vm-token"}], 200))
 
-    async def check():
-        running, running_vm, stop, connection = await registered_session()
+    async def check(running, running_vm, stop):
         link, vm = make_session(lambda *args: pytest.fail("standalone command"), [])
         monkeypatch.setattr(introduction, "LinkSession", lambda **kwargs: LinkSession(
             **kwargs, connect=link._connect))
@@ -316,11 +331,10 @@ def test_standalone_introduction_preserves_running_device_registration(tmp_path,
             result = await running_vm.next_message()
             assert result["id"] == "still-running" and result["ok"] is True
         finally:
-            stop.set()
             task.cancel()
-            await asyncio.gather(task, connection, return_exceptions=True)
+            await asyncio.gather(task, return_exceptions=True)
 
-    asyncio.run(asyncio.wait_for(check(), 3))
+    run_registered(check)
 
 
 def test_standalone_refreshes_rejected_access_token(tmp_path, monkeypatch):
@@ -450,8 +464,7 @@ def test_service_recovers_voice_after_an_uncertain_introduction(tmp_path, monkey
 
 
 def test_real_sdk_posts_text_to_main_chat_and_closes_reply_subscription(tmp_path):
-    async def check():
-        session, vm, stop, connection = await registered_session()
+    async def check(session, vm, stop):
         task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=stop))
         try:
             subscribe = await vm.next_frame()
@@ -478,11 +491,10 @@ def test_real_sdk_posts_text_to_main_chat_and_closes_reply_subscription(tmp_path
             assert not session.chat_subscribed.is_set()
             assert introduction.introduction_sent(tmp_path, **DESTINATION)
         finally:
-            stop.set()
             task.cancel()
-            await asyncio.gather(task, connection, return_exceptions=True)
+            await asyncio.gather(task, return_exceptions=True)
 
-    asyncio.run(asyncio.wait_for(check(), 3))
+    run_registered(check)
 
 
 @pytest.mark.parametrize("foreign_turn", ["earlier", "later"])
@@ -538,21 +550,12 @@ def test_real_sdk_parentless_replies_follow_the_acknowledged_user(tmp_path, monk
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
-    async def scenario():
-        session, vm, stop, connection = await registered_session()
-        try:
-            await asyncio.wait_for(check(session, vm, stop), 3)
-        finally:
-            stop.set()
-            await asyncio.gather(connection, return_exceptions=True)
-
-    asyncio.run(scenario())
+    run_registered(check)
 
 
 @pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
 def test_real_sdk_parentless_task_completion_survives_a_phone_message(tmp_path, status):
-    async def check():
-        session, vm, stop, connection = await registered_session()
+    async def check(session, vm, stop):
         task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=stop))
 
         async def publish(*events):
@@ -584,11 +587,10 @@ def test_real_sdk_parentless_task_completion_survives_a_phone_message(tmp_path, 
             assert reset.kind == "reset" and reset.stream_id == subscribe.stream_id
             assert not session.chat_subscribed.is_set()
         finally:
-            stop.set()
             task.cancel()
-            await asyncio.gather(task, connection, return_exceptions=True)
+            await asyncio.gather(task, return_exceptions=True)
 
-    asyncio.run(asyncio.wait_for(check(), 3))
+    run_registered(check)
 
 
 def test_terminal_task_without_assistant_message_finishes(tmp_path, monkeypatch):
@@ -701,8 +703,7 @@ def test_receipts_follow_the_destination_across_switches(tmp_path, monkeypatch, 
 
 @pytest.mark.parametrize("status", [500, 502, 504])
 def test_real_sdk_committed_post_is_not_repeated_after_a_failed_response(tmp_path, status):
-    async def check():
-        session, vm, stop, connection = await registered_session()
+    async def check(session, vm, stop):
         posts = []
 
         async def respond():
@@ -728,16 +729,14 @@ def test_real_sdk_committed_post_is_not_repeated_after_a_failed_response(tmp_pat
             receipts = json.loads((tmp_path / introduction.INTRODUCTION_STATE_FILE).read_text())["receipts"]
             assert [receipt["status"] for receipt in receipts] == ["pending"]
         finally:
-            stop.set()
             server.cancel()
-            await asyncio.gather(server, connection, return_exceptions=True)
+            await asyncio.gather(server, return_exceptions=True)
 
-    asyncio.run(asyncio.wait_for(check(), 3))
+    run_registered(check)
 
 
 def test_real_sdk_lost_acknowledgement_is_not_automatically_reposted(tmp_path):
-    async def check():
-        session, vm, stop, connection = await registered_session()
+    async def check(session, vm, stop):
         task = asyncio.create_task(introduction.introduce_once(session, tmp_path, **DESTINATION, stop=stop))
         try:
             subscribe = await vm.next_frame()
@@ -757,11 +756,10 @@ def test_real_sdk_lost_acknowledgement_is_not_automatically_reposted(tmp_path):
             assert retry.posts == []
             assert "outcome is unknown" in error
         finally:
-            stop.set()
             task.cancel()
-            await asyncio.gather(task, connection, return_exceptions=True)
+            await asyncio.gather(task, return_exceptions=True)
 
-    asyncio.run(asyncio.wait_for(check(), 3))
+    run_registered(check)
 
 
 @pytest.mark.parametrize("blocked_frame", ["post", "reset"])
