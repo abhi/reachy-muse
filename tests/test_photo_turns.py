@@ -1160,6 +1160,39 @@ def test_reachy_s_own_hey_muse_heard_back_never_makes_the_next_request_spoken_to
     assert (rig.hardware.captures, photo_lines(caplog)) == ([], [])
 
 
+@realtime
+def test_hey_muse_heard_only_because_muse_kept_listening_never_addresses_the_next_request(monkeypatch, caplog):
+    """Past the wake window, Reachy keeps listening without a wake while Muse works on a request. "Hey Muse" heard
+    then never makes the next request spoken to Reachy, so an unnamed photo request after it takes no photo."""
+    from test_realtime_turns import room, speak_live
+
+    caplog.set_level(logging.INFO)
+    rig = call_rig(monkeypatch, [PHOTO])
+
+    async def works(sdk, emit, script):
+        emit(sdk.Working(True))
+
+    calls = ScriptedCalls(answer=works)
+    conversation = realtime_service(rig, StreamingTranscripts("Book me a table for two.", "Hey Muse.", "Take a photo."),
+                                    calls, photo_requests=True)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        await room(rig, voice._wake_deadline - time.monotonic() + .5)
+        heard.append(voice.call.at_work)
+        await speak_live(rig)
+        await room(rig, .5)
+        await speak_live(rig)
+        await room(rig, 1)
+
+    events = run(rig, conversation, user, rest=("listening", "idle", "thinking"))
+    assert heard == [True]
+    assert (rig.hardware.captures, photo_lines(caplog), sent(events)) == ([], [], [])
+    assert [line.split(" outcome=")[1] for line in realtime_command_lines(caplog)] == ["none drop=none"] * 3
+
+
 def test_a_photo_request_the_companion_ends_while_the_user_still_talks_takes_no_photo(monkeypatch, caplog):
     from dataclasses import replace
     from reachy_muse.companion_client import CompanionHearing, CompanionLink, LinkState, _Connection

@@ -204,6 +204,7 @@ class _Utterance:
     utterance_id: int
     started_at: float              # capture clock
     generation: int                # PersonGaze token
+    open_mic: bool = False         # it began past the wake window, heard only because Muse kept the microphone open
     doa: dict[float, float] = field(default_factory=dict)
 
     def observe(self, direction: WakeDirection | None, voiced_until: float) -> None:
@@ -224,6 +225,7 @@ class _RecordedTurn:
     speaker_bearing: float | None
     gaze_generation: int
     over_muse: bool = False        # Muse's reply was audible while the user spoke
+    open_mic: bool = False
 
 
 @dataclass(frozen=True)
@@ -237,6 +239,7 @@ class _QueuedTurn:
     speaker_bearing: float | None
     gaze_generation: int
     over_muse: bool = False
+    open_mic: bool = False
 
 
 @dataclass(frozen=True)
@@ -1239,8 +1242,9 @@ class VoiceConversation:
             if utterance is not None and utterance.utterance_id != recorder.utterance_id:
                 utterance = None
             if utterance is None and (recorder.speech_active or heard.ended is not None):
+                past_window = self._wake_deadline is not None and endpoint_at >= self._wake_deadline
                 utterance = _Utterance(recorder.utterance_id, captured_at - len(sample) / self.hardware.sample_rate,
-                                       self._gaze.begin())
+                                       self._gaze.begin(), past_window)
                 self._gaze.opened(utterance.generation, recorder.speaker,
                                   lambda spoken=utterance: latched_bearing(spoken))
             current = utterance
@@ -1356,7 +1360,7 @@ class VoiceConversation:
             heard_over.clear()
             over_muse = False
             return _RecordedTurn(heard.ended, reply_cut if reply_began else endpoint_at, speech_end_at, over,
-                                 call_input, bearing, current.generation, over_reply)
+                                 call_input, bearing, current.generation, over_reply, current.open_mic)
 
         def recording_active():
             return (recorder.active or time.monotonic() < speech_continues_until
@@ -1551,7 +1555,7 @@ class VoiceConversation:
                 pending_turns.append(_QueuedTurn(recorded.ended, self._wake_strip_required, wake_epoch,
                                                 timeline, recorded.heard_over, self.call or self._lost_call,
                                                 recorded.speaker_bearing, recorded.gaze_generation,
-                                                recorded.over_muse))
+                                                recorded.over_muse, recorded.open_mic))
                 self._gaze.queued(recorded.gaze_generation, timeline.facts)
                 if self.realtime is not None and pending_turns[-1].call is None:
                     self.realtime.chat_turn()
@@ -2891,7 +2895,8 @@ class VoiceConversation:
             return TurnOutcome.EMPTY
         if text.strip():
             self._claim_wake_request(text, request.timeline)
-        elif prefix != "none":
+        elif prefix != "none" and not request.open_mic:
+            # The wake phrase alone opens the next request to Reachy, unless Muse kept the microphone open to hear it.
             self._open_wake_request()
         self._presence.mark("voice", started)
         command = await self._obey(text, started, request.timeline) if text.strip() else None
