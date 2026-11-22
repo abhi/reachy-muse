@@ -55,18 +55,17 @@ def spoken_words(text: str) -> List[str]:
 
 
 def word_count(text: str) -> int:
-    """How many words ``text`` holds, a back-channel sound such as "mm-hmm" or "uh huh" counting as none."""
+    """How many words ``text`` holds: none when it is only back-channel sounds, such as "mm-hmm" or "uh huh"."""
     words = spoken_words(text)
-    count = start = 0
+    start = 0
     while start < len(words):
         if "".join(words[start:start + 2]) in _BACK_CHANNELS:
             start += 2
         elif words[start] in _BACK_CHANNELS:
             start += 1
         else:
-            count += 1
-            start += 1
-    return count
+            return len(words)
+    return 0
 
 
 def classify_follow_up(text: str) -> FollowUp:
