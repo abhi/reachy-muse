@@ -473,17 +473,29 @@ def test_look_at_says_why_reachy_stays_put(people, caplog, target, case, outcome
     assert_allowed(rig.session.results, caplog)
 
 
-@pytest.mark.parametrize("target, turned", [("speaker", (30, 10)), ("other", (-25, -5))])
-def test_look_at_is_busy_only_while_reachy_still_turns_toward_a_person(people, caplog, monkeypatch, target, turned):
-    """The user asks Reachy itself to greet their friend; Muse asks to look too, while Reachy turns and after."""
+@pytest.mark.parametrize("first, target, turned", [
+    ("greeting", "speaker", (30, 10)),
+    ("greeting", "other", (-25, -5)),
+    ("speaker", "other", (-25, -5)),
+])
+def test_look_at_is_busy_only_while_reachy_still_turns_toward_a_person(people, caplog, monkeypatch, first, target,
+                                                                       turned):
+    """A person turn is under way: Reachy's own for a spoken greeting, or the one Muse asked for toward the
+    speaker, asked again past the thinking motion's fade, while it moves. Muse's look_at is busy while Reachy
+    turns, and turns it once that turn has settled."""
     rig, controller, robot, scene = people
     caplog.set_level("INFO")
     monkeypatch.setattr("reachy_muse.hardware.SPEAKER_TURN_S", 2.0)
     outcomes = []
 
     async def ask(ordinal):
-        await until(rig, lambda: logged(caplog, "Reachy gaze request") == [
-            "Reachy gaze request outcome=turned source=fresh faces=2"])
+        if first == "greeting":
+            await until(rig, lambda: logged(caplog, "Reachy gaze request") == [
+                "Reachy gaze request outcome=turned source=fresh faces=2"])
+        else:
+            await heard(rig, caplog)
+            await rig.session.invoke("reachy.look_at", {"target": "speaker"})
+            await asyncio.sleep(.8)
         outcomes.append((controller.person_turning, (await rig.session.invoke(
             "reachy.look_at", {"target": target}))["payload"]["outcome"]))
         await until(rig, lambda: not controller.person_turning, 4)
@@ -497,11 +509,12 @@ def test_look_at_is_busy_only_while_reachy_still_turns_toward_a_person(people, c
         await replied(rig, voice)
         await until(rig, lambda: facing(controller, robot) == turned, 4)
 
-    converse(rig, muse.calls, companion(request="Say hi to my friend."), user)
+    converse(rig, muse.calls, companion(request="Say hi to my friend." if first == "greeting" else REQUEST), user)
     assert outcomes == [(True, "busy"), (False, "turned")]
-    assert logged(caplog, "Reachy look_at") == [f"Reachy look_at target={target} outcome=busy",
-                                                f"Reachy look_at target={target} outcome=turned"]
-    assert_allowed(rig.session.results, caplog, words=(REPLY, "Say hi"))
+    assert logged(caplog, "Reachy look_at") == [
+        *(["Reachy look_at target=speaker outcome=turned"] if first == "speaker" else []),
+        f"Reachy look_at target={target} outcome=busy", f"Reachy look_at target={target} outcome=turned"]
+    assert_allowed(rig.session.results, caplog, words=(REPLY, "Say hi", "Sarah"))
 
 
 def test_look_at_is_busy_while_a_greeting_still_chooses_whom_to_face(people, caplog, monkeypatch):

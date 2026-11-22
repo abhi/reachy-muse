@@ -541,9 +541,10 @@ the bearing latched for that latest request and keeps facing that way. Target
 else, and the next request releases it. Muse gets only the outcome: `turned`,
 `no_other`, `no_faces`, `no_speaker_bearing`, `stale` or `busy`. Asked before
 Reachy's own end of the request, it waits for the bearing the same way. It is
-`busy` while a person turn is still being chosen, queued or moving, such as the
-one Reachy starts by itself for "say hi to my friend". The log line names only
-the target and outcome, as in `Reachy look_at target=other outcome=turned`.
+`busy` while a person turn is still being chosen, queued or moving, whether
+Reachy started it by itself for "say hi to my friend" or Muse asked for it. The
+log line names only the target and outcome, as in
+`Reachy look_at target=other outcome=turned`.
 
 With `--wave-wake`, a wave also turns Reachy toward the person before face
 tracking takes over. The detected person's position takes priority over recent

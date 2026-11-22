@@ -195,11 +195,22 @@ class _SpeakerTurn:
     started: float
     head_from: float
     body_from: float
+    toward_person: bool = False    # Muse's motion commands are refused until it ends
 
     def at(self, now: float) -> SpeakerYaw:
         weight = _ease((now - self.started) / SPEAKER_TURN_S)
         return SpeakerYaw(self.head_from + (self.target.head - self.head_from) * weight,
                           self.body_from + (self.target.body - self.body_from) * weight)
+
+
+@dataclass(frozen=True)
+class _PersonTurn:
+    """A turn toward a person, for the motion owner to start once clips fade. With a ``pitch`` it holds Reachy
+    on someone else until released; without, it becomes the gaze toward the speaker."""
+
+    target: SpeakerYaw
+    pitch: float | None = None     # head pitch in degrees to hold while no face is followed
+    yaw: float = 0.0               # the held person's world yaw, which the face follower re-centers on
 
 
 @dataclass(frozen=True)
@@ -348,8 +359,7 @@ class ReachyController:
         self._speaker_turn: _SpeakerTurn | None = None
         self._speaker_gaze = 0.0
         self.wake_gaze_bearing: float | None = None
-        # The target, then the pitch to hold and the person's world yaw; both are None for a turn toward the speaker.
-        self._person_pending: tuple[SpeakerYaw, float | None, float | None] | None = None
+        self._person_pending: _PersonTurn | None = None
         self._person_hold: _PersonHold | None = None
         self._person_release = False
         self._command_active = False
@@ -492,20 +502,21 @@ class ReachyController:
         if not math.isfinite(pitch):
             raise ValueError("Person pitch must be finite")
         low, high = POSE_LIMITS["pitch"]
-        return self._turn_to_person(speaker_yaw(math.pi / 2 - yaw), max(low, min(high, math.degrees(pitch))), yaw)
+        held = max(low, min(high, math.degrees(pitch)))
+        return self._turn_to_person(_PersonTurn(speaker_yaw(math.pi / 2 - yaw), held, yaw))
 
     def face_speaker(self, angle: float) -> bool:
         """Turn toward whoever spoke from DoA ``angle`` as a person turn does, fading clips and thinking motion
         first. The turn becomes the gaze toward the speaker, as a wake turn does, so nothing turns back from it."""
-        return self._turn_to_person(speaker_yaw(angle), None, None)
+        return self._turn_to_person(_PersonTurn(speaker_yaw(angle)))
 
-    def _turn_to_person(self, target: SpeakerYaw, pitch: float | None, yaw: float | None) -> bool:
+    def _turn_to_person(self, turn: _PersonTurn) -> bool:
         with self._state_lock:
             if (not self._enable_motion or self._stop.is_set() or self._state == "sleeping"
                     or self._command_active or self._deferred is not None
                     or self._clip is not None and self._clip.request is not None):
                 return False
-            self._person_pending = (target, pitch, yaw)
+            self._person_pending = turn
             self._person_release = False
             self._speaker_pending = None
             self._pending_motion = None
@@ -522,12 +533,13 @@ class ReachyController:
 
     @property
     def person_turning(self) -> bool:
-        """A person turn is queued, or still moving toward a held person; Muse's commands wait for it."""
+        """A person turn is queued or still moving; Muse's motion commands are refused meanwhile."""
         with self._state_lock:
             return self._turning_to_person()
 
     def _turning_to_person(self) -> bool:
-        return self._person_pending is not None or self._person_hold is not None and self._speaker_turn is not None
+        turn = self._speaker_turn
+        return self._person_pending is not None or turn is not None and turn.toward_person
 
     @property
     def head_yaw(self) -> float:
@@ -1331,14 +1343,14 @@ class ReachyController:
             self._face_follower.hold_center(None)
         return hold
 
-    def _turn_toward(self, look: SpeakerYaw | None, now: float) -> None:
+    def _turn_toward(self, look: SpeakerYaw | None, now: float, *, toward_person: bool = False) -> None:
         """Ease head and body to ``look``; without one, the head settles back to its resting yaw."""
         self._speaker_look = look
         self._speaker_turn = None
         if look is not None:
             self._speaker_gaze = look.head
             self._speaker_turn = _SpeakerTurn(look, now, self._pose_parameters(self._last_pose)["yaw"],
-                                              math.degrees(self._last_body_yaw))
+                                              math.degrees(self._last_body_yaw), toward_person)
 
     def _update_person(self, now: float, state: str) -> None:
         with self._state_lock:
@@ -1362,14 +1374,14 @@ class ReachyController:
                     clip.timeline.stop(now)
             if self._clip is not None or self._generated is not None:
                 return
-            target, pitch, yaw = pending
             self._person_pending = None
             replaced = self._end_person_hold()
-            if pitch is not None:
-                self._person_hold = _PersonHold(pitch, replaced.restore if replaced is not None else self._speaker_look)
-            self._turn_toward(target, now)
-            if pitch is not None and self._face_follower is not None:
-                self._face_follower.hold_center(yaw - math.radians(target.head))
+            if pending.pitch is not None:
+                self._person_hold = _PersonHold(pending.pitch,
+                                                replaced.restore if replaced is not None else self._speaker_look)
+            self._turn_toward(pending.target, now, toward_person=True)
+            if pending.pitch is not None and self._face_follower is not None:
+                self._face_follower.hold_center(pending.yaw - math.radians(pending.target.head))
 
     def _update_speaker(self, now: float, state: str, *, occupied: bool) -> None:
         with self._state_lock:
@@ -1590,7 +1602,7 @@ class ReachyController:
                 if request is not None or commanded:
                     with self._state_lock:
                         if request is not None and self._turning_to_person():
-                            request.result = {"ok": False, "error": "Reachy is still turning toward another person"}
+                            request.result = {"ok": False, "error": "Reachy is still turning toward a person"}
                             request.done.set()
                             request = None
                         if request is not None:

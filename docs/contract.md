@@ -139,7 +139,8 @@ words, such as `Reachy people speaker=owner visible=2`.
 `reachy.look_at` uses the bearing latched for that same request, waiting for it
 the same way. With `speaker`, Reachy turns head and body toward it; the turn
 becomes its gaze toward the speaker, as a wake turn does, so the next request
-does not undo it. With `other`, it runs the selector and hold of a local request
+does not undo it, and motion commands are refused only while it moves, as for
+any person turn. With `other`, it runs the selector and hold of a local request
 to greet someone else, without the words: it reports the same outcomes, and the
 next request releases the hold. Either target fades clips and the thinking
 motion first. Like Muse's other motion commands, it reports `busy` only while a
