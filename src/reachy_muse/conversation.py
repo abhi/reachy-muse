@@ -1134,15 +1134,15 @@ class VoiceConversation:
         turns_awaiting_transcript = set()
         # The latest audio the call was not sent while it heard only the room, sent first when speech resumes it.
         call_pre_roll = None
-        # The user talked on through a call turn's endpoint and no turn has opened since; that speech stays admitted.
-        speech_continues = False
+        # Until then, a user who talked on through a call turn's endpoint stays admitted while their next turn opens.
+        speech_continues_until = 0.0
 
         def make_recorder(*, reset_admission=True, **options):
-            nonlocal gap_quiet_samples, turn_open, recorder_for_call, utterance, call_pre_roll, speech_continues
+            nonlocal gap_quiet_samples, turn_open, recorder_for_call, utterance, call_pre_roll, speech_continues_until
             turn_open = False
             utterance = None
             call_pre_roll = None
-            speech_continues = False
+            speech_continues_until = 0.0
             heard_over.clear()
             if reset_admission:
                 if voice_gate is not None:
@@ -1168,7 +1168,7 @@ class VoiceConversation:
         recorder_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reachy-recorder")
         last_slow_feed = 0.0
         async def record_admitted(sample, *, captured_at, send_to_call=True):
-            nonlocal last_slow_feed, gap_quiet_samples, turn_open, utterance, call_pre_roll, speech_continues
+            nonlocal last_slow_feed, gap_quiet_samples, turn_open, utterance, call_pre_roll, speech_continues_until
             # Keep VAD ahead of transcription/TTS work in the shared executor.
             started = time.monotonic()
             feed = asyncio.get_running_loop().run_in_executor(recorder_worker, recorder.feed, sample)
@@ -1239,13 +1239,13 @@ class VoiceConversation:
                 if heard.ended is not None or heard.transcript_lost:
                     call_input = call.input if playback else None
                     # A turn the user talks straight through keeps its gate, so the rest of the utterance flows on.
-                    speech_continues = voicing
+                    speech_continues_until = endpoint_at + CALL_RECOVERY_PAUSE_S if voicing else 0.0
                     if not voicing:
                         self._renew_call_input()
                 elif recorder.active:
-                    speech_continues = False
-                elif quiet_s >= CALL_RECOVERY_PAUSE_S:
-                    speech_continues = False
+                    speech_continues_until = 0.0
+                elif quiet_s >= CALL_RECOVERY_PAUSE_S or endpoint_at >= speech_continues_until > 0:
+                    speech_continues_until = 0.0
                     if call.input.heard_speech:
                         self._renew_call_input()
             elif (speaking and heard_over and recorder.supports_partials
@@ -1294,7 +1294,8 @@ class VoiceConversation:
                                  bearing, current.generation)
 
         def recording_active():
-            return recorder.active or speech_continues or (voice_gate is not None and voice_gate.active)
+            return (recorder.active or time.monotonic() < speech_continues_until
+                    or (voice_gate is not None and voice_gate.active))
 
         async def record(sample, *, captured_at, send_to_call=True):
             if voice_gate is None:

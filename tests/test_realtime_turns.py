@@ -1417,6 +1417,61 @@ def test_after_a_barge_in_muse_s_next_reply_never_streams_back_into_muse(monkeyp
     assert heard == [(1, turn_ends == "mid-speech", 0, True, True)]
 
 
+def test_room_noise_after_a_turn_the_user_talked_through_does_not_hold_the_window_open(monkeypatch):
+    """The companion ends the user's turn on its last voiced frame. Afterwards the room has only a click every half
+    second, never three voiced frames in a row, so no turn opens; once Muse has answered, the window still closes."""
+    from reachy_muse.protocol import HearEndpoint, HearPartial, encode
+
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    answers = []
+
+    async def answer(sdk, emit, script):
+        answers.append(lambda: reply_events(sdk, emit, "r2", REPLY, voiced(.3)))
+        reply_events(sdk, emit, "r1", REPLY, voiced(.5))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls)
+    link = companion_hearing(conversation)
+    click = np.zeros(CHUNK, np.float32)
+    click[140:180] = VOICE_SAMPLE
+    heard = []
+
+    async def clicks(seconds):
+        for _ in range(round(seconds / .5)):
+            rig.hardware.samples.put(click.copy())
+            await room(rig, .48)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        while not ("muse" in played(rig.recording.events) and not call.audible):
+            await room(rig, .04)
+        streams = []
+        for _ in range(30):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            for stream in [stream for stream in link._connection.hearing if stream not in streams]:
+                streams.append(stream)
+                link._receive(link._connection, encode(HearPartial(stream, 1, "And what about Sunday?")))
+        link._receive(link._connection, encode(HearEndpoint(streams[0], "And what about Sunday?", False)))
+        rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+        await asyncio.sleep(CHUNK / 16000)
+        clicking = asyncio.create_task(clicks(8))
+        while call.turns < 2:
+            await asyncio.sleep(.01)
+        answers[0]()
+        await clicking
+        closed = voice._wake_deadline is None
+        before = len(calls.frames)
+        await speak_live(rig)
+        heard.append((closed, voiced_ms(calls.frames[before:])))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking"), timeout=40)
+    assert heard == [(True, 0)]
+
+
 def test_while_muse_works_past_the_follow_up_window_the_room_stops_reaching_muse_but_the_call_stays(monkeypatch):
     rig = rig_for(monkeypatch)
     calls = ScriptedCalls(answer=keeps_working)
