@@ -535,8 +535,11 @@ without a label or after the listening window closes. Muse often asks before the
 companion has labeled the request, so Reachy waits up to a second for the label,
 and not at all when the companion labels no voices; a cough or another sound too
 short to be a request does not count. The count comes from the latest face
-snapshot if it is at most 10 seconds old; the command takes no picture. It logs
-one line, such as `Reachy people speaker=owner visible=2`.
+snapshot if it is at most 10 seconds old. Detection pauses while anyone speaks,
+so in a call that snapshot is often older; then Reachy asks the face worker for
+one fresh pass while it waits for the label, as a greeting does, and the count is
+null if the pass does not finish within 300 ms. It logs one line, such as
+`Reachy people speaker=owner visible=2`.
 
 Muse can also turn Reachy with `reachy.look_at`. Target `speaker` turns toward
 the bearing latched for the latest request Muse is answering, or the bearing

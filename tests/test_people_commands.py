@@ -246,25 +246,39 @@ def test_muse_learns_whether_its_owner_asked_and_how_many_people_reachy_sees(peo
     assert_allowed(rig.session.results, caplog)
 
 
-@pytest.mark.parametrize("faces, age, visible, seen", [
-    ([(30, .35), (-25, .12)], 0, 2, 0),
-    ([(30, .35)], 0, 1, 0),
-    ([], 0, 0, 0),
-    ([(30, .35), (-25, .12)], 9, 2, 9),
-    ([(30, .35), (-25, .12)], 11, None, None),
-    (None, None, None, None),
+@pytest.mark.parametrize("faces, age, camera, visible, seen", [
+    ([(30, .35), (-25, .12)], 0, "on", 2, 0),
+    ([(30, .35)], 0, "on", 1, 0),
+    ([], 0, "on", 0, 0),
+    ([(30, .35), (-25, .12)], 9, "on", 2, 9),
+    ([(30, .35), (-25, .12)], 11, "on", 2, 0),
+    ([(30, .35), (-25, .12)], 11, "off", None, None),
+    ([(30, .35), (-25, .12)], 11, "slow", None, None),
+    ([(30, .35), (-25, .12)], None, "on", 2, 0),
+    ([(30, .35), (-25, .12)], None, "off", None, None),
 ])
-def test_visible_people_come_from_a_face_snapshot_at_most_about_ten_seconds_old(people, caplog, faces, age,
-                                                                                visible, seen):
+def test_visible_people_come_from_a_camera_look_at_most_about_ten_seconds_old(people, caplog, faces, age, camera,
+                                                                              visible, seen):
+    """A look at most about 10 seconds old counts as it is. Without one, Reachy looks again, as for a greeting,
+    within the second it may wait for the label; the count stays null when the camera is off or that look does
+    not finish in time."""
     rig, controller, robot, scene = people
     caplog.set_level("INFO")
+    looked = []
 
     async def ask(ordinal):
         await labeled(rig, caplog, SpeakerLabel.OWNER)
-        if faces is not None:
-            scene.faces, scene.age = faces, age
+        scene.faces = faces
+        if age is not None:
+            scene.age = age
             assert len((await asyncio.to_thread(controller.refresh_faces)).faces) == len(faces)
+            scene.age = 0
+        scene.camera = camera != "off"
+        scene.before_capture = (lambda: time.sleep(.5)) if camera == "slow" else None
+        passes, started = scene.passes, time.monotonic()
         await rig.session.invoke("reachy.people")
+        looked.append((scene.passes - passes, time.monotonic() - started))
+        scene.camera, scene.before_capture = True, None
 
     muse = Muse(ask)
 
@@ -277,6 +291,8 @@ def test_visible_people_come_from_a_face_snapshot_at_most_about_ten_seconds_old(
         {"speaker": "owner", "people_visible": visible, "seen_s_ago": seen}]
     assert logged(caplog, "Reachy people") == [
         f"Reachy people speaker=owner visible={'none' if visible is None else visible}"]
+    assert len(looked) == 1 and looked[0][0] == (age in (None, 11) and camera == "on")
+    assert looked[0][1] < .5
     assert_allowed(rig.session.results, caplog)
 
 
@@ -298,8 +314,8 @@ def test_a_label_from_a_closed_listening_window_is_unknown(people, caplog):
 
     converse(rig, muse.calls, companion(), user)
     assert [result["payload"]["speaker"] for result in rig.session.results] == ["owner", "unknown"]
-    assert logged(caplog, "Reachy people") == ["Reachy people speaker=owner visible=none",
-                                               "Reachy people speaker=unknown visible=none"]
+    assert logged(caplog, "Reachy people") == ["Reachy people speaker=owner visible=2",
+                                               "Reachy people speaker=unknown visible=2"]
     assert_allowed(rig.session.results, caplog)
 
 
@@ -375,7 +391,7 @@ def test_a_sound_that_never_becomes_a_request_leaves_the_owners_request_standing
 
     converse(rig, muse.calls, companion(), user)
     assert [result["payload"] for result in rig.session.results] == [
-        {"speaker": "owner", "people_visible": None, "seen_s_ago": None}, {"outcome": "turned"}]
+        {"speaker": "owner", "people_visible": 2, "seen_s_ago": 0}, {"outcome": "turned"}]
     assert_allowed(rig.session.results, caplog)
 
 
@@ -400,7 +416,7 @@ def test_muse_asking_before_reachys_own_end_of_the_request_hears_about_it(people
     converse(rig, muse.calls, companion(), user, silence_s=1.2)
     assert asked == [0]
     assert [result["payload"] for result in rig.session.results] == [
-        {"speaker": "owner", "people_visible": None, "seen_s_ago": None}, {"outcome": "turned"}]
+        {"speaker": "owner", "people_visible": 2, "seen_s_ago": 0}, {"outcome": "turned"}]
     assert_allowed(rig.session.results, caplog)
 
 

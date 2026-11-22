@@ -62,10 +62,10 @@ class _Heard:
 
 def people_result(speaker: str, snapshot) -> dict:
     """The reachy.people payload: ``speaker`` and the faces of a snapshot at most about 10 seconds old."""
-    age = time.monotonic() - snapshot.captured_at if snapshot is not None else math.inf
-    if not 0 <= age <= _VISIBLE_MAX_AGE_S:
+    if not _within(snapshot, _VISIBLE_MAX_AGE_S):
         return {"speaker": speaker, "people_visible": None, "seen_s_ago": None}
-    return {"speaker": speaker, "people_visible": len(snapshot.faces), "seen_s_ago": round(age)}
+    return {"speaker": speaker, "people_visible": len(snapshot.faces),
+            "seen_s_ago": round(time.monotonic() - snapshot.captured_at)}
 
 
 class PersonGaze:
@@ -136,19 +136,28 @@ class PersonGaze:
 
     async def people(self, deadline: float, activity: MuseActivity | None, chat: dict[str, str] | None) -> dict:
         """Who made the requests Muse is answering, waiting up to a second for the companion's labels of them,
-        and the faces Reachy saw last.
+        and the faces of Reachy's latest camera look; when that is over about 10 seconds old, Reachy looks again
+        meanwhile, within the same second.
 
         Their known labels must agree; a request labeled unknown, or not labeled by then, counts for nothing.
         """
         asked_at = time.monotonic()
         until = min(asked_at + _LABEL_WAIT_S, deadline)
-        requests = self._answering(asked_at, activity, chat)
-        while any(heard.awaiting_label for heard in requests) and time.monotonic() < until:
-            await asyncio.sleep(.05)
+        snapshot = self.hardware.face_snapshot()
+        looking = (None if _within(snapshot, _VISIBLE_MAX_AGE_S)
+                   else asyncio.ensure_future(self._fresh_pass(min(_FRESH_PASS_S, until - asked_at))))
+        try:
             requests = self._answering(asked_at, activity, chat)
+            while any(heard.awaiting_label for heard in requests) and time.monotonic() < until:
+                await asyncio.sleep(.05)
+                requests = self._answering(asked_at, activity, chat)
+            if looking is not None:
+                snapshot = await looking or snapshot
+        finally:
+            if looking is not None:
+                looking.cancel()
         labels = {heard.label for heard in requests}.intersection(_SPEAKERS)
-        return people_result(_SPEAKERS[labels.pop()] if len(labels) == 1 else "unknown",
-                             self.hardware.face_snapshot())
+        return people_result(_SPEAKERS[labels.pop()] if len(labels) == 1 else "unknown", snapshot)
 
     async def look_at(self, target: str, deadline: float, activity: MuseActivity | None,
                       chat: dict[str, str] | None) -> str:
@@ -210,17 +219,17 @@ class PersonGaze:
             return "no_speaker_bearing", "none", 0
         cached = self.hardware.face_snapshot()
         view, source = cached, "snapshot"
-        if not _recent(view):
+        if not _within(view, _SNAPSHOT_MAX_AGE_S):
             if self._choosing:
                 return "busy", "none", 0
             self._choosing = True
             try:
-                view, source = await self._fresh_pass(), "fresh"
+                view, source = await self._fresh_pass(_FRESH_PASS_S), "fresh"
             finally:
                 self._choosing = False
         if generation != self._admitted_generation:
             return "busy", "none", 0
-        if not _recent(view):
+        if not _within(view, _SNAPSHOT_MAX_AGE_S):
             view = None
         faces = view.faces if view is not None else ()
         speaker = math.pi / 2 - speaker_bearing
@@ -242,10 +251,12 @@ class PersonGaze:
             self._holding = True
         return "turned" if turned else "busy", source, len(faces)
 
-    async def _fresh_pass(self):
+    async def _fresh_pass(self, within_s: float):
+        """One camera pass of at most ``within_s``, or None."""
+        if within_s <= 0:
+            return None
         try:
-            return await asyncio.wait_for(asyncio.to_thread(self.hardware.refresh_faces, _FRESH_PASS_S),
-                                          _FRESH_PASS_S)
+            return await asyncio.wait_for(asyncio.to_thread(self.hardware.refresh_faces, within_s), within_s)
         except asyncio.TimeoutError:
             return None
 
@@ -254,8 +265,8 @@ class PersonGaze:
         log.info("Reachy gaze request outcome=%s source=%s faces=%d", outcome, source, faces)
 
 
-def _recent(snapshot) -> bool:
-    return snapshot is not None and 0 <= time.monotonic() - snapshot.captured_at <= _SNAPSHOT_MAX_AGE_S
+def _within(snapshot, max_age_s: float) -> bool:
+    return snapshot is not None and 0 <= time.monotonic() - snapshot.captured_at <= max_age_s
 
 
 def _answered(requests: list[_Heard], activity: MuseActivity, asked_at: float) -> list[_Heard]:

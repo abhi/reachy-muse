@@ -2823,7 +2823,7 @@ class VoiceConversation:
                 return
 
     async def people(self, deadline: float) -> dict:
-        """Muse's reachy.people: who made the requests Muse is answering, and the faces Reachy saw last."""
+        """Muse's reachy.people: who made the requests Muse is answering, and how many faces Reachy sees."""
         return await self._gaze.people(deadline, *self._answering())
 
     async def look_at(self, target: str, deadline: float) -> str:

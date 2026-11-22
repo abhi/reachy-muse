@@ -140,9 +140,13 @@ It also reports `unknown` after Reachy lets its requests go: when the listening
 window closes, Reachy sleeps or is hushed, or the call to Muse drops. A label is
 a voice match, not proof of identity, and nothing is gated on it.
 `people_visible` counts the faces in the latest face snapshot and `seen_s_ago`
-gives its rounded age, when that snapshot is at most 10 seconds old. The command
-never moves Reachy or reads the camera. It logs one line with fixed words, such
-as `Reachy people speaker=owner visible=2`.
+gives its rounded age, when that snapshot is at most 10 seconds old. Face
+detection pauses while anyone speaks, so in a call the snapshot is often older;
+then the command takes the same bounded camera pass as `reachy.look_at` with
+`other`, at most 300 ms, while it waits for the labels and within the same
+second. If that pass does not finish, both fields are null. The command never
+moves Reachy. It logs one line with fixed words, such as
+`Reachy people speaker=owner visible=2`.
 
 `reachy.look_at` uses the bearing latched for the latest of those requests, or,
 for one still being spoken, the bearing heard so far, without waiting. With
