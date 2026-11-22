@@ -2275,6 +2275,7 @@ class VoiceConversation:
             log.info("No words recognized in microphone input; listening again")
             return TurnOutcome.EMPTY
         if self.wake_detector is not None:
+            said = text
             text, prefix, _ = self._wake_prefix(text, strip_required)
             self._note_wake_phrase(prefix, timeline)
             if strip_required:
@@ -2284,7 +2285,9 @@ class VoiceConversation:
                          else "request" if question else "wake_only")
             if not text:
                 self._observe_arbitration(text, held)
-                self._open_wake_request()
+                # Reachy's own line naming the wake phrase, heard back, addresses nobody.
+                if not is_echo(said, heard_over):
+                    self._open_wake_request()
                 if not quiet:
                     self._moments.cue(Moment.GREETING)
                     await self._announce(cue, started=started, defer_playback=defer_playback)

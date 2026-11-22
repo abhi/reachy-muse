@@ -1131,3 +1131,30 @@ def test_an_addressed_question_about_the_user_s_own_things_takes_no_photo(monkey
 
     events = run(rig, conversation, user)
     assert (rig.hardware.captures, [event["muse"] for event in sent(events)]) == ([], ["send_chat"])
+
+
+def test_reachy_s_own_hey_muse_heard_back_never_makes_the_next_request_spoken_to_it(monkeypatch, caplog):
+    from test_device_command_turns import LongVoice
+    from test_pins import Wake
+
+    caplog.set_level(logging.INFO)
+    rig = photo_rig(monkeypatch, [PHOTO])
+    rig.hardware.chunk_s = .1
+    rig.hardware.echo_cancelled_input = True
+    conversation = service(rig, answers("Just say hey Muse whenever you need me.", "Okay."),
+                           Transcripts("Hey Muse, how do I wake you?", "Hey Muse.", "Take a picture of us."),
+                           voice=LongVoice(rig.recording, chunks=20), wake_detector=Wake(), wake_timeout_s=30,
+                           photo_requests=True)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: played(rig.recording.events), 5)
+        rig.say()
+        await rig.quiet("listening", "idle")
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: len(sent(rig.recording.events)) == 2, 5)
+
+    events = run(rig, conversation, user, rest=("listening", "idle"))
+    assert [(event["muse"], event["text"]) for event in sent(events)] == [
+        ("send_chat", "how do I wake you?"), ("send_chat", "Take a picture of us.")]
+    assert (rig.hardware.captures, photo_lines(caplog)) == ([], [])
