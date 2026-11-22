@@ -46,10 +46,16 @@ TOPIC_WORDS = 6
 
 
 _WORD = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
+_HYPHENATED_WORD = re.compile(r"[^\W_]+(?:['-][^\W_]+)*")
 
 
 def spoken_words(text: str) -> List[str]:
     return _WORD.findall(text.replace("’", "'").casefold())
+
+
+def word_count(text: str) -> int:
+    """How many words ``text`` holds, counting a hyphenated word such as "mm-hmm" or "uh-huh" as one."""
+    return len(_HYPHENATED_WORD.findall(text.replace("’", "'")))
 
 
 def words_after(text: str, said: List[str]) -> str:

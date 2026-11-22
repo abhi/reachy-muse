@@ -30,7 +30,7 @@ from musegadget.streaming import HTTPStatusError
 from reachy_muse.motion.reply_alignment import SAMPLE_RATE
 from reachy_muse.motion.reply_motion import Mark, ReplyMotion
 from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlayback
-from reachy_muse.follow_up import FollowUp, classify_follow_up, repeats_playback, spoken_words, words_after
+from reachy_muse.follow_up import FollowUp, classify_follow_up, repeats_playback, spoken_words, word_count, words_after
 
 log = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ class CallInput:
         return self.confirmed
 
     def _distinct(self, text: str, heard_over: tuple[str, ...]) -> bool:
-        enough_words = len(spoken_words(text)) >= 2 or classify_follow_up(text) in (
+        enough_words = word_count(text) >= 2 or classify_follow_up(text) in (
             FollowUp.CANCEL, FollowUp.SILENCE)
         return bool(enough_words and heard_over and not repeats_playback(text, heard_over))
 
