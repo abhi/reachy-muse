@@ -36,3 +36,20 @@ def test_longest_escaped_owner_place_stays_within_registration_budget():
     message = service.describe().register_message("00000000-0000-0000-0000-000000000000")
     assert len(encode_message(message)) == 7232
     assert len(encode_message(message)) < 8192
+
+
+def test_photo_requests_tell_muse_how_photos_arrive_within_the_byte_budget():
+    def registration(**fields):
+        service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=object(), backends=lambda _: None,
+                                **fields)
+        return service.describe().register_message("00000000-0000-0000-0000-000000000000")
+
+    plain, photos = registration(), registration(photo_requests=True)
+    say = plain["params"]["commands_v2"]["reachy.say"]
+    assert photos["params"]["commands_v2"] == {**plain["params"]["commands_v2"], "reachy.say": {
+        **say, "description": say["description"] + (
+            " When the user asks Reachy itself to take a photo or what it sees, Reachy sends you one photo with "
+            "their words as a chat message and speaks your reply. You cannot ask Reachy for a photo.")}}
+    assert len(photos["params"]["commands_v2"]["reachy.say"]["description"].encode("utf-8")) == 1657
+    assert len(encode_message(photos)) == 7132
+    assert len(encode_message(registration(photo_requests=True, place='"' * 64))) == 7418 < 8192

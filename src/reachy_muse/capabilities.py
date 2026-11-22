@@ -51,6 +51,7 @@ class Endpoint:
     audio: bytes                   # the turn as a 16 kHz mono PCM16 WAV
     text: Optional[str]            # None: not transcribed here; "": nothing intelligible
     forced: bool = False
+    partial: bool = False          # the words are a streaming partial, which can lack the utterance's tail
 
 
 @dataclass(frozen=True)

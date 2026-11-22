@@ -59,6 +59,18 @@ def test_guide_explains_presence_first_delivery_and_recipient_limit():
     assert "These commands grant no additional permissions." in REACHY_GUIDE
 
 
+def test_photo_requests_add_a_photos_section_to_the_guide():
+    plain = reachy_description("homelink-abcdef", GuidedDescription, place="office").guide
+    photos = reachy_description("homelink-abcdef", GuidedDescription, place="office", photos=True).guide
+    assert "photo" not in plain
+    assert photos == REACHY_GUIDE + (
+        "\n## Photos\n\nWhen the user asks Reachy itself to take a photo or what it sees, Reachy sends you one photo "
+        "with their words as a chat message and speaks your reply. You cannot ask Reachy for a photo.\n"
+        '\nOwner-configured place: "office".\n')
+    assert len(reachy_description("homelink-abcdef", GuidedDescription, place="x" * 64, photos=True)
+               .guide.encode()) <= 4096
+
+
 def test_the_people_trigger_reaches_muse_with_or_without_the_guide_and_promises_no_names():
     description = COMMAND_SPECS["reachy.people"]["description"]
     trigger = ("Call reachy.people before answering when it matters whether you're talking to Reachy's owner or "

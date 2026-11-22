@@ -10,18 +10,22 @@ import dataclasses
 from musegadget.link_client import DeviceDescription
 
 from reachy_muse import __version__
-from reachy_muse.contract.commands import COMMAND_SPECS
+from reachy_muse.contract.commands import COMMAND_SPECS, HOW_PHOTOS_ARRIVE
 from reachy_muse.contract.guide import MODEL_ID, MODEL_NAME, owner_place, reachy_guide
 
 
-def reachy_description(node_id: str, description=DeviceDescription, *, place: str | None = None) -> DeviceDescription:
+def reachy_description(node_id: str, description=DeviceDescription, *, place: str | None = None,
+                       photos: bool = False) -> DeviceDescription:
     """Reachy's commands, plus its model and device guide when the Muse SDK can register them."""
     fields = {field.name for field in dataclasses.fields(description)}
-    extra = {"model_id": MODEL_ID, "model_name": MODEL_NAME, "guide": reachy_guide(place)}
+    extra = {"model_id": MODEL_ID, "model_name": MODEL_NAME, "guide": reachy_guide(place, photos=photos)}
     commands = COMMAND_SPECS
     if place is not None:
         presence = COMMAND_SPECS["reachy.presence"]
-        commands = {**COMMAND_SPECS, "reachy.presence": {
+        commands = {**commands, "reachy.presence": {
             **presence, "description": presence["description"] + " " + owner_place(place)}}
+    if photos:
+        say = COMMAND_SPECS["reachy.say"]
+        commands = {**commands, "reachy.say": {**say, "description": say["description"] + " " + HOW_PHOTOS_ARRIVE}}
     return description(node_id, "Reachy Mini", __version__, commands,
                        **{key: value for key, value in extra.items() if key in fields})
