@@ -1253,10 +1253,10 @@ def echo_of(rig, seconds):
      ["Realtime command transcript=arrived words=5 wake_prefix=none outcome=none drop=none"]),
     ("voice", .3, "Okay.", False,
      ["Realtime command transcript=arrived words=1 wake_prefix=none outcome=none drop=barge_in"]),
-    ("voice", .5, "Mm-hmm.", False,
-     ["Realtime command transcript=arrived words=1 wake_prefix=none outcome=none drop=barge_in"]),
-    ("voice", .5, "Uh-huh.", False,
-     ["Realtime command transcript=arrived words=1 wake_prefix=none outcome=none drop=barge_in"]),
+    ("voice", .5, "No-no-no!", True,
+     ["Realtime command transcript=arrived words=1 wake_prefix=none outcome=none drop=none"]),
+    ("voice", .5, "Wait-wait!", True,
+     ["Realtime command transcript=arrived words=1 wake_prefix=none outcome=none drop=none"]),
     ("cough", .16, "", False, []),
     ("echo", .5, "it will be sunny tomorrow", False,
      ["Realtime command transcript=arrived words=5 wake_prefix=none outcome=none drop=barge_in"]),
@@ -1300,6 +1300,47 @@ def test_while_muse_talks_past_the_wake_deadline_only_confirmed_speech_reaches_i
     assert [line for line in caplog.messages if line.startswith("Realtime command ")] == diagnostics
     assert set(played(events)) == {"muse"}
     assert sent_to_muse(events) == []
+
+
+BACK_CHANNELS = ("Mm-hmm.", "Mm hmm.", "Mmhmm.", "Mhm.", "M-hm.", "M hm.", "Uh-huh.", "Uh huh.", "Uhhuh.",
+                 "Uh-uh.", "Uh uh.", "Uhuh.", "Uh-oh.", "Uh oh.", "Uhoh.", "Hmm.", "Mm.", "Uh.", "Um.", "Ah.", "Oh.")
+
+
+def test_back_channel_sounds_over_muse_s_reply_never_cut_it_off(monkeypatch, caplog):
+    """Each back-channel sound, written with a hyphen, a space or neither, as half a second of voice over Muse."""
+    caplog.set_level("INFO", logger="reachy_muse.conversation")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+
+    async def answer(sdk, emit, script):
+        reply_events(sdk, emit, "r1", REPLY, voiced(22))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, StreamingTranscripts("Tell me a long story.", *BACK_CHANNELS), calls,
+                                    wake_timeout_s=30)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        caplog.clear()
+        before = len(calls.frames)
+        for _ in BACK_CHANNELS:
+            for _ in range(25):
+                rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+                await asyncio.sleep(CHUNK / 16000)
+            await room(rig, .3)
+        heard.append((voiced_ms(calls.frames[before:]), calls.barge_ins, call.audible))
+        await rig.wait_until_or_timeout(lambda: not call.audible, 8)
+        heard.append(sum(len(chunk) for chunk in rig.hardware.played) / rig.hardware.output_sample_rate)
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking"), timeout=45)
+    assert heard[0] == (0, 0, True)
+    assert heard[1] == pytest.approx(22, abs=.003)
+    assert [line for line in caplog.messages if line.startswith("Realtime command ")] == [
+        f"Realtime command transcript=arrived words={len(sound.split())} wake_prefix=none outcome=none drop=barge_in"
+        for sound in BACK_CHANNELS]
 
 
 @pytest.mark.parametrize("muse, barge_ins, pending", [("works", 0, [1, 2, 3]), ("talks", 1, [2, 3]),

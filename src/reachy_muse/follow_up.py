@@ -46,7 +46,8 @@ TOPIC_WORDS = 6
 
 
 _WORD = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
-_HYPHENATED_WORD = re.compile(r"[^\W_]+(?:['-][^\W_]+)*")
+# Back-channel sounds, with any hyphen or space between their parts taken out: "mm-hmm", "mm hmm" and "mmhmm" alike.
+_BACK_CHANNELS = frozenset(("mmhmm", "mhm", "uhhuh", "uhuh", "uhoh", "hmm", "mm", "uh", "um", "ah", "oh"))
 
 
 def spoken_words(text: str) -> List[str]:
@@ -54,8 +55,18 @@ def spoken_words(text: str) -> List[str]:
 
 
 def word_count(text: str) -> int:
-    """How many words ``text`` holds, counting a hyphenated word such as "mm-hmm" or "uh-huh" as one."""
-    return len(_HYPHENATED_WORD.findall(text.replace("’", "'")))
+    """How many words ``text`` holds, a back-channel sound such as "mm-hmm" or "uh huh" counting as none."""
+    words = spoken_words(text)
+    count = start = 0
+    while start < len(words):
+        if "".join(words[start:start + 2]) in _BACK_CHANNELS:
+            start += 2
+        elif words[start] in _BACK_CHANNELS:
+            start += 1
+        else:
+            count += 1
+            start += 1
+    return count
 
 
 def words_after(text: str, said: List[str]) -> str:
