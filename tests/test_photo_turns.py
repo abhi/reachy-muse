@@ -1007,3 +1007,114 @@ def test_detail_added_while_the_photo_is_taken_goes_to_muse_with_the_photo(monke
     assert [(event["muse"], event["text"]) for event in sent(events)] == [
         ("send_image", PHOTO_MESSAGE.format("Reachy, what am I holding?")), ("send_chat", "Actually, the red one.")]
     assert "Reachy sent Muse more detail for the running request" in caplog.messages
+
+
+FIRST_AND_SECOND = pytest.mark.parametrize("first, second, photo", [
+    ("What do you see?", "What do you see?", True),           # only the first request after the wake
+    ("What's the weather tomorrow?", "Take a picture of us.", False),  # a television's line comes second
+])
+
+
+@FIRST_AND_SECOND
+def test_the_first_request_after_hey_muse_and_yes_is_spoken_to_reachy_and_no_later_one(
+        monkeypatch, caplog, first, second, photo):
+    from test_pins import Wake
+
+    caplog.set_level(logging.INFO)
+    rig = photo_rig(monkeypatch, [PHOTO])
+    conversation = service(rig, answers("A desk.", "It is a desk."), Transcripts("Hey Muse.", first, second),
+                           wake_detector=Wake(), wake_timeout_s=30, photo_requests=True)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "tts:Yes?" in played(rig.recording.events), 5)
+        await rig.quiet("listening")
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: "tts:A desk." in played(rig.recording.events), 5)
+        await rig.quiet("listening")
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: "tts:It is a desk." in played(rig.recording.events), 5)
+
+    events = run(rig, conversation, user, rest=("listening",))
+    first_sent = ("send_image", PHOTO_MESSAGE.format(first)) if photo else ("send_chat", first)
+    assert [(event["muse"], event["text"]) for event in sent(events)] == [first_sent, ("send_chat", second)]
+    assert rig.hardware.captures == ([2.0] if photo else [])
+    assert [fields(line)["outcome"] for line in photo_lines(caplog)] == (["sent"] if photo else [])
+
+
+def test_hey_muse_alone_inside_an_open_window_makes_the_next_request_first_again(monkeypatch):
+    from test_pins import Wake
+
+    rig = photo_rig(monkeypatch, [PHOTO])
+    conversation = service(rig, answers("Sunny tomorrow.", "A desk."),
+                           Transcripts("Hey Muse, what's the weather tomorrow?", "Hey Muse.", "What do you see?"),
+                           wake_detector=Wake(), wake_timeout_s=30, photo_requests=True)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "tts:Sunny tomorrow." in played(rig.recording.events), 5)
+        await rig.quiet("listening")
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: "tts:Yes?" in played(rig.recording.events), 5)
+        await rig.quiet("listening")
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: "tts:A desk." in played(rig.recording.events), 5)
+
+    events = run(rig, conversation, user, rest=("listening",))
+    assert [(event["muse"], event["text"]) for event in sent(events)] == [
+        ("send_chat", "what's the weather tomorrow?"), ("send_image", PHOTO_MESSAGE.format("What do you see?"))]
+    assert rig.hardware.captures == [2.0]
+
+
+@realtime
+@FIRST_AND_SECOND
+def test_in_a_call_the_first_request_after_hey_muse_is_spoken_to_reachy_and_no_later_one(
+        monkeypatch, caplog, first, second, photo):
+    caplog.set_level(logging.INFO)
+    rig = call_rig(monkeypatch, [PHOTO])
+    calls = ScriptedCalls(reply="Yes?", reply_s=.3)
+    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse.", first, second), calls,
+                                    muse=answers("A desk."), photo_requests=True, wake_timeout_s=8)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(
+            lambda: any(line.startswith("Realtime turn ordinal=1 ") for line in caplog.messages), 8)
+        await rig.quiet("thinking", "listening")
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: len(realtime_command_lines(caplog)) == 2, 5)
+        if photo:
+            await rig.wait_until_or_timeout(lambda: "tts:A desk." in played(rig.recording.events), 8)
+        await rig.quiet("thinking", "listening")
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: len(realtime_command_lines(caplog)) == 3, 5)
+
+    events = run(rig, conversation, user, rest=("thinking", "listening", "idle"))
+    assert [line.split(" outcome=")[1] for line in realtime_command_lines(caplog)] == [
+        "none drop=none", ("PHOTO" if photo else "none") + " drop=none", "none drop=none"]
+    assert [event["muse"] for event in sent(events)] == (["send_image"] if photo else [])
+    assert rig.hardware.captures == ([2.0] if photo else [])
+    assert [fields(line)["outcome"] for line in photo_lines(caplog)] == (["sent"] if photo else [])
+
+
+def test_a_wave_and_its_yes_do_not_make_the_next_request_spoken_to_reachy(monkeypatch, caplog):
+    from test_pins import Wake
+    from test_wave_conversation import WaveCamera
+
+    caplog.set_level(logging.INFO)
+    rig = photo_rig(monkeypatch, [PHOTO])
+    camera = WaveCamera(rig.hardware)
+    conversation = service(rig, answers("I can't see anything."), Transcripts("What do you see?"),
+                           wake_detector=Wake(), wave_wake=True, wake_timeout_s=30, photo_requests=True)
+
+    async def user():
+        assert camera.active is True
+        camera.pending = True
+        await rig.wait_until_or_timeout(lambda: "tts:Yes?" in played(rig.recording.events), 5)
+        await rig.quiet("listening", "idle")
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: "tts:I can't see anything." in played(rig.recording.events), 5)
+
+    events = run(rig, conversation, user, rest=("listening", "idle"))
+    assert [(event["muse"], event["text"]) for event in sent(events)] == [("send_chat", "What do you see?")]
+    assert (rig.hardware.captures, photo_lines(caplog)) == ([], [])

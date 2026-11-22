@@ -626,6 +626,8 @@ class VoiceConversation:
         self.photo_requests = photo_requests
         # While a photo turn runs: set by a cancel heard before the photo is sent, which then stays home.
         self._photo_cancel: asyncio.Event | None = None
+        # The wake phrase opened or refreshed the window, and no request has followed it yet.
+        self._wake_request_open = False
         self._startup = startup or StartupTimeline()
         self._ready = asyncio.Event()
         self.hardware = hardware
@@ -2016,6 +2018,7 @@ class VoiceConversation:
                 if isinstance(text, TurnOutcome):
                     completed = True
                     return text
+                self._claim_wake_request(timeline)
                 if gaze_generation is not None:
                     self._gaze.admit(gaze_generation)
                 if text is not None:
@@ -2115,18 +2118,33 @@ class VoiceConversation:
     def _photo_requested(self, text: str | None, timeline: TurnTimeline) -> bool:
         """Whether this turn asks Reachy for a photo it may take.
 
-        The request must address Reachy in its own words: the utterance whose wake phrase woke Reachy, or words
-        that open with the wake phrase or open or close by naming Muse or Reachy. A room's or a television's
-        words never do. And the user must have finished speaking, or the request's end may still be coming.
+        The request must address Reachy: the first request after the wake phrase opened or refreshed the
+        window, whether said in the same breath or after Reachy's "Yes?", or words that open with the wake
+        phrase or open or close by naming Muse or Reachy. A later unnamed request, such as a television's,
+        never does, and neither does a wave. The user must also have finished speaking, or the request's end
+        may still be coming.
         """
-        return (self.photo_requests and text is not None and photo_requested(text)
-                and ("wake" in timeline.marks or timeline.facts.get("wake_phrase") == "said" or names_reachy(text))
-                and not self._recording_active() and photo_allowed(timeline))
+        if not (self.photo_requests and text is not None and photo_requested(text)):
+            return False
+        addressed = ("wake" in timeline.marks or timeline.facts.get("wake_request") == "first"
+                     or timeline.facts.get("wake_phrase") == "said" or names_reachy(text))
+        return addressed and not self._recording_active() and photo_allowed(timeline)
 
     def _note_wake_phrase(self, prefix: str, timeline: TurnTimeline | None) -> None:
         """Remember that this utterance opened with the wake phrase, which stripping removes from its words."""
         if self.photo_requests and prefix == "exact" and timeline is not None:
             timeline.facts["wake_phrase"] = "said"
+
+    def _open_wake_request(self) -> None:
+        """The wake phrase opened or refreshed the window: the next request is spoken to Reachy."""
+        if self.photo_requests:
+            self._wake_request_open = True
+
+    def _claim_wake_request(self, timeline: TurnTimeline | None) -> None:
+        """A request was heard; only the first one after the wake phrase is spoken to Reachy by it."""
+        if self._wake_request_open and timeline is not None:
+            self._wake_request_open = False
+            timeline.facts["wake_request"] = "first"
 
     async def _photo_turn(self, request: PhotoRequest, wav: bytes, *, started: float, defer_playback: bool,
                           timeline: TurnTimeline) -> TurnOutcome:
@@ -2249,6 +2267,7 @@ class VoiceConversation:
             self._observe_arbitration(text, held)
             log.info("Speech recognition outcome empty")
             if self.wake_detector is not None and strip_required:
+                self._open_wake_request()
                 if not quiet:
                     self._moments.cue(Moment.GREETING)
                     await self._announce(cue, started=started, defer_playback=defer_playback)
@@ -2265,6 +2284,7 @@ class VoiceConversation:
                          else "request" if question else "wake_only")
             if not text:
                 self._observe_arbitration(text, held)
+                self._open_wake_request()
                 if not quiet:
                     self._moments.cue(Moment.GREETING)
                     await self._announce(cue, started=started, defer_playback=defer_playback)
@@ -2613,6 +2633,7 @@ class VoiceConversation:
                                 held=held, timeline=request.timeline)
         if isinstance(text, TurnOutcome):
             return held
+        self._claim_wake_request(request.timeline)
         self._gaze.admit(request.gaze_generation)
         kind = FollowUp.NEW if text is None else classify_follow_up(text)
         # A one-word command ("goodnight", "louder") is obeyed before one-word asides are dropped.
@@ -2747,6 +2768,10 @@ class VoiceConversation:
                 self._log_realtime_command(endpoint.text, decision,
                                            transcript=request.timeline.facts.get("command_transcript"), drop="echo")
             return TurnOutcome.EMPTY
+        if text.strip():
+            self._claim_wake_request(request.timeline)
+        elif prefix != "none":
+            self._open_wake_request()
         self._presence.mark("voice", started)
         command = await self._obey(text, started, request.timeline) if text.strip() else None
         photo = command is None and not endpoint.partial and self._photo_requested(text, request.timeline)
@@ -2881,6 +2906,7 @@ class VoiceConversation:
         await self._announce(CALL_LOST_CUE, started=None, defer_playback=True)
 
     def _wake_window_closed(self) -> None:
+        self._wake_request_open = False
         self._gaze.release()
         self._wake_has_gaze = False
         self._lost_call = None
@@ -3023,6 +3049,9 @@ class VoiceConversation:
         self._wake_deadline = now + (self.wake_timeout_s or 10.0)
         self._wake_strip_required = strip_required
         self._wake_first_request_pending = True
+        self._wake_request_open = False
+        if source == "voice":
+            self._open_wake_request()
         if self._wake_window is WakeWindow.ASLEEP:
             await self._wake_up(WakeWindow.WOKEN)
         elif self._wake_window is WakeWindow.DISMISSED:

@@ -976,12 +976,14 @@ because the user asked. The user's spoken request is: …". A short shutter soun
 plays once the photo is taken. Reachy says nothing else until Muse's answer,
 which it speaks in its own voice.
 
-Ask Reachy itself, in the words of the request: open it with the wake phrase, or
-start or end it with Muse's or Reachy's name, as in "Hey Muse, what do you
-see?", "Reachy, take a photo" or "What am I holding, Reachy?". Inside an open
-listening window, a plain "what do you see?", from you, a guest or a television,
-takes no photo: it is an ordinary request, and Muse answers it. So is one that
-follows a wave, or Reachy's reply to the wake phrase alone; say its name with it.
+Ask Reachy itself. The first request after the wake phrase opens or refreshes
+the window counts, whether you say it in the same breath, as in "Hey Muse, what
+do you see?", or after Reachy's "Yes?". Any request that starts or ends with
+Muse's or Reachy's name counts too, as in "Reachy, take a photo" or "What am I
+holding, Reachy?". Only that first request counts: later in the same window, a
+plain "what do you see?", from you, a guest or a television, takes no photo. It
+is an ordinary request, and Muse answers it. A wave opens the window but does not
+count; say Reachy's name with the request.
 
 These ask for a photo: "take a photo", "photograph this", "take a picture of
 this and tell me what it is", "take a picture, what do you see?", "what do you
