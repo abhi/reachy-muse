@@ -896,3 +896,45 @@ def test_a_photo_request_decided_while_the_user_still_speaks_is_an_ordinary_requ
     events = run(rig, conversation, user)
     assert rig.hardware.captures == []
     assert [(event["muse"], event["text"]) for event in sent(events)][0] == ("send_chat", "Reachy, what do you see?")
+
+
+@realtime
+def test_a_photo_request_never_cuts_off_muse_s_answer_to_an_earlier_call_turn(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    rig = call_rig(monkeypatch, [PHOTO])
+    working = asyncio.Event()
+
+    async def works_then_answers(sdk, emit, script):
+        emit(sdk.Working(True))
+        working.set()
+        for _ in range(500):
+            if script.barge_ins:
+                break
+            await asyncio.sleep(.01)
+        if script.barge_ins:
+            emit(sdk.ResponseStarted("r1"))
+            emit(sdk.ResponseDone("r1", "completed"))
+        else:
+            reply_events(sdk, emit, "r1", "Your table is booked.", voiced(.6))
+        emit(sdk.Working(False))
+
+    calls = ScriptedCalls(answer=works_then_answers)
+    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, book me a table for two.",
+                                                              "Reachy, what do you see?"),
+                                    calls, muse=answers("A desk."), photo_requests=True, wake_timeout_s=8)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(working.is_set, 5)
+        rig.say()
+        await rig.wait_until_or_timeout(
+            lambda: any(line.startswith("Realtime turn ordinal=1 ") for line in caplog.messages), 8)
+
+    events = run(rig, conversation, user)
+    assert [line.split(" words=")[0] for line in caplog.messages if line.startswith("Realtime turn ordinal=1 ")] == [
+        "Realtime turn ordinal=1 outcome=answered"]
+    assert (calls.barge_ins, rig.hardware.captures, sent(events)) == (0, [], [])
+    assert played(events)[0] == "tts:One at a time, please."
+    assert [line.split(" outcome=")[1] for line in realtime_command_lines(caplog)] == [
+        "none drop=none", "none drop=none"]
+    assert [fields(line)["outcome"] for line in photo_lines(caplog)] == ["busy"]

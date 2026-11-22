@@ -2743,12 +2743,18 @@ class VoiceConversation:
         self._presence.mark("voice", started)
         command = await self._obey(text, started, request.timeline) if text.strip() else None
         photo = command is None and not endpoint.partial and self._photo_requested(text, request.timeline)
+        # Muse still owes an answer to an earlier call turn; a barge-in would cut it off.
+        waiting = photo and bool(request.call.pending)
         if request.timeline.facts.get("command_transcript") != "deadline":
             self._log_realtime_command(endpoint.text, decision, transcript=request.timeline.facts.get("command_transcript"),
-                                       outcome=command.name if command is not None else "PHOTO" if photo else "none")
+                                       outcome=command.name if command is not None
+                                       else "PHOTO" if photo and not waiting else "none")
         if command is not None:
             return TurnOutcome.ACCEPTED
-        if photo:
+        if waiting:
+            PhotoLog("realtime", "busy").write()
+            await self._announce(BUSY_CUE, started=None, defer_playback=True)
+        elif photo:
             return await self._photo_in_call(endpoint, request, text, follow_up=follow_up)
         if follow_up and classify_follow_up(text) in (FollowUp.CANCEL, FollowUp.SILENCE):
             self._cancel_photo()

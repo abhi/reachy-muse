@@ -1009,7 +1009,8 @@ they go to Muse as ordinary requests.
 - A photo request heard while Muse is still answering another request, such as
   the morning briefing's or another photo, gets "One at a time, please." and no
   photo. So does one heard in a call while Reachy still handles your previous
-  turn.
+  turn, or while Muse still owes an answer to an earlier call turn; that answer
+  is not cut off, and Muse hears the request in the call as an ordinary one.
 - The camera is in the head, so Reachy waits up to a second for its head to come
   to rest, then holds the camera still until it has the frame. A gaze held on
   another person ends first, as it does for any next request, so the photo shows
