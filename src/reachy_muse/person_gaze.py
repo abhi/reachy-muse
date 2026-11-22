@@ -109,8 +109,9 @@ class PersonGaze:
         return self._generation
 
     def release(self) -> None:
+        """Forget every utterance, and turn back from someone else Reachy was asked to face."""
         self._heard.clear()
-        self.admit(self.begin())
+        self._admit(self.begin(), turn_back=True)
 
     def opened(self, generation: int, speaker, bearing_so_far: Callable[[], float | None]) -> None:
         """An utterance began: ``speaker`` is the companion's label slot for its voice, if the link labels voices,
@@ -130,6 +131,11 @@ class PersonGaze:
             heard.facts = facts
 
     def admit(self, generation: int) -> bool:
+        """Take an utterance as the user's speech. A look on someone else ends where Reachy faces them, for the
+        turn toward whoever speaks now to take over."""
+        return self._admit(generation, turn_back=False)
+
+    def _admit(self, generation: int, *, turn_back: bool) -> bool:
         if generation <= self._admitted_generation:
             return generation == self._admitted_generation
         self._admitted_generation = generation
@@ -139,7 +145,7 @@ class PersonGaze:
         self._facing = False
         if self._holding:
             self._holding = False
-            self.hardware.release_person_gaze()
+            self.hardware.release_person_gaze(turn_back=turn_back)
         return True
 
     def follow(self, generation: int, voiced_s: float, direction: Callable[[], DirectionDecision]) -> None:

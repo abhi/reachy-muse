@@ -580,3 +580,16 @@ def test_a_later_speaker_gets_a_turn_through_a_nod(monkeypatch):
     turned = pose_at(controller, robot, clock.now)
     assert (turned["yaw"], turned["body_yaw"]) == pytest.approx((-25, -5), abs=.01)
 
+
+@pytest.mark.parametrize("turn_back, faced, centers", [(True, (30, 10), [0, None]), (False, (-30, -10), [0])])
+def test_a_greeting_released_in_place_keeps_reachy_and_its_follower_on_the_friend(monkeypatch, turn_back, faced,
+                                                                                 centers):
+    follower = CenteringFollower()
+    controller, robot, clock = simulate(monkeypatch, {
+        5: listen_to_speaker_at_30, 60: greet_friend_at_minus_30,
+        120: lambda c: c.release_person_gaze(turn_back=turn_back),
+    }, ticks=200, follower=follower)
+    final = pose_at(controller, robot, clock.now)
+    assert (round(final["yaw"]), round(final["body_yaw"])) == faced
+    assert not controller.person_gaze_held
+    assert follower.centers == [pytest.approx(center) if center is not None else None for center in centers]

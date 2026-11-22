@@ -540,9 +540,11 @@ camera just covered, since it saw no one else there. A friend standing above the
 frame is still found. Faces in view take priority over remembered ones.
 The person turn fades competing clips and thinking motion, then re-centers the
 follower on the selected direction. It holds through the reply. The next request,
-including a stop command, or the end of the listening window releases it, and
-Reachy turns back to the gaze it replaced, usually toward the speaker. Sleep
-releases it to the sleep pose. An explicit motion command returns an error only
+including a stop command, releases it where Reachy faces that person, and Reachy
+then turns toward whoever made that request, as above: when the friend answers,
+it stays on them. The end of the listening window releases it, and Reachy turns
+back to the gaze it replaced, usually toward the speaker. Sleep releases it to
+the sleep pose. An explicit motion command returns an error only
 while Reachy is still turning toward the person. Once Reachy faces them, the
 command runs and releases this gaze, as commands release the wake gaze. Reachy
 skips its own closing expression for a reply while it holds this gaze. Logs

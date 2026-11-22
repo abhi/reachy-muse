@@ -13,8 +13,8 @@ import numpy as np
 import pytest
 
 from reachy_muse.speaker_direction import DoAReading
-from test_device_command_turns import played, run, service as make_service
-from test_person_gaze import people  # noqa: F401  # people is the fixture shared with people1's tests
+from test_device_command_turns import never_asked, played, run, service as make_service
+from test_person_gaze import DelayedWake, people  # noqa: F401  # people is the fixture shared with people1's tests
 from test_pins import CHUNK, VOICE_SAMPLE, WAKE_SAMPLE, Transcripts
 from test_realtime_turns import (ScriptedCalls, StreamingTranscripts, TimedWake, realtime_service, reply_events, room,
                                  voiced)
@@ -114,6 +114,40 @@ def test_reachy_faces_each_of_two_people_as_they_take_turns(people, caplog, path
     assert seen == [(30, 10), (-25, -5), (30, 10)]
     assert followed(caplog) == ["outcome=turned delta_deg=30", "outcome=turned delta_deg=-55",
                                 "outcome=turned delta_deg=55"]
+
+
+def test_the_friend_answering_a_greeting_keeps_reachy_on_them_until_the_owner_speaks(people, caplog):
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    calls = answering()
+    service = make_service(rig, never_asked, StreamingTranscripts("Say hi to my friend.", "Hi Reachy!",
+                                                                  "What time is it?"),
+                           wake_detector=DelayedWake(), wake_timeout_s=5, muse_path="realtime",
+                           voice_link=calls.link, voice_call=calls)
+    seen = {}
+
+    async def user():
+        scene.doa = bearing(OWNER)
+        for _ in range(30):
+            rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+        await until(rig, lambda: facing(controller, robot) == (30, 10))
+        await speak_from(rig, scene, OWNER)
+        await until(rig, lambda: facing(controller, robot) == (-25, -5))
+        await replied(rig, service, 1)
+        seen["friend"] = await speak_from(rig, scene, FRIEND)
+        await replied(rig, service, 2)
+        seen["answered"] = facing(controller, robot), controller.person_gaze_held
+        seen["owner"] = await speak_from(rig, scene, OWNER)
+        await until(rig, lambda: facing(controller, robot) == (30, 10))
+
+    run(rig, service, user)
+    assert set(seen["friend"]) == {-25}
+    assert seen["answered"] == ((-25, -5), False)
+    assert seen["owner"][0] == -25
+    assert [line for line in caplog.messages if line.startswith("Reachy gaze request")] == [
+        "Reachy gaze request outcome=turned source=fresh faces=2"]
+    assert followed(caplog) == ["outcome=same delta_deg=0", "outcome=same delta_deg=0", "outcome=turned delta_deg=55"]
 
 
 @pytest.mark.parametrize("heard", ["Sure thing, it will be sunny all day.", "Okay."])

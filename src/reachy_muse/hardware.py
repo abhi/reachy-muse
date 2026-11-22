@@ -598,10 +598,15 @@ class ReachyController:
             self._pending_motion = None
             return True
 
-    def release_person_gaze(self) -> None:
+    def release_person_gaze(self, *, turn_back: bool = True) -> None:
+        """End a person turn. With ``turn_back``, Reachy turns back to the gaze the hold replaced; without, it keeps
+        facing that person, with the face follower on them, until a turn toward whoever speaks takes over."""
         with self._state_lock:
             self._person_pending = None
-            self._person_release = True
+            if turn_back:
+                self._person_release = True
+            else:
+                self._person_hold = None
 
     @property
     def person_gaze_held(self) -> bool:
