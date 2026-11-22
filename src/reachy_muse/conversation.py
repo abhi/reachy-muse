@@ -2756,13 +2756,14 @@ class VoiceConversation:
             await self._announce(BUSY_CUE, started=None, defer_playback=True)
         elif photo:
             return await self._photo_in_call(endpoint, request, text, follow_up=follow_up)
-        if follow_up and classify_follow_up(text) in (FollowUp.CANCEL, FollowUp.SILENCE):
-            self._cancel_photo()
-        running = self.job
-        if (follow_up and running is not None and running.request is not None and not running.dropped
+        if (follow_up and self._photo_cancel is not None
                 and classify_follow_up(text) in (FollowUp.CANCEL, FollowUp.SILENCE)):
-            # Muse answers the cancel in the call; the request it works on by chat, such as a photo, is dropped.
-            await self._drop(running)
+            # Muse answers the cancel in the call; the photo, or Muse's chat answer to it, is dropped. A photo turn
+            # runs only as the turn task, so the running job is its own, never a briefing's.
+            self._cancel_photo()
+            running = self.job
+            if running is not None and running.request is not None and not running.dropped:
+                await self._drop(running)
         await self._gaze.request(text, request.speaker_bearing, request.gaze_generation)
         call = request.call
         # The turn's speech_end mark can be later than the last voiced chunk's processing time when processing lags.

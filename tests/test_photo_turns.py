@@ -938,3 +938,34 @@ def test_a_photo_request_never_cuts_off_muse_s_answer_to_an_earlier_call_turn(mo
     assert [line.split(" outcome=")[1] for line in realtime_command_lines(caplog)] == [
         "none drop=none", "none drop=none"]
     assert [fields(line)["outcome"] for line in photo_lines(caplog)] == ["busy"]
+
+
+@realtime
+@pytest.mark.parametrize("photo_requests", [False, True])
+def test_a_cancel_said_in_a_call_leaves_a_briefing_muse_works_on_alone(monkeypatch, caplog, photo_requests):
+    from reachy_muse.contract.prompts import STOP_REQUEST
+    from test_device_command_turns import sent_to_muse
+    from test_morning_turns import BRIEFING, Camera, morning
+
+    caplog.set_level(logging.INFO)
+    rig = call_rig(monkeypatch, [PHOTO])
+
+    async def muse(session, request):
+        await rig.wait_until_or_timeout(lambda: realtime_command_lines(caplog), 10)
+        await asyncio.sleep(.3)
+        await session.answer(request, BRIEFING)
+
+    calls = ScriptedCalls(reply=None)
+    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, never mind."), calls, muse=muse,
+                                    morning=morning(Camera()), photo_requests=photo_requests, wake_timeout_s=5)
+
+    async def user():
+        await rig.wait_until_or_timeout(lambda: sent_to_muse(rig.recording.events), 5)
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: realtime_command_lines(caplog), 5)
+        await asyncio.sleep(1)
+
+    events = run(rig, conversation, user, rest=("thinking", "listening", "idle"))
+    assert realtime_command_lines(caplog)[0].endswith("outcome=none drop=none")
+    assert (sent_to_muse(events), STOP_REQUEST in sent_to_muse(events)) == (["Brief me."], False)
+    assert rig.hardware.captures == []
