@@ -33,6 +33,7 @@ class MuseActivity:
 
     starts: tuple[float, ...] = ()      # when each of its responses began, oldest first
     open: bool = False                  # its latest response has not finished
+    silent: bool = False                # its latest response finished without audio, as one calling a tool does
     working_since: float | None = None  # when the work it is busy with began
 
 
@@ -276,32 +277,33 @@ def _within(snapshot, max_age_s: float) -> bool:
 def _answered(requests: list[_Heard], activity: MuseActivity, asked_at: float) -> list[_Heard]:
     """Which of ``requests``, oldest first, Muse answers when it asks at ``asked_at``.
 
-    An open response made the command, so it answers the requests before it. Otherwise Muse answers the
-    requests since its latest response, if any came, and else the ones that response answered. Work Muse began
-    after its latest response answers the requests before the work and also those said during it, since
-    Working cannot tell an aside from part of the request.
+    Work Muse is busy with answers the requests since the response before the work began, or else that
+    response's, and anything said during the work, which Working cannot tell from part of the request; the
+    responses Muse began meanwhile, such as an acknowledgement, are part of the work. Otherwise a response that
+    is still open, or that finished without audio as one calling a tool does, made the command: it answers the
+    requests before it, back past the response before it, which may have been an acknowledgement. Otherwise
+    Muse answers the requests since its latest response, if any came, and else the ones that response answered.
     """
     starts = [start for start in activity.starts if start <= asked_at]
-    latest = starts[-1] if starts else -math.inf
     working_since = activity.working_since
-    if working_since is not None and working_since <= latest:
-        working_since = None
-    since = [heard for heard in requests if heard.admitted_at > latest]
-    if activity.open or not since and working_since is None:
-        return _answered_by(requests, starts)
     if working_since is not None:
-        before = [heard for heard in since if heard.admitted_at <= working_since]
-        return (before or _answered_by(requests, starts)) + [heard for heard in since
-                                                              if heard.admitted_at > working_since]
-    return since
+        before = [start for start in starts if start < working_since]
+        since = before[-1] if before else -math.inf
+        asked = [heard for heard in requests if since < heard.admitted_at <= working_since]
+        return (asked or _answered_by(requests, before, 1)) + [
+            heard for heard in requests if heard.admitted_at > working_since]
+    if activity.open or activity.silent:
+        return _answered_by(requests, starts, 2)
+    latest = starts[-1] if starts else -math.inf
+    return [heard for heard in requests if heard.admitted_at > latest] or _answered_by(requests, starts, 1)
 
 
-def _answered_by(requests: list[_Heard], starts: list[float]) -> list[_Heard]:
-    """The requests the latest of ``starts`` answers: those since the response before it, or, when a response
-    only went on with an earlier answer, since an earlier one."""
+def _answered_by(requests: list[_Heard], starts: list[float], responses: int) -> list[_Heard]:
+    """The requests that the latest ``responses`` of ``starts`` answer: those since the response before them,
+    or, when those only went on with an earlier answer, since an earlier one."""
     if not starts:
         return []
-    for since in [*reversed(starts[:-1]), -math.inf]:
+    for since in [*reversed(starts[:-responses]), -math.inf]:
         answered = [heard for heard in requests if since < heard.admitted_at <= starts[-1]]
         if answered:
             return answered

@@ -623,6 +623,54 @@ def test_a_response_that_asks_is_about_the_request_before_it_not_an_aside_during
     assert_allowed(rig.session.results, caplog)
 
 
+@pytest.mark.parametrize("muse, speaker", [
+    ("calls_a_tool", "someone_else"),
+    ("works_and_calls_a_tool", "unknown"),
+    ("acknowledges_then_calls_a_tool", "unknown"),
+])
+def test_an_aside_before_muses_tool_call_arrives_never_stands_for_the_guest(people, caplog, muse, speaker):
+    """A guest asks. Muse's response that calls the tool opens and finishes without a word before the call
+    reaches Reachy, as a function-call response does, maybe while Muse works on the request or after it said
+    "sure, let me check"; the owner remarks aside meanwhile. The aside never answers for the guest alone."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    fake = companion(SpeakerLabel.OTHER)
+    ready_for_the_aside, aside_heard = asyncio.Event(), asyncio.Event()
+
+    async def answer(sdk, emit, calls):
+        await labeled(rig, caplog, SpeakerLabel.OTHER)
+        if muse == "works_and_calls_a_tool":
+            emit(sdk.Working(True))
+        if muse == "acknowledges_then_calls_a_tool":
+            reply_events(sdk, emit, "ack", "Sure, let me check.", REPLY_AUDIO)
+            ready_for_the_aside.set()
+            await asyncio.wait_for(aside_heard.wait(), 5)
+        emit(sdk.ResponseStarted("tool"))
+        emit(sdk.ResponseDone("tool", "completed"))
+        ready_for_the_aside.set()
+        await asyncio.wait_for(aside_heard.wait(), 5)
+        await rig.session.invoke("reachy.people")
+        reply_events(sdk, emit, "r1", REPLY, REPLY_AUDIO)
+        if muse == "works_and_calls_a_tool":
+            emit(sdk.Working(False))
+
+    async def user(voice):
+        await say_live(rig, wake=True)
+        await asyncio.wait_for(ready_for_the_aside.wait(), 5)
+        await until(rig, lambda: not voice.call.audible)
+        fake.speaker = SpeakerLabel.OWNER
+        await say_live(rig, voiced_s=.5)
+        await heard(rig, caplog, 2)
+        await labeled(rig, caplog, SpeakerLabel.OWNER, 2)
+        aside_heard.set()
+        await until(rig, lambda: len(rig.session.results) == 1, 6)
+        await replied(rig, voice, 2 if muse == "acknowledges_then_calls_a_tool" else 1)
+
+    converse(rig, ScriptedCalls(answer=answer), fake, user, wake_timeout_s=10)
+    assert [result["payload"]["speaker"] for result in rig.session.results] == [speaker]
+    assert_allowed(rig.session.results, caplog)
+
+
 @pytest.mark.parametrize("aside, speaker", [(False, "someone_else"), (True, "unknown")])
 def test_while_muse_works_on_a_request_it_hears_about_whoever_made_it(people, caplog, aside, speaker):
     """The owner asks and Muse answers. Then a guest asks, and Muse works on it before answering; meanwhile the

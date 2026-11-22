@@ -124,16 +124,19 @@ returns an error only while Reachy is still turning toward that person. After
 that, the command runs and ends the gaze.
 
 `reachy.people` reports the companion's voice labels for the requests Muse is
-answering, with `other` reported as `someone_else`. In a call, a response that
-asks is answering the requests admitted since the response before it, or since
-an earlier one when it only goes on with an earlier answer. Between responses,
-Muse is answering the requests admitted since its latest response, or else the
-ones that response answered; while it works, a remark made meanwhile counts too,
-because the call cannot tell it from part of the request. In chat, it is the
-request Muse was sent. A request still being spoken counts, and so does one
-whose words Reachy failed to transcribe, since Muse heard it. A sound that never
-becomes a request, such as a cough, and anything Reachy admits after Muse asks
-never count. The command waits up to a second for the companion's labels of
+answering, with `other` reported as `someone_else`. In a call, while Muse works
+on a turn, those are the requests admitted since the response before the work
+began, and any remark made during the work, which the call cannot tell from part
+of the request; responses Muse starts meanwhile, such as an acknowledgement,
+belong to the work. Otherwise a response that is still open, or that finished
+without audio as one calling a tool does, made the command: it answers the
+requests before it, back past the response before it, which may have been an
+acknowledgement. Between responses, Muse is answering the requests admitted
+since its latest response, or else the ones that response answered. In chat, it
+is the request Muse was sent. A request still being spoken counts, and so does
+one whose words Reachy failed to transcribe, since Muse heard it. A sound that
+never becomes a request, such as a cough, and anything Reachy admits after Muse
+asks never count. The command waits up to a second for the companion's labels of
 those requests, which come at the companion's end of each one's speech, and does
 not wait when the companion labels no voices. If the labels disagree, or none
 has come, it reports `unknown`; a request labeled `unknown` counts for nothing.
