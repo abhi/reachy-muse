@@ -1191,3 +1191,63 @@ def test_a_photo_request_the_companion_ends_while_the_user_still_talks_takes_no_
     events = run(rig, conversation, user, rest=("listening", "idle"))
     assert (rig.hardware.captures, photo_lines(caplog)) == ([], [])
     assert [(event["muse"], event["text"]) for event in sent(events)][0] == ("send_chat", "Muse, take a photo")
+
+
+def queued_turns(caplog):
+    return sum(message.startswith("Reachy queued a voice turn") for message in caplog.messages)
+
+
+def test_never_mind_after_a_remark_while_the_photo_is_taken_sends_no_photo(monkeypatch, caplog):
+    import threading
+
+    caplog.set_level(logging.INFO)
+    released = threading.Event()
+    capturing, capture = capture_held_until(released)
+    rig = photo_rig(monkeypatch, [capture])
+    conversation = service(rig, answers("A red mug.", "Okay."),
+                           Transcripts("Reachy, what am I holding?", "It is my favorite.", "Never mind."),
+                           photo_requests=True)
+
+    async def user():
+        rig.say()
+        await rig.wait_until_or_timeout(capturing.is_set, 5)
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: queued_turns(caplog) == 2, 5)
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: "tts:Okay, I'll drop that." in played(rig.recording.events), 5)
+        released.set()
+
+    try:
+        events = run(rig, conversation, user)
+    finally:
+        released.set()
+    assert sent(events) == []
+    assert [fields(line)["outcome"] for line in photo_lines(caplog)] == ["cancelled"]
+
+
+def test_a_remark_heard_while_the_photo_is_taken_goes_to_muse_after_the_photo_s_answer(monkeypatch, caplog):
+    import threading
+
+    caplog.set_level(logging.INFO)
+    released = threading.Event()
+    capturing, capture = capture_held_until(released)
+    rig = photo_rig(monkeypatch, [capture])
+    conversation = service(rig, answers("A red mug.", "It suits you."),
+                           Transcripts("Reachy, what am I holding?", "It is my favorite."), photo_requests=True)
+
+    async def user():
+        rig.say()
+        await rig.wait_until_or_timeout(capturing.is_set, 5)
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: queued_turns(caplog) == 2, 5)
+        await asyncio.sleep(.3)
+        released.set()
+        await rig.wait_until_or_timeout(lambda: "tts:It suits you." in played(rig.recording.events), 8)
+
+    try:
+        events = run(rig, conversation, user)
+    finally:
+        released.set()
+    assert [(event["muse"], event["text"]) for event in sent(events)] == [
+        ("send_image", PHOTO_MESSAGE.format("Reachy, what am I holding?")), ("send_chat", "It is my favorite.")]
+    assert played(events)[-2:] == ["tts:A red mug.", "tts:It suits you."]

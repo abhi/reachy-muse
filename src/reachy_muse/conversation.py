@@ -591,6 +591,15 @@ class MuseJob:
         return not self.answered or not self.turn.complete(time.monotonic())
 
 
+@dataclass
+class _PhotoTurn:
+    """A photo turn under way, and what the user said before Muse had the photo."""
+
+    cancelled: asyncio.Event = field(default_factory=asyncio.Event)  # set before the photo is sent, it stays home
+    details: list[str] = field(default_factory=list)  # added detail, sent on once Muse has the photo
+    remarked: bool = False                             # another utterance came before the photo's job
+
+
 @dataclass(frozen=True)
 class _HeldRequest:
     """A request heard while Muse worked on another; it is sent once that one finishes."""
@@ -624,8 +633,7 @@ class VoiceConversation:
             raise ValueError("wake timeout must be a finite, nonnegative number")
         self.session = session
         self.photo_requests = photo_requests
-        # While a photo turn runs: set by a cancel heard before the photo is sent, which then stays home.
-        self._photo_cancel: asyncio.Event | None = None
+        self._photo: _PhotoTurn | None = None
         # The wake phrase opened or refreshed the window, and no request has followed it yet.
         self._wake_request_open = False
         self._startup = startup or StartupTimeline()
@@ -1600,7 +1608,7 @@ class VoiceConversation:
                 if (turn_task is not None and follow_up_task is None and pending_turns
                         and (pending_turns[0].call is not None
                              or self.job is not None and self.job.turn.acknowledged
-                             or self._photo_cancel is not None)):
+                             or self._photo is not None)):
                     follow_up_task = asyncio.create_task(follow_up(pending_turns.popleft(), held))
                 if not ready and turn_task is None:
                     log.info("Reachy speech yield ready: microphone priority, ordered background replies")
@@ -2156,7 +2164,7 @@ class VoiceConversation:
         leaves the conversation, and any call, running.
         """
         report = PhotoLog(timeline.facts.get("path", "chat"))
-        self._photo_cancel = asyncio.Event()
+        self._photo = photo = _PhotoTurn()
         try:
             job = None
             if request.expired(time.monotonic()):
@@ -2165,6 +2173,10 @@ class VoiceConversation:
                 job = await self._send_photo(request, wav, report, started=started,
                                              defer_playback=defer_playback, timeline=timeline)
             if job is not None:
+                job.context_changed = job.context_changed or photo.remarked
+                for detail in photo.details:
+                    if not job.dropped:
+                        await self._add_detail(job, detail)
                 try:
                     outcome = await self._deliver(job)
                 except TimeoutError:
@@ -2183,7 +2195,7 @@ class VoiceConversation:
                 await self._announce(PHOTO_FAILURE_LINES[report.outcome], started=None, defer_playback=True)
             return TurnOutcome.ACCEPTED
         finally:
-            self._photo_cancel = None
+            self._photo = None
             timeline.facts["photo"] = report.outcome
             report.write()
 
@@ -2205,7 +2217,7 @@ class VoiceConversation:
         if capture.failure is not None:
             report.outcome = capture.failure
             return None
-        if self._photo_cancel.is_set():
+        if self._photo.cancelled.is_set():
             report.outcome = "cancelled"
             return None
         await self._shutter()
@@ -2226,13 +2238,8 @@ class VoiceConversation:
         return job
 
     def _cancel_photo(self) -> None:
-        if self._photo_cancel is not None:
-            self._photo_cancel.set()
-
-    async def _until_photo_sent(self) -> None:
-        """Wait until a photo turn's request reaches Muse or fails, as a follow-up waits behind any request."""
-        while self._photo_cancel is not None and (self.job is None or not self.job.turn.acknowledged):
-            await asyncio.sleep(.05)
+        if self._photo is not None:
+            self._photo.cancelled.set()
 
     async def _shutter(self) -> None:
         """Let everyone in the room hear that a photo was taken."""
@@ -2656,12 +2663,12 @@ class VoiceConversation:
         if kind in (FollowUp.NEW, FollowUp.ADD_DETAIL) and text is not None and too_short_for_follow_up(text):
             log.info("Reachy ignored a one-word follow-up while Muse worked")
             return held
-        if kind in (FollowUp.NEW, FollowUp.ADD_DETAIL):
-            await self._until_photo_sent()
         job = self.job
         running = job if job is not None and job.request is not None and not job.dropped else None
         if running is not None:
             running.context_changed = True
+        elif self._photo is not None:
+            self._photo.remarked = True
         log.info("Reachy heard a %s follow-up while Muse worked", kind.value)
         if kind is FollowUp.SILENCE:
             self._hush()
@@ -2681,6 +2688,10 @@ class VoiceConversation:
         if kind is FollowUp.ADD_DETAIL:
             if held is not None:
                 return replace(held, text=f"{held.text} {text}")
+            if self._photo is not None and (job is None or not job.turn.acknowledged):
+                # Sent on once Muse has the photo, so the detail never arrives before it.
+                self._photo.details.append(text)
+                return None
             if running is not None and running.backend_pending:
                 await self._add_detail(running, text)
                 return None
@@ -2793,7 +2804,7 @@ class VoiceConversation:
             await self._announce(BUSY_CUE, started=None, defer_playback=True)
         elif photo:
             return await self._photo_in_call(endpoint, request, text, follow_up=follow_up)
-        if (follow_up and self._photo_cancel is not None
+        if (follow_up and self._photo is not None
                 and classify_follow_up(text) in (FollowUp.CANCEL, FollowUp.SILENCE)):
             # Muse answers the cancel in the call; the photo, or Muse's chat answer to it, is dropped. A photo turn
             # runs only as the turn task, so the running job is its own, never a briefing's.
