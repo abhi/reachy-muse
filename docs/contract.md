@@ -138,8 +138,9 @@ one whose words Reachy failed to transcribe, since Muse heard it. A sound that
 never becomes a request, such as a cough, and anything Reachy admits after Muse
 asks never count. The command waits up to a second for the companion's labels of
 those requests, which come at the companion's end of each one's speech, and does
-not wait when the companion labels no voices. If the labels disagree, or none
-has come, it reports `unknown`; a request labeled `unknown` counts for nothing.
+not wait when the companion labels no voices. If the labels disagree, or any of
+those requests has none by then, it reports `unknown`; a request the companion
+labeled `unknown`, such as a short tail split off another, counts for nothing.
 It also reports `unknown` after Reachy lets its requests go: when the listening
 window closes, Reachy sleeps or is hushed, or the call to Muse drops. A label is
 a voice match, not proof of identity, and nothing is gated on it.

@@ -141,7 +141,8 @@ class PersonGaze:
         and the faces of Reachy's latest camera look; when that is over about 10 seconds old, Reachy looks again
         meanwhile, within the same second.
 
-        Their known labels must agree; a request labeled unknown, or not labeled by then, counts for nothing.
+        Their labels must agree. A request the companion labeled unknown, such as a short tail split off another,
+        counts for nothing, but one with no label by then makes the speaker unknown.
         """
         asked_at = time.monotonic()
         until = min(asked_at + _LABEL_WAIT_S, deadline - _HANDOFF_S)
@@ -158,8 +159,10 @@ class PersonGaze:
         finally:
             if looking is not None:
                 looking.cancel()
-        labels = {heard.label for heard in requests}.intersection(_SPEAKERS)
-        return people_result(_SPEAKERS[labels.pop()] if len(labels) == 1 else "unknown", snapshot)
+        labels = [heard.label for heard in requests]
+        known = set(labels).intersection(_SPEAKERS)
+        return people_result(_SPEAKERS[known.pop()] if len(known) == 1 and None not in labels else "unknown",
+                             snapshot)
 
     async def look_at(self, target: str, deadline: float, activity: MuseActivity | None,
                       chat: dict[str, str] | None) -> str:

@@ -557,6 +557,35 @@ def test_a_request_whose_words_reachy_lost_is_still_the_one_muse_answers(people,
     assert_allowed(rig.session.results, caplog)
 
 
+@pytest.mark.parametrize("label, speaker", [(None, "unknown"), (SpeakerLabel.UNKNOWN, "owner")])
+def test_a_request_without_a_label_never_rides_on_the_owners(people, caplog, label, speaker):
+    """The owner asks, and before Muse answers, someone asks too. The companion never labels that request, as
+    when it ends before the companion's end of speech, so Muse hears unknown. A request the companion labeled
+    unknown, such as a short tail split off the owner's, leaves the owner's label standing."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    fake = companion(SpeakerLabel.OWNER)
+    both_heard = asyncio.Event()
+
+    async def answer(sdk, emit, calls):
+        await asyncio.wait_for(both_heard.wait(), 8)
+        await rig.session.invoke("reachy.people")
+        reply_events(sdk, emit, "r1", REPLY, REPLY_AUDIO)
+
+    async def user(voice):
+        await say_live(rig, wake=True)
+        await labeled(rig, caplog, SpeakerLabel.OWNER)
+        fake.speaker = label
+        await say_live(rig, voiced_s=.8)
+        await heard(rig, caplog, 2)
+        both_heard.set()
+        await replied(rig, voice)
+
+    converse(rig, ScriptedCalls(answer=answer), fake, user, wake_timeout_s=10)
+    assert [result["payload"]["speaker"] for result in rig.session.results] == [speaker]
+    assert_allowed(rig.session.results, caplog)
+
+
 def test_an_aside_while_muse_prepares_its_answer_never_stands_for_the_guest(people, caplog):
     """A guest asks; while Muse prepares its answer, the owner says something aside, and Muse asks who made the
     request it is answering. Muse heard both before answering, and their labels disagree."""

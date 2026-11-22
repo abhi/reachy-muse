@@ -530,16 +530,16 @@ answering and how many faces Reachy saw. It gets only `speaker` (`owner`,
 comes from the companion's voice labels for the requests Muse is answering: in a
 call, the ones its current response or work is about, and in chat, the request
 it was sent. A remark made while Muse prepares or gives its answer never stands
-for that request. When the labels disagree, the speaker is `unknown`, as it is
-without a label or after the listening window closes. Muse often asks before the
-companion has labeled the request, so Reachy waits up to a second for the label,
-and not at all when the companion labels no voices; a cough or another sound too
-short to be a request does not count. The count comes from the latest face
-snapshot if it is at most 10 seconds old. Detection pauses while anyone speaks,
-so in a call that snapshot is often older; then Reachy asks the face worker for
-one fresh pass while it waits for the label, as a greeting does, and the count is
-null if the pass does not finish within 300 ms. It logs one line, such as
-`Reachy people speaker=owner visible=2`.
+for that request. When the labels disagree, or one of those requests has no
+label, the speaker is `unknown`, as it is after the listening window closes.
+Muse often asks before the companion has labeled the request, so Reachy waits up
+to a second for the label, and not at all when the companion labels no voices; a
+cough or another sound too short to be a request does not count. The count comes
+from the latest face snapshot if it is at most 10 seconds old. Detection pauses
+while anyone speaks, so in a call that snapshot is often older; then Reachy asks
+the face worker for one fresh pass while it waits for the label, as a greeting
+does, and the count is null if the pass does not finish within 300 ms. It logs
+one line, such as `Reachy people speaker=owner visible=2`.
 
 Muse can also turn Reachy with `reachy.look_at`. Target `speaker` turns toward
 the bearing latched for the latest request Muse is answering, or the bearing
