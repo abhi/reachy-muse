@@ -524,28 +524,29 @@ skips its own closing expression for a reply while it holds this gaze. Logs
 contain only the outcome, the source of the faces it used (`snapshot`, `fresh`,
 `memory` or `none`) and the number of faces in view.
 
-Muse can ask through `reachy.people` whether the owner made the latest request
-and how many faces Reachy saw. It gets only `speaker` (`owner`, `someone_else`
-or `unknown`), `people_visible` and `seen_s_ago`. The speaker comes from the
-companion's voice label for the latest request admitted in the listening window;
-without a label for that request, or after the window closes, it is `unknown`.
-In a call, Muse often asks before Reachy's own end of the request, so Reachy
-waits up to three seconds for it; a cough or another sound too short to be a
-request does not replace the request before it. The count comes from the latest
-face snapshot if it is at most 10 seconds old; the command takes no picture. It
-logs one line, such as `Reachy people speaker=owner visible=2`.
+Muse can ask through `reachy.people` whether the owner made the request it is
+answering and how many faces Reachy saw. It gets only `speaker` (`owner`,
+`someone_else` or `unknown`), `people_visible` and `seen_s_ago`. The speaker
+comes from the companion's voice labels for the requests Muse is answering: in a
+call, the ones its current response or work is about, and in chat, the request
+it was sent. A remark made while Muse prepares or gives its answer never stands
+for that request. When the labels disagree, the speaker is `unknown`, as it is
+without a label or after the listening window closes. In a call, Muse often asks
+before Reachy's own end of the request, so Reachy waits up to three seconds for
+it; a cough or another sound too short to be a request does not count. The count
+comes from the latest face snapshot if it is at most 10 seconds old; the command
+takes no picture. It logs one line, such as `Reachy people speaker=owner visible=2`.
 
 Muse can also turn Reachy with `reachy.look_at`. Target `speaker` turns toward
-the bearing latched for that latest request and keeps facing that way through
-Muse's reply; like a wake turn, it lasts until a motion command or sleep. Target
+the bearing latched for the latest request Muse is answering, or the bearing
+heard so far for one still spoken, and keeps facing that way through Muse's
+reply; like a wake turn, it lasts until a motion command or sleep. Target
 `other` runs the same selection and hold as a spoken request to greet someone
 else, and the next request releases it. Muse gets only the outcome: `turned`,
-`no_other`, `no_faces`, `no_speaker_bearing`, `stale` or `busy`. Asked before
-Reachy's own end of the request, it waits for the bearing the same way. It is
-`busy` while a person turn is still being chosen, queued or moving, whether
-Reachy started it by itself for "say hi to my friend" or Muse asked for it. The
-log line names only the target and outcome, as in
-`Reachy look_at target=other outcome=turned`.
+`no_other`, `no_faces`, `no_speaker_bearing`, `stale` or `busy`. It is `busy`
+while a person turn is still being chosen, queued or moving, whether Reachy
+started it by itself for "say hi to my friend" or Muse asked for it. The log line
+names only the target and outcome, as in `Reachy look_at target=other outcome=turned`.
 
 With `--wave-wake`, a wave also turns Reachy toward the person before face
 tracking takes over. The detected person's position takes priority over recent

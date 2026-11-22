@@ -23,15 +23,35 @@ _SPEAKER_ARC = math.radians(20)
 _VISIBLE_MAX_AGE_S = 10.0
 # The robot's longest end-of-turn silence: an utterance becomes a request within it once its words end.
 _HEARD_OUT_S = 3.0
+_HEARD_KEPT = 16
 _SPEAKERS = {"owner": "owner", "other": "someone_else"}
 
 
 @dataclass(frozen=True)
-class _Request:
-    """What Muse's people commands may use of one queued request."""
+class MuseActivity:
+    """What Muse did in a realtime call, which tells which requests a command of its is about."""
 
-    bearing: float | None          # the speaker's bearing, latched at the endpoint
-    facts: dict[str, str]          # its timeline facts, where the companion's speaker label lands, maybe later
+    starts: tuple[float, ...] = ()      # when each of its responses began, oldest first
+    open: bool = False                  # its latest response has not finished
+    working_since: float | None = None  # when the work it is busy with began
+
+
+@dataclass
+class _Heard:
+    """One utterance, as Muse's people commands see it."""
+
+    bearing_so_far: Callable[[], float | None]
+    admitted_at: float | None = None
+    request: bool = False               # it ended as a request
+    bearing: float | None = None        # its speaker's bearing, latched at that end
+    facts: dict[str, str] | None = None  # its timeline facts once queued, where its speaker label lands
+
+    @property
+    def label(self) -> str | None:
+        return self.facts.get("speaker") if self.facts is not None else None
+
+    def speaker_bearing(self) -> float | None:
+        return self.bearing if self.request else self.bearing_so_far()
 
 
 def people_result(speaker: str, snapshot) -> dict:
@@ -45,24 +65,23 @@ def people_result(speaker: str, snapshot) -> dict:
 class PersonGaze:
     """Gaze tokens: one begins with each utterance, and admitting a newer one supersedes the rest.
 
-    Muse's people commands answer about the latest request Reachy admitted. They wait a little for an
-    admitted utterance still being heard, which may become that request; one that ends without a request,
-    such as a cough, leaves the previous request standing. A release, such as when the listening window
-    closes, drops every request.
+    Muse's people commands answer about the requests Muse is answering when it asks: in a realtime call, the
+    ones its current response or work is about, and in chat, the request it was sent. An utterance still being
+    heard may become such a request; one that ended without becoming a request, such as a cough, or that
+    Reachy admitted after Muse asked, never counts. A release, such as when the listening window closes,
+    forgets them all.
     """
 
-    def __init__(self, hardware, hearing: Callable[[], bool] = lambda: False):
-        """``hearing`` tells whether an utterance is still being heard or turned into a request."""
+    def __init__(self, hardware, hearing: Callable[[], int | None]):
+        """``hearing`` gives the token of the utterance Reachy is hearing now, if any."""
         self.hardware = hardware
         self._hearing = hearing
         self._generation = 0
         self._admitted_generation = 0
-        self._released_generation = 0
         self._holding = False
         self._facing = False           # Muse turned Reachy toward the speaker since the latest admission
         self._choosing = False         # a turn toward someone else waits for its camera pass
-        self._admitted: set[int] = set()
-        self._requests: dict[int, _Request] = {}
+        self._heard: dict[int, _Heard] = {}
 
     @property
     def holding(self) -> bool:
@@ -76,79 +95,90 @@ class PersonGaze:
         return self._generation
 
     def release(self) -> None:
-        self._released_generation = self.begin()
-        self.admit(self._released_generation)
+        self._heard.clear()
+        self.admit(self.begin())
 
-    def queued(self, generation: int, bearing: float | None, facts: dict[str, str]) -> None:
-        if generation > self._released_generation:
-            self._requests[generation] = _Request(bearing, facts)
-            self._forget_older()
+    def opened(self, generation: int, bearing_so_far: Callable[[], float | None]) -> None:
+        """An utterance began; ``bearing_so_far`` gives its speaker's bearing from the speech heard so far."""
+        self._heard[generation] = _Heard(bearing_so_far)
+        while len(self._heard) > _HEARD_KEPT:
+            del self._heard[min(self._heard)]
+
+    def requested(self, generation: int, bearing: float | None) -> None:
+        heard = self._heard.get(generation)
+        if heard is not None:
+            heard.request, heard.bearing = True, bearing
+
+    def queued(self, generation: int, facts: dict[str, str]) -> None:
+        heard = self._heard.get(generation)
+        if heard is not None:
+            heard.facts = facts
 
     def admit(self, generation: int) -> bool:
         if generation <= self._admitted_generation:
             return generation == self._admitted_generation
         self._admitted_generation = generation
-        self._admitted.add(generation)
+        heard = self._heard.get(generation)
+        if heard is not None:
+            heard.admitted_at = time.monotonic()
         self._facing = False
-        self._forget_older()
         if self._holding:
             self._holding = False
             self.hardware.release_person_gaze()
         return True
 
-    async def people(self, deadline: float) -> dict:
-        request = await self._heard_out(deadline)
-        label = request.facts.get("speaker") if request is not None else None
-        return people_result(_SPEAKERS.get(label, "unknown"), self.hardware.face_snapshot())
+    async def people(self, deadline: float, activity: MuseActivity | None, chat: dict[str, str] | None) -> dict:
+        """Who made the requests Muse is answering, once one still being heard has ended, and the faces Reachy
+        saw last.
 
-    async def look_at(self, target: str, deadline: float) -> str:
-        """Face the latest admitted request's speaker, or someone else as a request to greet them does.
+        Their known labels must agree; a request labeled unknown, or not labeled, counts for nothing.
+        """
+        asked_at = time.monotonic()
+        until = min(asked_at + _HEARD_OUT_S, deadline)
+        requests = self._answering(asked_at, activity, chat)
+        while not all(heard.request for heard in requests) and time.monotonic() < until:
+            await asyncio.sleep(.05)
+            requests = self._answering(asked_at, activity, chat)
+        labels = {heard.label for heard in requests}.intersection(_SPEAKERS)
+        return people_result(_SPEAKERS[labels.pop()] if len(labels) == 1 else "unknown",
+                             self.hardware.face_snapshot())
+
+    async def look_at(self, target: str, deadline: float, activity: MuseActivity | None,
+                      chat: dict[str, str] | None) -> str:
+        """Face the speaker of the latest request Muse is answering, or someone else as a request to greet them
+        does.
 
         As with Muse's other motion commands, a person turn that is still being chosen, queued or moving
         makes it busy.
         """
-        request = await self._heard_out(deadline)
-        if request is None or request.bearing is None:
+        requests = self._answering(time.monotonic(), activity, chat)
+        bearing = requests[-1].speaker_bearing() if requests else None
+        if bearing is None:
             return "no_speaker_bearing"
         if self._choosing or self.hardware.person_turning:
             return "busy"
         generation = self._admitted_generation
         if target == "other":
-            outcome, _, _ = await self._look_at_other(request.bearing, generation)
+            outcome, _, _ = await self._look_at_other(bearing, generation)
             return outcome
-        if not self.hardware.face_speaker(request.bearing):
+        if not self.hardware.face_speaker(bearing):
             return "busy"
         self._holding, self._facing = False, True
         return "turned"
 
-    async def _heard_out(self, deadline: float) -> _Request | None:
-        """The latest admitted request, once an admitted utterance still being heard has become one, or by
-        ``deadline``; None if there is none, or the utterance is still heard by then."""
-        until = min(time.monotonic() + _HEARD_OUT_S, deadline)
-        while self._undecided() and time.monotonic() < until:
-            await asyncio.sleep(.05)
-        newest = self._admitted_generation
-        if newest in self._requests:
-            return self._requests[newest]
-        if self._undecided() or newest == self._released_generation:
-            return None
-        latest = self._latest()
-        return self._requests[latest] if latest is not None else None
-
-    def _undecided(self) -> bool:
-        newest = self._admitted_generation
-        return newest not in self._requests and newest != self._released_generation and self._hearing()
-
-    def _latest(self) -> int | None:
-        admitted = self._admitted.intersection(self._requests)
-        return max(admitted) if admitted else None
-
-    def _forget_older(self) -> None:
-        """Forget requests and tokens older than the last release or the latest admitted request; no answer
-        reads them again."""
-        oldest = max(self._released_generation, self._latest() or 0)
-        self._requests = {key: request for key, request in self._requests.items() if key >= oldest}
-        self._admitted = {key for key in self._admitted if key >= oldest}
+    def _answering(self, asked_at: float, activity: MuseActivity | None,
+                   chat: dict[str, str] | None) -> list[_Heard]:
+        """The requests Muse is answering, oldest first: the chat request whose timeline facts are ``chat``, or
+        the call's requests by what Muse did in it, among those admitted by ``asked_at``."""
+        if chat is not None:
+            return [heard for heard in self._heard.values() if heard.facts is chat] or [
+                _Heard(lambda: None, request=True, facts=chat)]
+        if activity is None:
+            return []
+        hearing = self._hearing()
+        return _answered([heard for generation, heard in sorted(self._heard.items())
+                          if heard.admitted_at is not None and heard.admitted_at <= asked_at
+                          and (heard.request or generation == hearing)], activity, asked_at)
 
     async def request(self, text: str | None, speaker_bearing: float | None, generation: int) -> None:
         """Face the person who is not speaking when the request asks Reachy to greet or look at them."""
@@ -219,6 +249,41 @@ class PersonGaze:
 
 def _recent(snapshot) -> bool:
     return snapshot is not None and 0 <= time.monotonic() - snapshot.captured_at <= _SNAPSHOT_MAX_AGE_S
+
+
+def _answered(requests: list[_Heard], activity: MuseActivity, asked_at: float) -> list[_Heard]:
+    """Which of ``requests``, oldest first, Muse answers when it asks at ``asked_at``.
+
+    An open response made the command, so it answers the requests before it. Otherwise Muse answers the
+    requests since its latest response, if any came, and else the ones that response answered. Work Muse began
+    after its latest response answers the requests before the work and also those said during it, since
+    Working cannot tell an aside from part of the request.
+    """
+    starts = [start for start in activity.starts if start <= asked_at]
+    latest = starts[-1] if starts else -math.inf
+    working_since = activity.working_since
+    if working_since is not None and working_since <= latest:
+        working_since = None
+    since = [heard for heard in requests if heard.admitted_at > latest]
+    if activity.open or not since and working_since is None:
+        return _answered_by(requests, starts)
+    if working_since is not None:
+        before = [heard for heard in since if heard.admitted_at <= working_since]
+        return (before or _answered_by(requests, starts)) + [heard for heard in since
+                                                              if heard.admitted_at > working_since]
+    return since
+
+
+def _answered_by(requests: list[_Heard], starts: list[float]) -> list[_Heard]:
+    """The requests the latest of ``starts`` answers: those since the response before it, or, when a response
+    only went on with an earlier answer, since an earlier one."""
+    if not starts:
+        return []
+    for since in [*reversed(starts[:-1]), -math.inf]:
+        answered = [heard for heard in requests if since < heard.admitted_at <= starts[-1]]
+        if answered:
+            return answered
+    return []
 
 
 def _away_from(speaker_yaw: float, faces) -> list:

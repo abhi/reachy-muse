@@ -52,7 +52,7 @@ from reachy_muse.turn_timeline import TurnTimeline
 from reachy_muse.startup import StartupTimeline
 from reachy_muse.speaker_direction import DirectionDecision, DirectionSnapshot, WakeDirection, speaker_yaw
 from reachy_muse.presence import PresenceFusion
-from reachy_muse.person_gaze import PersonGaze, people_result
+from reachy_muse.person_gaze import MuseActivity, PersonGaze, people_result
 from reachy_muse.inbox import Inbox, outcome, owner_binding
 from reachy_muse.notifications import Notifications
 from reachy_muse.wake_policy import WakeContext
@@ -639,7 +639,7 @@ class VoiceConversation:
         self.wake_enabled = wake_detector is not None or wave_wake
         self._wake_direction: WakeDirection | None = None
         self._direction_audio_until = 0.0
-        self._gaze = PersonGaze(hardware, hearing=lambda: self._hearing_open())
+        self._gaze = PersonGaze(hardware, hearing=lambda: self._heard_now())
         self._wake_has_gaze = False
         self._wake_policy = wake_policy
         self._wake_unknown_output_until = 0.0
@@ -662,6 +662,8 @@ class VoiceConversation:
         self._stop_sent_at: float | None = None
         # True while the user is mid-utterance or Reachy is still acting on what they said.
         self._hearing_open: Callable[[], bool] = lambda: False
+        # The gaze token of the utterance the microphone is hearing now, if any.
+        self._heard_now: Callable[[], int | None] = lambda: None
         self._seen_sequences: set[int] = set()
         self._sequence_order = deque()
         self._muted = False
@@ -1112,6 +1114,14 @@ class VoiceConversation:
 
         turn_open = False
         utterance: _Utterance | None = None
+        self._heard_now = lambda: utterance.generation if utterance is not None else None
+
+        def latched_bearing(spoken: _Utterance) -> float | None:
+            """The speaker's bearing for an utterance: its speech's DoA, or else the wake gaze from this window."""
+            bearing = spoken.bearing()
+            if bearing is None and self._wake_has_gaze:
+                bearing = self.hardware.wake_gaze_bearing
+            return bearing
 
         heard_over: set[str] = set()
         admitted_turns = deque()
@@ -1168,11 +1178,16 @@ class VoiceConversation:
             if utterance is None and (recorder.speech_active or heard.ended is not None):
                 utterance = _Utterance(recorder.utterance_id, captured_at - len(sample) / self.hardware.sample_rate,
                                        self._gaze.begin())
+                self._gaze.opened(utterance.generation, lambda spoken=utterance: latched_bearing(spoken))
             current = utterance
             if current is not None:
                 current.observe(self._wake_direction, captured_at - quiet_s)
             if heard.ended is not None or not (recorder.active or recorder.speech_active):
                 utterance = None
+            bearing = None
+            if heard.ended is not None:
+                bearing = latched_bearing(current)
+                self._gaze.requested(current.generation, bearing)
             for _ in range(heard.failures):
                 transcription_failed(self.call)
             if heard.transcript_lost:
@@ -1244,9 +1259,6 @@ class VoiceConversation:
                 return None
             over = tuple(sorted(heard_over))
             heard_over.clear()
-            bearing = current.bearing()
-            if bearing is None and self._wake_has_gaze:
-                bearing = self.hardware.wake_gaze_bearing
             return _RecordedTurn(heard.ended, endpoint_at, endpoint_at - quiet_s, over, call_input,
                                  bearing, current.generation)
 
@@ -1437,7 +1449,7 @@ class VoiceConversation:
                 pending_turns.append(_QueuedTurn(recorded.ended, self._wake_strip_required, wake_epoch,
                                                 timeline, recorded.heard_over, self.call or self._lost_call,
                                                 recorded.speaker_bearing, recorded.gaze_generation))
-                self._gaze.queued(recorded.gaze_generation, recorded.speaker_bearing, timeline.facts)
+                self._gaze.queued(recorded.gaze_generation, timeline.facts)
                 if self.realtime is not None and pending_turns[-1].call is None:
                     self.realtime.chat_turn()
                 self._lost_call = None
@@ -1862,6 +1874,7 @@ class VoiceConversation:
                 ended.cancel()
             self._wake_direction = None
             self._hearing_open = lambda: False
+            self._heard_now = lambda: None
 
             async def cleanup():
                 try:
@@ -2809,16 +2822,23 @@ class VoiceConversation:
                 return
 
     async def people(self, deadline: float) -> dict:
-        """Muse's reachy.people: the latest admitted request's speaker and the faces Reachy saw last."""
-        return await self._gaze.people(deadline)
+        """Muse's reachy.people: who made the requests Muse is answering, and the faces Reachy saw last."""
+        return await self._gaze.people(deadline, *self._answering())
 
     async def look_at(self, target: str, deadline: float) -> str:
         """Muse's reachy.look_at. A turn counts as Muse moving Reachy: a response without words answers the
         request, and Reachy's own closing gives way."""
-        outcome = await self._gaze.look_at(target, deadline)
+        outcome = await self._gaze.look_at(target, deadline, *self._answering())
         if outcome == "turned" and self.call is not None:
             self.call.moved_by_muse()
         return outcome
+
+    def _answering(self) -> tuple[MuseActivity | None, dict[str, str] | None]:
+        """What tells which requests Muse is answering: the call's activity, or the chat request's timeline facts."""
+        if self.call is not None:
+            return self.call.activity(), None
+        job = self.job
+        return None, (job.timeline.facts if job is not None and not job.dropped else None)
 
     def muse_moved(self, change: int) -> None:
         """Muse started (+1) or finished (-1) moving Reachy itself; local reply motion waits meanwhile."""

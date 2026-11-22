@@ -22,11 +22,11 @@ def test_exact_sdk_registration_and_byte_budget():
     assert REACHY_PERSONA in commands["reachy.say"]["description"]
     assert {name: len(spec["description"].encode("utf-8")) for name, spec in commands.items()} == {
         "reachy.say": 1471, "reachy.presence": 537, "reachy.notify": 475, "reachy.expression": 446, "reachy.move": 388,
-        "reachy.people": 504, "reachy.look_at": 647,
+        "reachy.people": 514, "reachy.look_at": 657,
     }
     wire = encode_message(message)
-    assert int.from_bytes(wire[:4], "little") == len(wire[4:]) == 6922
-    assert len(wire) == 6926
+    assert int.from_bytes(wire[:4], "little") == len(wire[4:]) == 6942
+    assert len(wire) == 6946
     assert len(wire) < 8192
 
 
@@ -34,5 +34,5 @@ def test_longest_escaped_owner_place_stays_within_registration_budget():
     service = ReachyService(identity=Identity("02:00:00:ab:cd:ef"), executor=object(),
                            backends=lambda _: None, place='"' * 64)
     message = service.describe().register_message("00000000-0000-0000-0000-000000000000")
-    assert len(encode_message(message)) == 7212
+    assert len(encode_message(message)) == 7232
     assert len(encode_message(message)) < 8192
