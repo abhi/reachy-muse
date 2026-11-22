@@ -1039,7 +1039,8 @@ they go to Muse as ordinary requests.
 | --- | --- |
 | The camera stays busy, gives no frame, or fails, or the photo cannot be encoded | "I couldn't take a photo." |
 | No JPEG of 150 KiB or less fits, even 640 pixels wide | "That photo was too large to send." |
-| Muse rejects the photo, or does not acknowledge it within 20 seconds | "Muse didn't get the photo." |
+| Muse rejects the photo | "Muse didn't get the photo." |
+| Muse does not acknowledge the photo within 20 seconds; it may have arrived | "I'm not sure Muse got the photo." |
 | Muse does not answer within three minutes | "Muse didn't answer about the photo." |
 | The request waited more than 30 seconds | "Please ask me again for the photo." |
 

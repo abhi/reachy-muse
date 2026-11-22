@@ -39,7 +39,8 @@ PHOTO_FAILURE_LINES = {
     "camera_failed": PHOTO_FAILED,
     "too_large": "That photo was too large to send.",
     "rejected": PHOTO_NOT_SENT,
-    "send_timeout": PHOTO_NOT_SENT,
+    # The photo may have reached Muse with only its acknowledgement late.
+    "send_timeout": "I'm not sure Muse got the photo.",
     "no_answer": "Muse didn't answer about the photo.",
 }
 

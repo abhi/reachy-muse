@@ -247,7 +247,7 @@ def slowly():
     ("slow_camera", [slowly], "I couldn't take a photo.", False),
     ("rejected", [PHOTO], "Muse didn't get the photo.", True),
     ("unacknowledged", [PHOTO], "Muse didn't get the photo.", True),
-    ("send_timeout", [PHOTO], "Muse didn't get the photo.", True),
+    ("send_timeout", [PHOTO], "I'm not sure Muse got the photo.", True),
     ("no_answer", [PHOTO], "Muse didn't answer about the photo.", True),
     ("expired", [PHOTO], "Please ask me again for the photo.", False),
 ])
@@ -452,7 +452,7 @@ def test_a_second_photo_request_in_a_call_gets_the_busy_line(monkeypatch, caplog
     ("too_large", [PhotoCapture("too_large", capture_ms=40, encode_ms=90)], "That photo was too large to send."),
     ("slow_camera", [slowly], "I couldn't take a photo."),
     ("rejected", [PHOTO], "Muse didn't get the photo."),
-    ("send_timeout", [PHOTO], "Muse didn't get the photo."),
+    ("send_timeout", [PHOTO], "I'm not sure Muse got the photo."),
     ("no_answer", [PHOTO], "Muse didn't answer about the photo."),
     ("expired", [PHOTO], "Please ask me again for the photo."),
 ])
