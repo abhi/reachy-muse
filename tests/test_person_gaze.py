@@ -103,6 +103,26 @@ class DelayedWake(TimedWake):
         return detected and self.samples >= 9600
 
 
+class PlacedWake(TimedWake):
+    """Fires on the first wake audio after Reachy's DoA history can place the speaker.
+
+    Under load a capture gap or a late DoA read clears that history, so 0.6 s of wake audio may not be enough.
+    Reachy places the speaker as of the moment it captured the wake audio, which can precede the newest sample;
+    with three samples the decision holds without it.
+    """
+
+    history = None
+    heard = False
+    examined = 0
+
+    def feed(self, samples):
+        phrase_end = time.monotonic()
+        decision = self.history.snapshot().decide(phrase_end)
+        self.heard = super().feed(samples) and decision.reason == 'ok' and decision.samples >= 3
+        self.examined += 1
+        return self.heard
+
+
 @pytest.fixture
 def people(monkeypatch):
     rig = Rig(monkeypatch)
@@ -1149,18 +1169,25 @@ def test_wake_gaze_is_fallback_only_within_its_window(people, caplog, speaker_ya
     if speaker_yaw == 60:
         scene.faces = [(60, .35)]
     calls = ScriptedCalls(reply='Hello!', reply_s=.1)
+    wake = PlacedWake()
     service = make_service(rig, never_asked, StreamingTranscripts('Say hi to my friend.'),
-                           wake_detector=DelayedWake(), wake_timeout_s=5, muse_path='realtime',
+                           wake_detector=wake, wake_timeout_s=5, muse_path='realtime',
                            voice_link=calls.link, voice_call=calls)
 
     async def user():
-        for _ in range(30):
+        wake.history = service._voice[1]._wake_direction
+        while not wake.heard:
+            examined = wake.examined
             rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
+            await rig.wait_until_or_timeout(lambda: wake.examined > examined)
             await asyncio.sleep(.02)
         await rig.wait_until_or_timeout(lambda: controller.wake_gaze_bearing is not None)
+        assert controller.wake_gaze_bearing == pytest.approx(math.radians(90 - speaker_yaw))
         scene.doa = None
         scene.camera = True
-        await say_live(rig)
+        # Queued at once: paced from the event loop, a stall of 0.27 s would look like a capture gap and split
+        # the request in two.
+        rig.say(voiced_s=.7)
         await rig.wait_until_or_timeout(lambda: any(line.startswith('Reachy gaze request') for line in caplog.messages))
         assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
             'Reachy gaze request outcome=' + ('turned source=fresh faces=2' if speaker_yaw == 30 else 'no_other source=fresh faces=1')]
