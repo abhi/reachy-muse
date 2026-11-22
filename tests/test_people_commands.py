@@ -997,6 +997,42 @@ def test_nothing_beyond_the_allowed_fields_reaches_muse_or_the_log(people, caplo
     assert_allowed(rig.session.results, caplog)
 
 
+def test_reachy_people_and_a_look_at_someone_else_share_one_camera_pass(people, caplog):
+    """Muse asks who is there, and to look at someone else while Reachy still looks for faces for that answer;
+    Reachy's previous look is 40 seconds old. The face worker takes one pass at a time, so both commands use the
+    same fresh one."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    passes = []
+
+    async def look_at_someone_else():
+        await asyncio.sleep(.03)
+        await rig.session.invoke("reachy.look_at", {"target": "other"})
+
+    async def ask(ordinal):
+        await heard(rig, caplog)
+        await labeled(rig, caplog, SpeakerLabel.OWNER)
+        scene.age = 40
+        assert len((await asyncio.to_thread(controller.refresh_faces)).faces) == 2
+        scene.age, scene.before_capture, before = 0, lambda: time.sleep(.1), scene.passes
+        await asyncio.gather(rig.session.invoke("reachy.people"), look_at_someone_else())
+        passes.append(scene.passes - before)
+        scene.before_capture = None
+
+    muse = Muse(ask)
+
+    async def user(voice):
+        await say_live(rig, wake=True)
+        await replied(rig, voice)
+
+    converse(rig, muse.calls, companion(), user)
+    payloads = {"outcome" in result["payload"]: result["payload"] for result in rig.session.results}
+    assert payloads == {False: {"speaker": "owner", "people_visible": 2, "seen_s_ago": 0},
+                        True: {"outcome": "turned"}}
+    assert passes == [1]
+    assert_allowed(rig.session.results, caplog)
+
+
 @pytest.mark.parametrize("command, params", [("reachy.look_at", {"target": "other"}), ("reachy.people", {})])
 def test_a_slow_camera_pass_ends_in_time_for_muses_timeout(people, caplog, command, params):
     """Muse allows 250 ms here. Reachy's view is stale and its camera slower than that, so the camera pass gives

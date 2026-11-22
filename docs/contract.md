@@ -148,11 +148,11 @@ a voice match, not proof of identity, and nothing is gated on it.
 gives its rounded age, when that snapshot is at most 10 seconds old. Face
 detection pauses while anyone speaks, so in a call the snapshot is often older;
 then the command takes the same bounded camera pass as `reachy.look_at` with
-`other`, at most 300 ms, while it waits for the labels and within the same
-second. If that pass does not finish, both fields are null. The wait and the
-pass end early enough for the answer to reach Muse within its `timeout_ms`. The
-command never moves Reachy. It logs one line with fixed words, such as
-`Reachy people speaker=owner visible=2`.
+`other`, at most 300 ms, and shares it when both need one at once, while it
+waits for the labels and within the same second. If that pass does not finish,
+both fields are null. The wait and the pass end early enough for the answer to
+reach Muse within its `timeout_ms`. The command never moves Reachy. It logs one
+line with fixed words, such as `Reachy people speaker=owner visible=2`.
 
 `reachy.look_at` uses the bearing latched for the latest of those requests, or,
 for one still being spoken, the bearing heard so far, without waiting. With

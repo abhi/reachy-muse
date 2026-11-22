@@ -89,6 +89,7 @@ class PersonGaze:
         self._holding = False
         self._facing = False           # Muse turned Reachy toward the speaker since the latest admission
         self._choosing = False         # a turn toward someone else waits for its camera pass
+        self._looking: asyncio.Future | None = None   # the camera pass in flight
         self._heard: dict[int, _Heard] = {}
 
     @property
@@ -260,11 +261,14 @@ class PersonGaze:
         return "turned" if turned else "busy", source, len(faces)
 
     async def _fresh_pass(self, within_s: float):
-        """One camera pass of at most ``within_s``, or None."""
+        """A camera pass, waited for at most ``within_s``, or None. The face worker takes one pass at a time, so
+        commands that need one meanwhile share the pass in flight."""
         if within_s <= 0:
             return None
+        if self._looking is None or self._looking.done():
+            self._looking = asyncio.ensure_future(asyncio.to_thread(self.hardware.refresh_faces, within_s))
         try:
-            return await asyncio.wait_for(asyncio.to_thread(self.hardware.refresh_faces, within_s), within_s)
+            return await asyncio.wait_for(asyncio.shield(self._looking), within_s)
         except asyncio.TimeoutError:
             return None
 
