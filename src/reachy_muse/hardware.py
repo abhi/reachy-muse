@@ -272,6 +272,9 @@ class ReachyController:
         from reachy_muse.camera_gaze import GazeSettler
         self._wave_gaze = GazeSettler()
         self._wave_gaze_status = None
+        # Seconds watched, flips into watching, and when the current watch began. Only the motion
+        # thread writes it, always as a whole tuple, so other threads read a consistent snapshot.
+        self._wave_watched: tuple[float, int, float | None] = (0.0, 0, None)
         self._wave_lock = threading.Lock()
         self._camera_lock = threading.Lock()
         from reachy_muse.vision_budget import VisionBudget
@@ -1093,17 +1096,27 @@ class ReachyController:
                                    eligible=eligible)
         except AssertionError:
             self._wave_gaze.invalidate()
-        if not self._wave_watching:
-            self._wave_gaze_status = None
+        status = None
+        if self._wave_watching:
+            status = "follow" if self._face_tracking_status == (True, "idle follow") else "moving"
+            if self._wave_still():
+                status = "wave watching"
+        if status == self._wave_gaze_status:
             return
-        status = "follow" if self._face_tracking_status == (True, "idle follow") else "moving"
-        if self._wave_still():
-            status = "wave watching"
-        if status != self._wave_gaze_status:
-            if status == "wave watching":
-                log.info("Wave gaze: settled")
-            log.info("Wave gaze: %s", status)
-            self._wave_gaze_status = status
+        seconds, flips, since = self._wave_watched
+        if status == "wave watching":
+            self._wave_watched = (seconds, flips + 1, now)
+            log.debug("Wave gaze: settled")
+        elif since is not None:
+            self._wave_watched = (seconds + now - since, flips, None)
+        if status is not None:
+            log.debug("Wave gaze: %s", status)
+        self._wave_gaze_status = status
+
+    def _wave_watching_totals(self) -> tuple[float, int]:
+        """Seconds the head has held still enough to watch for waves, and how many times it settled."""
+        seconds, flips, since = self._wave_watched
+        return (seconds if since is None else seconds + time.monotonic() - since), flips
 
     def set_wave_watching(self, active: bool) -> None:
         """Called off the audio loop: disabling bounds the wait for in-flight inference."""
@@ -1118,7 +1131,8 @@ class ReachyController:
                 self._wave_watcher = factory(self._read_camera_frame, self._wave_still,
                                              self._arrival_model, read_gaze=self._read_wave_gaze,
                                              camera_matrix=getattr(camera, "K", None),
-                                             budget=self.vision_budget)
+                                             budget=self.vision_budget,
+                                             read_watching=self._wave_watching_totals)
                 self._wave_watcher.start()
             if self._wave_watcher is not None:
                 self._wave_watcher.set_active(active)

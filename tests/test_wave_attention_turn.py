@@ -1,8 +1,9 @@
 """Visual admission, wake attention and a reply through the real motion owner."""
 
-import asyncio
 import math
+import time
 from types import SimpleNamespace
+from typing import NamedTuple
 
 import pytest
 
@@ -14,6 +15,18 @@ from test_device_command_turns import played, rig_with, run, sent_to_muse, servi
 from test_face_tracking_motion import Follower
 from test_hardware import FakeRobot, generated, np, start_controller
 from test_pins import Transcripts, Vad, Wake
+
+
+class Tick(NamedTuple):
+    """One motion tick, recorded on the motion thread as it wrote the robot's targets."""
+
+    began_after: float  # when the previous tick wrote; this tick read its clock later
+    written: float
+    turning: bool
+    following: bool
+    generated: object
+    yaw: float
+    body_yaw: float
 
 
 @pytest.mark.parametrize("visual", [False, True])
@@ -88,11 +101,38 @@ def test_wave_turn_hands_over_to_face_tracking_through_a_whole_reply(monkeypatch
     expected_yaw = 30 if visual else -30
     expected_body = 10 if visual else -10
     follower.yaw, follower.pitch = -5, -3
+    ticks = []
+    write = robot.set_target
+
+    def set_target(head, antennas, body_yaw):
+        began_after = ticks[-1].written if ticks else -math.inf
+        write(head=head, antennas=antennas, body_yaw=body_yaw)
+        ticks.append(Tick(began_after, time.monotonic(), controller._speaker_turn is not None, follower.active,
+                          controller._generated, controller._pose_parameters(head)["yaw"],
+                          math.degrees(body_yaw)))
+
+    robot.set_target = set_target
+
+    async def first_tick(predicate, since=0):
+        """Wait for the motion thread to record a tick from ``since`` on that matches; return its index.
+
+        Checks read these records rather than the live controller, which may be part way through a tick.
+        """
+        def match():
+            return next((index for index in range(since, len(ticks)) if predicate(ticks[index])), None)
+
+        await rig.wait_until_or_timeout(lambda: match() is not None)
+        index = match()
+        assert index is not None, "no motion tick matched"
+        return index
 
     async def muse(session, request):
+        since = len(ticks)
         controller.play_motion(generated(3, yaw=3, roll=5), 25, during={"thinking", "speaking"})
-        await asyncio.sleep(.5)
-        tracking.append((follower.active, controller._pose_parameters(robot.pose)["yaw"]))
+        timeline = ticks[await first_tick(lambda tick: tick.generated is not None, since)].generated.timeline
+        faded_in = ticks[await first_tick(
+            lambda tick: tick.began_after >= timeline.started + timeline.fade_in_s, since)]
+        tracking.append((faded_in.following, faded_in.yaw))
         await session.answer(request, "Tomorrow will be sunny.")
 
     class RejectAcousticWake:
@@ -123,12 +163,12 @@ def test_wave_turn_hands_over_to_face_tracking_through_a_whole_reply(monkeypatch
         conversation._voice[1]._direction_audio_until = math.inf
         await rig.wait_until_or_timeout(lambda: len(reads) >= 5)
         camera.pending = True
-        await rig.wait_until_or_timeout(lambda: controller._speaker_turn is not None)
-        assert not follower.active
+        turn = await first_tick(lambda tick: tick.turning)
+        assert not ticks[turn].following
         assert sent_to_muse(rig.recording.events) == []
-        await rig.wait_until_or_timeout(lambda: controller._speaker_turn is None and follower.active)
-        assert controller._pose_parameters(robot.pose)["yaw"] == pytest.approx(expected_yaw, abs=.2)
-        assert math.degrees(robot.body_yaw) == pytest.approx(expected_body, abs=.2)
+        handover = ticks[await first_tick(lambda tick: tick.following and not tick.turning, turn)]
+        assert handover.yaw == pytest.approx(expected_yaw, abs=.2)
+        assert handover.body_yaw == pytest.approx(expected_body, abs=.2)
         assert directions == [pytest.approx(math.pi / 3 if visual else 2 * math.pi / 3, abs=.01)]
         await rig.quiet("listening", "idle")
         follower.visible = True
@@ -136,6 +176,8 @@ def test_wave_turn_hands_over_to_face_tracking_through_a_whole_reply(monkeypatch
             lambda: abs(controller._pose_parameters(robot.pose)["yaw"] - (expected_yaw - 5)) < .2)
         assert voice_checks == []
         rig.say()
+        # run() ends the conversation once listening goes 0.6 s without an event, which a slow microphone can outlast.
+        await rig.wait_until_or_timeout(lambda: sent_to_muse(rig.recording.events))
 
     try:
         events = run(rig, conversation, user, rest=("listening", "idle"))
