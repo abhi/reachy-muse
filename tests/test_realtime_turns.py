@@ -1788,6 +1788,58 @@ def test_a_short_afterthought_said_as_muse_starts_answering_reaches_muse(monkeyp
     assert heard == [True]
 
 
+def test_an_afterthought_on_its_own_stream_reaches_muse_when_the_request_ended_before_muse_answered(monkeypatch):
+    """As the branch's amended afterthought test, with Reachy's 1.2 s end of turn, but the request ends before Muse's
+    first reply, so the afterthought's own words, on the stream opened after Muse's next reply starts, are the only
+    words that can confirm it."""
+    from reachy_muse.protocol import HearPartial, encode
+
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    next_reply = []
+
+    async def answer(sdk, emit, script):
+        next_reply.append(lambda: reply_events(sdk, emit, "r2", REPLY, voiced(4)))
+        await asyncio.sleep(1.6)
+        reply_events(sdk, emit, "r1", REPLY, voiced(7.5))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=30)
+    conversation.silence_s = 1.2
+    link = companion_hearing(conversation)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        while not call.audible:
+            await room(rig, .04)
+        await room(rig, .5)
+        streams = []
+        for _ in range(40):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            for stream in [stream for stream in link._connection.hearing if stream not in streams]:
+                streams.append(stream)
+                link._receive(link._connection, encode(HearPartial(stream, 1, "Actually, tell me about trains")))
+        assert calls.barge_ins == 1
+        next_reply[0]()
+        await rig.wait_until_or_timeout(lambda: call.audible, 1)
+        before = len(calls.frames)
+        for frame in range(40):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE if frame < 15 else 0, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            if frame == 25:
+                for stream in [stream for stream in link._connection.hearing if stream not in streams]:
+                    link._receive(link._connection, encode(HearPartial(stream, 2, "and boats too")))
+        await room(rig, .5)
+        heard.append((len(streams), calls.barge_ins, voiced_ms(calls.frames[before:]) >= 250))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=30)
+    assert heard == [(1, 2, True)]
+
+
 def test_after_a_second_interruption_muse_s_third_reply_never_streams_back_into_muse(monkeypatch):
     """The user cuts Muse off, talks on over its next reply until that is cut too, stops, and Muse answers at once.
     Words said after a reply starts, and the echo of the third, come as partials of streams opened after it."""
