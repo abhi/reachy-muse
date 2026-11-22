@@ -88,7 +88,7 @@ CAMERA_STILL_STEP = 0.02
 CAMERA_AXES = [0, 1, 2, 3, 4, 5, 8]
 CAMERA_STILL_S = 0.5
 WATCH_TURN_S = 4.0
-# A photo waits this long for the head to come to rest, longer than a turn toward a speaker, then holds
+# A photo waits this long for the head to reach a new view, longer than a turn toward a speaker, then holds
 # the camera's pose until a frame is read.
 PHOTO_SETTLE_S = 1.0
 PHOTO_STILL_S = 0.1
@@ -1087,8 +1087,9 @@ class ReachyController:
     def capture_photo(self, timeout_s: float = PHOTO_CAPTURE_S) -> PhotoCapture:
         """One JPEG of what the camera sees now, made within ``timeout_s``; call it off the event loop.
 
-        The head gets PHOTO_SETTLE_S to come to rest, then keeps its camera pose until a frame is read.
-        It reads even while a turn pauses background vision. One capture runs at a time, and only its
+        The head gets PHOTO_SETTLE_S to finish a turn or a move from Muse, then keeps its camera pose until a
+        frame is read; the hold also stills expressive motion, such as the thinking pose, without waiting for
+        it. It reads even while a turn pauses background vision. One capture runs at a time, and only its
         JPEG leaves this call.
         """
         started = time.monotonic()
@@ -1096,8 +1097,7 @@ class ReachyController:
         if not self._photo_lock.acquire(blocking=False):
             return PhotoCapture("camera_busy")
         try:
-            self._wait_for(lambda: not self._head_turning() and self._camera_steady(),
-                           min(deadline, started + PHOTO_SETTLE_S))
+            self._wait_for(lambda: not self._view_changing(), min(deadline, started + PHOTO_SETTLE_S))
             self._photo_hold.set()
             try:
                 frame, failure = self._read_photo_frame(deadline)
@@ -1150,10 +1150,14 @@ class ReachyController:
         while not ready() and time.monotonic() < until and not self._stop.wait(.01):
             pass
 
-    def _head_turning(self) -> bool:
+    def _view_changing(self) -> bool:
+        """The head turns toward or back from someone, wakes up, or moves on a command from Muse."""
         with self._state_lock:
+            clip = self._clip
             return (self._speaker_pending is not None or self._speaker_turn is not None
-                    or self._person_pending is not None or self._person_release)
+                    or self._person_pending is not None or self._person_release
+                    or self._command_active or self._deferred is not None
+                    or clip is not None and (clip.request is not None or clip.wake))
 
     def _camera_steady(self) -> bool:
         """The camera has moved less than PHOTO_STILL_STEP per motion period for PHOTO_STILL_S, or nothing moves it."""

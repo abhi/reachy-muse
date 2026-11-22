@@ -1019,10 +1019,12 @@ they go to Muse as ordinary requests.
   photo. So does one heard in a call while Reachy still handles your previous
   turn, or while Muse still owes an answer to an earlier call turn; that answer
   is not cut off, and Muse hears the request in the call as an ordinary one.
-- The camera is in the head, so Reachy waits up to a second for its head to come
-  to rest, then holds the camera still until it has the frame. A gaze held on
-  another person ends first, as it does for any next request, so the photo shows
-  what Reachy faces afterwards, usually you.
+- The camera is in the head, so Reachy waits up to a second for its head to
+  finish turning toward you or a move Muse asked for, then holds the camera still
+  until it has the frame. The thinking pose and other expressive motion are held
+  at once, not waited out. A gaze held on another person ends first, as it does
+  for any next request, so the photo shows what Reachy faces afterwards, usually
+  you.
 - In a [realtime call](#realtime-voice-calls), Muse hears the request too.
   Reachy cuts off Muse's spoken answer, as it does for a device command, and
   speaks Muse's answer to the photo in its own voice. The call stays open. A

@@ -203,7 +203,7 @@ def written_since(robot, since):
     return [write for write in list(robot.frames) if write[0] >= since]
 
 
-def test_a_swaying_head_holds_its_pose_while_the_frame_is_read_and_then_moves_on():
+def test_a_thinking_head_is_held_still_at_once_for_the_photo_and_then_moves_on():
     robot = FakeRobot()
     seen = []
 
@@ -226,10 +226,37 @@ def test_a_swaying_head_holds_its_pose_while_the_frame_is_read_and_then_moves_on
     finally:
         controller.close()
     assert photo.failure is None
-    assert read_at - started >= PHOTO_SETTLE_S
+    assert read_at - started < PHOTO_SETTLE_S / 2
     assert len(camera_poses(before_read)) == 1
     assert len(after) > 1
     assert controller._failure is None
+
+
+def test_the_curious_thinking_lean_a_turn_starts_is_held_rather_than_waited_out():
+    robot = FakeRobot()
+    seen = []
+
+    def get_frame():
+        seen.append((time.monotonic(), len(robot.frames)))
+        return frame()
+
+    robot.media.get_frame = get_frame
+    controller = start_controller(robot, photo_encoder=Encoder(),
+                                  style=MotionStyle(breathing=False, expression_clips=False))
+    try:
+        controller.set_state("listening")
+        time.sleep(.5)
+        controller.set_state("thinking", expression="curious")
+        time.sleep(.05)
+        started = time.monotonic()
+        photo = controller.capture_photo()
+        read_at, written = seen[0]
+        before_read = robot.frames[written - 3:written]
+    finally:
+        controller.close()
+    assert photo.failure is None
+    assert read_at - started < PHOTO_SETTLE_S / 2
+    assert len(camera_poses(before_read)) == 1
 
 
 def test_a_photo_waits_until_the_head_has_turned_back_from_another_person():
