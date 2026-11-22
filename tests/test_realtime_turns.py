@@ -1850,6 +1850,48 @@ def test_after_a_second_interruption_muse_s_third_reply_never_streams_back_into_
     assert heard == [2, (2, 0)]
 
 
+@pytest.mark.parametrize("muse_says", ["Okay.", "Okay, I'll stop listening."])
+def test_stop_listening_over_muse_is_obeyed_even_when_muse_s_next_reply_repeats_it(monkeypatch, muse_says):
+    """As the command repro, with the companion answering the finish, but Muse's next reply, which starts before
+    Reachy ends the turn, says the command's words back. The turn ended where that reply began."""
+    from reachy_muse.device_command import WakeWindow
+    from reachy_muse.protocol import HearPartial, encode
+
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    next_reply = []
+
+    async def answer(sdk, emit, script):
+        next_reply.append(lambda: reply_events(sdk, emit, "r2", muse_says, voiced(2)))
+        reply_events(sdk, emit, "r1", REPLY, voiced(7.5))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=30)
+    link = companion_hearing(conversation, forced_endpoints=True)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, .5)
+        streams = []
+        for _ in range(30):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            for stream in [stream for stream in link._connection.hearing if stream not in streams]:
+                streams.append(stream)
+                link._receive(link._connection, encode(HearPartial(stream, 1, "Stop listening.")))
+        assert calls.barge_ins == 1
+        next_reply[0]()
+        await room(rig, 2.0)
+        heard.append(voice._wake_window is WakeWindow.DISMISSED)
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking", "sleeping"), timeout=30)
+    assert heard == [True]
+
+
 def test_room_noise_after_a_turn_the_user_talked_through_does_not_hold_the_window_open(monkeypatch):
     """The companion ends the user's turn on its last voiced frame. Afterwards the room has only a click every half
     second, never three voiced frames in a row, so no turn opens; once Muse has answered, the window still closes."""

@@ -1231,7 +1231,7 @@ class VoiceConversation:
             quiet_s = recorder.quiet_s
             # Read before take: a companion's endpoint there starts the recorder's voice detector over.
             voicing = recorder.speech_active and quiet_s == 0
-            if recorder.active or recorder.speech_active:
+            if (recorder.active or recorder.speech_active) and not reply_began:
                 if self.call is not None:
                     replies = self.call.audible_transcripts(ECHO_TAIL_S)
                     over_muse = over_muse or bool(replies)
