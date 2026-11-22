@@ -45,8 +45,27 @@ _TOPIC_LEAD = frozenset((
 TOPIC_WORDS = 6
 
 
+_WORD = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
+# Back-channel sounds, with any hyphen or space between their parts taken out: "mm-hmm", "mm hmm" and "mmhmm" alike.
+_BACK_CHANNELS = frozenset(("mmhmm", "mhm", "uhhuh", "uhuh", "uhoh", "hmm", "mm", "uh", "um", "ah", "oh"))
+
+
 def spoken_words(text: str) -> List[str]:
-    return re.findall(r"[^\W_]+(?:'[^\W_]+)*", text.replace("’", "'").casefold())
+    return _WORD.findall(text.replace("’", "'").casefold())
+
+
+def word_count(text: str) -> int:
+    """How many words ``text`` holds: none when it is only back-channel sounds, such as "mm-hmm" or "uh huh"."""
+    words = spoken_words(text)
+    start = 0
+    while start < len(words):
+        if "".join(words[start:start + 2]) in _BACK_CHANNELS:
+            start += 2
+        elif words[start] in _BACK_CHANNELS:
+            start += 1
+        else:
+            return len(words)
+    return 0
 
 
 def classify_follow_up(text: str) -> FollowUp:

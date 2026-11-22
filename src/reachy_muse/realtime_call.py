@@ -30,7 +30,7 @@ from musegadget.streaming import HTTPStatusError
 from reachy_muse.motion.reply_alignment import SAMPLE_RATE
 from reachy_muse.motion.reply_motion import Mark, ReplyMotion
 from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlayback
-from reachy_muse.follow_up import FollowUp, classify_follow_up, repeats_playback, spoken_words
+from reachy_muse.follow_up import FollowUp, classify_follow_up, repeats_playback, word_count
 from reachy_muse.person_gaze import MuseActivity
 
 log = logging.getLogger(__name__)
@@ -63,7 +63,8 @@ class CallInput:
 
     Silence keeps the remote VAD clock moving while local recognition catches up. Only
     a confirmed interruption releases the bounded pre-roll, preserving its first words.
-    Echo and unrecognized room sounds never enter Muse's microphone stream.
+    Echo and unrecognized room sounds never enter Muse's microphone stream. One gate serves
+    one utterance, which can run on past the endpoint of a turn within it.
     """
 
     def __init__(self, feed, sample_rate: int):
@@ -79,9 +80,11 @@ class CallInput:
         self._quiet_samples = 0
         self.confirmed = False
         self.sent_speech = False
+        self.heard_speech = False
 
     def push(self, samples, *, speaking: bool, text: str, playback: bool,
              heard_over: tuple[str, ...], quiet_s: float = 0.0) -> bool:
+        self.heard_speech = self.heard_speech or speaking
         if not playback or self.confirmed:
             self.feed.push(samples, silent=quiet_s >= len(samples) / self.rate + FRAME_SAMPLES / SAMPLE_RATE)
             self.sent_speech = self.sent_speech or speaking
@@ -112,15 +115,14 @@ class CallInput:
         return False
 
     def finish(self, text: str, heard_over: tuple[str, ...]) -> bool:
+        """Confirm on a finished turn's words. Held audio stays: the utterance can go on past the turn."""
         if (not self.confirmed and self._speech_samples >= BARGE_IN_SPEECH_S * self.rate
                 and self._distinct(text, heard_over)):
             self._confirm()
-        self._pending.clear()
-        self._samples = 0
         return self.confirmed
 
     def _distinct(self, text: str, heard_over: tuple[str, ...]) -> bool:
-        enough_words = len(spoken_words(text)) >= 2 or classify_follow_up(text) in (
+        enough_words = word_count(text) >= 2 or classify_follow_up(text) in (
             FollowUp.CANCEL, FollowUp.SILENCE)
         return bool(enough_words and heard_over and not repeats_playback(text, heard_over))
 
@@ -544,7 +546,7 @@ class RealtimeCall:
         self.working = False
         self.pending: list[PendingTurn] = []
         self.turns = 0
-        self.outcomes = {"answered": 0, "silent": 0, "unanswered": 0, "recovered": 0}
+        self.outcomes = {"answered": 0, "silent": 0, "unanswered": 0, "recovered": 0, "not_awaited": 0}
         self.latest_response: Optional[str] = None
         self.muse_moved = False
         self.reason: Optional[str] = None
@@ -565,7 +567,7 @@ class RealtimeCall:
         self._closing = False
         self._transcripts: dict[Optional[str], str] = {}
 
-    def accept_turn(self, *, endpoint_at: float, speech_end_at: float, words: int) -> bool:
+    def accept_turn(self, *, endpoint_at: float, speech_end_at: float, words: int, awaits_answer: bool = True) -> bool:
         self.turns += 1
         turn = PendingTurn(self.turns, endpoint_at, speech_end_at, words, self.feed.sent, endpoint_at)
         replied_at = self.speaker.reply_started
@@ -577,6 +579,9 @@ class RealtimeCall:
             return False
         if self.done:
             self._outcome(turn, "unanswered")
+            return False
+        if not awaits_answer:
+            self._outcome(turn, "not_awaited")
             return False
         self.pending.append(turn)
         return True
@@ -634,8 +639,20 @@ class RealtimeCall:
             log.info("Muse's realtime reply started %.2f s after turn %d's last voiced sample",
                      replied_at - turn.speech_end_at, turn.ordinal)
 
+    def _events_fresh(self, now: float) -> bool:
+        return self.last_event_at is not None and now - self.last_event_at < WORKING_STALE_S
+
+    @property
+    def at_work(self) -> bool:
+        """Muse is working on a request: Working is on and its work has not gone stale.
+
+        The robot's SDK can leave Working on after Muse stops, so Working with no SDK event for
+        ``WORKING_STALE_S`` no longer counts.
+        """
+        return self.working and self._events_fresh(time.monotonic())
+
     def _progress_suspended(self, now: float) -> bool:
-        if self.last_event_at is None or now - self.last_event_at >= WORKING_STALE_S:
+        if not self._events_fresh(now):
             return False
         opened = [response for response in self._responses.values() if not response.done]
         latest = self._responses.get(self.latest_response)
@@ -808,10 +825,10 @@ class RealtimeCall:
             await asyncio.gather(*tasks, return_exceptions=True)
             self.finish_pending("unanswered")
             log.info("Realtime call_summary duration_ms=%d turns=%d answered=%d silent=%d unanswered=%d recovered=%d "
-                     "responses=%d audio_bytes=%d feed_sent=%d feed_evictions=%d max_queue_age_ms=%d",
+                     "not_awaited=%d responses=%d audio_bytes=%d feed_sent=%d feed_evictions=%d max_queue_age_ms=%d",
                      round((time.monotonic() - self.opened_at) * 1000), self.turns,
                      self.outcomes["answered"], self.outcomes["silent"], self.outcomes["unanswered"],
-                     self.outcomes["recovered"],
+                     self.outcomes["recovered"], self.outcomes["not_awaited"],
                      self._response_count, self._audio_bytes, self.feed.sent, self.feed.evictions,
                      round(self.feed.max_queue_age_s * 1000))
 

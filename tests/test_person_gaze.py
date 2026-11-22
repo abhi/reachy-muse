@@ -503,6 +503,33 @@ def test_request_negative_outcomes_keep_the_call_reply(people, caplog, case, tex
         ['Reachy gaze request outcome=' + expected] if expected else [])
 
 
+def test_a_turn_ended_where_muse_s_reply_starts_keeps_its_speakers_bearing(people, caplog):
+    """Reachy's own end of the turn would come 3 s after the user stops, but Muse's reply starts first and ends the
+    turn there. The turn keeps the bearing taken while the user spoke, so Reachy turns to the friend at once."""
+    rig, controller, robot, scene = people
+    caplog.set_level('INFO')
+    rig.hardware.echo_cancelled_input = True
+    calls = ScriptedCalls(reply='Hello!', reply_s=.1)
+    service = realtime_service(rig, StreamingTranscripts('Say hi to my friend.'), calls)
+    service.silence_s = 3
+
+    async def user():
+        await say_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events), 3)
+        answered = time.monotonic()
+        await rig.wait_until_or_timeout(lambda: controller._person_hold is not None, 2)
+        assert time.monotonic() - answered < 1
+        await asyncio.sleep(.9)
+        assert math.degrees(controller.head_yaw) == pytest.approx(-25, abs=1)
+        assert math.degrees(robot.body_yaw) == pytest.approx(-5, abs=.2)
+
+    events = run(rig, service, user)
+    assert set(played(events)) == {'muse'}
+    assert calls.barge_ins == 0
+    assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
+        'Reachy gaze request outcome=turned source=fresh faces=2']
+
+
 @pytest.mark.parametrize('seen_s, remembered, current, expected, facing', [
     (10, [(30, .35), (-40, .12)], [(30, .35)], 'turned source=memory faces=1', (-35, -15)),
     (40, [(30, .35), (-40, .12)], [(30, .35)], 'no_other source=fresh faces=1', (0, 0)),

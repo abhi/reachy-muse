@@ -468,6 +468,60 @@ def test_rejected_call_mode_speech_counts_as_neither_heard_nor_refused(monkeypat
     assert STRIKES.findall(caplog.text) == ["1", "2"]
 
 
+def test_a_refusal_landing_before_the_endpoint_of_a_command_cut_off_at_muse_s_reply_counts_after_it(
+        monkeypatch, caplog):
+    """Refused, refused, then a call command the robot cuts off where Muse's reply begins, and the next stream,
+    opened right after it, refused before the command's forced endpoint lands. Outcomes count once each, in stream
+    order: the command was heard, so the refusal is the first in a row and hearing does not rest."""
+    from reachy_muse.companion_server.engines import ScriptedHearing
+    from test_pins import Vad
+
+    stuck, final = [True], asyncio.Event()
+    stalls(monkeypatch, stuck)
+
+    class HeldFinal(ScriptedHearing):
+        def open(self, pre_roll_frames):
+            session = super().open(pre_roll_frames)
+            words = session.finish
+
+            async def finish():
+                await final.wait()
+                return await words()
+
+            session.finish = finish
+            return session
+
+    async def scenario():
+        async with companion_hearing(HeldFinal(frames_per_partial=1), link_type=SlowLink) as (link, hearing):
+            words = [await heard(hearing), await heard(hearing)]
+            stuck[0] = False
+            window = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=True)
+            try:
+                window.feed(SPEECH)
+                async with asyncio.timeout(2):
+                    while window.take().ended is None and window.partial is None:
+                        await asyncio.sleep(.01)
+                        window.feed(SPEECH[:320])
+                window.feed(SPEECH[:320], turn_ends_at=0)
+                command = window.take().ended
+                await asyncio.sleep(.25)   # past the companion's stall checks of the command's last audio
+                stuck[0] = True
+                link.held = []
+                await link.in_flight(Error, speaking=window)
+                link.land()
+                assert window.take().ended is None
+                strikes_before_its_endpoint = STRIKES.findall(caplog.text)
+                final.set()
+                words.append((await command.endpoint()).text)
+                return words, strikes_before_its_endpoint
+            finally:
+                window.abort()
+
+    assert asyncio.run(scenario()) == (["robot words", "robot words", "hello"], ["1", "2"])
+    assert STRIKES.findall(caplog.text) == ["1", "2", "1"]
+    assert "rests its companion's hearing" not in caplog.text
+
+
 @pytest.mark.parametrize("commands_only", [False, True])
 @pytest.mark.parametrize("speech_ended", [False, True])
 def test_three_overloaded_streams_rest_hearing_and_retry_after_cooldown(monkeypatch, commands_only, speech_ended):
@@ -558,6 +612,47 @@ def test_call_commands_use_companion_partials_without_requesting_or_waiting_for_
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("companion, words, strikes", [
+    ("ends it", ("volume down", True), []),
+    ("refuses it", ("volume", False), ["companion overloaded (1 in a row)"]),
+    ("never ends it", ("volume", False), ["the companion did not end the turn in time (1 in a row)"]),
+])
+def test_a_call_command_cut_off_where_muse_s_reply_began_waits_for_the_companion_s_final_words(
+        monkeypatch, caplog, companion, words, strikes):
+    """Muse is already answering, so the command's words can come with the companion's forced endpoint. When that
+    fails, its latest partial stands in."""
+    from reachy_muse import companion_client
+    from reachy_muse.protocol import CloseHow, Error, ErrorCode, HearClose, Sender, decode
+    from test_pins import Vad
+
+    monkeypatch.setattr(companion_client, "ENDPOINT_WAIT_S", .1)
+
+    async def scenario():
+        link = CompanionLink("ws://localhost:9", token="test", out_rate=16000, insecure=True)
+        link._connection = _Connection(None, (Op.HEAR,))
+        link._set(LinkState.UP)
+        hearing = FailoverHearing(CompanionHearing(link), LocalHearing(), CompanionRoute(link).hearing)
+        turn = hearing.open_turn(16000, silence_s=.1, vad=Vad(), commands_only=True)
+        turn.feed(np.full(8000, .2, np.float32))
+        assert turn.take().ended is None
+        stream, = link._connection.hearing.values()
+        link._receive(link._connection, encode(HearPartial(stream.id, 1, "volume")))
+        turn.feed(np.full(320, .2, np.float32), turn_ends_at=0)
+        ended = turn.take().ended
+        outbox = link._connection.outbox
+        sent = [outbox.get_nowait() for _ in range(outbox.qsize())]
+        assert decode(sent[-1], sender=Sender.ROBOT) == HearClose(stream.id, CloseHow.FINISH)
+        if companion == "ends it":
+            link._receive(link._connection, encode(HearEndpoint(stream.id, "volume down", True)))
+        elif companion == "refuses it":
+            link._receive(link._connection, encode(Error(ErrorCode.OVERLOADED, "busy", stream=stream.id)))
+        endpoint = await ended.endpoint()
+        return endpoint.text, endpoint.forced
+
+    assert asyncio.run(scenario()) == words
+    assert [line.removeprefix("Reachy used its own hearing: ") for line in caplog.messages] == strikes
+
+
 def test_a_failed_companion_endpoint_keeps_its_audio_and_logs_no_user_words(caplog):
     from reachy_muse.protocol import Error, ErrorCode
     from test_pins import Vad
@@ -639,7 +734,7 @@ class ScriptedTurn:
         self.fed = []
         self._takes = list(takes)
 
-    def feed(self, samples):
+    def feed(self, samples, turn_ends_at=None):
         self.fed.append(samples.copy())
 
     def take(self):

@@ -53,12 +53,15 @@ class SpeechEnd:
     """The recorder's endpoint, including rejected short utterances."""
 
     accepted: bool
+    cut: bool = False              # the caller ended the turn, not the user's silence
 
 
 # With a short-utterance guard, a turn holding less voiced speech than this ("um",
 # "remind me") ends only after the guard's longer silence, so a hesitation does not
 # send a fragment.
 SHORT_UTTERANCE_S = 0.6
+# The audio a turn keeps from before its speech was detected, so its first word is whole.
+PRE_ROLL_S = 0.2
 _UTTERANCE_IDS = itertools.count(1)
 
 
@@ -81,7 +84,8 @@ class TurnRecorder:
 
     ``feed`` returns at most one turn. Any remaining input stays buffered for
     the next call. Call ``reset`` when suspending capture for speaker playback
-    to discard audio from before that suspension.
+    to discard audio from before that suspension. ``end_turn_at`` ends the open
+    turn at a given sample, before the user falls silent.
     """
 
     RATE = 16_000
@@ -131,7 +135,7 @@ class TurnRecorder:
             1, math.ceil(math.nextafter(initial_min_s / self.FRAME_SECONDS, -math.inf))))
         self._initial_capture = initial_min_s is not None
         self._max_frames = math.floor(math.nextafter(max_s / self.FRAME_SECONDS, math.inf))
-        self._history = deque(maxlen=min(10, self._max_frames))
+        self._history = deque(maxlen=min(round(PRE_ROLL_S / self.FRAME_SECONDS), self._max_frames))
         self._stream_audio = stream_audio
         self._audio_events: list[SpeechAudio | SpeechEnd] = []
         self.last_truncated = False
@@ -173,6 +177,7 @@ class TurnRecorder:
         self._speech_run = 0
         self._speech_quiet = 0
         self._total_quiet_frames = 0
+        self._cut_at: int | None = None   # where in the pending audio the open turn ends early
         self.last_truncated = False
         self._clear_turn()
         self._min_frames = self._initial_min_frames
@@ -194,6 +199,13 @@ class TurnRecorder:
         """Restore the normal speech minimum without losing buffered samples."""
         self._initial_capture = False
         self._min_frames = self._normal_min_frames
+
+    def end_turn_at(self, sample: int) -> None:
+        """End the open turn before the 20 ms frame that holds the ``sample``-th input sample fed from now, as
+        silence would. The next turn keeps no pre-roll from before that frame."""
+        if sample < 0:
+            raise ValueError("A turn can only end at a sample still to be fed")
+        self._cut_at = len(self._pending) + 2 * round(sample * self.RATE / self._input_rate)
 
     def _clear_turn(self) -> None:
         self._min_frames = (self._initial_min_frames if self._initial_capture
@@ -218,7 +230,14 @@ class TurnRecorder:
 
         offset = 0
         result = None
-        while len(self._pending) - offset >= self.FRAME_BYTES:
+        while result is None:
+            # A cut ends the turn before the first frame holding any audio from past it.
+            if self._cut_at is not None and offset + self.FRAME_BYTES > self._cut_at:
+                self._cut_at = None
+                result = self._end_turn(cut=True)
+                continue
+            if len(self._pending) - offset < self.FRAME_BYTES:
+                break
             pcm = bytes(self._pending[offset:offset + self.FRAME_BYTES])
             offset += self.FRAME_BYTES
             voiced = bool(self._vad.is_speech(pcm, self.RATE))
@@ -250,16 +269,23 @@ class TurnRecorder:
             silence_frames = (self._silence_frames if self._voiced_frames >= self._short_frames
                               else self._short_silence_frames)
             if truncated or self._quiet_frames >= silence_frames:
-                accepted = self._voiced_frames >= self._min_frames
-                if self._stream_audio:
-                    self._audio_events.append(SpeechEnd(accepted))
-                if accepted:
-                    result = self._wav()
-                    self.last_truncated = truncated
-                self._clear_turn()
-                if result is not None:
-                    break
+                result = self._end_turn(truncated=truncated)
         del self._pending[:offset]
+        if self._cut_at is not None:
+            self._cut_at -= offset
+        return result
+
+    def _end_turn(self, *, truncated: bool = False, cut: bool = False) -> bytes | None:
+        """End the open turn, if any; its WAV when it holds enough voice."""
+        result = None
+        if self.active:
+            accepted = self._voiced_frames >= self._min_frames
+            if self._stream_audio:
+                self._audio_events.append(SpeechEnd(accepted, cut))
+            if accepted:
+                result = self._wav()
+                self.last_truncated = truncated
+        self._clear_turn()
         return result
 
     def _wav(self) -> bytes:

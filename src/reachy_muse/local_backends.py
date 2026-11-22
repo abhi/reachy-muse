@@ -63,6 +63,24 @@ class _LocalEndedTurn:
         return Endpoint(self.wav, text)
 
 
+class _LocalCutCommand(_LocalEndedTurn):
+    """A call command the robot ended where Muse's reply began. Muse is already answering, so its words can wait
+    for the streaming final as long as a companion's forced endpoint can; after that its latest partial stands in."""
+
+    def __init__(self, wav: bytes, recognition: asyncio.Future, truncated: bool, partial: str, *, restart=None):
+        from reachy_muse.companion_client import ENDPOINT_WAIT_S
+
+        super().__init__(wav, recognition, None, truncated, restart=restart)
+        self._partial = partial
+        self._deadline = time.monotonic() + ENDPOINT_WAIT_S
+
+    async def endpoint(self) -> Optional[Endpoint]:
+        try:
+            return await asyncio.wait_for(super().endpoint(), max(0.0, self._deadline - time.monotonic()))
+        except asyncio.TimeoutError:
+            return Endpoint(self.wav, self._partial, partial=True)
+
+
 class LocalHearingTurn:
     """One TurnRecorder, fed to a streaming recognizer while the user speaks."""
 
@@ -108,7 +126,9 @@ class LocalHearingTurn:
             return None
         return self._turn.partial
 
-    def feed(self, samples) -> None:
+    def feed(self, samples, turn_ends_at: Optional[int] = None) -> None:
+        if turn_ends_at is not None:
+            self._recorder.end_turn_at(turn_ends_at)
         self._wav = self._recorder.feed(samples)
 
     async def drain(self) -> None:
@@ -124,7 +144,7 @@ class LocalHearingTurn:
 
         wav, self._wav = self._wav, None
         events = self._recorder.take_audio_events() if self._recognizer is not None else ()
-        recognition = None
+        recognition = cut_off = None
         failures = 0
         transcript_lost = accepted_turn_lost = False
         audio = bytearray()
@@ -139,6 +159,7 @@ class LocalHearingTurn:
                 elif self._turn is not None:
                     if event.accepted:
                         recognition = self._turn.finish()
+                        cut_off = self._turn.partial if event.cut else None
                     else:
                         self._turn.abort()
                 self._turn = None
@@ -146,8 +167,12 @@ class LocalHearingTurn:
         failures += self._listen(audio)
         ended = None
         if wav is not None and not accepted_turn_lost:
-            ended = _LocalEndedTurn(wav, recognition, self._transcribe, self._recorder.last_truncated,
-                                    restart=self._restart)
+            if cut_off is not None:
+                ended = _LocalCutCommand(wav, recognition, self._recorder.last_truncated, cut_off.text,
+                                         restart=self._restart)
+            else:
+                ended = _LocalEndedTurn(wav, recognition, self._transcribe, self._recorder.last_truncated,
+                                        restart=self._restart)
         return HeardAudio(ended, failures, transcript_lost)
 
     def _listen(self, audio: bytearray) -> int:
