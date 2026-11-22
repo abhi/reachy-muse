@@ -30,7 +30,7 @@ from musegadget.streaming import HTTPStatusError
 from reachy_muse.motion.reply_alignment import SAMPLE_RATE
 from reachy_muse.motion.reply_motion import Mark, ReplyMotion
 from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlayback
-from reachy_muse.follow_up import FollowUp, classify_follow_up, repeats_playback, spoken_words, word_count, words_after
+from reachy_muse.follow_up import FollowUp, classify_follow_up, repeats_playback, word_count
 
 log = logging.getLogger(__name__)
 
@@ -63,15 +63,12 @@ class CallInput:
     Silence keeps the remote VAD clock moving while local recognition catches up. Only
     a confirmed interruption releases the bounded pre-roll, preserving its first words.
     Echo and unrecognized room sounds never enter Muse's microphone stream. One gate serves
-    one utterance, which can run on past the endpoint of a turn within it. A gate opened for a
-    reply that starts mid-utterance weighs only the words that come after ``said_before``.
+    one utterance, which can run on past the endpoint of a turn within it.
     """
 
-    def __init__(self, feed, sample_rate: int, *, said_before: str = ""):
+    def __init__(self, feed, sample_rate: int):
         self.feed = feed
         self.rate = sample_rate
-        self._said_before = spoken_words(said_before)
-        self.transcript = ""
         self.reset()
 
     def reset(self) -> None:
@@ -87,8 +84,6 @@ class CallInput:
     def push(self, samples, *, speaking: bool, text: str, playback: bool,
              heard_over: tuple[str, ...], quiet_s: float = 0.0) -> bool:
         self.heard_speech = self.heard_speech or speaking
-        self.transcript = text
-        text = words_after(text, self._said_before)
         if not playback or self.confirmed:
             self.feed.push(samples, silent=quiet_s >= len(samples) / self.rate + FRAME_SAMPLES / SAMPLE_RATE)
             self.sent_speech = self.sent_speech or speaking
@@ -120,7 +115,6 @@ class CallInput:
 
     def finish(self, text: str, heard_over: tuple[str, ...]) -> bool:
         """Confirm on a finished turn's words. Held audio stays: the utterance can go on past the turn."""
-        text = words_after(text, self._said_before)
         if (not self.confirmed and self._speech_samples >= BARGE_IN_SPEECH_S * self.rate
                 and self._distinct(text, heard_over)):
             self._confirm()
