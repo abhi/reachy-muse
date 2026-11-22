@@ -1035,21 +1035,25 @@ def test_reachy_people_and_a_look_at_someone_else_share_one_camera_pass(people, 
 
 @pytest.mark.parametrize("command, params", [("reachy.look_at", {"target": "other"}), ("reachy.people", {})])
 def test_a_slow_camera_pass_ends_in_time_for_muses_timeout(people, caplog, command, params):
-    """Muse allows 250 ms here. Reachy's view is stale and its camera slower than that, so the camera pass gives
-    up early enough for the answer to reach Muse before its timeout."""
+    """Muse allows 250 ms here. Reachy's view is stale, so it starts a camera pass, but the camera is slower than
+    that; the pass gives up early enough for the answer to reach Muse before its timeout."""
     rig, controller, robot, scene = people
     caplog.set_level("INFO")
-    took = []
+    captures, asked = [], []
+
+    def slow_capture():
+        captures.append(time.monotonic())
+        time.sleep(1)
 
     async def ask(ordinal):
         await heard(rig, caplog)
         await labeled(rig, caplog, SpeakerLabel.OWNER)
         scene.age = 11
         assert len((await asyncio.to_thread(controller.refresh_faces)).faces) == 2
-        scene.age, scene.before_capture = 0, lambda: time.sleep(1)
+        scene.age, scene.before_capture = 0, slow_capture
         started = time.monotonic()
         await rig.session.invoke(command, params, timeout_ms=250)
-        took.append(time.monotonic() - started)
+        asked.append((started, time.monotonic()))
         scene.before_capture = None
 
     muse = Muse(ask)
@@ -1060,7 +1064,9 @@ def test_a_slow_camera_pass_ends_in_time_for_muses_timeout(people, caplog, comma
 
     converse(rig, muse.calls, companion(), user)
     assert [result["ok"] for result in rig.session.results] == [True]
-    assert len(took) == 1 and took[0] < .25
+    assert len(asked) == len(captures) == 1
+    (started, answered), = asked
+    assert started <= captures[0] <= answered and answered - started < .25
     assert_allowed(rig.session.results, caplog)
 
 
