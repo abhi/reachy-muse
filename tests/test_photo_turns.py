@@ -1251,3 +1251,27 @@ def test_a_remark_heard_while_the_photo_is_taken_goes_to_muse_after_the_photo_s_
     assert [(event["muse"], event["text"]) for event in sent(events)] == [
         ("send_image", PHOTO_MESSAGE.format("Reachy, what am I holding?")), ("send_chat", "It is my favorite.")]
     assert played(events)[-2:] == ["tts:A red mug.", "tts:It suits you."]
+
+
+def test_an_um_after_hey_muse_and_yes_leaves_the_next_request_spoken_to_reachy(monkeypatch):
+    from test_pins import Wake
+
+    rig = photo_rig(monkeypatch, [PHOTO])
+    conversation = service(rig, answers("Take your time.", "A desk."),
+                           Transcripts("Hey Muse.", "Um.", "What do you see?"),
+                           wake_detector=Wake(), wake_timeout_s=30, photo_requests=True)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "tts:Yes?" in played(rig.recording.events), 5)
+        await rig.quiet("listening")
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: "tts:Take your time." in played(rig.recording.events), 5)
+        await rig.quiet("listening")
+        rig.say()
+        await rig.wait_until_or_timeout(lambda: "tts:A desk." in played(rig.recording.events), 5)
+
+    events = run(rig, conversation, user, rest=("listening",))
+    assert [(event["muse"], event["text"]) for event in sent(events)] == [
+        ("send_chat", "Um."), ("send_image", PHOTO_MESSAGE.format("What do you see?"))]
+    assert rig.hardware.captures == [2.0]

@@ -37,8 +37,8 @@ from reachy_muse.protocol import MAX_LINE_BYTES
 from reachy_muse.device_command import (COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow,
                                        command_after_wake, executable, names_reachy, photo_requested,
                                        whole_command)
-from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, interrupts_playback, request_topic,
-                                   too_short_for_follow_up, repeats_playback)
+from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, interrupts_playback, only_fillers,
+                                   request_topic, too_short_for_follow_up, repeats_playback)
 from reachy_muse.contract.intent import Intent, maybe_chat
 from reachy_muse.morning_briefing import MorningRoutine, briefing_lines
 from reachy_muse.recent import Recent
@@ -2026,7 +2026,7 @@ class VoiceConversation:
                 if isinstance(text, TurnOutcome):
                     completed = True
                     return text
-                self._claim_wake_request(timeline)
+                self._claim_wake_request(text, timeline)
                 if gaze_generation is not None:
                     self._gaze.admit(gaze_generation)
                 if text is not None:
@@ -2150,9 +2150,12 @@ class VoiceConversation:
         if self.photo_requests:
             self._wake_request_open = True
 
-    def _claim_wake_request(self, timeline: TurnTimeline | None) -> None:
-        """A request was heard; only the first one after the wake phrase is spoken to Reachy by it."""
-        if self._wake_request_open and timeline is not None:
+    def _claim_wake_request(self, text: str | None, timeline: TurnTimeline | None) -> None:
+        """A request was heard; only the first one after the wake phrase is spoken to Reachy by it.
+
+        Words that only hesitate, such as "um", ask nothing and leave the address to the next request.
+        """
+        if self._wake_request_open and timeline is not None and not (text is not None and only_fillers(text)):
             self._wake_request_open = False
             timeline.facts["wake_request"] = "first"
 
@@ -2645,12 +2648,15 @@ class VoiceConversation:
                                 held=held, timeline=request.timeline)
         if isinstance(text, TurnOutcome):
             return held
-        self._claim_wake_request(request.timeline)
         self._gaze.admit(request.gaze_generation)
         kind = FollowUp.NEW if text is None else classify_follow_up(text)
         # A one-word command ("goodnight", "louder") is obeyed before one-word asides are dropped.
         command = (await self._obey(text, request.timeline.marks["endpoint"], request.timeline)
                    if kind is FollowUp.NEW and text is not None else None)
+        aside = (command is None and kind in (FollowUp.NEW, FollowUp.ADD_DETAIL) and text is not None
+                 and too_short_for_follow_up(text))
+        if not aside:
+            self._claim_wake_request(text, request.timeline)
         if command is not None:
             if not COMMANDS[command].silence_speech:
                 self._say_hushed = False
@@ -2660,7 +2666,7 @@ class VoiceConversation:
             PhotoLog("chat", "busy").write()
             await self._announce(BUSY_CUE, started=None, defer_playback=True)
             return held
-        if kind in (FollowUp.NEW, FollowUp.ADD_DETAIL) and text is not None and too_short_for_follow_up(text):
+        if aside:
             log.info("Reachy ignored a one-word follow-up while Muse worked")
             return held
         job = self.job
@@ -2785,7 +2791,7 @@ class VoiceConversation:
                                            transcript=request.timeline.facts.get("command_transcript"), drop="echo")
             return TurnOutcome.EMPTY
         if text.strip():
-            self._claim_wake_request(request.timeline)
+            self._claim_wake_request(text, request.timeline)
         elif prefix != "none":
             self._open_wake_request()
         self._presence.mark("voice", started)

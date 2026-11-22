@@ -978,7 +978,8 @@ which it speaks in its own voice.
 
 Ask Reachy itself. The first request after the wake phrase opens or refreshes
 the window counts, whether you say it in the same breath, as in "Hey Muse, what
-do you see?", or after Reachy's "Yes?". Any request that starts or ends with
+do you see?", or after Reachy's "Yes?". A hesitation such as "um" before it does
+not use it up. Any request that starts or ends with
 Muse's or Reachy's name counts too, as in "Reachy, take a photo" or "What am I
 holding, Reachy?". Only that first request counts: later in the same window, a
 plain "what do you see?", from you, a guest or a television, takes no photo. It
