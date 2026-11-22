@@ -137,13 +137,19 @@ class FailingNarrator(EchoNarrator):
 
 
 class SlowHearing:
-    """A partial for every frame, 50 ms after it arrives: slower than the robot sends."""
+    """A partial for every frame, 50 ms after feeding starts: slower than the robot sends.
+
+    Feeding waits until ``released`` is set, so every stream stays busy on its first frame. A test
+    that releases the engine only after the server has handled a stream's abort or gap sees anything
+    the server still sends under that stream.
+    """
 
     name = "slow"
 
-    def __init__(self, *, stall=False):
-        self.stall = stall
+    def __init__(self):
         self.closed = []
+        self.busy = asyncio.Event()
+        self.released = asyncio.Event()
 
     def open(self, pre_roll_frames):
         hearing, index = self, len(self.closed)
@@ -153,8 +159,8 @@ class SlowHearing:
             heard = 0
 
             async def feed(self, pcm):
-                if hearing.stall:
-                    await asyncio.Event().wait()
+                hearing.busy.set()
+                await hearing.released.wait()
                 await asyncio.sleep(0.05)
                 self.heard += 1
                 return [Partial(f"p{self.heard}")]
@@ -291,8 +297,10 @@ def test_abort_silences_a_busy_hear_stream_and_frees_its_id():
         ws = await connected(companion)
         await send(ws, HearOpen(stream=1, pre_roll_frames=0))
         await mic(ws, 1, range(3))
-        await asyncio.sleep(0.03)
+        await hearing.busy.wait()
         await send(ws, HearClose(stream=1, how=CloseHow.ABORT))
+        await nothing_else_arrived(ws)
+        hearing.released.set()
         await send(ws, HearOpen(stream=1, pre_roll_frames=0))
         await mic(ws, 1, [0])
         await send(ws, HearClose(stream=1, how=CloseHow.FINISH))
@@ -310,9 +318,10 @@ def test_gap_silences_a_busy_hear_stream():
         ws = await connected(companion)
         await send(ws, HearOpen(stream=1, pre_roll_frames=0))
         await mic(ws, 1, [0, 1])
-        await asyncio.sleep(0.03)
+        await hearing.busy.wait()
         await mic(ws, 1, [3])
         assert await recv(ws) == Error(ErrorCode.GAP, "gap/gap: stream 1 expected seq 2, got 3", stream=1)
+        hearing.released.set()
         await asyncio.sleep(0.3)
         await nothing_else_arrived(ws)
         assert hearing.closed == [True]
@@ -744,12 +753,12 @@ def test_shutdown_with_a_stalled_hearing_engine_still_closes_the_session():
             ws = await connected(companion)
             await send(ws, HearOpen(stream=1, pre_roll_frames=0))
             await mic(ws, 1, [0])
-            await asyncio.sleep(0.1)
+            await hearing.busy.wait()
         with pytest.raises(ConnectionClosed):
             await recv(ws)
         return ws.close_code, hearing.closed
 
-    hearing = SlowHearing(stall=True)
+    hearing = SlowHearing()
     assert asyncio.run(asyncio.wait_for(script(), 3)) == (1001, [True])
 
 
