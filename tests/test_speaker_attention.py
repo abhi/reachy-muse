@@ -539,6 +539,23 @@ def test_a_speaker_the_head_faces_or_one_right_after_a_turn_gets_no_turn(monkeyp
     assert (turned["yaw"], turned["body_yaw"]) == pytest.approx((30, 10), abs=.01)
 
 
+def test_the_waker_s_own_request_during_the_wake_turn_gets_no_second_turn(monkeypatch, caplog):
+    """The waker at +35 talks on, and Reachy weighs their request a quarter second into its wake turn."""
+    caplog.set_level("INFO", logger="reachy_muse.hardware")
+    results = []
+
+    def wake_toward_35(controller):
+        controller.look_at_speaker(math.radians(90 - 35))
+        controller.set_state("listening")
+
+    controller, robot, clock = simulate(monkeypatch, {5: wake_toward_35, 15: follow_from(35, results)})
+    assert results == [("same", pytest.approx(0))]
+    arrived = pose_at(controller, robot, clock.times[5] + .65)
+    assert (arrived["yaw"], arrived["body_yaw"]) == pytest.approx((35, 15), abs=.01)
+    assert [record.message for record in caplog.records if record.message.startswith("Speaker gaze")] == [
+        "Speaker gaze yaw=35.0 body_yaw=15.0 decision=turn"]
+
+
 def greet_friend_at_minus_30(controller):
     assert controller.look_at_person(math.radians(-30), 0) is True
 

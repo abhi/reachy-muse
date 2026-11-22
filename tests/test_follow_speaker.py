@@ -8,6 +8,7 @@ import asyncio
 import itertools
 import math
 import threading
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -165,6 +166,56 @@ def test_a_sound_too_short_to_be_a_request_never_turns_reachy(people, caplog, pa
         assert [line for line in caplog.messages if line.startswith("Reachy queued a voice turn")] == [
             "Reachy queued a voice turn; 1 pending"]
     assert followed(caplog) == ["outcome=turned delta_deg=30"]
+
+
+class LateWake(TimedWake):
+    """Fires 0.3 s into the request that follows 0.6 s of wake audio, as verification and alignment delay a real
+    detection, and hands that 0.3 s of the request to the recorder as audio after the keyword."""
+
+    def __init__(self):
+        self.wake_samples = self.after = 0
+
+    def feed(self, samples):
+        self.feed_id += 1
+        if np.any(samples == WAKE_SAMPLE):
+            self.wake_samples += len(samples)
+            return False
+        if self.wake_samples < 9600:
+            return False
+        self.after += len(samples)
+        if self.after < 4800:
+            return False
+        self.last_detection = SimpleNamespace(epoch=self.epoch, feed_id=self.feed_id, post_wake_samples=self.after)
+        self.wake_samples = self.after = 0
+        return True
+
+
+def test_the_waker_s_request_heard_during_the_wake_turn_gets_no_second_turn(people, caplog):
+    """The owner says "Hey Muse" and the request in one breath, and Reachy weighs the request partway through its
+    wake turn toward them."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    calls = answering()
+    service = make_service(rig, never_asked, StreamingTranscripts("What's the weather?"), wake_detector=LateWake(),
+                           wake_timeout_s=5, muse_path="realtime", voice_link=calls.link, voice_call=calls)
+
+    async def user():
+        scene.doa = bearing(OWNER)
+        for _ in range(30):
+            rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+        await speak_from(rig, scene, OWNER, voiced_s=1.2)
+        await replied(rig, service, 1)
+
+    run(rig, service, user)
+    yaws = [(at, controller._pose_parameters(head)["yaw"]) for at, head, _, _ in robot.frames]
+    crossing = {mark: next(at for at, yaw in yaws if yaw >= mark) for mark in (3, 27)}
+    assert [line for line in caplog.messages if line.startswith("Wake direction decision=ok")] != []
+    # The eased 0.65 s wake turn passes 10% (3 degrees) and 90% (27 degrees) of its way 0.3 s apart, once.
+    assert round(crossing[27] - crossing[3], 1) == .3
+    assert [line for line in caplog.messages if line.startswith("Speaker gaze")] == [
+        "Speaker gaze yaw=30.0 body_yaw=10.0 decision=turn"]
+    assert followed(caplog) == ["outcome=same delta_deg=0"]
 
 
 def test_the_friend_answering_a_greeting_keeps_reachy_on_them_until_the_owner_speaks(people, caplog):

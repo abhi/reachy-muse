@@ -544,12 +544,12 @@ class ReachyController:
         """Turn toward a later speaker in the conversation, at DoA ``angle``, as a wake turn does, unless Reachy
         already looks within ``FOLLOW_TURN_DEG`` of them. The face follower then keeps to the face nearest them.
 
-        Where Reachy looks is the speaker or face it faces, not the swing of an expression or gesture. Returns the
-        outcome, and the degrees its gaze would turn when Reachy weighed a turn: ``turned``, ``same``, or
-        ``too_soon`` within ``FOLLOW_DWELL_S`` of the last such turn. It is ``off`` while the user has turned face
-        tracking off, ``held`` while a person turn holds Reachy on someone or is pending to, and ``busy`` while a
-        command, clip, generated motion, photo or another turn owns the head, or Reachy sleeps; head gestures go on
-        through the turn.
+        Where Reachy looks is the speaker or face it faces, or where the turn it is making ends, not the swing of an
+        expression or gesture. Returns the outcome, and the degrees its gaze would turn when Reachy weighed a turn:
+        ``turned``, ``same``, or ``too_soon`` within ``FOLLOW_DWELL_S`` of the last such turn. It is ``off`` while the
+        user has turned face tracking off, ``held`` while a person turn holds Reachy on someone or is pending to, and
+        ``busy`` while a command, clip, generated motion, photo or another turn owns the head, or Reachy sleeps; head
+        gestures go on through the turn.
         """
         target = speaker_yaw(angle)
         with self._state_lock:
@@ -564,7 +564,8 @@ class ReachyController:
                     or self._generated is not None or self._pending_motion is not None
                     or self._photo_hold.is_set()):
                 return "busy", None
-            delta = target.head - self._gaze_yaw
+            turn = self._speaker_turn
+            delta = target.head - (turn.target.head if turn is not None else self._gaze_yaw)
             now = time.monotonic()
             if abs(delta) <= FOLLOW_TURN_DEG:
                 return "same", delta

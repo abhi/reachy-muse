@@ -488,7 +488,8 @@ voice in it, it places the speaker from that utterance's own DoA readings, by
 the rules of the wake decision; a shorter request is placed at its end, and a
 sound too short to be a request never turns Reachy. If the speaker is
 more than 20 degrees from where Reachy looks, meaning the speaker or face it
-faces rather than the swing of an expression, Reachy turns as a wake turn does.
+faces, or where a turn under way ends, rather than the swing of an expression,
+Reachy turns as a wake turn does.
 The face follower then starts on the face nearest the new gaze, and head
 gestures go on through the turn. After such a turn, Reachy keeps the new gaze
 for at least 2 seconds, so two people trading quick remarks do not swing it
