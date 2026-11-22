@@ -435,7 +435,7 @@ def test_commands_wait_only_while_reachy_turns_toward_the_person(monkeypatch, so
         2: play_thinking(source), 25: look_at_friend, 30: lambda c: c._commands.put_nowait(turning),
         100: lambda c: c._commands.put_nowait(facing),
     }, ticks=200)
-    assert turning.result == {'ok': False, 'error': 'Reachy is still turning toward another person'}
+    assert turning.result == {'ok': False, 'error': 'Reachy is still turning toward a person'}
     turned = pose_at(controller, robot, clock.times[99])
     assert (turned['yaw'], turned['body_yaw'], turned['pitch']) == pytest.approx((-30, -10, 6), abs=.2)
     assert facing.result['ok'] is True
@@ -444,6 +444,31 @@ def test_commands_wait_only_while_reachy_turns_toward_the_person(monkeypatch, so
     assert (rested['yaw'], rested['body_yaw']) == pytest.approx((0, 0), abs=.2)
     assert controller._person_hold is None
     assert len(robot.writers) == 1
+
+
+def face_the_speaker_at_30(controller):
+    assert controller.face_speaker(math.pi / 3) is True
+
+
+@pytest.mark.parametrize('source', ['generated', 'clip'])
+def test_a_turn_toward_the_speaker_refuses_commands_only_while_it_moves_and_holds_nothing(monkeypatch, source):
+    turning = _Command('reachy.move', {'yaw': 0, 'duration': .2, 'hold': 0}, 1010)
+    seen = []
+
+    def command_mid_turn(controller):
+        seen.append(('moving', controller._person_pending is None and controller._speaker_turn is not None))
+        controller._commands.put_nowait(turning)
+
+    controller, robot, clock = simulate(monkeypatch, {
+        2: play_thinking(source), 25: face_the_speaker_at_30, 55: command_mid_turn,
+        110: lambda c: seen.append(('turning', c.person_turning)), 130: lambda c: c.release_person_gaze(),
+    }, ticks=230)
+    assert turning.result == {'ok': False, 'error': 'Reachy is still turning toward a person'}
+    assert seen == [('moving', True), ('turning', False)]
+    assert controller._person_hold is None
+    for at in (clock.times[100], clock.now):
+        faced = pose_at(controller, robot, at)
+        assert (faced['yaw'], faced['body_yaw']) == pytest.approx((30, 10), abs=.2)
 
 
 def test_sleep_releases_person_gaze(monkeypatch):
