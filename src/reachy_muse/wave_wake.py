@@ -148,11 +148,16 @@ class WaveWatcher:
     in bursts. Throttling spaces out person inference and idle sampling, while
     gestures keep their 8 Hz cadence and can await the next person confirmation.
     Rearming requires 3 s without motion, including after pauses and reconnects.
+    ``read_watching`` returns the total seconds the head has held still enough to
+    watch, and how many times it settled; each stats line reports their change.
     """
 
     def __init__(self, read_frame, is_still, model_path=None, *, clock=time.monotonic,
-                 detector_factory=YoloxPersonDetector, read_gaze=None, camera_matrix=None, budget=None):
+                 detector_factory=YoloxPersonDetector, read_gaze=None, camera_matrix=None, budget=None,
+                 read_watching=None):
         self._budget = budget
+        self._read_watching = read_watching
+        self._watching_logged = read_watching() if read_watching is not None else (0.0, 0)
         self._inference_after = -math.inf
         self._read_frame, self._is_still = read_frame, is_still
         self._read_gaze = read_gaze
@@ -233,8 +238,12 @@ class WaveWatcher:
             return
         self._stats_at = now
         stats, self._stats = self._stats, WaveStats()
-        log.info("Wave stats frames=%d detector_runs=%d cues=%d max_score=%.3f frame_errors=%d",
-                 stats.frames, stats.detector_runs, stats.cues, stats.max_score, stats.frame_errors)
+        watched, flips = self._read_watching() if self._read_watching is not None else (0.0, 0)
+        logged_s, logged_flips = self._watching_logged
+        self._watching_logged = (watched, flips)
+        log.info("Wave stats frames=%d detector_runs=%d cues=%d max_score=%.3f frame_errors=%d "
+                 "watching_s=%.1f flips=%d", stats.frames, stats.detector_runs, stats.cues, stats.max_score,
+                 stats.frame_errors, watched - logged_s, flips - logged_flips)
 
     def _current(self, epoch):
         with self._condition:
