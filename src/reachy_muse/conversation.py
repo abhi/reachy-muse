@@ -76,7 +76,8 @@ CANCEL_ACKNOWLEDGEMENT = "Okay, I'll drop that."
 STOP_REPLY_WINDOW_S = 5.0
 BUSY_CUE = "One at a time, please."
 CALL_LOST_CUE = "I lost my line to Muse. Please say that again."
-CALL_RECOVERY_PAUSE_S = 0.7
+# A user whose voice has been quiet this long has paused.
+USER_PAUSE_S = 0.7
 CALL_PENDING_EXTENSION_S = 10.0
 CALL_COMMAND_DEADLINE_S = 0.25
 CLOSING_CLIPS = {Moment.CELEBRATION: ("success1", "happy"), Moment.APOLOGY: ("sad",)}
@@ -1239,12 +1240,12 @@ class VoiceConversation:
                 if heard.ended is not None or heard.transcript_lost:
                     call_input = call.input if playback else None
                     # A turn the user talks straight through keeps its gate, so the rest of the utterance flows on.
-                    speech_continues_until = endpoint_at + CALL_RECOVERY_PAUSE_S if voicing else 0.0
+                    speech_continues_until = endpoint_at + USER_PAUSE_S if voicing else 0.0
                     if not voicing:
                         self._renew_call_input()
                 elif recorder.active:
                     speech_continues_until = 0.0
-                elif quiet_s >= CALL_RECOVERY_PAUSE_S or endpoint_at >= speech_continues_until > 0:
+                elif quiet_s >= USER_PAUSE_S or endpoint_at >= speech_continues_until > 0:
                     speech_continues_until = 0.0
                     if call.input.heard_speech:
                         self._renew_call_input()
@@ -2679,14 +2680,14 @@ class VoiceConversation:
                 self._moments.stop_cue()
                 await self._muse_quiet()
             return False
-        speaking = self._playback.user_speaking and quiet_s < CALL_RECOVERY_PAUSE_S
+        speaking = self._playback.user_speaking and quiet_s < USER_PAUSE_S
         expired = (self._wake_deadline is not None
                    and time.monotonic() >= self._wake_deadline + CALL_PENDING_EXTENSION_S)
         cues, reason = call.check_pending(paused=speaking or self._has_output(), window_expired=expired)
         for ordinal in cues:
             log.info("Realtime turn ordinal=%d cue=still_waiting", ordinal)
             await self._apply_cue(plan.Gesture(plan.NOD))
-        if cues or reason is None or time.monotonic() - self._call_last_voice_at < CALL_RECOVERY_PAUSE_S:
+        if cues or reason is None or time.monotonic() - self._call_last_voice_at < USER_PAUSE_S:
             return False
         self._call_recoveries += 1
         log.info("Realtime recovery attempt=%d reason=%s", self._call_recoveries, reason)
