@@ -748,6 +748,11 @@ class VoiceConversation:
         """In an open call, output that is still playing or queued, or Muse still at work, admits speech without a wake."""
         return self.call is not None and (self._has_output() or self.call.at_work)
 
+    def _renew_call_input(self, *, said_before: str = "") -> None:
+        """Gate the call's microphone afresh; a turn that holds the old gate keeps it."""
+        from reachy_muse.realtime_call import CallInput
+        self.call.input = CallInput(self.call.feed, self.hardware.sample_rate, said_before=said_before)
+
     async def _speech_with_timeout(self, speaking) -> None:
         task = asyncio.create_task(speaking)
         progressed = time.monotonic()
@@ -1126,10 +1131,6 @@ class VoiceConversation:
         # The user talked on through a call turn's endpoint and no turn has opened since; that speech stays admitted.
         speech_continues = False
 
-        def renew_call_input():
-            from reachy_muse.realtime_call import CallInput
-            self.call.input = CallInput(self.call.feed, self.hardware.sample_rate)
-
         def make_recorder(*, reset_admission=True, **options):
             nonlocal gap_quiet_samples, turn_open, recorder_for_call, utterance, call_pre_roll, speech_continues
             turn_open = False
@@ -1147,7 +1148,7 @@ class VoiceConversation:
             recorder_for_call = self.call is not None
             if recorder_for_call:
                 options["commands_only"] = True
-                renew_call_input()
+                self._renew_call_input()
             if recorder is not None:
                 recorder.abort()
             if self._playback.user_speaking:
@@ -1234,13 +1235,13 @@ class VoiceConversation:
                     # A turn the user talks straight through keeps its gate, so the rest of the utterance flows on.
                     speech_continues = voicing
                     if not voicing:
-                        renew_call_input()
+                        self._renew_call_input()
                 elif recorder.active:
                     speech_continues = False
                 elif quiet_s >= CALL_RECOVERY_PAUSE_S:
                     speech_continues = False
                     if call.input.heard_speech:
-                        renew_call_input()
+                        self._renew_call_input()
             elif (speaking and heard_over and recorder.supports_partials
                     and not self._playback.user_speaking):
                 # Hardware AEC can leave residual speech. Keep capturing it, but
@@ -2770,6 +2771,9 @@ class VoiceConversation:
     async def _muse_speaks(self) -> None:
         if self.call is not None:
             self.call.finish_pending("answered", self.call.speaker.reply_started)
+            # A confirmed interruption covered only the reply it cut off: for this one, only new words count.
+            if self.call.input.confirmed:
+                self._renew_call_input(said_before=self.call.input.transcript)
         self._moments.stop_cue()
         await asyncio.to_thread(self.hardware.set_state, "speaking")
 

@@ -301,6 +301,11 @@ def voiced_ms(frames):
     return round(np.count_nonzero(_voice(frames)) * 1000 / RATE)
 
 
+def echo_frames(frames):
+    """How many call frames carry Muse's own voice, which swings below zero; the user's test voice never does."""
+    return sum(int(np.frombuffer(frame, "<i2").min()) < -2000 for frame in frames)
+
+
 def gaps_ms(frames):
     """Each stretch, in milliseconds, missing from the user's voice between its first and last sample in call frames."""
     voice = _voice(frames)
@@ -1231,6 +1236,12 @@ def test_unconfirmed_sound_crossing_the_deadline_does_not_hang_up_a_reply(monkey
     assert "Reachy's wake window closed after empty recognition and inactivity" not in caplog.messages
 
 
+def muse_heard(seconds):
+    """Muse's test voice, as ``voiced`` makes it, the way Reachy's microphone hears it from the speaker."""
+    t = np.arange(round(seconds * 16000)) / 16000
+    return (4000 / 32768 * np.sin(2 * np.pi * 150 * t)).astype(np.float32)
+
+
 def echo_of(rig, seconds):
     """The last ``seconds`` that Reachy's speaker played, as its microphone hears them."""
     played = np.concatenate(rig.hardware.played)[-round(seconds * rig.hardware.output_sample_rate):]
@@ -1338,6 +1349,68 @@ def test_speech_that_runs_on_past_a_companion_endpoint_reaches_muse_without_a_ga
 
     run(rig, conversation, user, rest=("thinking", "listening"))
     assert heard == [([], 1000, barge_ins, pending)]
+
+
+@pytest.mark.parametrize("turn_ends, pause_s", [("mid-speech", 0.0), ("mid-speech", .3), ("after speech", 0.0)])
+def test_after_a_barge_in_muse_s_next_reply_never_streams_back_into_muse(monkeypatch, turn_ends, pause_s):
+    """The user talks over Muse until Reachy cuts the reply off, says a little more and stops, and Muse answers at
+    once. The microphone hears that answer, and the companion transcribes it into whatever turn is open.
+    Mid-speech, the companion ends the user's first turn while the user is still talking."""
+    from reachy_muse.protocol import HearEndpoint, HearPartial, encode
+
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    said = {}
+    next_reply = []
+
+    def hear(stream, text):
+        said[stream] = text
+        link._receive(link._connection, encode(HearPartial(stream, len(said), text)))
+
+    async def answer(sdk, emit, script):
+        next_reply.append(lambda: reply_events(sdk, emit, "r2", REPLY, voiced(3)))
+        reply_events(sdk, emit, "r1", REPLY, voiced(7.5))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=30)
+    link = companion_hearing(conversation)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, .5)
+        ended = False
+        for chunks in range(1, 41):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            for stream in [stream for stream in link._connection.hearing if stream not in said]:
+                hear(stream, "No, wait, I mean boats." if said else "Actually, I love your voice, tell me about trains.")
+            if turn_ends == "mid-speech" and not ended and calls.barge_ins and chunks >= 30:
+                link._receive(link._connection, encode(HearEndpoint(next(iter(said)), "Actually, I love your voice", False)))
+                ended = True
+        await room(rig, pause_s)
+        next_reply[0]()
+        await rig.wait_until_or_timeout(lambda: call.audible, 1)
+        open_before = [stream for stream in link._connection.hearing if stream in said]
+        before = len(calls.frames)
+        echo = muse_heard(1.0)
+        for start in range(0, len(echo), CHUNK):
+            rig.hardware.samples.put(echo[start:start + CHUNK])
+            await asyncio.sleep(CHUNK / 16000)
+            for stream in [stream for stream in link._connection.hearing if stream not in said]:
+                hear(stream, "Great news, it will be sunny tomorrow!")
+            if start == 10 * CHUNK:
+                for stream in open_before:
+                    hear(stream, said[stream] + " Great news, it will be sunny tomorrow!")
+        await room(rig, .5)
+        heard.append((calls.barge_ins, ended, echo_frames(calls.frames[before:]), len(calls.frames) - before >= 25,
+                      voice.call is call))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=30)
+    assert heard == [(1, turn_ends == "mid-speech", 0, True, True)]
 
 
 def test_while_muse_works_past_the_follow_up_window_the_room_stops_reaching_muse_but_the_call_stays(monkeypatch):

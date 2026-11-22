@@ -45,8 +45,20 @@ _TOPIC_LEAD = frozenset((
 TOPIC_WORDS = 6
 
 
+_WORD = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
+
+
 def spoken_words(text: str) -> List[str]:
-    return re.findall(r"[^\W_]+(?:'[^\W_]+)*", text.replace("’", "'").casefold())
+    return _WORD.findall(text.replace("’", "'").casefold())
+
+
+def words_after(text: str, said: List[str]) -> str:
+    """``text`` past its longest opening run of the words in ``said``, as ``spoken_words`` gives them."""
+    spans = list(_WORD.finditer(text.replace("’", "'")))
+    run = 0
+    while run < min(len(spans), len(said)) and spans[run].group().casefold() == said[run]:
+        run += 1
+    return text[spans[run - 1].end():] if run else text
 
 
 def classify_follow_up(text: str) -> FollowUp:
