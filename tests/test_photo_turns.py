@@ -972,3 +972,38 @@ def test_a_cancel_said_in_a_call_leaves_a_briefing_muse_works_on_alone(monkeypat
     assert realtime_command_lines(caplog)[0].endswith("outcome=none drop=none")
     assert (sent_to_muse(events), STOP_REQUEST in sent_to_muse(events)) == (["Brief me."], False)
     assert rig.hardware.captures == []
+
+
+def test_detail_added_while_the_photo_is_taken_goes_to_muse_with_the_photo(monkeypatch, caplog):
+    import threading
+
+    caplog.set_level(logging.INFO)
+    released = threading.Event()
+    capturing, capture = capture_held_until(released)
+    rig = photo_rig(monkeypatch, [capture])
+
+    async def muse(session, request):
+        if request == 1:
+            await rig.wait_until_or_timeout(lambda: session.requests == 2, 3)
+        await session.answer(request, ("A red mug.", "The red one is a mug.")[request - 1])
+
+    conversation = service(rig, muse, Transcripts("Reachy, what am I holding?", "Actually, the red one."),
+                           photo_requests=True)
+
+    async def user():
+        rig.say()
+        await rig.wait_until_or_timeout(capturing.is_set, 5)
+        rig.say()
+        await rig.wait_until_or_timeout(
+            lambda: sum(message.startswith("Reachy queued a voice turn") for message in caplog.messages) == 2, 5)
+        await asyncio.sleep(.3)
+        released.set()
+        await rig.wait_until_or_timeout(lambda: "tts:A red mug." in played(rig.recording.events), 8)
+
+    try:
+        events = run(rig, conversation, user)
+    finally:
+        released.set()
+    assert [(event["muse"], event["text"]) for event in sent(events)] == [
+        ("send_image", PHOTO_MESSAGE.format("Reachy, what am I holding?")), ("send_chat", "Actually, the red one.")]
+    assert "Reachy sent Muse more detail for the running request" in caplog.messages

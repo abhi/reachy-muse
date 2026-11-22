@@ -2209,6 +2209,11 @@ class VoiceConversation:
         if self._photo_cancel is not None:
             self._photo_cancel.set()
 
+    async def _until_photo_sent(self) -> None:
+        """Wait until a photo turn's request reaches Muse or fails, as a follow-up waits behind any request."""
+        while self._photo_cancel is not None and (self.job is None or not self.job.turn.acknowledged):
+            await asyncio.sleep(.05)
+
     async def _shutter(self) -> None:
         """Let everyone in the room hear that a photo was taken."""
         async def audio():
@@ -2625,6 +2630,8 @@ class VoiceConversation:
         if kind in (FollowUp.NEW, FollowUp.ADD_DETAIL) and text is not None and too_short_for_follow_up(text):
             log.info("Reachy ignored a one-word follow-up while Muse worked")
             return held
+        if kind in (FollowUp.NEW, FollowUp.ADD_DETAIL):
+            await self._until_photo_sent()
         job = self.job
         running = job if job is not None and job.request is not None and not job.dropped else None
         if running is not None:
