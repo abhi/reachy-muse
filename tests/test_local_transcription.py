@@ -248,6 +248,7 @@ def test_cancellation_after_speech_notification_reaps_and_restarts(model, worker
         transcriber = WhisperTranscriber(model)
         detected = asyncio.Event()
         monkeypatch.setenv("WHISPER_TEST_MODE", "notice_stall")
+        await transcriber.start()
         task = asyncio.create_task(transcriber.transcribe(recording(), on_speech=detected.set))
         await asyncio.wait_for(detected.wait(), 2)
         task.cancel()
@@ -305,8 +306,15 @@ def test_concurrent_requests_serialize_complete_wav_packets(model, worker):
 def test_invalid_worker_response_stops_and_reaps_without_private_data(model, worker, monkeypatch, capsys,
                                                                     mode, error, message):
     monkeypatch.setenv("WHISPER_TEST_MODE", mode)
+
+    async def scenario():
+        transcriber = WhisperTranscriber(model)
+        # Starting the worker is setup, which load can slow past the bound meant for the response.
+        await transcriber.start()
+        await asyncio.wait_for(transcribe_and_close(transcriber, recording()), 3)
+
     with pytest.raises(error, match=message) as raised:
-        asyncio.run(asyncio.wait_for(transcribe_and_close(WhisperTranscriber(model), recording()), 3))
+        asyncio.run(scenario())
     assert "private" not in str(raised.value)
     output = capsys.readouterr()
     assert "private" not in output.out + output.err
