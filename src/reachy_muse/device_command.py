@@ -145,32 +145,84 @@ _ELSEWHERE = frozenset((
 # A photo's subject ends at these words: what follows is a condition, a time, a recipient or another request.
 _PHOTO_STOP = r"(?:and|then|when|whenever|if|later|tomorrow|tonight|every|after|before|until|once|while|to|for)"
 _PHOTO_WORD = rf"(?!{_PHOTO_STOP}\b)[a-z0-9']+"
-_ONE_PHOTO = (r"(?:a|an|one|another|a quick|a new) (?:photo|picture|pic|snapshot|selfie)"
-              rf"(?: of {_PHOTO_WORD}(?: {_PHOTO_WORD}){{0,4}})?")
+_SUBJECT = rf"{_PHOTO_WORD}(?: {_PHOTO_WORD}){{0,4}}"
+_ONE_PHOTO = rf"(?:a|an|one|another|a quick|a new) (?:photo|picture|pic|snapshot|selfie)(?: of {_SUBJECT})?"
 _PHOTO_QUESTION = (r"(?:tell me|describe|what|what's|whats|who|who's|which|how|how's|is|are|does|do"
-                   r"|can you|could you|read|identify|explain|count|check|guess)\b.*")
+                   r"|can you|could you|read|identify|explain|count|check|guess"
+                   r"|ask(?: muse| it)? (?:what|who|which|how|if|whether|about))\b.*")
+# After "look at this", a question rather than an exclamation such as "what a mess".
+_LOOK_QUESTION = (r"(?:tell me|describe|read|identify|explain|what(?! an? )|what's|whats|who|who's|which"
+                  r"|is (?:it|this|that)|are (?:these|those)|does (?:it|this|that)|can you|could you"
+                  r"|how (?:many|much|old|big|long|do|does|is|are))\b.*")
 _IN_VIEW = (r"(?:table|desk|counter|shelf|floor|wall|window|screen|whiteboard|board|plate|bowl|box|bag|hand|hands"
             r"|book|page|room|kitchen|picture|photo|fridge)")
-# Narrower politeness than device commands: "you can take a photo later" describes rather than asks.
+# "What's on my plate" or "on the board" is often a to-do list; these are places a thing is shown.
+_ON_VIEW = r"(?:table|desk|counter|shelf|floor|wall|window|screen|whiteboard|page)"
+# Seeing or naming these is hearing or understanding, as in "do you see my point" or "what kind of music is this".
+_NOT_IN_VIEW = (r"(?:point|points|problem|problems|issue|issues|difference|irony|appeal|future|past|reason|logic"
+                r"|humor|humour|joke|jokes|connection|pattern|sense|meaning|value|benefit|risk|answer|solution|end"
+                r"|light|truth|way|side|funny|bigger|big|perspective|position|reasoning|thinking|concern|concerns"
+                r"|worry|situation|plan|plans|idea|ideas|vision|mistake|mistakes|question|questions|game|show|movie"
+                r"|film|news|song|songs|music|sound|sounds|noise|tune|track|voice|accent|language|singer|artist|band"
+                r"|podcast|station|channel|story|word|words|name|person|attitude|argument|excuse)")
+_SEEN_WORD = rf"(?!{_NOT_IN_VIEW}\b){_PHOTO_WORD}"
+# Things read off what Reachy is shown; "read that" alone is often Reachy's own last line.
+_READABLE = (r"(?:label|sign|note|page|letter|card|menu|receipt|screen|book|recipe|list|paper|bottle|box|package"
+             r"|ingredients|instructions|poster|form|price|tag|whiteboard)")
+_LOOKS = r"(?:outfit|hair|haircut|shirt|dress|look|shoes|glasses|jacket|tie|makeup|sweater|hat)"
+_KIND = r"(?:color|colour|kind|type|sort|breed|brand|make|species|size|shape)"
+# Words the user says to Reachy about what is in front of it. "This" points; "that" and "it" often refer back.
+_ASK_TO_SEE = (
+    r"what (?:do|can) you see(?: (?:here|there|in front of you|from here|from there|from where you are"
+    rf"|(?:on|in|under|behind|near|next to|over) (?:the|my|this|that|your) {_IN_VIEW}))?"
+    r"|what are you seeing|what(?:'s| is) in front of you"
+    r"|what am i (?:holding(?: up)?|showing you|wearing|pointing at)"
+    r"|what(?:'s| is) (?:this|that) (?:i'm|i am) holding|what(?:'s| is) in my hands?"
+    r"|what (?:do i have|have i got|i've got) in my hands?"
+    rf"|what(?:'s| is) (?:on|under|behind|next to) (?:the|my|this|that|your) {_ON_VIEW}"
+    r"|what(?:'s| is) (?:this|that)"
+    rf"|what {_KIND}(?: of {_SEEN_WORD}(?: {_SEEN_WORD})?)? (?:is|are) (?:this|that|these|those)(?: {_SEEN_WORD})?"
+    rf"|what does this say|what does (?:this|that) {_READABLE} say"
+    rf"|read (?:this(?: {_READABLE})?|that {_READABLE})(?: out loud| aloud| to me)?"
+    rf"|tell me what (?:this|that) (?:is|says)|identify (?:this|that)(?: {_SEEN_WORD})?"
+    r"|(?:can|do) you see (?:this|that|it|me|us|what i'm holding|what i am holding"
+    rf"|(?:my|the) {_SEEN_WORD}(?: {_SEEN_WORD})?)"
+    r"|(?:tell me|describe) what you (?:can )?see"
+    r"|describe (?:this|me|us|the room|what's in front of you|what is in front of you)"
+    rf"|how do i look|do i look (?:okay|ok|good|alright|all right|fine|nice|presentable|ready)"
+    rf"|what do you think (?:of|about) (?:my|this|that) {_LOOKS}"
+    rf"|how many {_PHOTO_WORD}(?: {_PHOTO_WORD})? (?:am i holding(?: up)?|do you see|can you see)")
+_TAKE_PHOTO = (rf"(?:take|snap|grab) {_ONE_PHOTO}|photograph (?!of\b){_SUBJECT}|send muse {_ONE_PHOTO}"
+               rf"|send {_ONE_PHOTO} to muse")
+_SHOW_MUSE = r"show (?:this|that) to muse|show muse (?:this|that)|send this to muse|send muse this"
+_THEN = r"(?:(?:and|then|and then) )?"
+# Narrower politeness than device commands: "you can take a photo later" describes rather than asks. Muse is the
+# one place a photo may be sent: "take a photo for Muse", "take a picture and send it to Muse".
 _PHOTO = re.compile(
     rf"(?:{_LEAD} )*(?:(?:please|(?:can|could|would|will) you(?: please)?|i (?:want|need) you to"
     r"|i'd like you to|i would like you to|go ahead and) )?(?:"
-    rf"(?:(?:take|snap|grab) {_ONE_PHOTO}|send muse {_ONE_PHOTO}|send {_ONE_PHOTO} to muse)"
-    rf"(?: (?:and|then|and then) (?P<question>{_PHOTO_QUESTION}))?"
-    r"|what (?:do|can) you see(?: (?:here|there|in front of you"
-    rf"|(?:on|in|under|behind|near|next to|over) (?:the|my|this|that|your) {_IN_VIEW}))?"
-    r"|what are you seeing|what(?:'s| is) in front of you|what am i (?:holding|showing you|wearing|pointing at)"
-    r"|what(?:'s| is) (?:this|that) (?:i'm|i am) holding|(?:can|do) you see (?:this|that|it|what i'm holding"
-    r"|what i am holding)|(?:tell me|describe) what you (?:can )?see"
-    r"|(?:look|have a look|take a look) at (?:this|that|it) and (?P<look>(?:tell me|describe|read|identify)\b.*)"
+    rf"(?:{_TAKE_PHOTO})(?: for muse)?(?: (?:and|then|and then) send it to muse)?"
+    rf"(?: {_THEN}(?P<question>{_PHOTO_QUESTION}))?"
+    rf"|(?:{_SHOW_MUSE})(?: {_THEN}(?P<shown>{_PHOTO_QUESTION}))?"
+    rf"|{_ASK_TO_SEE}"
+    rf"|(?:look|have a look|take a look) at (?:this|that|it)(?: and)? (?P<look>{_LOOK_QUESTION})"
     r")(?: (?:please|now|right now|for me|thanks|thank you|reachy|muse))*")
 # Anywhere in the request, these put the photo off until later.
 _PHOTO_LATER = frozenset((
-    "later", "tomorrow", "tonight", "soon", "every", "minute", "minutes", "hour", "hours", "seconds", "o'clock",
-    "pm", "noon", "midnight", "morning", "afternoon", "evening", "week", "weeks", "weekend", "month", "months",
-    "year", "years", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"))
-_PHOTO_AT_A_TIME = re.compile(r"\b(?:at (?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve"
-                              r"|night|dawn|dusk|sunrise|sunset)|in a (?:bit|moment|while|sec|second))\b")
+    "later", "tomorrow", "tonight", "soon", "every", "minute", "minutes", "min", "mins", "hour", "hours", "hr", "hrs",
+    "seconds", "secs", "sec", "o'clock", "pm", "noon", "midnight", "week", "weeks", "month", "months", "year",
+    "years", "timer", "countdown", "delay", "delayed", "monday", "tuesday", "wednesday", "thursday", "friday",
+    "saturday", "sunday"))
+_COUNT = (r"(?:\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty"
+          r"|forty|fifty|sixty|a few|a couple|a couple of|few|several)")
+_PHOTO_AT_A_TIME = re.compile(
+    r"\b(?:at (?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|night|dawn|dusk|sunrise|sunset)"
+    rf"|in (?:{_COUNT} )?(?:sec|secs|second|seconds|min|mins|minute|minutes|hour|hours|moment|moments|bit|while"
+    r"|jiffy|day|days)"
+    r"|on (?:three|3|go|cue|my (?:count|signal|mark|cue|go)|the count of [a-z0-9]+)|count(?:ing)? (?:to|down|from))\b"
+    # "this morning" or "in the evening" is a time; "my morning coffee" or "the evening sky" is not.
+    r"|\b(?:this|next|every|each|tomorrow|yesterday|later|until|till|by|during|in|on|over)(?: the)?"
+    r" (?:morning|afternoon|evening|night|weekend)s?\b|\b(?:mornings|afternoons|evenings|nights|weekends)\b")
 # A question after the photo may not share, keep or delete it, or take the request back.
 _PHOTO_SHARED = frozenset((
     "send", "sends", "sending", "sent", "share", "shares", "sharing", "shared", "post", "posts", "posting", "posted",
@@ -181,6 +233,8 @@ _PHOTO_SHARED = frozenset((
     "tweets", "tweeting", "tweeted", "instagram", "facebook", "dm", "airdrop", "print", "prints", "printing",
     "printed", "publish", "publishes", "publishing", "published", "album", "remember", "remembers", "remembering",
     "don't", "dont", "never"))
+# Quotation marks, not apostrophes inside a word or closing a plural possessive, as in "the kids' drawing".
+_PHOTO_QUOTED = re.compile(r"[\"“”]|(?<![a-z])['‘’]|(?<!s)['‘’](?![a-z])|(?<=s)['‘’](?! [a-z])", re.IGNORECASE)
 
 
 def _words(text: str) -> list[str]:
@@ -277,10 +331,11 @@ def photo_requested(text: str) -> bool:
     One that puts the photo off, or asks to share or keep it, is refused.
     """
     spoken = _spoken(text)
-    if _QUOTED.search(text) or not _PHOTO_LATER.isdisjoint(spoken.split()) or _PHOTO_AT_A_TIME.search(spoken):
+    if _PHOTO_QUOTED.search(text) or not _PHOTO_LATER.isdisjoint(spoken.split()) or _PHOTO_AT_A_TIME.search(spoken):
         return False
     match = _PHOTO.fullmatch(spoken)
-    return match is not None and _PHOTO_SHARED.isdisjoint((match["question"] or match["look"] or "").split())
+    return match is not None and _PHOTO_SHARED.isdisjoint(
+        (match["question"] or match["shown"] or match["look"] or "").split())
 
 
 _NAMES = frozenset(("muse", "reachy"))

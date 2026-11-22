@@ -23,6 +23,16 @@ REQUESTS = [
     "Muse, can you take a photo of this?", "Can you take a photo of this for me?",
     "take a photo of what's on my desk", "take a picture of my screen and tell me what the error says",
     "take a photo of this text message and read it to me", "What am I pointing at?",
+    # Natural forms
+    "What is this?", "What's that?", "What's in my hand?", "What am I holding up?", "Can you see me?",
+    "Take a photo for Muse", "Take a picture and send it to Muse", "Take a picture, what do you see?",
+    "Look at this, what is it?", "Show this to Muse", "Photograph this", "Take a photo of my morning coffee.",
+    "Take a photo of the kids' drawing.", "Take a picture of the evening sky.", "Show Muse this.",
+    "Send this to Muse.", "Take a photo and ask Muse what it is.", "What kind of plant is this?",
+    "What breed is this dog?", "Read this label.", "What does that sign say?", "Identify this bird.",
+    "Can you see my face?", "Do you see the dog?", "What's on the table?", "How do I look?", "Do I look okay?",
+    "Describe the room.", "How many fingers am I holding up?", "What do you think of my outfit?",
+    "What can you see from where you are?", "Photograph the whiteboard.",
 ]
 
 NOT_REQUESTS = [
@@ -42,14 +52,27 @@ NOT_REQUESTS = [
     "take a photo and could you forward it to dad", "take a photo then could you whatsapp it to her",
     "take a photo and can you put it on instagram", "take a photo and could you e-mail it to me",
     "take a photo and could you add it to the family album", "take a photo and can you remember it",
-    "take a photo and tell me what it is, then keep it",
+    "take a photo and tell me what it is, then keep it", "take a photo and send it to Muse and my wife",
+    "take a picture for Muse and my wife", "take a photo and ask her what she thinks",
+    "take a photo of me in 2 secs", "take a photo on three", "take a photo of us on three",
+    "take a photo of us on the count of three", "take a photo and count down from five",
+    "take a photo with a timer", "take a photo of me this morning", "take a photo of us in the evening",
+    "take a photo of the garden on weekends", "take a photo of me in a few seconds",
     # Quoted, hypothetical, reported or about the capability
     "if I say take a photo what happens", "how do I make you take a photo", "she said take a photo",
     "remind me to take a photo", "say take a photo", "Say 'take a photo' and I'll look.", '"Take a photo."',
     "“What do you see?”", "‘take a picture’", "can you take photos?", "do you take photos",
     "are you able to take a photo", "you can take a photo later",
-    # Open-ended seeing
+    # Open-ended seeing, hearing, understanding, or words that refer back
     "what do you see in the news today", "what do you see as the problem", "what do you see in your future",
+    "What kind of music is this?", "What type of song is this?", "What kind of question is that?",
+    "What model is this?", "What is this song?", "What's that noise?", "Who is this?", "Who is this calling?",
+    "Do you see what I mean?", "Do you see the point?", "Can you see the bigger picture?",
+    "Can you see that happening?", "Can you see my perspective?", "Send that to Muse.", "Read that again.",
+    "Read that to me.", "What does that say?", "What does it say?", "Identify this song.", "Describe that.",
+    "What's on my plate?", "Photograph of the Eiffel Tower.", "Look at that, what a mess.",
+    "Look at this, how cute.", "Check this out.", "Take a look.", "Capture this.", "Take a shot of this.",
+    "Is this a good idea?", "Say 'take photos' and smile.",
     # Device commands, gaze and local chat
     "look at me", "look over here", "keep looking at me", "watch me", "say hi to someone else",
     "look at the other person", "greet my guest", "look at him", "look at this", "what's up", "go to sleep",
@@ -99,7 +122,7 @@ def test_no_device_command_or_gaze_phrase_takes_a_photo(text):
 
 @pytest.mark.parametrize("text", [
     "Look at this and tell me what it is.", "Look at this and describe it.", "Take a picture of my face.",
-    "Can you take a photo of my eyes?",
+    "Can you take a photo of my eyes?", "Look at this, what is it?", "Can you see my face?",
 ])
 def test_photo_requests_never_reach_the_command_model(text):
     model = FakeModel(DeviceCommand.FACE_TRACKING_ON)
@@ -187,4 +210,43 @@ def test_room_and_television_speech_never_takes_a_photo():
     assert len(BACKGROUND) == 96
     assert [text for text in BACKGROUND if decider._photo_requested(text, TurnTimeline())] == []
     assert sum(decider._photo_requested(text, after_a_wake()) for text in BACKGROUND) == sum(
-        map(photo_requested, BACKGROUND)) == 69
+        map(photo_requested, BACKGROUND)) == 72
+
+
+# Natural requests a user makes of Reachy.
+NATURAL = [
+    "What is this?", "What's this?", "What's that?", "What is that?", "Who is this?", "What color is this?",
+    "What does this say?", "Can you read this?", "Read this for me.", "What does it say?", "Can you read this label?",
+    "What kind of plant is this?", "Is this ripe?", "How do I look?", "Do I look okay?", "What do you think of my outfit?",
+    "Look at this.", "Look at this!", "Check this out.", "Take a look.", "Have a look at this.",
+    "Look at this, what is it?", "Look at this and tell me what you think.", "Take a look at this, what is it?",
+    "Can you see me?", "Can you see my face?", "Do you see my cat?", "Can you see the dog?",
+    "Show Muse this.", "Show this to Muse.", "Send this to Muse.", "Send Muse a picture.", "Send a picture to Muse.",
+    "Take a pic.", "Snap a pic.", "Take a photo for Muse.", "Take a picture and send it to Muse.",
+    "Take a picture for me.", "Take a photo please.", "Could you take a photo of this, please?",
+    "Take a photo of this and describe it.", "Take a picture, what do you see?", "Take a photo. What is it?",
+    "Photograph this.", "Take a snapshot.", "Capture this.", "Take a shot of this.",
+    "What am I holding up?", "What's in my hand?", "What do I have in my hand?", "What's on the table?",
+    "What's on my desk?", "Describe the room.", "Describe what's in front of you.", "What is in front of you right now?",
+    "What do you see right now?", "Hey Reachy, what do you see right now?", "What can you see from where you are?",
+    "Muse, what do you see?", "OK Muse, what am I holding?", "Reachy, look at this and tell me what it is.",
+    "Tell me what this is.", "Identify this.", "What breed is this dog?", "How many fingers am I holding up?",
+    "Is my shirt on inside out?", "Which one is bigger?", "Can you tell me what this is?",
+    "Take a photo of my morning coffee.", "Take a picture of the evening sky.", "Take a photo of my weekend bag.",
+    "Take a photo of the kids' drawing.", "Take a photo of the kids drawing.", "Take a photo of this receipt for my records.",
+]
+
+
+def test_most_natural_requests_take_a_photo_and_the_rest_are_refused_on_purpose():
+    assert len(NATURAL) == 74
+    assert [text for text in NATURAL if not photo_requested(text)] == [
+        "Who is this?",                       # also a song's singer or a caller
+        "What does it say?",                  # "it" refers back, often to a message
+        "Is this ripe?",                      # "is this" asks too much that is not seen
+        "Look at this.", "Look at this!",     # no question for Muse, and "look at" is also face tracking
+        "Check this out.", "Take a look.", "Have a look at this.",
+        "Capture this.",                      # often a note to keep
+        "Take a shot of this.",               # also a drink
+        "Is my shirt on inside out?", "Which one is bigger?",
+        "Take a photo of this receipt for my records.",  # keeps the photo
+    ]

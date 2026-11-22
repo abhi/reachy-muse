@@ -982,19 +982,27 @@ see?", "Reachy, take a photo" or "What am I holding, Reachy?". Inside an open
 listening window, a plain "what do you see?", from you, a guest or a television,
 takes no photo: it is an ordinary request, and Muse answers it.
 
-These ask for a photo: "take a photo", "take a picture of this and tell me what
-it is", "send Muse a photo of the whiteboard", "what do you see?", "what am I
-holding?", "what's in front of you?" and "look at this and tell me what it
-says". As with device commands, a request may open with words such as "okay" or
-"Reachy", use a polite form such as "can you", and end with "please" or "now".
-The request must come first in what you say, so negated, quoted and reported
-forms, such as "don't take a photo" or "she said take a photo", and questions
-about photos, such as "can you take photos?", never take one. Reachy also
-refuses a request that would share, keep or delay the photo, such as "take a
-photo and send it to my wife", "take a photo for my wife" or "take a photo of me
-in five minutes". It checks a fixed list of words, such as "send", "share",
-"save", "forward", "tomorrow" and "minutes", so a rephrasing outside that list
-can still take a photo. These phrases never go to the companion's command model,
+These ask for a photo: "take a photo", "photograph this", "take a picture of
+this and tell me what it is", "take a picture, what do you see?", "what do you
+see?", "what is this?", "what's in my hand?", "what am I holding up?", "can you
+see me?", "what kind of plant is this?", "read this label", "how do I look?",
+"look at this, what is it?" and "show this to Muse". As with device commands, a
+request may open with words such as "okay", use a polite form such as "can
+you", and end with "please" or "now". The request must come first in what you
+say, so negated, quoted and reported forms, such as "don't take a photo" or "she
+said take a photo", and questions about photos, such as "can you take photos?",
+never take one. "Look at this" alone takes none: it asks Muse nothing. Words
+that often refer back or are about sound, such as "what does it say?", "read that
+again", "who is this?" or "what kind of music is this?", are ordinary requests.
+
+Muse is the one place a photo may go: "take a photo for Muse" and "take a
+picture and send it to Muse" take one. Reachy refuses a request that would share,
+keep or delay the photo, such as "take a photo and send it to my wife", "take a
+photo for my wife", "take a photo of me in five minutes", "take a photo on three"
+or "take a photo of me this evening"; "my morning coffee" names a thing, not a
+time, and takes one. It checks fixed lists of words, such as "send", "share",
+"save", "forward", "tomorrow" and "minutes", so a rephrasing outside them can
+still take a photo. These phrases never go to the companion's command model,
 which could take "look at this" for face following. Without `--photo-requests`,
 they go to Muse as ordinary requests.
 
