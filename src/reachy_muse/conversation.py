@@ -3141,7 +3141,7 @@ class VoiceConversation:
             self._audible_line = line
 
     async def _muse_speaks(self) -> None:
-        if self.call is not None:
+        if self.call is not None and self.call.speaker.reply_started != self._muse_began_at:
             self.call.finish_pending("answered", self.call.speaker.reply_started)
             self._muse_began_at = self.call.speaker.reply_started
         self._moments.stop_cue()

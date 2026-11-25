@@ -379,6 +379,7 @@ class RealtimeSpeaker:
         self._replies: list = []
         self._pending_replies: set[Optional[str]] = set()
         self.reply_started: Optional[float] = None
+        self._begun: deque[Optional[str]] = deque(maxlen=16)
 
     @property
     def busy(self) -> bool:
@@ -492,7 +493,9 @@ class RealtimeSpeaker:
                 self._owner = owner
             if item.response_id not in self._replies:
                 self._replies.append(item.response_id)
-                self.reply_started = time.monotonic()
+                if item.response_id is None or item.response_id not in self._begun:
+                    self._begun.append(item.response_id)
+                    self.reply_started = time.monotonic()
                 await self._on_start()
             if self._response_id != item.response_id:
                 self._audible_index = None

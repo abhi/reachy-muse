@@ -3320,3 +3320,81 @@ def test_a_what_s_this_reachy_takes_no_photo_for_is_dropped_as_a_remark(monkeypa
     assert heard == [(0, 0, 0, [
         "Realtime command transcript=arrived words=2 wake_prefix=none outcome=none drop=barge_in"]), 12.8]
     assert rig.hardware.captures == []
+
+
+RESUMED_REPLY = "Let me check the calendar for you, it can take a moment to load everything."
+RESUMED_WORDS, RESUMED_STRETCHES = "and the night after that", ((200, 120), (160, 60), (200, 100), (160, 40), (240, 0))
+
+
+def reply_chunks(sdk, emit, response_id, pcm, start=0):
+    for offset in range(0, len(pcm), 9600):
+        emit(sdk.AudioChunk(response_id, (start + offset) // 2, pcm[offset:offset + 9600]))
+
+
+@pytest.mark.parametrize("resumes", ["while the command model weighs the words", "before Reachy's endpoint"])
+def test_a_request_held_over_a_reply_that_resumes_after_a_stall_still_reaches_muse(monkeypatch, caplog, resumes):
+    """The user adds "and the night after that" in short words over Muse's acknowledgement, and only the turn's final
+    words confirm it. The acknowledgement's audio stalls for about 0.4 s and then the same reply, r1, plays on: Muse
+    begins no new reply. The request is Muse's and reaches it whole, cutting the acknowledgement off."""
+    from reachy_muse import device_command
+
+    caplog.set_level("INFO")
+    monkeypatch.setattr(device_command, "CLASSIFY_DEADLINE_S", 2.0)
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    handles, started = [], []
+    # The acknowledgement's first part ends about 0.3 s before Reachy weighs the words, or before its endpoint.
+    first_s = 4.0 if resumes == "while the command model weighs the words" else 3.6
+
+    async def answer(sdk, emit, script):
+        if started:
+            return
+        started.append(True)
+        handles.append((sdk, emit))
+        emit(sdk.ResponseStarted("r1"))
+        for word in RESUMED_REPLY.split(" "):
+            emit(sdk.TranscriptDelta("r1", word + " "))
+        reply_chunks(sdk, emit, "r1", voiced(first_s))
+
+    conversation = None
+
+    async def resume():
+        sdk, emit = handles[0]
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: not call.audible, 5)
+        await asyncio.sleep(.1)
+        reply_chunks(sdk, emit, "r1", voiced(3), start=len(voiced(first_s)))
+        emit(sdk.TranscriptDone("r1", RESUMED_REPLY))
+        emit(sdk.ResponseDone("r1", "completed"))
+
+    class Weighing(FakeModel):
+        async def classify(self, text, allowed):
+            if resumes == "while the command model weighs the words":
+                await resume()
+            return await super().classify(text, allowed)
+
+    calls = ScriptedCalls(answer=answer, every_turn=True, paced=True)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=10, model=Weighing(None, delay_s=.3))
+    conversation.silence_s = 2.0
+    link = companion_hearing(conversation, forced_endpoints=True)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, 1)
+        caplog.clear()
+        before = len(calls.frames)
+        await say_over_reply(rig, link, RESUMED_WORDS, RESUMED_STRETCHES)
+        quiet = asyncio.ensure_future(room(rig, 7))
+        if resumes == "before Reachy's endpoint":
+            await resume()
+        await quiet
+        heard.append((voiced_ms(calls.frames[before:]), calls.barge_ins,
+                      [line.split(" wake_prefix=")[1] for line in caplog.messages
+                       if line.startswith("Realtime command ")],
+                      sum("Realtime event=ResponseStarted" in line for line in caplog.messages), len(call.pending)))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
+    assert heard == [(960, 1, ["none outcome=none drop=none"], 0, 1)]
