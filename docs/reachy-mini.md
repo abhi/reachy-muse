@@ -474,7 +474,9 @@ within 1.5 seconds before the keyword boundary. A confident estimate needs at
 least two recent, consistent speech samples; its direction is their median.
 A window without speech bearings logs `too_few`, or `ineligible`, `timeout` or
 `unavailable` when Reachy's own audio or a late or failed read cleared the ring
-after the window opened.
+after the window opened. The line's `reads` counts the DoA reads the daemon
+answered in the window, with speech or without; with `too_few`, `reads=0` means
+it was never asked, as for a phrase too quiet to count as microphone activity.
 Missing or uncertain direction, including unverified keyword timing, keeps the
 usual wake behavior. Direction HTTP requests have a 0.1-second deadline and a
 4096-byte body limit. Microphone cleanup does not wait for an unfinished read.

@@ -926,8 +926,8 @@ class VoiceConversation:
             else:
                 direction.clear()
         yaw = f" yaw={speaker_yaw(decision.angle).head:.1f}" if decision.angle is not None else ""
-        log.info("Wake direction decision=%s samples=%d span_ms=%.1f boundary_age_ms=%.1f "
-                 "last_age_ms=%.1f mad_deg=%.1f inlier=%.2f%s", decision.reason, decision.samples,
+        log.info("Wake direction decision=%s samples=%d reads=%d span_ms=%.1f boundary_age_ms=%.1f "
+                 "last_age_ms=%.1f mad_deg=%.1f inlier=%.2f%s", decision.reason, decision.samples, decision.reads,
                  decision.span_ms, decision.boundary_age_ms, decision.last_age_ms,
                  decision.mad_deg, decision.inlier, yaw)
         if decision.angle is not None:

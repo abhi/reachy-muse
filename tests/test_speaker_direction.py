@@ -159,6 +159,17 @@ def test_phrase_boundary_excludes_later_speech_and_stale_or_cleared_history():
     assert direction.snapshot().decide(clock.now).angle is None
 
 
+def test_the_read_count_includes_reads_without_speech_and_forgets_a_decided_window():
+    def check(direction, clock, delays):
+        decision = direction.snapshot().decide(clock.now)
+        assert (decision.reason, decision.samples, decision.reads) == ("ok", 2, 4)
+        direction.discard_through(100.4)
+        decision = direction.snapshot().decide(clock.now)
+        assert (decision.reason, decision.samples, decision.reads) == ("too_few", 0, 1)
+
+    sampled([DoAReading(0, False), DoAReading(1, True), DoAReading(1, True), DoAReading(0, False)], check)
+
+
 def test_a_pause_and_changed_speaker_selects_only_the_later_segment():
     def check(direction, clock, delays):
         assert direction.snapshot().decide(clock.now).angle == pytest.approx(2.0943951024)
