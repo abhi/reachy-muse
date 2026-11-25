@@ -27,7 +27,8 @@ from test_hardware import FakeRobot, pose_factory
 from test_person_gaze import PeopleHardware, PlacedWake
 from test_photo_capture import Encoder
 from test_pins import CHUNK, VOICE_SAMPLE, WAKE_SAMPLE, Rig
-from test_realtime_turns import RATE, ScriptedCalls, StreamingTranscripts, TimedWake, reply_events, voiced
+from test_realtime_turns import (RATE, ScriptedCalls, StreamingTranscripts, TimedWake, reply_events, voiced,
+                                 voiced_ms)
 
 OWNER, FRIEND = 30, -25
 HALF_VIEW = math.atan2(640, 900)
@@ -448,6 +449,18 @@ def test_a_turn_while_the_camera_pauses_replaces_the_face_it_held(owner_followed
     assert facing(controller, robot) == (-25, -5)
 
 
+@pytest.mark.parametrize("ending", ["sleep", "idle", "stop_looking"])
+def test_sleep_idle_and_stop_looking_still_end_the_face_held_through_a_pause(owner_followed, ending):
+    """Going to sleep, going idle without idle follow, and the user asking Reachy to stop looking at them each stop
+    face following, held face or not: Reachy settles straight ahead though the camera stays paused."""
+    controller, robot, scene = owner_followed
+    {"sleep": lambda: controller.set_state("sleeping"), "idle": lambda: controller.set_state("idle"),
+     "stop_looking": lambda: controller.allow_face_tracking(False)}[ending]()
+    time.sleep(2.0)
+    assert controller._face_follower.target() is None
+    assert facing(controller, robot) == (0, 0)
+
+
 def test_a_photo_while_the_camera_pauses_is_taken_facing_the_person_followed(owner_followed):
     """A photo neither turns Reachy nor moves the follower's centre: it frames the owner Reachy kept facing, and the
     head stays on them afterwards."""
@@ -684,3 +697,29 @@ def test_the_owner_speaking_while_reachy_looks_thoughtful_gets_it_listening(came
     run(rig, service, user, rest=("listening", "idle"))
     assert seen["while_talking"].index("listening") <= 10
     assert seen["while_talking"][-1] == "listening"
+
+
+def test_speech_the_microphone_does_not_admit_leaves_reachy_thoughtful(camera_room, caplog):
+    """The request waits for Muse past the follow-up window, so Reachy needs its wake phrase again. Speech without it
+    never reaches the call, so Reachy stays thoughtful through it."""
+    rig, controller, robot, scene = camera_room()
+    caplog.set_level("INFO")
+
+    async def answer(sdk, emit, calls):
+        await asyncio.Event().wait()
+
+    service, calls = realtime(rig, answer, "Book me a table for two.", wake_timeout_s=2)
+    seen = {}
+
+    async def user():
+        await say_live(rig, wake=True)
+        voice = service._voice[1]
+        await until(rig, lambda: voice.call.pending and rig.states()[-1:] == ["thinking"], 10)
+        await until(rig, lambda: time.monotonic() > voice._wake_deadline + .2)
+        sent = len(calls.frames)
+        seen["while_talking"] = await states_while_talking(rig)
+        seen["reached_muse_ms"] = voiced_ms(calls.frames[sent:])
+
+    run(rig, service, user, rest=("thinking", "listening", "idle"))
+    assert set(seen["while_talking"]) == {"thinking"}
+    assert seen["reached_muse_ms"] == 0
