@@ -4,6 +4,7 @@ import pytest
 
 np = pytest.importorskip("numpy")
 
+from reachy_muse.follow_up import Spoken
 from reachy_muse.realtime_call import CallInput
 
 
@@ -134,15 +135,16 @@ def test_delayed_words_can_confirm_speech_only_within_the_recognition_window(qui
 
 
 def held_turn(gate, *, voice, partial):
-    """Four words in 200 ms voiced stretches 100 ms apart, then the robot's 2 s of silence before its endpoint."""
+    """Four words in 200 ms voiced stretches 100 ms apart, from time 0, then the robot's 2 s of silence before its
+    endpoint."""
     reply = ("It will be sunny tomorrow.",)
-    for _ in range(4):
-        for _ in range(2):
-            gate.push(np.full(100, .5) if voice else np.zeros(100), speaking=voice, text=partial, playback=True,
-                      heard_over=reply)
-        gate.push(np.zeros(100), speaking=False, text=partial, playback=True, heard_over=reply)
-    for _ in range(19):
-        gate.push(np.zeros(100), speaking=False, text=partial, playback=True, heard_over=reply)
+    for index, voiced in enumerate([voice, voice, False] * 4 + [False] * 19, 1):
+        gate.push(np.full(100, .5) if voiced else np.zeros(100), speaking=voiced, text=partial, playback=True,
+                  heard_over=reply, at=index / 10)
+
+
+# Muse's reply, as Reachy's speaker played it while the voice of held_turn was heard.
+PLAYED = (Spoken("It will be sunny tomorrow.", 0.0, 1.5),)
 
 
 def test_a_turn_s_final_words_release_all_its_voice_after_the_recognition_window():
@@ -154,7 +156,7 @@ def test_a_turn_s_final_words_release_all_its_voice_after_the_recognition_window
     reply = ("It will be sunny tomorrow.",)
     held_turn(gate, voice=True, partial="What about")
     assert (gate.confirmed, feed.samples) == (False, [0.0] * 3100)
-    assert gate.finish("What about Friday then?", reply) is True
+    assert gate.finish("What about Friday then?", reply, PLAYED) is True
     gate.push(np.full(100, .25), speaking=True, text="", playback=True, heard_over=reply)
     assert feed.samples == [0.0] * 3200
     assert gate.release() is True
@@ -170,7 +172,7 @@ def test_a_turn_reachy_takes_at_its_endpoint_never_reaches_muse_and_later_speech
     gate = CallInput(feed, 1000)
     reply = ("It will be sunny tomorrow.",)
     held_turn(gate, voice=True, partial="Turn the")
-    assert gate.finish("Turn the volume down.", reply) is True
+    assert gate.finish("Turn the volume down.", reply, PLAYED) is True
     gate.push(np.full(100, .25), speaking=True, text="", playback=True, heard_over=reply)
     gate.discard()
     assert (gate.confirmed, gate.release()) == (False, False)
@@ -188,8 +190,34 @@ def test_a_turn_s_final_words_release_nothing_without_distinct_words_over_held_v
     feed = Feed()
     gate = CallInput(feed, 1000)
     held_turn(gate, voice=voice, partial=partial)
-    assert gate.finish(final, ("It will be sunny tomorrow.",)) is False
+    assert gate.finish(final, ("It will be sunny tomorrow.",), PLAYED) is False
     assert feed.samples == [0.0] * 3100
+
+
+@pytest.mark.parametrize("offered_at, confirmed", [(-4.0, True), (0.0, False)],
+                         ids=["Muse made the offer before", "Muse made the offer as the voice was heard"])
+def test_final_words_are_muse_s_echo_only_if_muse_played_them_while_their_voice_was_heard(offered_at, confirmed):
+    """The final words take up Muse's offer in Muse's own words, as its echo would hold them. Echo holds only words
+    Muse played while the voice was heard: if Muse made the offer before then, the user is taking it up."""
+    gate = CallInput(Feed(), 1000)
+    offer = "Or I can set a reminder for you."
+    held_turn(gate, voice=True, partial="Yes")
+    played = (Spoken(offer, offered_at, offered_at + 1.5),)
+    assert gate.finish("Yes, set a reminder for me.", (offer,), played) is confirmed
+
+
+def test_final_words_are_weighed_against_what_muse_played_since_their_voice_began_though_its_echo_reset_the_gate():
+    """Muse's echo, written at first as Muse's very words, erases what the gate holds until the companion gets a word
+    wrong. The turn's final words still cover the echo from its start, so they are weighed against what Muse played
+    from then: they are its echo, and confirm nothing."""
+    gate = CallInput(Feed(), 1000)
+    line = "Tell me what you're wearing and I'll suggest something for tonight."
+    for index in range(1, 41):
+        partial = "Tell me what you're wearing" if index < 20 else "Tell me what you're wearing and I just"
+        gate.push(np.full(100, .5) if index % 3 else np.zeros(100), speaking=bool(index % 3), text=partial,
+                  playback=True, heard_over=(line,), at=index / 10)
+    assert gate.finish("Tell me what you're wearing and I just suggest some four tonight", (line,),
+                       (Spoken(line, 0.0, 4.5),)) is False
 
 
 @pytest.mark.parametrize("words, kept", [("", False), ("Reachy,", True)], ids=["no words", "a word"])

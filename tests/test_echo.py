@@ -55,14 +55,32 @@ STORY = ("Once upon a time there was a little robot who lived in a workshop by t
     ("Reachy, can you take a photo of me now?", STORY, False),
     ("and the one after that", STORY, False),
     ("", LONG_REPLY, False),
+    ("tell me what your wear in and I just", "Tell me what you're wearing and I'll suggest something", True),
+    ("the week and looks rain he so you", "and the weekend looks rainy, so you might want", True),
+    ("some four tonight", "and I'll suggest something for tonight, or ask", True),
+    ("Yes, the forecast for next week please.", "Would you like the forecast for next week too?", True),
+    ("Yes, the forecast for next week please.", "week too? I can also tell you about the pollen count", False),
 ], ids=["exact", "a contraction written out", "a number written out", "a substitution", "fragments",
         "a request", "a request opening with a word of the reply", "a remark", "a request over a long story",
-        "a remark over a long story", "no words"])
+        "a remark over a long story", "no words", "five in nine words wrong", "four in eight words wrong",
+        "two in three words wrong", "an offer taken up, against the offer",
+        "an offer taken up, against what followed"])
 def test_muse_s_words_written_back_with_some_changed_or_missed_are_its_echo_and_a_request_is_not(
         text, line, expected):
+    """Words alone cannot tell the user taking up Muse's offer from Muse's echo of it: the gate weighs them only
+    against the words Muse played while the voice was heard."""
     from reachy_muse.follow_up import echoes_playback
 
     assert echoes_playback(text, (line,)) is expected
+
+
+def test_the_words_spoken_between_two_times_are_placed_by_when_their_line_played():
+    """A finished line's words spread over the time it played; the last line's over at least the time they take at
+    15 characters a second, since it may still be playing."""
+    from reachy_muse.follow_up import Spoken, spoken_between
+
+    lines = (Spoken("Tomorrow will be sunny.", 10.0, 12.0), Spoken("Would you like the forecast too?", 12.0, 13.0))
+    assert spoken_between(lines, 11.0, 12.5) == "be sunny would you"
 
 
 @pytest.mark.parametrize("text, heard_over", [

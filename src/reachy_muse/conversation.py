@@ -37,8 +37,8 @@ from reachy_muse.protocol import MAX_LINE_BYTES
 from reachy_muse.device_command import (COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow,
                                        command_after_wake, executable, names_reachy, photo_requested,
                                        whole_command)
-from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, interrupts_playback, only_fillers,
-                                   request_topic, too_short_for_follow_up, repeats_playback, word_count,
+from reachy_muse.follow_up import (FollowUp, Spoken, classify_follow_up, is_echo, interrupts_playback,
+                                   only_fillers, request_topic, too_short_for_follow_up, repeats_playback, word_count,
                                    words_besides_back_channels)
 from reachy_muse.contract.intent import Intent, maybe_chat
 from reachy_muse.morning_briefing import MorningRoutine, briefing_lines
@@ -708,8 +708,8 @@ class VoiceConversation:
         self._sequence_order = deque()
         self._muted = False
         self._echo_until = 0.0
-        # Each line Reachy played recently, and when its echo has died away.
-        self._audible: deque[tuple[str, float]] = deque(maxlen=8)
+        # Each line Reachy played recently, and when it played: its echo dies away ECHO_TAIL_S after its sound.
+        self._audible: deque[Spoken] = deque(maxlen=16)
         self._input_overflow = False
         self._turn_started = None
         self._logged_activity = None
@@ -940,7 +940,8 @@ class VoiceConversation:
     def _wake_capture_context(self, now):
         return WakeContext(blocked=self._input_blocked() or now < self._wake_unknown_output_until,
                            speaking=self._muted or now < self._echo_until,
-                           playback=tuple(text for text, until in tuple(self._audible) if until > now - 2.5))
+                           playback=tuple(line.text for line in tuple(self._audible)
+                                          if line.until + ECHO_TAIL_S > now - 2.5))
 
     async def run(self) -> None:
         await self.session.registered.wait()
@@ -1254,7 +1255,7 @@ class VoiceConversation:
                     replies = self.call.audible_transcripts(ECHO_TAIL_S)
                     over_muse = over_muse or bool(replies)
                     heard_over.update(replies)
-                heard_over.update(text for text, until in self._audible if until > endpoint_at)
+                heard_over.update(line.text for line in self._audible if line.until + ECHO_TAIL_S > endpoint_at)
             heard = recorder.take()
             # One feed can end a rejected utterance and start the next.
             if utterance is not None and utterance.utterance_id != recorder.utterance_id:
@@ -1314,7 +1315,7 @@ class VoiceConversation:
                         call_pre_roll = None
                     call.input.push(sample, speaking=speaking and quiet_s == 0,
                                     text=partial.text if partial else "", playback=playback,
-                                    heard_over=tuple(heard_over), quiet_s=quiet_s)
+                                    heard_over=tuple(heard_over), quiet_s=quiet_s, at=captured_at)
                     speaking = speaking and (not playback or call.input.confirmed)
                     if call.audible and call.input.confirmed and not confirmed_before:
                         self._barge_in_call()
@@ -1527,7 +1528,7 @@ class VoiceConversation:
                 confirmed = gate.confirmed
                 # A reply Muse began after the turn's last word ended the turn before Muse heard any of it.
                 if (self.call is call and self._muse_began_at < recorded.speech_end_at
-                        and gate.finish(text, recorded.heard_over)):
+                        and gate.finish(text, recorded.heard_over, tuple(self._audible))):
                     if confirmed:
                         self._gaze.admit(recorded.gaze_generation)
                     else:
@@ -3131,10 +3132,10 @@ class VoiceConversation:
         if speech and not text:
             self._wake_unknown_output_until = max(self._wake_unknown_output_until, until + ECHO_TAIL_S + 1.5)
         if text:
-            if self._audible and self._audible[-1][0] == text:
-                self._audible[-1] = (text, until + ECHO_TAIL_S)
+            if self._audible and self._audible[-1].text == text:
+                self._audible[-1] = self._audible[-1]._replace(until=until)
             else:
-                self._audible.append((text, until + ECHO_TAIL_S))
+                self._audible.append(Spoken(text, time.monotonic(), until))
 
     async def _muse_speaks(self) -> None:
         if self.call is not None:

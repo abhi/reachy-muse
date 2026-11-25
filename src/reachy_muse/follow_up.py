@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from enum import Enum
-from typing import List, Tuple
+from typing import List, NamedTuple, Sequence, Tuple
 
 
 class FollowUp(Enum):
@@ -134,29 +134,67 @@ def repeats_playback(text: str, heard_over: Tuple[str, ...]) -> bool:
     return bool(words) and _matches_spoken_phrase(words, heard_over)
 
 
+class Spoken(NamedTuple):
+    """A line Reachy's speaker played: its words, when it began to sound, and when its latest sound ends."""
+
+    text: str
+    started: float
+    until: float
+
+
+# How fast the words of a line still playing are taken to sound: the rate Reachy's reply aligner starts from.
+SPOKEN_CHARS_PER_S = 15.0
+
+
+def spoken_between(lines: Sequence[Spoken], start: float, end: float) -> str:
+    """The words of ``lines``, oldest line first, that began to sound from ``start`` to ``end``, in the order they
+    sounded. Each line's words are spread over the time it played, and the last line's over at least the time they
+    take at ``SPOKEN_CHARS_PER_S``, since it may still be playing."""
+    timed = []
+    for index, line in enumerate(lines):
+        text = line.text.replace("’", "'").casefold()
+        span = line.until - line.started
+        if index == len(lines) - 1:
+            span = max(span, len(text) / SPOKEN_CHARS_PER_S)
+        timed += [(line.started + span * word.start() / len(text), word.group()) for word in _WORD.finditer(text)]
+    return " ".join(word for at, word in sorted(timed) if start <= at <= end)
+
+
 def echoes_playback(text: str, heard_over: Tuple[str, ...]) -> bool:
     """Whether the words are mostly a line heard over, as a recognizer writes that line back with words changed,
-    split or missed: at least three in five of them occur in the line's order, within a stretch of it twice as long
-    as they are. The stretch keeps a long line's scattered common words from adding up to the user's request."""
+    split or missed: at least three in five of them are alike words of the line, in its order and within a stretch
+    of it twice as long as they are. The stretch keeps a long line's scattered common words from adding up to the
+    user's request."""
     words = spoken_words(text)
     if not words:
         return False
-    known = set(words)
     for line in heard_over:
         said = spoken_words(line)
         for start, word in enumerate(said):
-            if word in known and 5 * _in_order(words, said[start:start + 2 * len(words)]) >= 3 * len(words):
+            if (any(_alike(mine, word) for mine in words)
+                    and 5 * _in_order(words, said[start:start + 2 * len(words)]) >= 3 * len(words)):
                 return True
     return False
 
 
+def _alike(word: str, other: str) -> bool:
+    """Whether a recognizer may have written one word for the other: the same word but for a contraction, as "you"
+    for "you're", or one opening the other with three letters or more, as "rain" for "rainy"."""
+    if word.split("'")[0] == other.split("'")[0]:
+        return True
+    short, long = sorted((word.replace("'", ""), other.replace("'", "")), key=len)
+    return len(short) >= 3 and long.startswith(short)
+
+
 def _in_order(words: List[str], said: List[str]) -> int:
-    """How many of ``words`` ``said`` holds in the same order, gaps allowed: their longest common subsequence."""
+    """How many of ``words`` are alike words that ``said`` holds in the same order, gaps allowed: their longest
+    common subsequence."""
     best = [0] * (len(said) + 1)
     for word in words:
         previous = best[:]
         for index, other in enumerate(said, 1):
-            best[index] = previous[index - 1] + 1 if word == other else max(previous[index], best[index - 1])
+            best[index] = (previous[index - 1] + 1 if _alike(word, other)
+                           else max(previous[index], best[index - 1]))
     return best[-1]
 
 

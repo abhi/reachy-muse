@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import re
 import time
 from types import SimpleNamespace
 
@@ -1705,12 +1706,20 @@ def said_over_reply(monkeypatch, caplog, words, stretches, *, reply=LONG_REPLY, 
         await say_over_reply(rig, link, words, stretches, sound=sound)
         await room(rig, 1.6)
         heard.append((calls.barge_ins, voiced_ms(calls.frames[before:]), echo_frames(calls.frames[before:]),
-                      [line for line in caplog.messages if line.startswith("Realtime command ")]))
+                      [line for line in caplog.messages
+                       if line.startswith("Realtime command ") or "could not transcribe" in line]))
         await rig.wait_until_or_timeout(lambda: not call.audible, 12)
         heard.append(round(sum(len(chunk) for chunk in rig.hardware.played) / rig.hardware.output_sample_rate, 2))
 
     run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
     return heard
+
+
+def said_at(reply, words):
+    """About when Muse's test voice says ``words``, in seconds into ``reply``: that voice has no pauses to place the
+    words by, so Reachy places them at 15 characters a second, with a pause at each comma and sentence break."""
+    before = reply[:reply.index(words)]
+    return len(before) / 15 + .15 * before.count(",") + .35 * len(re.findall(r"[.!?] ", before))
 
 
 MUSEUM_REPLY = ("The museum is open until six tonight, and the cafe is on the second floor, next to the gift shop. "
@@ -1728,6 +1737,30 @@ def test_a_short_request_opening_with_a_word_of_muse_s_reply_reaches_muse_at_rea
     still counts toward the turn's final words: Muse is cut off and hears every word."""
     heard = said_over_reply(monkeypatch, caplog, words, gapped(words), reply=reply)
     assert heard[0] == (1, sum(voiced_ms_ for voiced_ms_, _ in gapped(words)), 0, [
+        f"Realtime command transcript=arrived words={len(words.split())} wake_prefix=none outcome=none drop=none"])
+
+
+OFFER_REPLY = ("I can read you the news, check the weather, or set a reminder for you. Just tell me which one you "
+               "want, and I can also play some music while you get ready.")
+FORECAST_REPLY = ("Tomorrow will be sunny with a high of 72. Would you like the forecast for next week too? I can also "
+                  "tell you about the pollen count, or what to wear.")
+
+
+@pytest.mark.parametrize("reply, then, words, stretches", [
+    (FORECAST_REPLY, "I can also", "Yes, the forecast for next week please.",
+     gapped("Yes, the forecast for next week please.")),
+    (OFFER_REPLY, "Just tell me", "Okay, set a reminder for me.", gapped("Okay, set a reminder for me.")),
+    (FORECAST_REPLY, "I can also", "Yes, the forecast for next week please.",
+     STRETCHES["fluent, ending on a long stretch"][:7])],
+    ids=["the forecast Muse offered", "the reminder Muse offered", "control: said fluently"])
+def test_a_request_taking_up_muse_s_offer_in_its_words_reaches_muse_at_reachy_s_endpoint(
+        monkeypatch, caplog, reply, then, words, stretches):
+    """Muse makes an offer and talks on, and the user takes the offer up over the reply in short words, in Muse's own
+    words, as Muse's echo of the offer would hold them. But echo holds only words Muse played while the voice was
+    heard, and Muse made the offer before then: Muse is cut off and hears every word. Said fluently, the same words
+    confirm by a partial."""
+    heard = said_over_reply(monkeypatch, caplog, words, stretches, reply=reply, after_s=said_at(reply, then))
+    assert heard[0] == (1, sum(voiced_ms_ for voiced_ms_, _ in stretches), 0, [
         f"Realtime command transcript=arrived words={len(words.split())} wake_prefix=none outcome=none drop=none"])
 
 
@@ -1906,51 +1939,37 @@ def test_reachy_never_nods_that_muse_is_slow_while_a_request_held_over_its_reply
 
 NUMBER_REPLY = ("Right now it's 72 degrees and sunny, and by eight tonight it will drop to 64, so bring a jacket "
                 "if you go out later.")
+WEATHER_REPLY = ("Tomorrow will be sunny with a high of 72, and the weekend looks rainy, so you might want an "
+                 "umbrella on Saturday. Would you like the forecast for next week too?")
 
 
-@pytest.mark.parametrize("reply, words, stretches", [
-    *((LONG_REPLY, "Tell me what you're wearing and I'll suggest something", stretches) for stretches in STRETCHES),
-    (LONG_REPLY, "Tell me what you are wearing and I'll suggest", "each word its own stretch"),
-    (NUMBER_REPLY, "it's seventy two degrees and sunny and by eight", "each word its own stretch"),
-    (LONG_REPLY, "Tell me what your wearing and I'll suggest something", "each word its own stretch"),
-    (LONG_REPLY, "wearing suggest something tonight ask about the weather first", "each word its own stretch")],
-    ids=[*STRETCHES, "a contraction written out", "a number written out", "a substitution", "fragments"])
+@pytest.mark.parametrize("reply, said, words, stretches", [
+    *((LONG_REPLY, "Tell me", "Tell me what you're wearing and I'll suggest something", STRETCHES[name])
+      for name in STRETCHES),
+    (LONG_REPLY, "Tell me", "Tell me what you are wearing and I'll suggest",
+     gapped("Tell me what you are wearing and I'll suggest")),
+    (NUMBER_REPLY, "it's 72", "it's seventy two degrees and sunny and by eight",
+     gapped("it's seventy two degrees and sunny and by eight")),
+    (LONG_REPLY, "Tell me", "Tell me what your wearing and I'll suggest something",
+     gapped("Tell me what your wearing and I'll suggest something")),
+    (LONG_REPLY, "wearing", "wearing suggest something tonight ask about the weather first",
+     ((240, 360),) * 8 + ((240, 0),)),
+    (LONG_REPLY, "Tell me", "tell me what your wear in and I just", gapped("tell me what your wear in and I just")),
+    (WEATHER_REPLY, "and the weekend", "the week and looks rain he so you",
+     gapped("the week and looks rain he so you")),
+    (LONG_REPLY, "something for", "some four tonight", gapped("some four tonight"))],
+    ids=[*STRETCHES, "a contraction written out", "a number written out", "a substitution", "fragments",
+         "five in nine words wrong", "four in eight words wrong", "two in three words wrong"])
 def test_muse_s_echo_heard_in_gapped_stretches_over_its_reply_never_reaches_it_at_reachy_s_endpoint(
-        monkeypatch, caplog, reply, words, stretches):
-    """As the request above, but the sound is Muse's own reply coming back through the speaker, and the companion
-    hears its words: with the robot's 2 s of silence, the turn's words at Reachy's endpoint confirm nothing. So too
-    when the companion writes a word differently from Muse's transcript, or hears only some of the words."""
-    caplog.set_level("INFO")
-    rig = rig_for(monkeypatch)
-    rig.hardware.echo_cancelled_input = True
-
-    async def answer(sdk, emit, script):
-        reply_events(sdk, emit, "r1", reply, voiced(12.8))
-
-    calls = ScriptedCalls(answer=answer)
-    conversation = realtime_service(rig, None, calls, wake_timeout_s=10)
-    conversation.silence_s = 2.0
-    link = companion_hearing(conversation, forced_endpoints=True)
-    heard = []
-
-    async def user():
-        await speak_live(rig, wake=True)
-        call = conversation._voice[1].call
-        await rig.wait_until_or_timeout(lambda: call.audible, 5)
-        await room(rig, 3)
-        caplog.clear()
-        before = len(calls.frames)
-        await say_over_reply(rig, link, words, STRETCHES[stretches], sound=muse_heard(1))
-        await room(rig, 1.5)
-        heard.append((voiced_ms(calls.frames[before:]), echo_frames(calls.frames[before:]), calls.barge_ins, [
-            line for line in caplog.messages
-            if line.startswith("Realtime command ") or "could not transcribe" in line]))
-        await rig.wait_until_or_timeout(lambda: not call.audible, 12)
-        heard.append(round(sum(len(chunk) for chunk in rig.hardware.played) / rig.hardware.output_sample_rate, 2))
-
-    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
-    assert heard == [
-        (0, 0, 0, ["Realtime command transcript=arrived words=9 wake_prefix=none outcome=none drop=barge_in"]), 12.8]
+        monkeypatch, caplog, reply, said, words, stretches):
+    """As the request above, but the sound is Muse's own reply coming back through the speaker from when Muse says
+    ``said``, and the companion hears its words: with the robot's 2 s of silence, the turn's words at Reachy's
+    endpoint confirm nothing. So too when the companion writes some words differently from Muse's transcript, gets
+    two in five of them wrong, or hears only some of them."""
+    assert said_over_reply(monkeypatch, caplog, words, stretches, reply=reply, after_s=said_at(reply, said),
+                           sound=muse_heard(1)) == [(0, 0, 0, [
+        f"Realtime command transcript=arrived words={len(words.split())} wake_prefix=none outcome=none drop=barge_in"]),
+        12.8]
 
 
 def test_echo_the_companion_hears_no_words_in_never_reaches_muse_ahead_of_the_request_after_it(monkeypatch):

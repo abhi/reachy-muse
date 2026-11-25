@@ -30,8 +30,8 @@ from musegadget.streaming import HTTPStatusError
 from reachy_muse.motion.reply_alignment import SAMPLE_RATE
 from reachy_muse.motion.reply_motion import Mark, ReplyMotion
 from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlayback
-from reachy_muse.follow_up import (FollowUp, classify_follow_up, echoes_playback, repeats_playback, spoken_words,
-                                   word_count)
+from reachy_muse.follow_up import (FollowUp, Spoken, classify_follow_up, echoes_playback, repeats_playback,
+                                   spoken_between, spoken_words, word_count)
 from reachy_muse.person_gaze import MuseActivity
 
 log = logging.getLogger(__name__)
@@ -52,6 +52,9 @@ DISTINCT_WORDS_S = 0.12
 # Held audio covers a whole request said over Muse's reply, which may confirm only at its endpoint.
 INTERRUPTION_BUFFER_S = 8.0
 INTERRUPTION_RECOGNITION_S = 0.75
+# Words Reachy's speaker played up to this long before or after the voice a gate heard may be that voice's echo: echo
+# comes just after its sound, and where a word falls in its line is an estimate.
+ECHO_TIMING_S = 1.0
 WAITING_CUE_S = 4.0
 NO_EVENT_S = 15.0
 WORKING_STALE_S = 30.0
@@ -76,6 +79,10 @@ class CallInput:
     def __init__(self, feed, sample_rate: int):
         self.feed = feed
         self.rate = sample_rate
+        # When the gate first heard voice over Muse's playback, and when it last did, through every reset: a turn's
+        # final words cover its speech from the start, though Muse's echo heard in it erased what was held.
+        self._voiced_from: Optional[float] = None
+        self._voiced_until = 0.0
         self.reset()
 
     def reset(self) -> None:
@@ -92,7 +99,8 @@ class CallInput:
         self.heard_speech = False
 
     def push(self, samples, *, speaking: bool, text: str, playback: bool,
-             heard_over: tuple[str, ...], quiet_s: float = 0.0) -> bool:
+             heard_over: tuple[str, ...], quiet_s: float = 0.0, at: Optional[float] = None) -> bool:
+        """``at`` is when the samples were captured, if not just now."""
         self.heard_speech = self.heard_speech or speaking
         if self._held_for_turn:
             self._hold(samples)
@@ -102,6 +110,10 @@ class CallInput:
             self.feed.push(samples, silent=quiet_s >= len(samples) / self.rate + FRAME_SAMPLES / SAMPLE_RATE)
             self.sent_speech = self.sent_speech or speaking
             return speaking
+        if speaking:
+            self._voiced_until = time.monotonic() if at is None else at
+            if self._voiced_from is None:
+                self._voiced_from = self._voiced_until
         echo = repeats_playback(text, heard_over)
         if echo and len(spoken_words(text)) > 1:
             self.reset()
@@ -136,14 +148,19 @@ class CallInput:
         self.feed.push(np.zeros_like(samples))
         return False
 
-    def finish(self, text: str, heard_over: tuple[str, ...]) -> bool:
-        """Confirm on a finished turn's words and all its held voice, unless the words are mostly Muse's own, as its
-        voice heard back and written with a word changed would be. The audio stays held, with whatever follows it,
-        until ``release`` or ``discard``: the utterance can go on past the turn."""
+    def finish(self, text: str, heard_over: tuple[str, ...], spoken: tuple[Spoken, ...]) -> bool:
+        """Confirm on a finished turn's words and all its held voice, unless the words are mostly those of ``spoken``
+        that Reachy's speaker played while the voice was heard, as Muse's voice heard back and written with words
+        changed would be. Words Muse said before then can be the user's, taking up Muse's offer. The audio stays held,
+        with whatever follows it, until ``release`` or ``discard``: the utterance can go on past the turn."""
         if (not self.confirmed and self._voiced_samples >= BARGE_IN_SPEECH_S * self.rate
-                and self._distinct(text, heard_over) and not echoes_playback(text, heard_over)):
+                and self._distinct(text, heard_over) and not self._echoes(text, spoken)):
             self.confirmed = self._held_for_turn = True
         return self.confirmed
+
+    def _echoes(self, text: str, spoken: tuple[Spoken, ...]) -> bool:
+        played = spoken_between(spoken, self._voiced_from - ECHO_TIMING_S, self._voiced_until + ECHO_TIMING_S)
+        return echoes_playback(text, (played,))
 
     def release(self) -> bool:
         """Send Muse the audio held for a turn it takes, and let what follows flow on; whether any was held."""
