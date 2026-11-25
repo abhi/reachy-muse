@@ -1503,8 +1503,11 @@ class ReachyController:
             self._face_tracking_status = status
             log.info("Local face tracking %s: %s", "on" if active else "off", reason)
 
+    def _watch_holds(self, state: str) -> bool:
+        return self._watching and (state in ("sleeping", "error") or state == "idle" and not self._call_open)
+
     def _face_pose(self, pose):
-        if self._watching and self._state in ("idle", "sleeping", "error"):
+        if self._watch_holds(self._state):
             return pose
         follower = self._face_follower
         look = self._speaker_look
@@ -1902,7 +1905,7 @@ class ReachyController:
                         self._stop.wait(_MOTION_PERIOD_S)
                 else:
                     if ((state == "sleeping" and previous_state != "sleeping")
-                            or (self._watching and state in ("idle", "sleeping", "error"))):
+                            or self._watch_holds(state)):
                         with self._state_lock:
                             self._clear_speaker()
                     self._update_speaker(now, state, occupied=(
@@ -2181,7 +2184,8 @@ class ReachyController:
             return self._head(**self._watched({"pitch": 8, "z": -3})), self._np.deg2rad([-35, 35])
         if state == "sleeping":
             return self._head(**self._watched({"pitch": 15, "z": -10})), self._np.deg2rad([-80, 80])
-        return self._head(**self._watched({})), self._np.deg2rad([-10, 10])
+        coordinates = {} if self._call_open else self._watched({})
+        return self._head(**coordinates), self._np.deg2rad([-10, 10])
 
     def _check_command(self, request: _Command) -> None:
         if self._stop.is_set() or request.cancelled.is_set():

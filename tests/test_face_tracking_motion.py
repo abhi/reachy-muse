@@ -410,3 +410,26 @@ def test_arrival_watching_observes_faces_at_the_watch_pose_then_resumes_gaze(mon
     assert tracking == [True] * 20
     assert follower.active
     assert samples[515]['yaw'] == pytest.approx(8, abs=.1)
+
+
+@pytest.mark.parametrize('state, call_open', [('idle', False), ('sleeping', True), ('error', True)])
+def test_arrival_watching_holds_the_watch_pose_and_clears_speaker_gaze(monkeypatch, state, call_open):
+    def action(controller, follower, tick):
+        if tick == 1:
+            controller._face_follower = None
+            controller.set_state('listening')
+            assert controller.look_at_person(math.radians(30), 0)
+        if tick == 70:
+            assert controller._person_hold is not None
+            assert controller._speaker_look is not None
+            controller.set_call_open(call_open)
+            controller.set_state(state)
+            controller.start_watching(WatchPose(-20, 5))
+
+    controller, _, samples = drive(monkeypatch, action, ticks=350, style=MotionStyle(breathing=False))
+    assert samples[65]['yaw'] == pytest.approx(30, abs=.1)
+    assert samples[340]['yaw'] == pytest.approx(-20, abs=.1)
+    assert samples[340]['pitch'] == pytest.approx(5, abs=.1)
+    assert controller._speaker_look is None
+    assert controller._person_hold is None
+    assert controller._robot.body_yaw == pytest.approx(0, abs=.01)

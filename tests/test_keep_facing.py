@@ -7,6 +7,7 @@ DoA, camera frames and Muse's link. The camera sees a face only within its field
 """
 
 import asyncio
+from datetime import datetime, timedelta
 import math
 from pathlib import Path
 import queue
@@ -18,8 +19,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from reachy_muse.arrival import WatchPose
 from reachy_muse.hardware import ReachyController
 from reachy_muse.local_face_tracking import FACE_LOSS_SECONDS, FaceCapture, FaceFollower, _Face
+from reachy_muse.morning_briefing import DayLedger, MorningRoutine, TestWindow as Window
 from reachy_muse.motion import MotionStyle
 from reachy_muse.speaker_direction import DoAReading
 from test_device_command_turns import LongVoice, never_asked, played, run, service as make_service
@@ -842,3 +845,200 @@ def test_once_the_window_closes_and_hangs_up_the_call_reachy_stops_following_wit
 
     run(rig, service, user, rest=("idle",), timeout=30)
     assert seen["closed"] == ("idle", (0, 0))
+
+
+def morning_window(controller, watch_yaw):
+    """The morning briefing's window, open now for an hour, watching for arrival at ``watch_yaw`` degrees."""
+    now = datetime.now().astimezone()
+    return MorningRoutine(Window(now - timedelta(minutes=1), now + timedelta(hours=1)), "Brief me.", controller,
+                          DayLedger(None), pose=WatchPose(watch_yaw, 0), poll_s=.05)
+
+
+def answers_then_answers_late(released):
+    """Muse answers while the robot's SDK leaves Working on, then answers again once ``released``, with no event in
+    between, as after a tool call that sends none."""
+    async def answer(sdk, emit, calls):
+        emit(sdk.Working(True))
+        reply_events(sdk, emit, "r1", "It will be sunny.", voiced(1.0))
+        await released.wait()
+        reply_events(sdk, emit, "r2", "And warm all week.", voiced(2.0))
+    return answer
+
+
+def test_morning_watching_keeps_facing_the_owner_reachy_turned_to(camera_room, caplog):
+    """A DoA-placed wake keeps its head and body gaze through a Working hold during arrival watching."""
+    rig, controller, robot, scene = camera_room(face_follow_idle=True)
+    caplog.set_level("INFO")
+    scene.faces = [(OWNER, .1, .35)]
+    released = asyncio.Event()
+    routine = morning_window(controller, 0)
+    calls = ScriptedCalls(answer=answers_then_answers_late(released))
+    wake = Placed()
+    service = make_service(rig, never_asked, StreamingTranscripts("What's the weather?"), wake_detector=wake,
+                           wake_timeout_s=3, muse_path="realtime", voice_link=calls.link, voice_call=calls)
+    seen = {}
+
+    async def user():
+        watching_task = asyncio.create_task(routine.watch_camera())
+        try:
+            await until(rig, lambda: controller._watching, 5)
+            await wake_from(rig, service, scene, wake, OWNER)
+            await until(rig, lambda: facing(controller, robot) == (30, 10), 5)
+            voice = service._voice[1]
+            await say_live(rig)
+            await until(rig, lambda: rig.hardware.played and not voice.call.audible, 10)
+            seen["answered"] = facing(controller, robot)
+            await until(rig, lambda: time.monotonic() > voice._wake_deadline + .5, 8)
+            await asyncio.sleep(2.5)
+            seen["call_open"] = voice.call is not None and not voice.call.done
+            released.set()
+            await until(rig, lambda: voice.call.audible, 5)
+            watching = Watch(controller)
+            await until(rig, lambda: sum(map(len, rig.hardware.played)) >= 2.9 * RATE and not voice.call.audible, 10)
+            yaws = [round(yaw) for yaw, _ in await watching.stop()]
+            seen["late_answer"] = (min(yaws), max(yaws), round(math.degrees(robot.body_yaw)))
+        finally:
+            watching_task.cancel()
+            await asyncio.gather(watching_task, return_exceptions=True)
+
+    run(rig, service, user, rest=("listening", "idle", "thinking"), timeout=50)
+    assert seen["answered"] == (30, 10)
+    assert seen["call_open"] is True
+    assert seen["late_answer"] == (30, 30, 10)
+
+
+def test_morning_watching_keeps_facing_the_owner_reachy_followed(camera_room, caplog):
+    """With default idle follow off, an open call follows the owner instead of the briefing's watch pose."""
+    rig, controller, robot, scene = camera_room()
+    caplog.set_level("INFO")
+    scene.faces = [(15, .4, .3)]
+    released = asyncio.Event()
+    routine = morning_window(controller, -25)
+    service, calls = realtime(rig, answers_then_answers_late(released), "What's the weather?", wake_timeout_s=3)
+    seen = {}
+
+    async def user():
+        watching_task = asyncio.create_task(routine.watch_camera())
+        try:
+            await until(rig, lambda: controller._watching, 5)
+            await say_live(rig, wake=True)
+            voice = service._voice[1]
+            await until(rig, lambda: rig.hardware.played and not voice.call.audible, 10)
+            await until(rig, lambda: abs(math.degrees(controller.head_yaw) - 15) < 1.5, 3)
+            await until(rig, lambda: time.monotonic() > voice._wake_deadline + .5, 8)
+            await asyncio.sleep(2.5)
+            seen["call_open"] = voice.call is not None and not voice.call.done
+            released.set()
+            await until(rig, lambda: voice.call.audible, 5)
+            watching = Watch(controller)
+            await until(rig, lambda: sum(map(len, rig.hardware.played)) >= 2.9 * RATE and not voice.call.audible, 10)
+            yaws = [round(yaw) for yaw, _ in await watching.stop()]
+            seen["late_answer"] = (min(yaws), max(yaws))
+        finally:
+            watching_task.cancel()
+            await asyncio.gather(watching_task, return_exceptions=True)
+
+    run(rig, service, user, rest=("listening", "idle", "thinking"), timeout=50)
+    assert seen["call_open"] is True
+    assert seen["late_answer"] in ((14, 14), (14, 15), (15, 15))
+
+
+HOLD_BEGAN = "Reachy's wake window stays open past its deadline only on Muse's Working flag"
+BRIEFING = "Good morning. That's your briefing."
+ROBOT_WORKING_DELAY_S = 1.3
+
+
+class OpeningClock:
+    """The wall clock at the edge: just before the morning window until ``opened`` is set, then inside it."""
+
+    def __init__(self, start):
+        self.start = start
+        self.opened = asyncio.Event()
+
+    def now_local(self):
+        return self.start + (timedelta(minutes=1) if self.opened.is_set() else -timedelta(minutes=1))
+
+    def monotonic(self):
+        return time.monotonic()
+
+    async def sleep(self, seconds):
+        if self.opened.is_set():
+            await asyncio.sleep(seconds)
+            return
+        try:
+            await asyncio.wait_for(self.opened.wait(), seconds)
+        except asyncio.TimeoutError:
+            pass
+
+
+def morning_routine(controller, clock):
+    return MorningRoutine(Window(clock.start, clock.start + timedelta(hours=1)), "Brief me.", controller,
+                          DayLedger(None), pose=WatchPose(0, 0), clock=clock, poll_s=.05)
+
+
+async def briefing_chat(session, request):
+    await session.answer(request, BRIEFING)
+
+
+def aside_then_late_answer(released):
+    """Muse, with the robot's timing, says a short aside, then works in silence until ``released``, then answers."""
+    async def answer(sdk, emit, calls):
+        await asyncio.sleep(ROBOT_WORKING_DELAY_S)
+        emit(sdk.Working(True))
+        reply_events(sdk, emit, "r1", "Let me check.", voiced(1.0))
+        await released.wait()
+        reply_events(sdk, emit, "r2", "It will be sunny and warm.", voiced(2.0))
+    return answer
+
+
+def realtime_morning(rig, routine, released, wake):
+    calls = ScriptedCalls(answer=aside_then_late_answer(released), every_turn=True)
+    return make_service(rig, briefing_chat, StreamingTranscripts("What's the weather?"), wake_detector=wake,
+                        wake_timeout_s=3, muse_path="realtime", voice_link=calls.link, voice_call=calls,
+                        morning=routine)
+
+
+async def hold_then_late_answer(rig, controller, robot, voice, routine, released, caplog, seen):
+    """Past the follow-up window, records the hold; then releases Muse's late answer and records the head's yaw span
+    and the body's yaw while it plays."""
+    await until(rig, lambda: time.monotonic() > voice._wake_deadline + .5, 8)
+    await asyncio.sleep(2.5)
+    seen["hold"] = (rig.states()[-1], len(logged(caplog, HOLD_BEGAN)), controller._watching, routine._arrived,
+                    voice.call is not None and not voice.call.done, facing(controller, robot))
+    released.set()
+    await until(rig, lambda: voice.call.audible, 5)
+    watching = Watch(controller)
+    await until(rig, lambda: sum(map(len, rig.hardware.played)) >= 2.9 * RATE and not voice.call.audible, 10)
+    yaws = [round(yaw) for yaw, _ in await watching.stop()]
+    seen["late_answer"] = (min(yaws), max(yaws), round(math.degrees(robot.body_yaw)))
+    seen["greeted"] = "tts:Good morning!" in played(rig.recording.events)
+
+
+@pytest.mark.parametrize("faces", [[(OWNER, .1, .35)], []], ids=["face seen", "dim room"])
+def test_morning_window_opens_while_muse_works_on_the_owners_request(camera_room, caplog, faces):
+    """The full morning routine starts watching during a call's silent work, then Muse answers facing the owner."""
+    rig, controller, robot, scene = camera_room(face_follow_idle=True)
+    caplog.set_level("INFO")
+    scene.faces = faces
+    released = asyncio.Event()
+    clock = OpeningClock(datetime.now().astimezone())
+    routine = morning_routine(controller, clock=clock)
+    wake = Placed()
+    service = realtime_morning(rig, routine, released, wake)
+    seen = {}
+
+    async def user():
+        await wake_from(rig, service, scene, wake, OWNER)
+        await until(rig, lambda: facing(controller, robot) == (30, 10), 5)
+        voice = service._voice[1]
+        await say_live(rig)
+        await until(rig, lambda: rig.hardware.played and not voice.call.audible, 10)
+        seen["before_window"] = (controller._watching, routine._arrived)
+        clock.opened.set()
+        await until(rig, lambda: controller._watching, 5)
+        await hold_then_late_answer(rig, controller, robot, voice, routine, released, caplog, seen)
+
+    run(rig, service, user, rest=("listening", "idle", "thinking"), timeout=60)
+    assert (seen["before_window"], seen["hold"][2:5], seen["greeted"]) == ((False, False), (True, bool(faces), True),
+                                                                           False)
+    assert seen["late_answer"] == (30, 30, 10)

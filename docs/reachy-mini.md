@@ -847,7 +847,9 @@ request waits for Muse and no event since Muse last finished shows it at work,
 speech then needs the wake phrase again, and Reachy shows the pose it shows
 when the window closes, not the listening pose. The call stays open, so Muse's
 late answer still plays, and the window then runs on as after any reply. Face
-following goes on meanwhile, so that answer plays facing you. Say
+following goes on meanwhile, so that answer plays facing you. During the
+morning window, an open call keeps Reachy facing the person instead of taking
+the watch pose. Say
 "Hey Muse" to open the window again in the same call. Reachy logs one
 content-free line when this begins, and one when it ends, with how long it
 lasted.
