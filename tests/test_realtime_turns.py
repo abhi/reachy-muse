@@ -1520,6 +1520,57 @@ def test_words_muse_s_next_reply_ends_before_they_confirm_are_dropped_though_the
     assert heard == [(0, 0, ["none outcome=none drop=barge_in"], []), 7.0]
 
 
+def test_words_muse_s_next_reply_begins_after_while_reachy_weighs_them_are_dropped(monkeypatch, caplog):
+    """The user adds "and the night after that" in short words over the end of Muse's acknowledgement, and only the
+    turn's final words confirm it. Reachy's command model weighs the words for a second, and Muse's next reply, its
+    answer, begins meanwhile: that reply ended the turn before Muse heard any of it. The turn is dropped, as when the
+    reply begins before the final words, and Muse's answer plays on whole."""
+    from reachy_muse import device_command
+
+    caplog.set_level("INFO")
+    monkeypatch.setattr(device_command, "CLASSIFY_DEADLINE_S", 2.0)
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    next_reply = []
+
+    async def answer(sdk, emit, script):
+        if next_reply:
+            return
+        next_reply.append(lambda: reply_events(sdk, emit, "r2", "You have a dentist appointment at nine tomorrow.",
+                                               voiced(4)))
+        reply_events(sdk, emit, "r1", "Let me check the calendar for you.", voiced(3))
+
+    class Weighing(FakeModel):
+        async def classify(self, text, allowed):
+            next_reply[0]()
+            return await super().classify(text, allowed)
+
+    calls = ScriptedCalls(answer=answer, every_turn=True, paced=True)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=10, model=Weighing(None, delay_s=1))
+    conversation.silence_s = 2.0
+    link = companion_hearing(conversation, forced_endpoints=True)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, 1)
+        caplog.clear()
+        before = len(calls.frames)
+        await say_over_reply(rig, link, "and the night after that",
+                             ((200, 120), (160, 60), (200, 100), (160, 40), (240, 0)))
+        await room(rig, 7)
+        heard.append((voiced_ms(calls.frames[before:]), calls.barge_ins,
+                      [line.split(" wake_prefix=")[1] for line in caplog.messages
+                       if line.startswith("Realtime command ")],
+                      [line for line in caplog.messages if line.startswith("Realtime turn ordinal=2 ")]))
+        heard.append(round(sum(count for _, count in rig.hardware.muse_played) / rig.hardware.output_sample_rate, 1))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
+    assert heard == [(0, 0, ["none outcome=none drop=barge_in"], []), 7.0]
+
+
 # A request as Reachy's voice detector hears it over Muse's reply: each word's voiced ms, and the quiet ms after it.
 STRETCHES = {
     "each word its own stretch": ((260, 120), (160, 40), (140, 60), (240, 40), (80, 40), (280, 80), (100, 40),

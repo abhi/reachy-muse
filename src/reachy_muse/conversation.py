@@ -2959,7 +2959,10 @@ class VoiceConversation:
         photo = command is None and not endpoint.partial and self._photo_requested(text, request.timeline)
         # Muse still owes an answer to an earlier call turn; a barge-in would cut it off.
         waiting = photo and bool(request.call.pending)
-        unconfirmed = remark and command is None
+        # Held words that are Muse's reach it only if Muse has begun no reply since they were said, as while Reachy's
+        # command model weighed them: that reply ended the turn before Muse heard any of it.
+        unconfirmed = gate is not None and command is None and not photo and (
+            remark or self._muse_began_at >= request.timeline.marks["speech_end"])
         if request.timeline.facts.get("command_transcript") != "deadline":
             self._log_realtime_command(endpoint.text, decision, transcript=request.timeline.facts.get("command_transcript"),
                                        outcome=command.name if command is not None

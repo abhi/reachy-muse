@@ -817,7 +817,7 @@ window closes, so Reachy's local chat does not answer greetings in a call.
   last word, and Muse answers after that. Reachy nods when Muse has not answered
   a request after 4 s, counted from when Muse has all of it, as for a request
   that a partial confirmed late. A reply that Muse begins before such a request
-  is confirmed ends the turn, and the request is dropped. A remark of two words
+  reaches it ends the turn, and the request is dropped. A remark of two words
   or fewer besides back-channel sounds, such as "got it", is dropped too, so it
   never cuts Muse off two seconds after it was said. A cancel or silence phrase,
   such as "never mind", still stops Muse.
