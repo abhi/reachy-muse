@@ -326,13 +326,13 @@ SUBJECTS = {
         "how do i look", "do i look okay", "do i look presentable", "what do you think about my hair",
         "can you see my face", "can you see my hair", "take a selfie of me", "take a photo of me again",
         "take a photo of me here", "take a photo of me today", "take a photo of me smiling",
-        "take a photo and tell me how i look"],
+        "take a photo and tell me how i look", "what do you think of this haircut"],
     PhotoSubject.HELD: [
         "what am i holding", "what am i holding up", "what am i wearing", "what am i showing you", "what's in my hand",
         "what's in my hands", "what do i have in my hand", "what's this i'm holding", "can you see what i'm holding",
         "how many fingers am i holding up", "how many fingers do you see", "what do you see in my hand",
         "take a photo of my outfit", "what do you think of my outfit", "take a photo, what am i holding?",
-        "take a photo and tell me what i'm wearing"],
+        "take a photo and tell me what i'm wearing", "what do you think of this outfit"],
     PhotoSubject.US: [
         "take a photo of us", "take a selfie", "take a selfie of us", "take a picture of us both",
         "take a photo of both of us", "take a photo of all of us", "take a photo of the two of us",
@@ -341,7 +341,9 @@ SUBJECTS = {
         "take a photo of all of us together", "take a photo of everyone here", "take a photo of the whole family"],
     PhotoSubject.OTHER: [
         "take a photo of my friend", "take a photo of him", "take a photo of her", "take a photo of them",
-        "take a photo of my guest", "take a photo of my mom", "take a photo of my friend sarah", "photograph my friend"],
+        "take a photo of my guest", "take a photo of my mom", "take a photo of my friend sarah", "photograph my friend",
+        "take a photo of this person", "take a photo of that guy", "take a photo of my best friend",
+        "take a photo of my little sister"],
     PhotoSubject.THIS: [
         "take a photo of this", "photograph this", "take a photo of this plant", "what is this", "what's this",
         "what kind of plant is this", "what color is this", "read this label", "read this", "what does this say",

@@ -1111,8 +1111,8 @@ they go to Muse as ordinary requests.
   you instead, since what you hold may hide your face; with no face in view and
   no direction, Reachy keeps its view. "Take a photo of us", "of everyone",
   "of the whole family" and "how many people do you see?" frame everyone who
-  fits in view, you included. "Take a photo of my friend",
-  "of him" or "of her" frames the person who is not speaking, or without your
+  fits in view, you included. "Take a photo of my friend", "of him", "of her"
+  or "of this person" frames the person who is not speaking, or without your
   direction, everyone in view if they fit. "What is this?" and "read this label"
   keep the view unless your voice came from outside it. Questions about the
   scene, such as "what do you see?", "describe the room" or "what am I pointing

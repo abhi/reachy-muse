@@ -364,7 +364,9 @@ _SLOT_SUBJECTS = tuple((re.compile(pattern), subject) for pattern, subject in (
     (r"us(?: (?:both|all|two))?|(?:both|all|the (?:two|three|four|five)) of us|ourselves|everyone|everybody"
      r"|the (?:whole )?(?:group|family|kids|children|guests)"
      r"|(?:my|our) (?:whole )?(?:family|friends|kids|children|guests)", PhotoSubject.US),
-    (rf"him|her|them|someone else|somebody else|the other person|my {_RELATIVE}(?: [a-z']+)?", PhotoSubject.OTHER),
+    (r"him|her|them|someone else|somebody else|the other person"
+     rf"|(?:this|that) (?:person|guy|man|woman|lady|boy|girl|kid)|my (?:[a-z']+ )?{_RELATIVE}(?: [a-z']+)?",
+     PhotoSubject.OTHER),
     (r"(?:this|these)(?: [a-z']+){0,2}", PhotoSubject.THIS),
     (r"(?:the|this|my) (?:room|view|table|desk|kitchen|counter|shelf|window|wall|floor)", PhotoSubject.SCENE),
 ))
@@ -372,9 +374,9 @@ _SLOT_SUBJECTS = tuple((re.compile(pattern), subject) for pattern, subject in (
 _ASKED_SUBJECTS = tuple((re.compile(pattern), subject) for pattern, subject in (
     (r"\bus\b|\bourselves\b|\beveryone\b|\beverybody\b|\bhow many people\b|\bselfie\b", PhotoSubject.US),
     (rf"\bwhat (?:am i|i(?:'m| am)) (?:holding|showing|wearing)|\bi(?:'m| am) holding\b|\bin my hands?\b"
-     rf"|\bam i holding\b|\bhow many fingers\b|\bmy {_LOOKS_BODY}\b", PhotoSubject.HELD),
-    (rf"\b(?:see|describe) me\b|\bhow (?:do )?i look\b|\b(?:do|if|whether) i look\b|\bmy {_LOOKS_FACE}\b",
-     PhotoSubject.ME),
+     rf"|\bam i holding\b|\bhow many fingers\b|\b(?:my|think (?:of|about) this) {_LOOKS_BODY}\b", PhotoSubject.HELD),
+    (rf"\b(?:see|describe) me\b|\bhow (?:do )?i look\b|\b(?:do|if|whether) i look\b"
+     rf"|\b(?:my|think (?:of|about) this) {_LOOKS_FACE}\b", PhotoSubject.ME),
     (r"\bthis\b|\bthese\b", PhotoSubject.THIS),
 ))
 
