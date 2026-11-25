@@ -92,6 +92,8 @@ _SPEECH_SERIALS = itertools.count(1)
 _MICROPHONE_READER = threading.Lock()
 # What Reachy says when the wake phrase alone wakes it, the same words as "wake up".
 WAKE_GREETING = COMMANDS[DeviceCommand.WAKE_UP].reply
+# A call turn heard over Muse's reply that its gate never confirmed: Muse never heard it, and Reachy drops it.
+_UNCONFIRMED_TURN = Endpoint(b"", None)
 
 
 @contextlib.contextmanager
@@ -1524,7 +1526,7 @@ class VoiceConversation:
                     self._log_realtime_command(transcript,
                                                self._wake_prefix(transcript or "", self._wake_strip_required),
                                                transcript=timeline.facts.get("command_transcript"), drop="barge_in")
-                    return None
+                    return _UNCONFIRMED_TURN
             if timeline.facts.get("command_transcript") == "deadline":
                 self._log_realtime_command(None, self._wake_prefix("", self._wake_strip_required),
                                            transcript="deadline", drop="deadline")
@@ -1538,6 +1540,8 @@ class VoiceConversation:
                     endpoint = await call_recognitions[request.ended]
                 else:
                     endpoint = await request.ended.endpoint()
+                if endpoint is _UNCONFIRMED_TURN:
+                    return held
                 if endpoint is None:
                     transcription_failed(request.call)
                     return held
@@ -1692,6 +1696,8 @@ class VoiceConversation:
                                 endpoint = await call_recognitions[request.ended]
                             else:
                                 endpoint = await request.ended.endpoint()
+                            if endpoint is _UNCONFIRMED_TURN:
+                                return TurnOutcome.EMPTY
                             if endpoint is None:
                                 transcription_failed(request.call)
                                 return TurnOutcome.EMPTY

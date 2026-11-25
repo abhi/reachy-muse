@@ -114,6 +114,41 @@ def test_delayed_words_can_confirm_speech_only_within_the_recognition_window(qui
     assert feed.samples == ([0.0] * 600 + [.5] * 500 + [0.0] * 200 if interrupted else [0.0] * 1700)
 
 
+def held_turn(gate, *, voice, partial):
+    """Four words in 200 ms voiced stretches 100 ms apart, then the robot's 2 s of silence before its endpoint."""
+    reply = ("It will be sunny tomorrow.",)
+    for _ in range(4):
+        for _ in range(2):
+            gate.push(np.full(100, .5) if voice else np.zeros(100), speaking=voice, text=partial, playback=True,
+                      heard_over=reply)
+        gate.push(np.zeros(100), speaking=False, text=partial, playback=True, heard_over=reply)
+    for _ in range(19):
+        gate.push(np.zeros(100), speaking=False, text=partial, playback=True, heard_over=reply)
+
+
+def test_a_turn_s_final_words_release_all_its_voice_after_the_recognition_window():
+    """No stretch lasts 300 ms, so no partial confirms the words, and the recognition window closes long before the
+    endpoint. The turn's final words still confirm, and Muse gets every word with the pauses the gate held."""
+    feed = Feed()
+    gate = CallInput(feed, 1000)
+    held_turn(gate, voice=True, partial="What about")
+    assert (gate.confirmed, feed.samples) == (False, [0.0] * 3100)
+    assert gate.finish("What about Friday then?", ("It will be sunny tomorrow.",)) is True
+    assert feed.samples == [0.0] * 3100 + ([.5] * 200 + [0.0] * 100) * 3 + [.5] * 200 + [0.0] * 700
+
+
+@pytest.mark.parametrize("voice, partial, final", [
+    (True, "", "sunny tomorrow"), (True, "", "Okay."), (False, "", "What about Friday then?"),
+    (True, "sunny tomorrow", "What about Friday then?")],
+    ids=["echo words", "one word", "no voice", "voice held only under echo words"])
+def test_a_turn_s_final_words_release_nothing_without_distinct_words_over_held_voice(voice, partial, final):
+    feed = Feed()
+    gate = CallInput(feed, 1000)
+    held_turn(gate, voice=voice, partial=partial)
+    assert gate.finish(final, ("It will be sunny tomorrow.",)) is False
+    assert feed.samples == [0.0] * 3100
+
+
 def test_separate_short_sounds_do_not_combine_into_sustained_speech():
     feed = Feed()
     gate = CallInput(feed, 1000)

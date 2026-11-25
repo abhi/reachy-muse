@@ -1325,7 +1325,8 @@ def test_while_muse_talks_past_the_wake_deadline_only_confirmed_speech_reaches_i
     events = run(rig, conversation, user, rest=("listening", "idle", "thinking"))
     assert heard[0] == (500 if reached else 0, 0, int(reached), True)
     assert (heard[1] < 7) if reached else (heard[1] == pytest.approx(7.5, abs=.003))
-    assert [line for line in caplog.messages if line.startswith("Realtime command ")] == diagnostics
+    assert [line for line in caplog.messages
+            if line.startswith("Realtime command ") or "could not transcribe" in line] == diagnostics
     assert set(played(events)) == {"muse"}
     assert sent_to_muse(events) == []
 
@@ -1405,6 +1406,172 @@ def test_a_remark_that_never_interrupted_muse_is_dropped_when_muse_s_next_reply_
 
     run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=30)
     assert heard == [(0, 1, ["Realtime command transcript=arrived words=1 wake_prefix=none outcome=none drop=barge_in"])]
+
+
+# A request as Reachy's voice detector hears it over Muse's reply: each word's voiced ms, and the quiet ms after it.
+STRETCHES = {
+    "each word its own stretch": ((260, 120), (160, 40), (140, 60), (240, 40), (80, 40), (280, 80), (100, 40),
+                                  (160, 100), (280, 0)),
+    "one long stretch before the partial has two words": ((380, 0), (180, 0), (140, 60), (240, 40), (80, 40),
+                                                          (280, 80), (100, 40), (160, 100), (280, 0)),
+    "fluent, ending on a long stretch": ((380, 100), (180, 0), (140, 60), (240, 0), (80, 0), (280, 80), (100, 0),
+                                         (160, 0), (280, 0)),
+}
+# The companion's streaming recognizer runs this far behind the voice.
+COMPANION_LAG_S = .48
+LONG_REPLY = ("I can't see you from here, but I can still help. Tell me what you're wearing and I'll suggest "
+              "something for tonight, or ask me about the weather first.")
+
+
+async def say_over_reply(rig, link, words, stretches, *, final_after_s=None, partial_words=None, sound=None):
+    """Say ``words`` at real-time pace in ``stretches``, in the user's test voice or ``sound``. The companion's
+    partial holds each word COMPANION_LAG_S after its voice ends, up to ``partial_words`` words; with
+    ``final_after_s``, the companion's own endpoint brings all the words that long after the last one."""
+    from reachy_muse.protocol import HearEndpoint, HearPartial, encode
+
+    said, voice, ends = words.split(), [], []
+    for voiced_ms_, quiet_ms in stretches:
+        voice += [True] * (voiced_ms_ // 20) + [False] * (quiet_ms // 20)
+        ends.append((len(voice) - quiet_ms // 20) * .02)
+    known, stream, shown = set(link._connection.hearing), None, 0
+    for frame in range(len(voice) + round(((final_after_s or 0) + COMPANION_LAG_S + .1) / .02)):
+        voiced = frame < len(voice) and voice[frame]
+        chunk = np.full(CHUNK, VOICE_SAMPLE if voiced else 0, np.float32)
+        if voiced and sound is not None:
+            chunk = sound[frame * CHUNK % len(sound):][:CHUNK].copy()
+        rig.hardware.samples.put(chunk)
+        await asyncio.sleep(CHUNK / 16000)
+        if stream is None:
+            stream = next((opened for opened in link._connection.hearing if opened not in known), None)
+        if stream is None or stream not in link._connection.hearing:
+            continue
+        heard = min(sum(end + COMPANION_LAG_S <= (frame + 1) * .02 for end in ends), partial_words or len(said))
+        if heard != shown:
+            shown = heard
+            link._receive(link._connection, encode(HearPartial(stream, heard, " ".join(said[:heard]))))
+        if final_after_s is not None and frame + 1 == len(voice) + round(final_after_s / .02):
+            link._receive(link._connection, encode(HearEndpoint(stream, words, False)))
+
+
+@pytest.mark.parametrize("stretches", ["each word its own stretch",
+                                       "one long stretch before the partial has two words"])
+def test_a_request_over_a_long_reply_that_no_partial_confirms_reaches_muse_at_reachy_s_endpoint(
+        monkeypatch, caplog, stretches):
+    """The user asks something over Muse's reply as the robot hears it: gaps between the words, the companion's
+    partials behind the voice, and the robot's 2 s of silence. No partial confirms the request while it is said,
+    but its words at Reachy's endpoint do: Muse is cut off, hears every word of it, and answers it."""
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    replies = []
+
+    async def answer(sdk, emit, script):
+        replies.append(len(replies) + 1)
+        if replies == [1]:
+            reply_events(sdk, emit, "r1", LONG_REPLY, voiced(12.8))
+        else:
+            reply_events(sdk, emit, "r2", "A navy shirt would work well.", voiced(1))
+
+    calls = ScriptedCalls(answer=answer, every_turn=True)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=10)
+    conversation.silence_s = 2.0
+    link = companion_hearing(conversation, forced_endpoints=True)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, 3)
+        caplog.clear()
+        before = len(calls.frames)
+        await say_over_reply(rig, link, "Reachy, what should I wear to the dinner tonight?", STRETCHES[stretches])
+        await room(rig, 1.5)
+        await rig.wait_until_or_timeout(lambda: replies == [1, 2] and not call.audible, 5)
+        heard.append((voiced_ms(calls.frames[before:]), calls.barge_ins, call.pending, [
+            line for line in caplog.messages if line.startswith(("Realtime command ", "Realtime turn ordinal=2 "))
+            or "could not transcribe" in line]))
+        heard.append(round(sum(len(chunk) for chunk in rig.hardware.played) / rig.hardware.output_sample_rate, 1))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
+    voice_ms = sum(voiced_ms_ for voiced_ms_, _ in STRETCHES[stretches])
+    assert heard[0][:3] == (voice_ms, 1, [])
+    assert [line.split(" voice_to_reply_ms=")[0] for line in heard[0][3]] == [
+        "Realtime command transcript=arrived words=9 wake_prefix=none outcome=none drop=none",
+        "Realtime turn ordinal=2 outcome=answered words=9"]
+    assert heard[1] < 12.8
+
+
+def test_a_device_command_over_a_long_reply_that_no_partial_confirms_is_obeyed_at_reachy_s_endpoint(
+        monkeypatch, caplog):
+    """As the request above, with a command said in stretches each under 300 ms: Reachy's endpoint confirms it, and
+    Reachy turns its volume down."""
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+
+    async def answer(sdk, emit, script):
+        reply_events(sdk, emit, "r1", LONG_REPLY, voiced(12.8))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=10)
+    conversation.silence_s = 2.0
+    link = companion_hearing(conversation, forced_endpoints=True)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, 3)
+        caplog.clear()
+        await say_over_reply(rig, link, "Reachy, turn the volume down please.",
+                             STRETCHES["each word its own stretch"][3:])
+        await room(rig, 2)
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
+    assert rig.hardware.volume_steps == [-10]
+    assert calls.barge_ins == 2
+    assert [line for line in caplog.messages if line.startswith("Realtime command ")] == [
+        "Realtime command transcript=arrived words=6 wake_prefix=none outcome=VOLUME_DOWN drop=none"]
+
+
+@pytest.mark.parametrize("stretches", list(STRETCHES))
+def test_muse_s_echo_heard_in_gapped_stretches_over_its_reply_never_reaches_it_at_reachy_s_endpoint(
+        monkeypatch, caplog, stretches):
+    """As the request above, but the sound is Muse's own reply coming back through the speaker, and the companion
+    hears its words: with the robot's 2 s of silence, the turn's words at Reachy's endpoint confirm nothing."""
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+
+    async def answer(sdk, emit, script):
+        reply_events(sdk, emit, "r1", LONG_REPLY, voiced(12.8))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=10)
+    conversation.silence_s = 2.0
+    link = companion_hearing(conversation, forced_endpoints=True)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, 3)
+        caplog.clear()
+        before = len(calls.frames)
+        await say_over_reply(rig, link, "Tell me what you're wearing and I'll suggest something", STRETCHES[stretches],
+                             sound=muse_heard(1))
+        await room(rig, 1.5)
+        heard.append((voiced_ms(calls.frames[before:]), echo_frames(calls.frames[before:]), calls.barge_ins, [
+            line for line in caplog.messages
+            if line.startswith("Realtime command ") or "could not transcribe" in line]))
+        await rig.wait_until_or_timeout(lambda: not call.audible, 12)
+        heard.append(round(sum(len(chunk) for chunk in rig.hardware.played) / rig.hardware.output_sample_rate, 2))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
+    assert heard == [
+        (0, 0, 0, ["Realtime command transcript=arrived words=9 wake_prefix=none outcome=none drop=barge_in"]), 12.8]
 
 
 @pytest.mark.parametrize("muse, barge_ins, pending", [("works", 0, [1, 2, 3]), ("talks", 1, [2, 3]),

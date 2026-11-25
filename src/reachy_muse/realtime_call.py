@@ -48,7 +48,8 @@ CALL_LIMIT_S = 900.0
 NATURAL_ENDS = frozenset({"remote_stop", "idle_timeout", "overall_timeout"})
 BARGE_IN_SPEECH_S = 0.3
 DISTINCT_WORDS_S = 0.12
-INTERRUPTION_BUFFER_S = 2.0
+# Held audio covers a whole request said over Muse's reply, which may confirm only at its endpoint.
+INTERRUPTION_BUFFER_S = 8.0
 INTERRUPTION_RECOGNITION_S = 0.75
 WAITING_CUE_S = 4.0
 NO_EVENT_S = 15.0
@@ -62,7 +63,9 @@ class CallInput:
     """Hold playback-time audio until sustained speech has words distinct from Muse's.
 
     Silence keeps the remote VAD clock moving while local recognition catches up. Only
-    a confirmed interruption releases the bounded pre-roll, preserving its first words.
+    a confirmed interruption releases the held audio, preserving its first words. A partial
+    confirms within the recognition window of a sustained stretch of speech; a turn's final words
+    confirm on all the voice held for it, however long its silence before the endpoint.
     Echo and unrecognized room sounds never enter Muse's microphone stream. One gate serves
     one utterance, which can run on past the endpoint of a turn within it.
     """
@@ -75,6 +78,7 @@ class CallInput:
     def reset(self) -> None:
         self._pending = deque()
         self._samples = 0
+        self._voiced_samples = 0
         self._speech_samples = 0
         self._distinct_samples = 0
         self._quiet_samples = 0
@@ -98,6 +102,10 @@ class CallInput:
             self._distinct_samples = 0
         self._quiet_samples = 0 if speaking else self._quiet_samples + len(samples)
         if self._quiet_samples > self.rate * INTERRUPTION_RECOGNITION_S:
+            if self._voiced_samples:
+                # Words recognized this late confirm nothing, but the held voice waits for its turn's final words.
+                self.feed.push(np.zeros_like(samples))
+                return False
             self.reset()
         self._pending.append(samples.copy())
         self._samples += len(samples)
@@ -105,6 +113,7 @@ class CallInput:
             self._samples -= len(self._pending.popleft())
         if speaking:
             self._speech_samples = min(self._speech_samples + len(samples), self._samples)
+            self._voiced_samples = min(self._voiced_samples + len(samples), self._samples)
         distinct = self._distinct(text, heard_over)
         self._distinct_samples = self._distinct_samples + len(samples) if distinct else 0
         if (self._speech_samples >= BARGE_IN_SPEECH_S * self.rate
@@ -115,8 +124,9 @@ class CallInput:
         return False
 
     def finish(self, text: str, heard_over: tuple[str, ...]) -> bool:
-        """Confirm on a finished turn's words. Held audio stays: the utterance can go on past the turn."""
-        if (not self.confirmed and self._speech_samples >= BARGE_IN_SPEECH_S * self.rate
+        """Confirm on a finished turn's words and all its held voice. Held audio stays: the utterance can go on past
+        the turn."""
+        if (not self.confirmed and self._voiced_samples >= BARGE_IN_SPEECH_S * self.rate
                 and self._distinct(text, heard_over)):
             self._confirm()
         return self.confirmed
