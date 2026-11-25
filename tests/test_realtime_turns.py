@@ -3437,3 +3437,56 @@ def test_muse_s_echo_late_in_a_long_sentence_never_reaches_it_whatever_muse_s_sp
                                     reply_s=round(len(LONG_SENTENCE) / chars_per_s, 1)) == [(0, 0, 0, [
         "Realtime command transcript=arrived words=9 wake_prefix=none outcome=none drop=barge_in"], []),
         round(len(LONG_SENTENCE) / chars_per_s, 1)]
+
+
+def test_a_short_answer_reaches_muse_when_its_reply_has_gone_quiet(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    replies = []
+
+    async def answer(sdk, emit, script):
+        replies.append(len(replies) + 1)
+        if replies == [1]:
+            reply_events(sdk, emit, "r1", "It will rain tomorrow afternoon. Want me to set a reminder?", voiced(3.5))
+        else:
+            reply_events(sdk, emit, f"r{len(replies)}", "Done, I set it for noon.", voiced(1))
+
+    calls = ScriptedCalls(answer=answer, every_turn=True)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=10)
+    conversation.silence_s = 2.0
+    link = companion_hearing(conversation, forced_endpoints=True)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, 3.3)
+        caplog.clear()
+        before = len(calls.frames)
+        await say_over_reply(rig, link, "Yes, please.", ((220, 140), (240, 0)))
+        audible_after_words = call.audible
+        await room(rig, 2.5)
+        heard.append((audible_after_words, calls.barge_ins, voiced_ms(calls.frames[before:]), replies[:],
+                      [line for line in caplog.messages if line.startswith("Realtime command ")],
+                      conversation._voice[1]._wake_request_open))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
+    assert heard == [(False, 0, 460, [1, 2], [
+        "Realtime command transcript=arrived words=2 wake_prefix=none outcome=none drop=none"], False)]
+
+
+@pytest.mark.parametrize("words, stretches, expected_ms", [
+    ("Wait, wait.", ((260, 120), (160, 0)), 420),
+    ("Hold on.", ((260, 120), (160, 0)), 420),
+    ("Wait.", ((380, 0),), 380),
+    ("Oh, wait.", ((260, 120), (160, 0)), 420),
+    ("No, wait.", ((260, 120), (160, 0)), 420),
+    ("Sorry, wait.", ((260, 120), (160, 0)), 420)])
+def test_taking_the_floor_in_short_words_reaches_muse_and_cuts_its_reply_off(
+        monkeypatch, caplog, words, stretches, expected_ms):
+    (barge_ins, voice_ms, echo, lines), played_s = said_over_reply(monkeypatch, caplog, words, stretches)
+    assert (barge_ins, voice_ms, echo) == (1, expected_ms, 0)
+    assert [line.split(" wake_prefix=")[1] for line in lines] == ["none outcome=none drop=none"]
+    assert played_s < 12.8

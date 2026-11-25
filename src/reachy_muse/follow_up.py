@@ -20,6 +20,8 @@ class FollowUp(Enum):
     SILENCE = "silence"        # stop the answer being spoken; a cancel when none is
 
 
+_FLOOR_PHRASES: Tuple[Tuple[str, ...], ...] = (
+    ("wait",), ("hold", "on"), ("hang", "on"), ("one", "sec"), ("one", "second"), ("one", "moment"), ("excuse", "me"))
 _SILENCE_PHRASES: Tuple[Tuple[str, ...], ...] = (("stop", "talking"), ("shut", "up"), ("be", "quiet"))
 _CANCEL_PHRASES: Tuple[Tuple[str, ...], ...] = (
     ("never", "mind"), ("nevermind",), ("cancel",), ("stop", "stop"), ("stop",),
@@ -61,17 +63,36 @@ def word_count(text: str) -> int:
 
 def words_besides_back_channels(text: str) -> int:
     """How many of the words are not back-channel sounds: one in "mm-hmm, okay"."""
-    words = spoken_words(text)
-    count = start = 0
+    return len(_without_back_channels(spoken_words(text)))
+
+
+def _without_back_channels(words: List[str]) -> List[str]:
+    kept = []
+    start = 0
     while start < len(words):
         if "".join(words[start:start + 2]) in _BACK_CHANNELS:
             start += 2
         elif words[start] in _BACK_CHANNELS:
             start += 1
         else:
-            count += 1
+            kept.append(words[start])
             start += 1
-    return count
+    return kept
+
+
+def takes_floor(text: str) -> bool:
+    """Ask Muse to stop speaking without cancelling its work, as in "wait, wait" or "sorry, hold on"."""
+    words = _without_back_channels(spoken_words(text))
+    while words and words[0] in ("no", "sorry"):
+        words = words[1:]
+    found = False
+    while words:
+        phrase = next((phrase for phrase in _FLOOR_PHRASES if tuple(words[:len(phrase)]) == phrase), None)
+        if phrase is None:
+            return False
+        found = True
+        words = words[len(phrase):]
+    return found
 
 
 def classify_follow_up(text: str) -> FollowUp:

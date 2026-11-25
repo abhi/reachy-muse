@@ -824,11 +824,13 @@ window closes, so Reachy's local chat does not answer greetings in a call.
   not answered a request after 4 s, counted from when Muse has all of it, as
   for a request that a partial confirmed late. For fluent speech, the wait
   starts at the endpoint; command classification adds no delay. Only a feed
-  backlog beyond its steady-state allowance delays that clock. A reply that Muse begins before
+  backlog beyond 0.4 s delays that clock. A reply that Muse begins before
   such a request reaches it ends the turn, and the request is dropped. A remark
   of two words or fewer besides back-channel sounds, such as "got it", is
-  dropped too, so it never cuts Muse off two seconds after it was said. A
-  cancel or silence phrase, such as "never mind", still stops Muse. A short
+  dropped only if Muse is still audible when the turn would be released.
+  "Yes, please" as Muse finishes reaches Muse. "Wait, wait" and "Hold on" take
+  the floor even when short; they stop the reply without cancelling work.
+  A cancel or silence phrase, such as "never mind", still stops Muse. A short
   photo phrase such as "What's this?" gets the remark rule unless Reachy takes
   the photo.
 - The call ends when the follow-up window closes, or when Muse ends it.

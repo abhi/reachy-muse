@@ -31,7 +31,7 @@ from reachy_muse.motion.reply_alignment import SAMPLE_RATE
 from reachy_muse.motion.reply_motion import Mark, ReplyMotion
 from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlayback
 from reachy_muse.follow_up import (FollowUp, Spoken, classify_follow_up, echoes_playback, repeats_playback,
-                                   spoken_between, spoken_words, word_count)
+                                   spoken_between, spoken_words, takes_floor, word_count)
 from reachy_muse.person_gaze import MuseActivity
 
 log = logging.getLogger(__name__)
@@ -153,8 +153,10 @@ class CallInput:
         that Reachy's speaker played while the voice was heard, as Muse's voice heard back and written with words
         changed would be. Words Muse said before then can be the user's, taking up Muse's offer. The audio stays held,
         with whatever follows it, until ``release`` or ``discard``: the utterance can go on past the turn."""
+        distinct = self._distinct(text, heard_over) or (
+            takes_floor(text) and bool(heard_over) and not repeats_playback(text, heard_over))
         if (not self.confirmed and self._voiced_samples >= BARGE_IN_SPEECH_S * self.rate
-                and self._distinct(text, heard_over) and not self._echoes(text, spoken)):
+                and distinct and not self._echoes(text, spoken)):
             self.confirmed = self._held_for_turn = True
         return self.confirmed
 

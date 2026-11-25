@@ -39,7 +39,7 @@ from reachy_muse.device_command import (COMMANDS, VOLUME_FAILED, DeviceCommand, 
                                        whole_command)
 from reachy_muse.follow_up import (FollowUp, Spoken, classify_follow_up, is_echo, interrupts_playback,
                                    only_fillers, request_topic, too_short_for_follow_up, repeats_playback, word_count,
-                                   words_besides_back_channels)
+                                   takes_floor, words_besides_back_channels)
 from reachy_muse.contract.intent import Intent, maybe_chat
 from reachy_muse.morning_briefing import MorningRoutine, briefing_lines
 from reachy_muse.recent import Recent
@@ -2940,11 +2940,9 @@ class VoiceConversation:
                 self._log_realtime_command(endpoint.text, decision,
                                            transcript=request.timeline.facts.get("command_transcript"), drop="echo")
             return TurnOutcome.EMPTY
-        # A remark such as "got it", said over Muse's reply in words only its endpoint confirmed, would cut Muse off two
-        # seconds after it, so it is dropped as unconfirmed unless it is a command: until then it takes neither the gaze
-        # nor the first request after the wake phrase. A short question such as "what's this?" asks for a photo.
+        # A late remark can cut Muse off two seconds after it was said. Its gaze and wake claim wait until it is kept.
         short = (gate is not None and request.over_muse and words_besides_back_channels(text) <= 2
-                 and classify_follow_up(text) not in (FollowUp.CANCEL, FollowUp.SILENCE))
+                 and classify_follow_up(text) not in (FollowUp.CANCEL, FollowUp.SILENCE) and not takes_floor(text))
         remark = short and not photo_requested(text)
         if gate is not None and not remark:
             self._gaze.admit(request.gaze_generation)
@@ -2965,7 +2963,7 @@ class VoiceConversation:
         # Held words that are Muse's reach it only if Muse has begun no reply since they were said, as while Reachy's
         # command model weighed them: that reply ended the turn before Muse heard any of it.
         unconfirmed = gate is not None and command is None and not photo and (
-            short or self._muse_began_at >= request.timeline.marks["speech_end"])
+            (short and request.call.audible) or self._muse_began_at >= request.timeline.marks["speech_end"])
         if request.timeline.facts.get("command_transcript") != "deadline":
             self._log_realtime_command(endpoint.text, decision, transcript=request.timeline.facts.get("command_transcript"),
                                        outcome=command.name if command is not None
@@ -2975,6 +2973,9 @@ class VoiceConversation:
             return TurnOutcome.ACCEPTED
         if unconfirmed:
             return TurnOutcome.EMPTY
+        if remark:
+            self._gaze.admit(request.gaze_generation)
+            self._claim_wake_request(text, request.timeline)
         if waiting:
             PhotoLog("realtime", "busy").write()
             await self._announce(BUSY_CUE, started=None, defer_playback=True)

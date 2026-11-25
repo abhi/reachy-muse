@@ -84,3 +84,16 @@ def test_alike_words_need_four_letters_for_a_prefix_but_keep_contractions(word, 
 
     assert _alike(word, other) is expected
     assert _alike(other, word) is expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Wait", True), ("hold on", True), ("hang on", True), ("one sec", True), ("one second", True),
+    ("one moment", True), ("excuse me", True), ("wait, wait", True), ("Mm-hmm, wait, uh-huh", True),
+    ("No, hold on", True), ("Sorry, excuse me", True), ("Oh, no, wait, wait, um", True),
+    ("Got it.", False), ("Oh, nice.", False), ("Mm-hmm, okay.", False), ("Wait for the bus", False),
+    ("One second place medal", False), ("Please excuse me from class", False), ("Sorry", False), ("", False)])
+def test_floor_phrases_are_requests_to_stop_speaking_without_cancelling_work(text, expected):
+    from reachy_muse.follow_up import takes_floor
+
+    assert takes_floor(text) is expected
+    assert classify_follow_up(text) is FollowUp.NEW
