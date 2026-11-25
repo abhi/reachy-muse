@@ -111,7 +111,7 @@ async def sample_script(readings, check, *, eligible=None):
         await asyncio.sleep(0)
 
     direction = WakeDirection(source, clock=lambda: clock.now, sleep=sleep)
-    task = asyncio.create_task(direction.sample_while(eligible or (lambda: True)))
+    task = asyncio.create_task(direction.sample_while(eligible or (lambda: True), lambda: True))
     try:
         await asyncio.wait_for(finished.wait(), 2)
         check(direction, clock, delays)
@@ -205,7 +205,7 @@ def test_inflight_read_is_rejected_across_a_listening_epoch():
             return DoAReading(math.pi / 2, True)
 
         direction = WakeDirection(read)
-        task = asyncio.create_task(direction.sample_while(lambda: gate.eligible))
+        task = asyncio.create_task(direction.sample_while(lambda: gate.eligible, lambda: True))
         try:
             assert await asyncio.to_thread(entered.wait, 2)
             gate.eligible = False

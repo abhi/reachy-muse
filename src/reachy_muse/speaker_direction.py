@@ -138,7 +138,7 @@ class WakeDirection:
     def samples_between(self, start: float, end: float) -> tuple[tuple[float, float], ...]:
         return tuple((at, angle) for at, angle in self._samples if start <= at <= end)
 
-    async def sample_while(self, eligible: Callable[[], bool], wanted: Callable[[], bool] = lambda: True) -> None:
+    async def sample_while(self, eligible: Callable[[], bool], wanted: Callable[[], bool]) -> None:
         try:
             while True:
                 if not eligible():
