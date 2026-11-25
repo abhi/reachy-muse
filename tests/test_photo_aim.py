@@ -306,6 +306,45 @@ def test_a_camera_pass_never_steers_the_head_while_the_view_is_held(people, capl
     assert aimed(caplog) == aim_fields("subject=me aim=locked bearing=no source=fresh faces=2 turns=1 off_deg=4")
 
 
+@pytest.mark.parametrize("words, subject", [("take a photo of me", "me"), ("what do you see?", "scene")])
+@pytest.mark.parametrize("pass_s, late_s", [(.12, 0.0), (0.0, .3)], ids=["robot_pass_time", "late_photo_thread"])
+def test_the_face_reachy_follows_when_asked_stays_framed(people, caplog, words, subject, pass_s, late_s):
+    """In a call the wake phrase opened without a bearing, as on 11-24, Reachy faces the owner at +15 by face
+    following alone, within a degree, with no turn to give it a gaze. Their photo needs no turn, and a scene
+    question keeps the view, so the frame shows what Reachy faced when they asked. A camera pass takes ``pass_s``,
+    as on the robot, or the photo thread starts ``late_s`` late."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    scene.faces, scene.doa, scene.busy = [(15, .35)], None, False
+    scene.before_capture = lambda: time.sleep(pass_s)
+    camera = PoseCamera(rig, controller, robot, late_s=late_s)
+    held_at = []
+    hold = controller.hold_view_for_photo
+    rig.hardware.hold_view_for_photo = lambda active: (held_at.append(time.monotonic()) if active else None,
+                                                       hold(active))
+    service = realtime_service(rig, StreamingTranscripts("What time is it?", f"Reachy, {words}"), ScriptedCalls(),
+                               muse=muse_answers, photo_requests=True, wake_timeout_s=20)
+    seen = {}
+
+    async def user():
+        await say_live(rig, wake=True)
+        voice = service._voice[1]
+        await until(rig, lambda: "muse" in played(rig.recording.events) and not voice.call.audible, 8)
+        await until(rig, lambda: abs(math.degrees(controller.head_yaw) - 15) < 1.5)
+        await room(rig, .5)
+        seen["before"] = round(math.degrees(controller.head_yaw)), controller._speaker_look
+        await say_live(rig, voiced_s=1.5)
+        await until(rig, lambda: answered(rig), 8)
+
+    run(rig, service, user, rest=("listening", "idle"))
+    before, look = seen["before"]
+    assert (before in (14, 15), look) == (True, None)
+    aiming = {round(controller._pose_parameters(pose)["yaw"]) for at, pose, _, _ in list(robot.frames)
+              if held_at[0] <= at <= camera.read_at[0]}
+    assert (aiming <= {before}, [(yaw, body) for yaw, _, body in camera.shots]) == (True, [(before, 0)])
+    assert {key: aimed(caplog)[key] for key in ("subject", "turns")} == {"subject": subject, "turns": "0"}
+
+
 @pytest.mark.parametrize("words, shots, aim", [
     ("take a photo of me", [(30, 0, 10)], "subject=me aim=locked bearing=no source=memory faces=0 turns=1 off_deg=0"),
     ("what am I holding?", STRAIGHT_AHEAD,

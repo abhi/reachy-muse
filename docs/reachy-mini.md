@@ -1130,7 +1130,9 @@ they go to Muse as ordinary requests.
   request. Without [local face following](#local-face-following), Reachy turns
   level toward your voice for "me", "what am I holding?" and "us", and keeps its
   view otherwise.
-- From the aim until the frame is read, nothing else moves Reachy's head. Muse's
+- From the aim until the frame is read, nothing else moves Reachy's head. Face
+  following stops steering it but leaves it facing whoever it followed, so a
+  photo of that person needs no turn. Muse's
   moves and expressions wait and run afterwards, `reachy.look_at` answers
   `busy`, and Reachy neither follows a new speaker, turns for a wake phrase,
   greets anyone nor nods. Muse cannot aim the camera.

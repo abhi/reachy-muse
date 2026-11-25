@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from reachy_muse.arrival import WatchPose
+    from reachy_muse.local_face_tracking import FaceTarget
     from reachy_muse.motion.layers import ClipTimeline
     from reachy_muse.motion.sentence import SentenceMotion
 
@@ -324,6 +325,7 @@ class ReachyController:
         self._photo_lock = threading.Lock()
         self._photo_hold = threading.Event()
         self._photo_view = threading.Event()
+        self._photo_view_target: FaceTarget | None = None  # the face follower's, frozen while the view is held
         self._camera_hold: _CameraHold | None = None
         self._head_still_since: float | None = None
         from reachy_muse.vision_budget import VisionBudget
@@ -682,6 +684,7 @@ class ReachyController:
         self._person_release = False
         self._command_active = False
         self._photo_view.clear()
+        self._photo_view_target = None
         from reachy_muse.motion.layers import MotionLayers, Ramp
         self._layers = MotionLayers(self._style)
         self._generated_gain = Ramp(1.0)
@@ -1179,12 +1182,17 @@ class ReachyController:
 
     def hold_view_for_photo(self, active: bool) -> None:
         """From a photo's aim until its frame is read, Muse's commands wait untaken in the queue, and no head
-        gesture, generated motion, wake turn or follow turn starts, nor does the face follower steer the head;
-        person turns still run."""
-        if active:
-            self._photo_view.set()
-        else:
-            self._photo_view.clear()
+        gesture, generated motion, wake turn or follow turn starts. The face follower's target is frozen where it
+        was, so the head keeps facing whoever it followed until a turn, a command or sleep ends that gaze; person
+        turns still run."""
+        follower = self._face_follower
+        target = follower.target() if active and follower is not None else None
+        with self._state_lock:
+            self._photo_view_target = target
+            if active:
+                self._photo_view.set()
+            else:
+                self._photo_view.clear()
 
     @property
     def view_changing(self) -> bool:
@@ -1503,8 +1511,12 @@ class ReachyController:
             return pose
         follower = self._face_follower
         look = self._speaker_look
-        target = (follower.target() if follower is not None and self._speaker_turn is None
-                  and not self._photo_view.is_set() else None)
+        if follower is None or self._speaker_turn is not None:
+            target = None
+        elif self._photo_view.is_set():
+            target = self._photo_view_target
+        else:
+            target = follower.target()
         if target is None:
             if look is None:
                 return pose
@@ -1532,7 +1544,7 @@ class ReachyController:
         self._drop_speaker_pending()
         self._person_pending = None
         self._end_person_hold()
-        self._speaker_look = self._speaker_turn = None
+        self._speaker_look = self._speaker_turn = self._photo_view_target = None
 
     def _drop_speaker_pending(self) -> None:
         """Forget a turn toward a speaker that has not started; a turn toward a later speaker logs that it never came."""
@@ -1555,7 +1567,7 @@ class ReachyController:
     def _turn_toward(self, look: SpeakerYaw | None, now: float, *, toward_person: bool = False) -> None:
         """Ease head and body to ``look``; without one, the head settles back to its resting yaw."""
         self._speaker_look = look
-        self._speaker_turn = None
+        self._speaker_turn = self._photo_view_target = None
         if look is not None:
             self._speaker_gaze = look.head
             self._speaker_turn = _SpeakerTurn(look, now, self._pose_parameters(self._last_pose)["yaw"],
@@ -1844,7 +1856,7 @@ class ReachyController:
                         if request is not None or commanded:
                             self._end_person_hold()
                             self._drop_speaker_pending()
-                            self._speaker_look = self._speaker_turn = None
+                            self._speaker_look = self._speaker_turn = self._photo_view_target = None
                             self._sentences.cancel()
                             self._sentence_active = False
                             self._sentence_terminal = None
