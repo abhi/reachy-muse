@@ -49,6 +49,7 @@ class DirectionSnapshot:
     samples: tuple[tuple[float, float], ...]
     captured_at: float
     empty_reason: str
+    cleared_at: float = -math.inf
 
     def decide(self, phrase_end: float | None) -> DirectionDecision:
         if phrase_end is None:
@@ -67,7 +68,8 @@ class DirectionSnapshot:
         mad = median(deviations) if deviations else math.nan
         inlier = sum(delta <= math.radians(20) for delta in deviations) / len(samples) if samples else 0.0
         if not samples:
-            reason = self.empty_reason
+            # Only a clear since the window opened can have removed its speech.
+            reason = self.empty_reason if self.cleared_at >= phrase_end - 1.5 else "too_few"
         elif not 0 <= age <= 1.0 or last_age > .45:
             reason = "stale"
         elif len(samples) < 2 or span < .1:
@@ -110,14 +112,16 @@ class WakeDirection:
         self._samples: deque[tuple[float, float]] = deque(maxlen=80)
         self._generation = 0
         self._empty_reason = "too_few"
+        self._cleared_at = -math.inf
 
     def clear(self, reason: str = "too_few") -> None:
         self._generation += 1
         self._samples.clear()
         self._empty_reason = reason
+        self._cleared_at = self._clock()
 
     def snapshot(self) -> DirectionSnapshot:
-        return DirectionSnapshot(tuple(self._samples), self._clock(), self._empty_reason)
+        return DirectionSnapshot(tuple(self._samples), self._clock(), self._empty_reason, self._cleared_at)
 
     def discard_through(self, at: float) -> None:
         while self._samples and self._samples[0][0] <= at:
@@ -154,8 +158,6 @@ class WakeDirection:
                     self._samples.append((started, reading.angle))
                     while self._samples and self._samples[0][0] < started - 3:
                         self._samples.popleft()
-                else:
-                    self._empty_reason = "too_few"
                 await self._sleep(delay)
         finally:
             self.clear()

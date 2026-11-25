@@ -1,6 +1,7 @@
 """Keyword admission freezes geometry before opening the microphone or greeting."""
 
 import asyncio
+from dataclasses import replace
 import math
 import time
 from types import SimpleNamespace
@@ -310,24 +311,53 @@ class SteppedClock:
         asyncio.run_coroutine_threadsafe(self.advance(self.now + seconds), self.loop).result(2)
 
 
-@pytest.mark.parametrize("tail, inference, lag, echo, line", [
+class UnflaggingDaemon(DirectionalHardware):
+    """The daemon never flags speech in its DoA readings."""
+
+    def read_doa(self):
+        return replace(super().read_doa(), speech_detected=False)
+
+
+class LoadedDaemon(DirectionalHardware):
+    """The daemon misses the 0.1 s deadline of the first DoA read, as on a loaded robot."""
+
+    def read_doa(self):
+        reading = super().read_doa()
+        return reading if self.reads > 1 else None
+
+
+@pytest.mark.parametrize("tail, inference, lag, daemon, echo, line", [
     # 17:12:47 on the robot: the candidate came 0.52 s after the keyword's last token, after 79 ms of inference.
-    (.52, .0789, 0, None, "Wake direction decision=ok samples=4 span_ms=600.0 boundary_age_ms=598.9 "
-                          "last_age_ms=30.0 mad_deg=0.0 inlier=1.00 yaw=30.0"),
+    (.52, .0789, 0, DirectionalHardware, None,
+     "Wake direction decision=ok samples=4 span_ms=600.0 boundary_age_ms=598.9 last_age_ms=30.0 mad_deg=0.0 "
+     "inlier=1.00 yaw=30.0"),
     # 17:25:25: 0.32 s and 95 ms, with the streaming model placing the last token 0.2 s after the loud audio.
-    (.32, .0954, .2, None, "Wake direction decision=ok samples=4 span_ms=600.0 boundary_age_ms=415.4 "
-                           "last_age_ms=230.0 mad_deg=0.0 inlier=1.00 yaw=30.0"),
+    (.32, .0954, .2, DirectionalHardware, None,
+     "Wake direction decision=ok samples=4 span_ms=600.0 boundary_age_ms=415.4 last_age_ms=230.0 mad_deg=0.0 "
+     "inlier=1.00 yaw=30.0"),
     # people1's timing: a 0.32 s tail and no inference, so the candidate beats the 0.5 s activity window.
-    (.32, 0, 0, None, "Wake direction decision=ok samples=4 span_ms=600.0 boundary_age_ms=320.0 "
-                      "last_age_ms=30.0 mad_deg=0.0 inlier=1.00 yaw=30.0"),
-    # Reachy's own echo tail covers 100.80-101.00 s of the pause: the phrase's bearings go with it.
-    (.52, .0789, 0, (40, 101.0), "Wake direction decision=too_few samples=0 span_ms=0.0 boundary_age_ms=598.9 "
-                                 "last_age_ms=nan mad_deg=nan inlier=0.00"),
-], ids=["robot-1712", "robot-1725", "people1", "robot-echo"])
+    (.32, 0, 0, DirectionalHardware, None,
+     "Wake direction decision=ok samples=4 span_ms=600.0 boundary_age_ms=320.0 last_age_ms=30.0 mad_deg=0.0 "
+     "inlier=1.00 yaw=30.0"),
+    # Reachy's own echo tail covers 100.80-101.00 s of the pause: the phrase's bearings go with it, and the line
+    # says so.
+    (.52, .0789, 0, DirectionalHardware, (40, 101.0),
+     "Wake direction decision=ineligible samples=0 span_ms=0.0 boundary_age_ms=598.9 last_age_ms=nan mad_deg=nan "
+     "inlier=0.00"),
+    # The daemon never flags the phrase.
+    (.52, .0789, 0, UnflaggingDaemon, None,
+     "Wake direction decision=too_few samples=0 span_ms=0.0 boundary_age_ms=598.9 last_age_ms=nan mad_deg=nan "
+     "inlier=0.00"),
+    # The phrase is flagged, but its first DoA read fails: the sampler clears and waits a second before the next.
+    (.52, .0789, 0, LoadedDaemon, None,
+     "Wake direction decision=unavailable samples=0 span_ms=0.0 boundary_age_ms=598.9 last_age_ms=nan mad_deg=nan "
+     "inlier=0.00"),
+], ids=["robot-1712", "robot-1725", "people1", "robot-echo", "never-flagged", "failed-read"])
 def test_a_pause_after_the_keyword_keeps_its_direction_until_the_robot_s_late_candidate(
-        handoff, monkeypatch, caplog, tail, inference, lag, echo, line):
+        handoff, monkeypatch, caplog, tail, inference, lag, daemon, echo, line):
     """The user says the 0.68 s phrase of people1's test, then waits for the wake gesture, as the docs say to. The
-    DoA flags speech only while they talk. The keyword is found on the robot's timing, with the robot's verifier."""
+    DoA flags speech only while they talk. The keyword is found on the robot's timing, with the robot's verifier.
+    A wake that finds no direction says what emptied its window, so the robot's log can tell the causes apart."""
     from reachy_muse.wake_policy import Verification, WakePolicy
     from test_wake_handoff import Detection
 
@@ -335,7 +365,7 @@ def test_a_pause_after_the_keyword_keeps_its_direction_until_the_robot_s_late_ca
     monkeypatch.setattr("reachy_muse.conversation.time", SimpleNamespace(monotonic=lambda: clock.now))
     monkeypatch.setattr("reachy_muse.conversation.WakeDirection",
                         lambda read: WakeDirection(read, clock=lambda: clock.now, sleep=clock.sleep))
-    hardware = DirectionalHardware()
+    hardware = daemon()
     caplog.set_level("INFO")
 
     async def run(conversation, session, hw, wake, recognition, recordings, accepted, feed):

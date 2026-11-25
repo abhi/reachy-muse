@@ -466,11 +466,15 @@ speaker has stopped to wait for the wake gesture. A single worker reuses its HTT
 keep-alive connection, outside audio capture and the motion thread. Each reading is transformed
 through the current head rotation into a world bearing. A short ring stores only
 speech bearings and monotonic times. Reachy's own output and echo tail invalidate
-the ring, including with echo-cancelled input. Capture gaps also clear it.
+the ring, including with echo-cancelled input. Capture gaps also clear it, and so
+does a DoA read that fails or takes over 0.15 seconds.
 At the wake candidate, Reachy freezes the ring and its observation time before
 verification, replay and alignment. Capture timing bounds the estimate to the most recent speech segment
 within 1.5 seconds before the keyword boundary. A confident estimate needs at
 least two recent, consistent speech samples; its direction is their median.
+A window without speech bearings logs `too_few`, or `ineligible`, `timeout` or
+`unavailable` when Reachy's own audio or a late or failed read cleared the ring
+after the window opened.
 Missing or uncertain direction, including unverified keyword timing, keeps the
 usual wake behavior. Direction HTTP requests have a 0.1-second deadline and a
 4096-byte body limit. Microphone cleanup does not wait for an unfinished read.
