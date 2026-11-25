@@ -84,6 +84,22 @@ def test_multilingual_echo_and_empty_normalized_words_never_release_audio(text, 
     assert gate.confirmed is False
 
 
+@pytest.mark.parametrize("muse_words, held", [("What", True), ("sunny tomorrow", False)],
+                         ids=["one word", "two words in a row"])
+def test_one_of_muse_s_words_keeps_the_voice_held_under_it_but_two_in_a_row_erase_it(muse_words, held):
+    """A request often opens with a word Muse's reply also holds, which could be its echo: the voice heard under that
+    word stays held, though it counts toward no confirmation, and reaches Muse with the request. Two of Muse's words
+    in a row are its echo, and erase what is held."""
+    feed = Feed()
+    gate = CallInput(feed, 1000)
+    reply = ("What a day: it will be sunny tomorrow.",)
+    for text, value in (("", .25), (muse_words, .25), (muse_words, .25),
+                        ("What about Friday", .5), ("What about Friday", .5), ("What about Friday", .5)):
+        gate.push(np.full(100, value), speaking=True, text=text, playback=True, heard_over=reply)
+    assert gate.confirmed is True
+    assert feed.samples == [0.0] * 500 + ([.25] * 300 if held else []) + [.5] * 300
+
+
 @pytest.mark.parametrize("user_samples", [2048, 6144])
 def test_echo_before_user_speech_neither_counts_toward_interruption_nor_reaches_muse(user_samples):
     feed = Feed()

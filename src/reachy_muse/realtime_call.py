@@ -30,7 +30,8 @@ from musegadget.streaming import HTTPStatusError
 from reachy_muse.motion.reply_alignment import SAMPLE_RATE
 from reachy_muse.motion.reply_motion import Mark, ReplyMotion
 from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlayback
-from reachy_muse.follow_up import FollowUp, classify_follow_up, echoes_playback, repeats_playback, word_count
+from reachy_muse.follow_up import (FollowUp, classify_follow_up, echoes_playback, repeats_playback, spoken_words,
+                                   word_count)
 from reachy_muse.person_gaze import MuseActivity
 
 log = logging.getLogger(__name__)
@@ -100,7 +101,8 @@ class CallInput:
             self.feed.push(samples, silent=quiet_s >= len(samples) / self.rate + FRAME_SAMPLES / SAMPLE_RATE)
             self.sent_speech = self.sent_speech or speaking
             return speaking
-        if repeats_playback(text, heard_over):
+        echo = repeats_playback(text, heard_over)
+        if echo and len(spoken_words(text)) > 1:
             self.reset()
             self.feed.push(np.zeros_like(samples))
             return False
@@ -118,6 +120,10 @@ class CallInput:
         if speaking:
             self._speech_samples = min(self._speech_samples + len(samples), self._samples)
             self._voiced_samples = min(self._voiced_samples + len(samples), self._samples)
+        if echo:
+            # A single word of Muse's may be its echo or open the user's request: what is held stays, but no voice
+            # heard so far counts toward a confirmation.
+            self._speech_samples = self._voiced_samples = 0
         distinct = self._distinct(text, heard_over)
         self._distinct_samples = self._distinct_samples + len(samples) if distinct else 0
         if (self._speech_samples >= BARGE_IN_SPEECH_S * self.rate

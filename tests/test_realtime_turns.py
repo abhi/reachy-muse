@@ -1481,13 +1481,19 @@ async def say_over_reply(rig, link, words, stretches, *, final_after_s=None, par
             link._receive(link._connection, encode(HearEndpoint(stream, words, False)))
 
 
-@pytest.mark.parametrize("stretches", ["each word its own stretch",
-                                       "one long stretch before the partial has two words"])
+@pytest.mark.parametrize("words, stretches", [
+    ("Reachy, what should I wear to the dinner tonight?", "each word its own stretch"),
+    ("Reachy, what should I wear to the dinner tonight?", "one long stretch before the partial has two words"),
+    ("What should I wear to the dinner tonight, Reachy?", "each word its own stretch"),
+    ("Can you take a photo of me now, Reachy?", "each word its own stretch")],
+    ids=["each word its own stretch", "one long stretch before the partial has two words",
+         "opening with a word of Muse's reply", "opening with another word of Muse's reply"])
 def test_a_request_over_a_long_reply_that_no_partial_confirms_reaches_muse_at_reachy_s_endpoint(
-        monkeypatch, caplog, stretches):
+        monkeypatch, caplog, words, stretches):
     """The user asks something over Muse's reply as the robot hears it: gaps between the words, the companion's
     partials behind the voice, and the robot's 2 s of silence. No partial confirms the request while it is said,
-    but its words at Reachy's endpoint do: Muse is cut off, hears every word of it, and answers it."""
+    but its words at Reachy's endpoint do: Muse is cut off, hears every word of it, and answers it. That holds for a
+    request opening, as most do, with a word Muse's reply also holds, which alone could be Muse's echo."""
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
     rig.hardware.echo_cancelled_input = True
@@ -1513,7 +1519,7 @@ def test_a_request_over_a_long_reply_that_no_partial_confirms_reaches_muse_at_re
         await room(rig, 3)
         caplog.clear()
         before = len(calls.frames)
-        await say_over_reply(rig, link, "Reachy, what should I wear to the dinner tonight?", STRETCHES[stretches])
+        await say_over_reply(rig, link, words, STRETCHES[stretches])
         await room(rig, 1.5)
         await rig.wait_until_or_timeout(lambda: replies == [1, 2] and not call.audible, 5)
         heard.append((voiced_ms(calls.frames[before:]), calls.barge_ins, call.pending, [
