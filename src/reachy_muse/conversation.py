@@ -1528,7 +1528,8 @@ class VoiceConversation:
                     self._log_realtime_command(transcript,
                                                self._wake_prefix(transcript or "", self._wake_strip_required),
                                                transcript=timeline.facts.get("command_transcript"), drop="barge_in")
-                    return _UNCONFIRMED_TURN
+                    # A failed call takes no more requests: the user is asked to say it again, by chat.
+                    return None if call.failed else _UNCONFIRMED_TURN
             if timeline.facts.get("command_transcript") == "deadline":
                 self._log_realtime_command(None, self._wake_prefix("", self._wake_strip_required),
                                            transcript="deadline", drop="deadline")

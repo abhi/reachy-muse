@@ -671,6 +671,45 @@ def test_words_recognized_after_speech_still_interrupt_playback(monkeypatch, rec
     assert sent_to_muse(events) == []
 
 
+def test_a_request_the_call_fails_under_before_its_words_confirm_it_asks_the_user_to_say_it_again(monkeypatch):
+    """The user asks something over Muse's reply, and its words are recognized only at its endpoint, by which time the
+    call has failed. Muse never heard the request and the call can take it no more, so Reachy asks for it again."""
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    calls = ScriptedCalls(reply_s=6)
+
+    class LateWords(StreamingTranscripts):
+        def open_turn(self):
+            turn = super().open_turn()
+            text = turn.partial.text
+            if text == "What about Friday then?":
+                turn.partial = Partial("", 0, turn.partial.utterance_id)
+
+                def finish():
+                    async def recognize():
+                        calls.hang_up(ConnectionError("media reset"))
+                        await asyncio.sleep(.1)
+                        return text
+                    return asyncio.create_task(recognize())
+
+                turn.finish = finish
+            return turn
+
+    conversation = realtime_service(rig, LateWords("Hey Muse, tell me a story.", "What about Friday then?"), calls)
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+        await asyncio.sleep(.3)
+        await speak_live(rig)
+        await rig.wait_until_or_timeout(
+            lambda: "tts:I missed part of that. Please say it again." in played(rig.recording.events), 3)
+
+    events = run(rig, conversation, user)
+    assert played(events)[-1] == "tts:I missed part of that. Please say it again."
+    assert sent_to_muse(events) == []
+
+
 def test_a_spoken_device_command_runs_on_the_robot_and_muse_is_cut_off(monkeypatch):
     rig = rig_for(monkeypatch)
     calls = ScriptedCalls(reply=None)
