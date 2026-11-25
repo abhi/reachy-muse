@@ -299,6 +299,7 @@ class ReachyController:
         self._face_follower = None
         self._face_failure_logged = False
         self._face_tracking_on = True
+        self._call_open = False
         self._face_tracking_status = None
         self._head_angles = (0.0, 0.0)
         self._face_half_view = (0.0, 0.0)
@@ -424,9 +425,23 @@ class ReachyController:
     def face_seen_at(self) -> float | None:
         return getattr(self._face_follower, "last_seen_at", None)
 
+    @property
+    def face_follow_seconds(self) -> tuple[float, float]:
+        """Seconds the face follower has waited out paused vision while following, and of those, seconds it kept
+        facing someone through the pause."""
+        follower = self._face_follower
+        return (follower.paused_s, follower.held_s) if follower is not None else (0.0, 0.0)
+
     def allow_face_tracking(self, enabled: bool) -> None:
         with self._state_lock:
             self._face_tracking_on = enabled
+
+    def set_call_open(self, call_open: bool) -> None:
+        """Whether a realtime call to Muse is open. Muse may answer in it at any time, and its reply pauses the camera,
+        so while it is open, face following goes on as in conversation even in the idle pose, which Reachy shows
+        while only Muse's Working flag holds the call open past the follow-up window."""
+        with self._state_lock:
+            self._call_open = call_open
 
     def change_volume(self, step: int) -> int | None:
         """The daemon plays a short sound at the new level."""
@@ -549,7 +564,7 @@ class ReachyController:
         ``turned``, ``same``, or ``too_soon`` within ``FOLLOW_DWELL_S`` of the last such turn. It is ``off`` while the
         user has turned face tracking off, ``held`` while a person turn holds Reachy on someone or is pending to, and
         ``busy`` while a command, clip, generated motion, photo or another turn owns the head, or Reachy sleeps; head
-        gestures go on through the turn.
+        gestures go on through the turn, and the turn fades the looping thinking motion first.
         """
         target = speaker_yaw(angle)
         with self._state_lock:
@@ -561,7 +576,7 @@ class ReachyController:
             if (not self._enable_motion or self._stop.is_set() or self._state == "sleeping"
                     or self._turning_to_person() or self._speaker_pending is not None
                     or self._command_active or self._deferred is not None or self._clip is not None
-                    or self._generated is not None or self._pending_motion is not None
+                    or self._generated_busy()
                     or self._photo_hold.is_set()):
                 return "busy", None
             turn = self._speaker_turn
@@ -573,6 +588,11 @@ class ReachyController:
                 return "too_soon", delta
             self._speaker_pending = _SpeakerPending(target, now + 1.0, angle, follow=True)
             return "turned", delta
+
+    def _generated_busy(self) -> bool:
+        """Generated motion, showing or about to, keeps a turn toward a later speaker waiting; the looping thinking
+        motion does not, since it never ends by itself, so that turn fades it instead."""
+        return any(motion is not None and not motion.move.loop for motion in (self._generated, self._pending_motion))
 
     def look_at_person(self, yaw: float, pitch: float) -> bool:
         """Face the person at world ``yaw`` and ``pitch`` until released, then turn back to the gaze this replaced."""
@@ -1461,7 +1481,7 @@ class ReachyController:
             reason = "sleeping"
         elif commanded:
             reason = "command"
-        elif state in ("listening", "thinking", "speaking"):
+        elif state in ("listening", "thinking", "speaking") or state == "idle" and self._call_open:
             reason = "conversation"
         elif self._watching:
             reason = "arrival watching"
@@ -1483,8 +1503,11 @@ class ReachyController:
             self._face_tracking_status = status
             log.info("Local face tracking %s: %s", "on" if active else "off", reason)
 
+    def _watch_holds(self, state: str) -> bool:
+        return self._watching and (state in ("sleeping", "error") or state == "idle" and not self._call_open)
+
     def _face_pose(self, pose):
-        if self._watching and self._state in ("idle", "sleeping", "error"):
+        if self._watch_holds(self._state):
             return pose
         follower = self._face_follower
         look = self._speaker_look
@@ -1516,6 +1539,9 @@ class ReachyController:
         self._drop_speaker_pending()
         self._person_pending = None
         self._end_person_hold()
+        if self._speaker_look is not None and self._face_follower is not None:
+            # A face target is a head yaw from the gaze it was seen from; with that gaze gone, it points elsewhere.
+            self._face_follower.hold_center(self._face_center)
         self._speaker_look = self._speaker_turn = None
 
     def _drop_speaker_pending(self) -> None:
@@ -1578,17 +1604,22 @@ class ReachyController:
 
     def _update_speaker(self, now: float, state: str, *, occupied: bool, gesturing: bool) -> None:
         """Start a pending turn toward a speaker, or drop it while other motion holds the head. A wake turn also
-        waits out head gestures; a turn toward a later speaker goes on through one, and ends the wake gaze that
-        stands in for the bearing of a request without one."""
+        waits out head gestures; a turn toward a later speaker goes on through one, fades the looping thinking
+        motion before it starts, and ends the wake gaze that stands in for the bearing of a request without one."""
         with self._state_lock:
             pending = self._speaker_pending
-            if pending is not None and (state != "sleeping" or now > pending.deadline):
+            generated = self._generated
+            if (pending is not None and pending.follow and generated is not None and generated.move.loop
+                    and not occupied and state != "sleeping" and now <= pending.deadline):
+                generated.timeline.stop(now)
+                pending = None
+            elif pending is not None and (state != "sleeping" or now > pending.deadline):
                 self._speaker_pending = None
             else:
                 pending = None
         if pending is not None:
             target = pending.target
-            decision = ("busy" if occupied or gesturing and not pending.follow
+            decision = ("busy" if occupied or generated is not None or gesturing and not pending.follow
                         else "stale" if now > pending.deadline else "turn")
             log.info("Speaker gaze yaw=%.1f body_yaw=%.1f decision=%s", target.head, target.body, decision)
             if decision == "turn":
@@ -1874,12 +1905,12 @@ class ReachyController:
                         self._stop.wait(_MOTION_PERIOD_S)
                 else:
                     if ((state == "sleeping" and previous_state != "sleeping")
-                            or (self._watching and state in ("idle", "sleeping", "error"))):
+                            or self._watch_holds(state)):
                         with self._state_lock:
                             self._clear_speaker()
                     self._update_speaker(now, state, occupied=(
-                        self._clip is not None or self._generated is not None
-                        or self._deferred is not None or commanded), gesturing=gesture_active and gesture != "wave")
+                        self._clip is not None or self._deferred is not None or commanded),
+                        gesturing=gesture_active and gesture != "wave")
                     self._update_face_tracking(state, commanded=(
                         commanded or self._deferred is not None or self._speaker_turn is not None))
                     if self._motion_epoch != self._sentences.epoch:
@@ -2153,7 +2184,8 @@ class ReachyController:
             return self._head(**self._watched({"pitch": 8, "z": -3})), self._np.deg2rad([-35, 35])
         if state == "sleeping":
             return self._head(**self._watched({"pitch": 15, "z": -10})), self._np.deg2rad([-80, 80])
-        return self._head(**self._watched({})), self._np.deg2rad([-10, 10])
+        coordinates = {} if self._call_open else self._watched({})
+        return self._head(**coordinates), self._np.deg2rad([-10, 10])
 
     def _check_command(self, request: _Command) -> None:
         if self._stop.is_set() or request.cancelled.is_set():

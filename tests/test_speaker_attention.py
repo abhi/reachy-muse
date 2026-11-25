@@ -566,7 +566,7 @@ def greet_friend_at_minus_30(controller):
     ("greeting_pending", "held", (-30, -10)),
     ("muse_turn", "busy", (-30, -10)),
     ("command", "busy", (0, 0)),
-    ("thinking_motion", "busy", (12, 0)),
+    ("command_after_thinking", "busy", (0, 0)),
     ("sleep", "busy", (0, 0)),
 ])
 def test_a_later_speaker_waits_while_a_person_turn_or_other_motion_owns_the_head(monkeypatch, owner, outcome, faced):
@@ -580,12 +580,32 @@ def test_a_later_speaker_waits_while_a_person_turn_or_other_motion_owns_the_head
         "greeting_pending": {40: lambda c: (greet_friend_at_minus_30(c), follow(c))},
         "muse_turn": {10: lambda c: c.face_speaker(math.radians(120)), 15: follow},
         "command": {10: lambda c: c._commands.put_nowait(move), 20: follow},
-        "thinking_motion": {2: play_thinking("generated"), 30: follow},
+        "command_after_thinking": {2: play_thinking("generated"), 30: lambda c: c._commands.put_nowait(move),
+                                   40: follow},
         "sleep": {2: lambda c: c.set_state("sleeping"), 30: follow},
     }[owner], ticks=200)
     assert results == [(outcome, None)]
     final = pose_at(controller, robot, clock.now)
     assert (round(final["yaw"]), round(final["body_yaw"])) == faced
+
+
+def test_a_later_speaker_gets_a_turn_that_fades_the_thinking_motion_first(monkeypatch, caplog):
+    """The looping thinking motion never ends by itself, so a turn toward a later speaker at +60 degrees fades it, as
+    a turn toward a person does, then turns the head to 35."""
+    caplog.set_level("INFO", logger="reachy_muse.hardware")
+    results = []
+    controller, robot, clock = simulate(monkeypatch, {2: play_thinking("generated"), 30: follow_from(60, results)},
+                                        ticks=200)
+    assert results == [("turned", pytest.approx(35))]
+    swaying = pose_at(controller, robot, clock.times[30])
+    assert swaying["yaw"] == pytest.approx(12, abs=.1)
+    faded = pose_at(controller, robot, clock.times[30] + .4)
+    assert (faded["yaw"], faded["body_yaw"]) == pytest.approx((0, 0), abs=.1)
+    turned = pose_at(controller, robot, clock.now)
+    assert (turned["yaw"], turned["body_yaw"]) == pytest.approx((35, 15), abs=.01)
+    assert controller._generated is None
+    assert [record.message for record in caplog.records if record.message.startswith("Speaker gaze")] == [
+        "Speaker gaze yaw=35.0 body_yaw=15.0 decision=turn"]
 
 
 @pytest.mark.parametrize("preempt, faced", [

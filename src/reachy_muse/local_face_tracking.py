@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 from pathlib import Path
 import threading
@@ -27,11 +27,26 @@ def default_face_model() -> Path:
 
 @dataclass(frozen=True)
 class FaceTarget:
-    """Absolute head angles in radians, with a monotonic observation time."""
+    """Absolute head angles in radians, with a monotonic observation time.
+
+    ``paused_s`` is how long vision has been paused since then; that time never counts toward losing the face.
+    """
 
     yaw: float
     pitch: float
     observed_at: float
+    paused_s: float = 0.0
+
+    def unseen_s(self, now: float) -> float:
+        """Seconds by ``now`` that vision looked for the face without seeing it."""
+        return now - self.observed_at - self.paused_s
+
+
+def _resumed(target: FaceTarget | None, paused_at: float, now: float) -> FaceTarget | None:
+    """``target`` once vision looks again at ``now``, after a pause that began at ``paused_at``."""
+    if target is None:
+        return None
+    return replace(target, paused_s=target.paused_s + max(0.0, now - max(paused_at, target.observed_at)))
 
 
 @dataclass(frozen=True)
@@ -186,7 +201,7 @@ class _FaceTracker:
                                                             face.pitch_error, face.score))]
         if self._hold_center is not None:
             faces = [face for face in faces if abs(angles[0] + face.yaw_error - self._hold_center) <= YAW_LIMIT]
-        if self._target is not None and now - self._target.observed_at >= self.loss_seconds:
+        if self._target is not None and self._target.unseen_s(now) >= self.loss_seconds:
             self._face = self._target = None
         chosen = None
         if self._face is not None:
@@ -225,6 +240,10 @@ class _FaceTracker:
         self._face = chosen
         return self._target
 
+    def resume(self, paused_at: float, now: float) -> None:
+        """Vision looks again at ``now``, after a pause that began at ``paused_at``."""
+        self._target = _resumed(self._target, paused_at, now)
+
 
 class FaceFollower:
     """A gated detector worker; the caller remains the sole motion writer.
@@ -233,6 +252,12 @@ class FaceFollower:
     angles and rotation at capture, or None. ``camera_matrix`` and ``distortion``
     must describe its original frame. Frames and detector inputs exist only
     during one worker iteration.
+
+    While the budget pauses detection, the follower keeps its target: Reachy
+    goes on facing the person it followed. The pause never counts toward losing
+    that face, so once vision looks again a face that has gone is dropped as
+    any unseen face is. ``paused_s`` counts the seconds following waited out a
+    pause, and ``held_s`` those of them it kept a target through.
     """
 
     def __init__(self, capture_frame: Callable[..., FaceCapture | None], model_path: Path | None = None, *,
@@ -259,6 +284,9 @@ class FaceFollower:
         self._seen: deque[ObservedFace] = deque(maxlen=SEEN_FACES)
         self._request: _FaceRequest | None = None
         self._hold_center: float | None = None
+        self._paused_at: float | None = None
+        self.paused_s = 0.0
+        self.held_s = 0.0
         self.last_seen_at: float | None = None
         self._failure: Exception | None = None
         self._thread: threading.Thread | None = None
@@ -293,11 +321,14 @@ class FaceFollower:
 
     def target(self) -> FaceTarget | None:
         with self._condition:
-            target = self._target
-            if (not self._active or target is None
-                    or self._clock() - target.observed_at >= self._loss_seconds):
-                return None
-            return target
+            return self._current()
+
+    def _current(self) -> FaceTarget | None:
+        target = self._target
+        now = self._clock() if self._paused_at is None else self._paused_at
+        if not self._active or target is None or target.unseen_s(now) >= self._loss_seconds:
+            return None
+        return target
 
     def snapshot(self) -> FaceSnapshot | None:
         with self._condition:
@@ -357,11 +388,14 @@ class FaceFollower:
                     generation = current_generation
                 started = self._clock()
                 scale = self._budget.delay() if self._budget is not None else 1.0
-                if request is None and not math.isfinite(scale):
-                    with self._condition:
-                        self._target = None
-                        self._condition.wait(.1)
-                    continue
+                with self._condition:
+                    if request is None and not math.isfinite(scale):
+                        self._wait_out_pause(started)
+                        continue
+                    if self._paused_at is not None:
+                        self._target = _resumed(self._target, self._paused_at, started)
+                        tracker.resume(self._paused_at, started)
+                        self._paused_at = None if math.isfinite(scale) else started
                 try:
                     capture = self._capture_frame(background=request is None)
                     if request is not None and self._clock() >= request.deadline:
@@ -369,6 +403,9 @@ class FaceFollower:
                     if (request is None and self._budget is not None
                             and not math.isfinite(self._budget.delay())):
                         capture = None
+                        with self._condition:
+                            if self._paused_at is None:
+                                self._paused_at = self._clock()
                     if capture is not None:
                         try:
                             faces = detector.detect(capture.frame)
@@ -412,3 +449,15 @@ class FaceFollower:
                 self._failure = exc
                 self._active = False
                 self._target = None
+
+    def _wait_out_pause(self, now: float) -> None:
+        """One wait while the budget pauses detection, with the condition held: the target stays, and the pause
+        that began here, or earlier, stops the clock that loses its face."""
+        if self._paused_at is None:
+            self._paused_at = now
+        holding = self._current() is not None
+        self._condition.wait(.1)
+        waited = self._clock() - now
+        self.paused_s += waited
+        if holding:
+            self.held_s += waited

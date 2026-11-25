@@ -604,11 +604,17 @@ class RealtimeCall:
     """One call: the SDK ``VoiceCall`` plus Reachy's microphone feed, speaker and reply motion.
 
     ``latest_response`` is the reply Muse started last, and ``muse_moved`` whether Muse has moved
-    Reachy itself since then.
+    Reachy itself since then. ``on_working`` hears each Working event, and ``on_working(True)`` each
+    response Muse starts while Working is on, and each that completes then without audio, as a tool
+    call's does. A spoken reply's ResponseDone shows no further work: it can come after the reply's
+    audio has played. ``worked_at`` is when the last event that shows Muse at work came: Working
+    coming on, or one of those responses. ``face_follow_seconds`` gives the robot's running totals
+    of paused and held face following, for the call's summary.
     """
 
     def __init__(self, feed: MicrophoneFeed, speaker: RealtimeSpeaker, motion: ReplyMotion, *,
-                 on_working: Callable[[bool], None], on_reply_done: Callable[[Optional[str]], None]) -> None:
+                 on_working: Callable[[bool], None], on_reply_done: Callable[[Optional[str]], None],
+                 face_follow_seconds: Callable[[], tuple[float, float]] = lambda: (0.0, 0.0)) -> None:
         self.voice_call = None
         self.feed = feed
         self.input = CallInput(feed, feed.input_rate)
@@ -629,9 +635,13 @@ class RealtimeCall:
         self.ready_at: Optional[float] = None
         self.link_reused = False
         self.last_event_at: Optional[float] = None
+        self.worked_at: Optional[float] = None
         self._quiet_since: Optional[float] = None
         self._moved_at: Optional[float] = None
         self._working_since: Optional[float] = None
+        self._worked_s = 0.0
+        self._face_follow_seconds = face_follow_seconds
+        self._face_follow_at_open = face_follow_seconds()
         self._responses: dict[Optional[str], _Response] = {}
         self._response_count = 0
         self._audio_bytes = 0
@@ -725,10 +735,10 @@ class RealtimeCall:
     def at_work(self) -> bool:
         """Muse is working on a request: Working is on and its work has not gone stale.
 
-        The robot's SDK can leave Working on after Muse stops, so Working with no SDK event for
-        ``WORKING_STALE_S`` no longer counts.
+        The robot's SDK can leave Working on after Muse stops, so Working no longer counts once no
+        event has shown Muse at work for ``WORKING_STALE_S``.
         """
-        return self.working and self._events_fresh(time.monotonic())
+        return self.working and self.worked_at is not None and time.monotonic() - self.worked_at < WORKING_STALE_S
 
     def _progress_suspended(self, now: float) -> bool:
         if not self._events_fresh(now):
@@ -841,6 +851,8 @@ class RealtimeCall:
         elif kind == "Working":
             if event.working and not self.working:
                 self._working_since = self.last_event_at
+            elif self.working and not event.working:
+                self._worked_s += self.last_event_at - self._working_since
             self.working = event.working
         elif kind == "ResponseStarted":
             self.latest_response = event.response_id
@@ -850,6 +862,11 @@ class RealtimeCall:
                 self._quiet_since = None
             elif self._quiet_since is None:
                 self._quiet_since = self.last_event_at
+        done = self._responses.get(event.response_id) if kind == "ResponseDone" else None
+        new_work = self.working and (kind == "ResponseStarted"
+                                     or done is not None and done.completed and not done.audio_bytes)
+        if new_work or kind == "Working" and event.working:
+            self.worked_at = self.last_event_at
         try:
             if kind == "AudioChunk":
                 self.motion.audio(event.response_id, event.offset, event.pcm)
@@ -866,6 +883,8 @@ class RealtimeCall:
                 self._on_working(event.working)
             elif kind == "PlaybackFlushed":
                 self.motion.flushed(event.response_ids)
+            if new_work:
+                self._on_working(True)
         except Exception as exc:
             log.warning("Reachy's realtime motion failed on a %s event (%s)", kind, type(exc).__name__)
 
@@ -904,13 +923,18 @@ class RealtimeCall:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             self.finish_pending("unanswered")
+            now = time.monotonic()
+            worked = self._worked_s + (now - self._working_since if self.working else 0.0)
+            totals = zip(self._face_follow_seconds(), self._face_follow_at_open)
+            paused, held = (total - at_open for total, at_open in totals)
             log.info("Realtime call_summary duration_ms=%d turns=%d answered=%d silent=%d unanswered=%d recovered=%d "
-                     "not_awaited=%d responses=%d audio_bytes=%d feed_sent=%d feed_evictions=%d max_queue_age_ms=%d",
-                     round((time.monotonic() - self.opened_at) * 1000), self.turns,
+                     "not_awaited=%d responses=%d audio_bytes=%d feed_sent=%d feed_evictions=%d max_queue_age_ms=%d "
+                     "working_s=%.1f face_paused_s=%.1f face_held_s=%.1f",
+                     round((now - self.opened_at) * 1000), self.turns,
                      self.outcomes["answered"], self.outcomes["silent"], self.outcomes["unanswered"],
                      self.outcomes["recovered"], self.outcomes["not_awaited"],
                      self._response_count, self._audio_bytes, self.feed.sent, self.feed.evictions,
-                     round(self.feed.max_queue_age_s * 1000))
+                     round(self.feed.max_queue_age_s * 1000), worked, paused, held)
 
     async def _ready(self) -> None:
         await self.voice_call.ready.wait()
@@ -1035,7 +1059,8 @@ class RealtimeVoice:
         call = RealtimeCall(MicrophoneFeed(hardware.sample_rate),
                             RealtimeSpeaker(hardware, motion, on_audible=on_audible, on_start=on_start,
                                             on_idle=on_idle, own_speaker=own_speaker),
-                            motion, on_working=on_working, on_reply_done=on_reply_done)
+                            motion, on_working=on_working, on_reply_done=on_reply_done,
+                            face_follow_seconds=lambda: getattr(hardware, "face_follow_seconds", (0.0, 0.0)))
         call.start(self._build)
         log.info("Muse realtime call opening, %s duplex", "half" if self.half_duplex else "full")
         return call

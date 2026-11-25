@@ -57,7 +57,8 @@ class WakeHeard:
 
 @dataclass(frozen=True)
 class WakeClosed:
-    """The wake window expired with nothing said."""
+    """The wake window expired with nothing said, or Muse's Working flag alone holds it open past its deadline, where
+    Reachy hears only the wake phrase."""
 
 
 @dataclass(frozen=True)
@@ -251,8 +252,11 @@ class ExpressionPlanner:
         return (SetState(State.LISTENING if event.active else State.IDLE),)
 
     def _user_speech(self, event: UserSpeech, now: float) -> Tuple[Cue, ...]:
+        """Speech the microphone admitted starts or stops. Reachy listens to speech over its output, during a turn,
+        or while it rests in its thinking pose, as in a realtime call, where no turn runs while Muse answers."""
         if event.speaking:
-            return (SetState(State.LISTENING),) if event.output or event.turn_running else ()
+            listens = event.output or event.turn_running or self._state is State.THINKING
+            return (SetState(State.LISTENING),) if listens else ()
         if not event.output and (event.turn_running or event.turns_waiting):
             return (self.resting(State.THINKING),)
         return ()

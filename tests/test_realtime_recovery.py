@@ -89,7 +89,8 @@ def test_silent_call_acknowledges_retries_then_recovers_without_replaying(monkey
     events = run(rig, conversation, user, rest=("listening", "idle"), timeout=30)
     assert played(events).count(LOST) == 1
     assert sent_to_muse(events) == []
-    assert thinking_cues == [1, 0]
+    # Reachy listens to the request said while it looks thoughtful, then looks thoughtful again.
+    assert thinking_cues == [1, 1]
     assert [name for name, _ in gestures] == ["nod", "nod"]
     assert [4 <= at - endpoint < 4.3 for (_, at), endpoint in zip(gestures, endpoints)] == [True, True]
     assert stall_cues(caplog) == ["Realtime turn ordinal=2 cue=still_waiting", "Realtime turn ordinal=3 cue=still_waiting"]
@@ -714,7 +715,8 @@ def test_a_reply_the_sdk_drops_after_a_device_command_is_not_a_silent_answer(mon
 
 
 def test_muse_moving_reachy_answers_a_request_while_working_stays_on(monkeypatch, caplog):
-    """On SDK 734263d Working stays on when Muse never settles a turn by name."""
+    """On SDK 734263d Working stays on when Muse never settles a turn by name. Once the nod answers the request,
+    Reachy listens: Working alone no longer shows Muse at work."""
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
     acts = []
@@ -744,7 +746,7 @@ def test_muse_moving_reachy_answers_a_request_while_working_stays_on(monkeypatch
         await wait_for(rig, lambda: len(turn_outcomes(caplog)) == 2, 2)
         assert call.working
 
-    events = run(rig, conversation, user, rest=("thinking",), timeout=30)
+    events = run(rig, conversation, user, rest=("listening",), timeout=30)
     assert [(row["ordinal"], row["outcome"]) for row in turn_outcomes(caplog)] == [("1", "answered"), ("2", "silent")]
     assert recoveries(caplog) == []
     assert LOST not in played(events)
@@ -912,7 +914,8 @@ def test_reply_diagnostics_use_each_turns_last_voiced_sample(monkeypatch, caplog
         "Realtime call_ready elapsed_ms=0 link=new queued_feed_frames=0"]
     assert [line for line in caplog.messages if line.startswith("Realtime call_summary ")] == [
         "Realtime call_summary duration_ms=2125 turns=2 answered=2 silent=0 unanswered=0 recovered=0 not_awaited=0 "
-        "responses=1 audio_bytes=14400 feed_sent=49 feed_evictions=0 max_queue_age_ms=0"]
+        "responses=1 audio_bytes=14400 feed_sent=49 feed_evictions=0 max_queue_age_ms=0 working_s=0.0 "
+        "face_paused_s=0.0 face_held_s=0.0"]
     assert stall_cues(caplog) == []
     assert set(played(events)) == {"muse"}
 
