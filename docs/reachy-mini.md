@@ -1113,7 +1113,9 @@ they go to Muse as ordinary requests.
   from only guides it. Words such as "again", "here", "today" or "together"
   after the subject leave it as it is. "Take a photo of me", "of me sitting
   down", "can you see me?", "how do I look?" and "take a photo and tell me what
-  I look like" frame your face: the face nearest where your voice came from, or
+  I look like" frame your face. So do look questions ending in "on me", such
+  as "does this look good on me?". Reachy picks the face nearest where your
+  voice came from, or
   without that direction, the largest face in view, or else the largest seen in
   the last 30 seconds. "What am I holding?", "what's in my hand?", "take a photo of my
   outfit" and "of me in my new dress" turn Reachy level toward you instead,
@@ -1123,7 +1125,8 @@ they go to Muse as ordinary requests.
   everyone who fits in view, you included. "Take a photo of my friend", "of my
   uncle", "of him", "of her" or "of this person" frames the person who is not
   speaking, or without your direction, everyone in view if they fit. "What is
-  this?" and "read this label" keep the view unless your voice came from
+  this?", "read this label" and questions about how a thing looks, such as
+  "does this look ripe?", keep the view unless your voice came from
   outside it. Questions about the scene, such as "what do you see?", "describe
   the room" or "what am I pointing at?", and photos of things or people Reachy
   does not know, such as "take a photo of my coffee" or "of Sarah", keep the

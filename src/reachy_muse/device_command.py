@@ -349,7 +349,8 @@ def photo_requested(text: str) -> bool:
         (match["question"] or match["shown"] or match["look"] or "").split())
 
 
-_LOOKS_FACE = r"(?:face|smile|eyes|hair|haircut|glasses|makeup|hat|look)"
+_WORN = r"(?:face|smile|eyes|hair|haircut|glasses|makeup|hat)"
+_LOOKS_FACE = rf"(?:{_WORN}|look)"
 _LOOKS_BODY = r"(?:outfit|shirt|dress|shoes|jacket|tie|sweater|hands?)"
 # Words before a look that ask about the speaker's own, as in "my hair", "think of this hat" or "does this shirt".
 _ASKED_LOOK = r"(?:my|(?:think (?:of|about)|does|do|if|whether) (?:this|these))"
@@ -379,8 +380,11 @@ _ASKED_SUBJECTS = tuple((re.compile(pattern), subject) for pattern, subject in (
     (r"\bus\b|\bourselves\b|\beveryone\b|\beverybody\b|\bhow many people\b|\bselfie\b", PhotoSubject.US),
     (rf"\bwhat (?:am i|i(?:'m| am)) (?:holding|showing|wearing)|\bi(?:'m| am) holding\b|\bin my hands?\b"
      rf"|\bam i holding\b|\bhow many fingers\b|\b{_ASKED_LOOK} {_LOOKS_BODY}\b", PhotoSubject.HELD),
-    (rf"\b(?:see|describe) me\b|\bhow (?:[a-z]+ )?i look\b|\b(?:do|if|whether) i look\b|\bwhat i look like\b"
-     rf"|\b(?:i'm|i am|am i) smiling\b|\b{_ASKED_LOOK} {_LOOKS_FACE}\b", PhotoSubject.ME),
+    (rf"\b(?:see|describe) me\b|\b(?:how (?:[a-z]+ )?|(?:do|if|whether) )i look\b"
+     rf"(?! (?:after|up|into|through)\b)|\bwhat i look like\b|\b(?:i'm|i am|am i) smiling\b"
+     rf"|\b(?:my|think (?:of|about) (?:this|these)) {_LOOKS_FACE}\b"
+     rf"|\b(?:does|do|if|whether) (?:this|these) {_WORN}\b"
+     r"|\b(?:does|do|if|whether) (?:this|these) look(?: [a-z']+)* on me$", PhotoSubject.ME),
     (r"\bthis\b|\bthese\b", PhotoSubject.THIS),
 ))
 

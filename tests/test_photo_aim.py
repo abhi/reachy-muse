@@ -220,6 +220,28 @@ def test_each_subject_frames_what_its_words_ask_for_without_doa(people, caplog, 
     assert scene.passes == passes
 
 
+ABOUT_A_THING = [
+    "look at this, does this look okay?",
+    "take a photo, does this look ripe?",
+    "take a photo, does this look like poison ivy?",
+    "take a photo, how does this look?",
+    "take a photo, do these look the same?",
+    "take a photo, how do these look?",
+    "take a photo and tell me if these look ripe",
+    "take a photo and tell me whether these look the same",
+    "take a photo, how should I look after this plant?",
+]
+
+
+@pytest.mark.parametrize("words", ABOUT_A_THING)
+@pytest.mark.parametrize("path", ["realtime", "chat"])
+def test_a_question_about_how_a_thing_looks_keeps_the_view(people, caplog, path, words):
+    rig, controller, robot, scene = people
+    scene.doa = None
+    camera, _ = ask(people, caplog, path, words)
+    assert (aimed(caplog), camera.shots, scene.passes) == (aim_fields(f"subject=this {KEPT}"), STRAIGHT_AHEAD, 0)
+
+
 def test_with_doa_the_speaker_s_own_face_is_framed_not_the_largest(people, caplog):
     """The friend, whose face is the smaller, asks; people2 has already turned Reachy toward them."""
     rig, controller, robot, scene = people
