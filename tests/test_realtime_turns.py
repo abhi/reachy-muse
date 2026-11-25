@@ -1672,6 +1672,59 @@ def test_a_device_command_over_a_long_reply_is_obeyed_and_muse_never_answers_it(
     assert (voice_to_muse[0] > 0, muse_played_after(rig, obeyed[0])) == (heard, 0.0)
 
 
+def test_a_command_its_final_words_confirmed_never_reaches_muse_through_the_turn_said_after_it(monkeypatch, caplog):
+    """The user says a command in short words over Muse's reply and talks straight on past the companion's end of it,
+    so the words after it share its gate. Those words are a turn of their own, decided while Reachy's command model
+    still weighs the command. Only the command's turn, whose final words confirmed the gate, decides where the held
+    audio goes, so the later turn never sends Muse the command. The words said on go where the command goes."""
+    from reachy_muse import device_command
+    from reachy_muse.device_command import DeviceCommand
+    from reachy_muse.protocol import HearEndpoint, encode
+    from test_device_command_turns import QUIET_DOWN
+
+    caplog.set_level("INFO")
+    monkeypatch.setattr(device_command, "CLASSIFY_DEADLINE_S", 2.0)
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+
+    async def answer(sdk, emit, script):
+        reply_events(sdk, emit, "r1", LONG_REPLY, voiced(12.8))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=10,
+                                    model=FakeModel(DeviceCommand.VOLUME_DOWN, delay_s=1))
+    conversation.silence_s = 2.0
+    link = companion_hearing(conversation)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, 3)
+        caplog.clear()
+        before, known, streams, voice = len(calls.frames), set(link._connection.hearing), [], []
+        for voiced_ms_, quiet_ms in STRETCHES["each word its own stretch"][:7]:
+            voice += [True] * (voiced_ms_ // 20) + [False] * (quiet_ms // 20)
+        said_on = len(voice)
+        voice += [True] * 10 + [False] * 10
+        for frame, voiced in enumerate(voice):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE if voiced else 0, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            streams += [stream for stream in link._connection.hearing if stream not in known and stream not in streams]
+            if frame == said_on:
+                link._receive(link._connection, encode(HearEndpoint(streams[0], QUIET_DOWN, False)))
+            if frame == said_on + 10:
+                link._receive(link._connection, encode(HearEndpoint(streams[1], "and thanks", False)))
+        await room(rig, 1.5)
+        heard.append((voiced_ms(calls.frames[before:]), rig.hardware.volume_steps,
+                      [line.split(" wake_prefix=")[1] for line in caplog.messages
+                       if line.startswith("Realtime command ")]))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
+    assert heard == [(0, [-10], ["none outcome=none drop=none", "none outcome=VOLUME_DOWN drop=none"])]
+
+
 def test_reachy_never_nods_that_muse_is_slow_while_a_request_its_endpoint_confirmed_still_reaches_muse(
         monkeypatch, caplog):
     """A long request said over Muse's reply in short words, with a pause in it, is confirmed only at Reachy's

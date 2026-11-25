@@ -57,7 +57,7 @@ def test_verified_paused_command_fits_cli_streaming_queue(handoff, model, worker
                 conversation._open_call = lambda: setattr(conversation, "call", call)
                 conversation.silence_s = .3
 
-                async def command(endpoint, request):
+                async def command(endpoint, request, *, gate=None):
                     commands.append(endpoint.text)
                     return TurnOutcome.ACCEPTED
 

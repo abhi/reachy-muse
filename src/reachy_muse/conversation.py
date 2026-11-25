@@ -254,7 +254,6 @@ class _QueuedTurn:
     gaze_generation: int
     over_muse: bool = False
     open_mic: bool = False
-    call_input: object = None    # the gate that held the turn's audio over Muse's reply
 
 
 @dataclass(frozen=True)
@@ -1485,6 +1484,9 @@ class VoiceConversation:
         turn_task = None
         pending_turns = deque()
         call_recognitions = {}
+        # The gate holding a call turn's audio, for a turn whose own final words confirmed it over Muse's reply. That
+        # turn alone settles where the audio goes, though later turns in the same breath share the gate.
+        call_holds = {}
         wake_epoch = 0
         active_wake_epoch = 0
         held = None
@@ -1519,10 +1521,13 @@ class VoiceConversation:
                 text = (endpoint.text or "") if endpoint is not None else ""
                 if self.wake_detector is not None:
                     text = self._without_wake(text)
+                confirmed = gate.confirmed
                 # A reply Muse began after the turn's last word ended the turn before Muse heard any of it.
                 if (self.call is call and self._muse_began_at < recorded.speech_end_at
                         and gate.finish(text, recorded.heard_over)):
                     self._gaze.admit(recorded.gaze_generation)
+                    if not confirmed:
+                        call_holds[recorded.ended] = gate
                 else:
                     transcript = endpoint.text if endpoint is not None else None
                     self._log_realtime_command(transcript,
@@ -1552,14 +1557,15 @@ class VoiceConversation:
                 if endpoint.text is not None:
                     request.timeline.mark("transcript")
                 if request.call is not None and (request.call.audio_sent or not request.call.failed):
-                    await self._realtime_turn(endpoint, request, follow_up=True)
+                    await self._realtime_turn(endpoint, request, follow_up=True, gate=call_holds.get(request.ended))
                     return held
                 return await self._follow_up(endpoint, request, held)
             finally:
                 call_recognitions.pop(request.ended, None)
                 turns_awaiting_transcript.discard(request.ended)
-                if request.call_input is not None:
-                    request.call_input.discard()
+                gate = call_holds.pop(request.ended, None)
+                if gate is not None:
+                    gate.discard()
         async def queue_turn(recorded: _RecordedTurn) -> None:
             nonlocal recorder
             if recorded.ended.truncated:
@@ -1579,7 +1585,7 @@ class VoiceConversation:
                 pending_turns.append(_QueuedTurn(recorded.ended, self._wake_strip_required, wake_epoch,
                                                 timeline, recorded.heard_over, self.call or self._lost_call,
                                                 recorded.speaker_bearing, recorded.gaze_generation,
-                                                recorded.over_muse, recorded.open_mic, recorded.call_input))
+                                                recorded.over_muse, recorded.open_mic))
                 self._gaze.queued(recorded.gaze_generation, timeline.facts)
                 if self.realtime is not None and pending_turns[-1].call is None:
                     self.realtime.chat_turn()
@@ -1710,7 +1716,7 @@ class VoiceConversation:
                             timeline = request.timeline
                             timeline.facts["forced"] = "yes" if endpoint.forced else "no"
                             if call is not None and (call.audio_sent or not call.failed):
-                                return await self._realtime_turn(endpoint, request)
+                                return await self._realtime_turn(endpoint, request, gate=call_holds.get(request.ended))
                             if endpoint.text is None:
                                 return await self.turn(endpoint.audio,
                                     wake_strip_required=request.wake_strip_required, timeline=timeline,
@@ -1727,8 +1733,9 @@ class VoiceConversation:
                         finally:
                             call_recognitions.pop(request.ended, None)
                             turns_awaiting_transcript.discard(request.ended)
-                            if request.call_input is not None:
-                                request.call_input.discard()
+                            gate = call_holds.pop(request.ended, None)
+                            if gate is not None:
+                                gate.discard()
                     turn_task = asyncio.create_task(process())
                 if (turn_task is None and follow_up_task is None and held is None and not pending_turns
                         and self._briefing_slots):
@@ -2906,10 +2913,11 @@ class VoiceConversation:
         log.info("Realtime command transcript=%s words=%d wake_prefix=%s outcome=%s drop=%s",
                  transcript, len(text.split()), prefix, outcome, drop)
 
-    async def _realtime_turn(self, endpoint: Endpoint, request: _QueuedTurn, *, follow_up: bool = False) -> TurnOutcome:
+    async def _realtime_turn(self, endpoint: Endpoint, request: _QueuedTurn, *, follow_up: bool = False,
+                             gate=None) -> TurnOutcome:
         """A turn in a realtime call: Reachy acts only on its own device commands and photo requests, and Muse takes the
-        rest. Muse heard the turn as it was said, unless only its final words confirmed it over Muse's reply: then its
-        audio reaches Muse only if the turn is Muse's.
+        rest. Muse heard the turn as it was said, unless only its final words confirmed it over Muse's reply: then
+        ``gate`` holds its audio, which reaches Muse only if the turn is Muse's.
 
         ``follow_up`` is a turn heard while another one is still handled.
         """
@@ -2947,7 +2955,7 @@ class VoiceConversation:
             return await self._photo_in_call(endpoint, request, text, follow_up=follow_up)
         # The turn is Muse's: words that only its endpoint confirmed reach Muse now, and cut off the reply they were
         # said over.
-        released = request.call_input is not None and request.call_input.release()
+        released = gate is not None and gate.release()
         if released and request.call.audible:
             await request.call.barge_in()
         if (follow_up and self._photo is not None
