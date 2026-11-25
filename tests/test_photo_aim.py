@@ -16,14 +16,16 @@ import numpy as np
 import pytest
 
 from reachy_muse.device_command import PhotoSubject
+from reachy_muse.local_face_tracking import FaceTarget
+from reachy_muse.motion import MotionStyle
 from reachy_muse.person_gaze import PersonGaze
 from reachy_muse.photo import shutter_cue
 from reachy_muse.speaker_direction import DoAReading
 from test_device_command_turns import played, run, service as make_service
-from test_hardware import generated
+from test_hardware import FakeRobot, generated, start_controller
 from test_people_commands import InvokedSession
 from test_person_gaze import people, say_live  # noqa: F401  # people is the fixture shared with people1's tests
-from test_photo_capture import Encoder
+from test_photo_capture import Encoder, until as wait_until
 from test_photo_turns import PHOTO_MESSAGE, fields, photo_lines, sent
 from test_pins import CHUNK, VOICE_SAMPLE, WAKE_SAMPLE, Transcripts, Wake
 from test_realtime_turns import ScriptedCalls, StreamingTranscripts, realtime_service, reply_events, room, voiced
@@ -407,6 +409,47 @@ def test_the_face_reachy_follows_when_asked_stays_framed(people, caplog, words, 
               if held_at[0] <= at <= camera.read_at[0]}
     assert (aiming <= {before}, [(yaw, body) for yaw, _, body in camera.shots]) == (True, [(before, 0)])
     assert {key: aimed(caplog)[key] for key in ("subject", "turns")} == {"subject": subject, "turns": "0"}
+
+
+def test_a_wake_turn_that_starts_as_the_view_is_held_keeps_facing_the_speaker():
+    robot = FakeRobot()
+    controller = start_controller(robot, photo_encoder=Encoder(),
+                                  style=MotionStyle(breathing=False, expression_clips=False))
+    held = threading.Event()
+
+    class Follower:
+        failure = None
+        active = False
+
+        def set_active(self, active, *, idle=False):
+            if self.active and not active and controller._speaker_turn is not None:
+                held.wait(1)
+            self.active = active
+
+        def hold_center(self, yaw):
+            pass
+
+        def target(self):
+            return FaceTarget(math.radians(-15), 0.0, time.monotonic()) if self.active else None
+
+        def close(self):
+            pass
+
+    controller._face_follower = Follower()
+    try:
+        controller.set_state("listening")
+        assert wait_until(lambda: round(math.degrees(controller.head_yaw)) == -15)
+        assert controller.look_at_speaker(math.radians(60))
+        assert wait_until(lambda: controller._speaker_turn is not None)
+        controller.hold_view_for_photo(True)
+        held.set()
+        assert wait_until(lambda: controller._speaker_turn is None)
+        time.sleep(.5)
+        facing = round(math.degrees(controller.head_yaw))
+        controller.hold_view_for_photo(False)
+    finally:
+        controller.close()
+    assert facing == 30
 
 
 def test_disabling_face_tracking_recentres_the_head_while_the_photo_view_is_held(people):

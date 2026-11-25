@@ -1192,7 +1192,8 @@ class ReachyController:
         run rather than being refused for interrupting it."""
         follower = self._face_follower
         with self._state_lock:
-            self._photo_view_target = follower.target() if active and follower is not None else None
+            self._photo_view_target = (follower.target() if active and follower is not None
+                                       and self._speaker_turn is None else None)
             self._photo_view_ending = not active and self._turning_to_person()
             if active:
                 self._photo_view.set()
