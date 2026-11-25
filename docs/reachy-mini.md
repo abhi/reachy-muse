@@ -824,7 +824,9 @@ window closes, so Reachy's local chat does not answer greetings in a call.
   such a request reaches it ends the turn, and the request is dropped. A remark
   of two words or fewer besides back-channel sounds, such as "got it", is
   dropped too, so it never cuts Muse off two seconds after it was said. A
-  cancel or silence phrase, such as "never mind", still stops Muse.
+  cancel or silence phrase, such as "never mind", still stops Muse. A short
+  photo phrase such as "What's this?" gets the remark rule unless Reachy takes
+  the photo.
 - The call ends when the follow-up window closes, or when Muse ends it.
 - If a call fails before any audio reached Muse, the request goes to Muse by
   chat. If Muse may have heard it, Reachy asks the user to say it again and the

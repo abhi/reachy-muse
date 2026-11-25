@@ -1587,7 +1587,7 @@ LONG_REPLY = ("I can't see you from here, but I can still help. Tell me what you
               "something for tonight, or ask me about the weather first.")
 
 
-async def say_over_reply(rig, link, words, stretches, *, final_after_s=None, partial_words=None, sound=None):
+async def say_over_reply(rig, link, words, stretches, *, final_after_s=None, partial_words=None, sound=None, wake=False):
     """Say ``words`` at real-time pace in ``stretches``, in the user's test voice or ``sound``. The companion's
     partial holds each word COMPANION_LAG_S after its voice ends, up to ``partial_words`` words; with
     ``final_after_s``, the companion's own endpoint brings all the words that long after the last one."""
@@ -1598,6 +1598,10 @@ async def say_over_reply(rig, link, words, stretches, *, final_after_s=None, par
         voice += [True] * (voiced_ms_ // 20) + [False] * (quiet_ms // 20)
         ends.append((len(voice) - quiet_ms // 20) * .02)
     known, stream, shown = set(link._connection.hearing), None, 0
+    last_voice = None
+    if wake:
+        rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
+        await asyncio.sleep(CHUNK / 16000)
     began = time.monotonic()
     for frame in range(len(voice) + round(((final_after_s or 0) + COMPANION_LAG_S + .1) / .02)):
         voiced = frame < len(voice) and voice[frame]
@@ -1606,6 +1610,8 @@ async def say_over_reply(rig, link, words, stretches, *, final_after_s=None, par
             chunk = sound[frame * CHUNK % len(sound):][:CHUNK].copy()
         rig.hardware.samples.put(chunk)
         await asyncio.sleep(max(0.0, began + (frame + 1) * CHUNK / 16000 - time.monotonic()))
+        if voiced:
+            last_voice = time.monotonic()
         if stream is None:
             stream = next((opened for opened in link._connection.hearing if opened not in known), None)
         if stream is None or stream not in link._connection.hearing:
@@ -1616,6 +1622,8 @@ async def say_over_reply(rig, link, words, stretches, *, final_after_s=None, par
             link._receive(link._connection, encode(HearPartial(stream, heard, " ".join(said[:heard]))))
         if final_after_s is not None and frame + 1 == len(voice) + round(final_after_s / .02):
             link._receive(link._connection, encode(HearEndpoint(stream, words, False)))
+
+    return last_voice
 
 
 @pytest.mark.parametrize("words, stretches", [
@@ -3257,3 +3265,58 @@ def test_a_question_sharing_only_common_words_with_what_muse_says_meanwhile_reac
     assert spoken_over_reply(monkeypatch, caplog, MUSEUM_REPLY, turns, after_s=4.0) == (
         1, 800, 0,
         ["Realtime command transcript=arrived words=4 wake_prefix=none outcome=none drop=none"])
+
+
+@pytest.mark.parametrize("words", ["What's this?", "Describe this."])
+def test_a_two_word_photo_phrase_reachy_takes_no_photo_for_is_dropped_as_a_remark(monkeypatch, caplog, words):
+    """The lead's F6 decision: a turn only its endpoint confirms, said over Muse's reply, that would go to Muse with
+    two words or fewer and is no cancel or silence phrase, is dropped, and Muse plays on. Reachy runs without
+    --photo-requests (the CLI default), so "What's this?" is no photo request and would go to Muse."""
+    (barge_ins, voice_ms, echo, lines), played_s = said_over_reply(monkeypatch, caplog, words, gapped(words))
+    assert [(barge_ins, voice_ms, echo, [line for line in lines if line.startswith("Realtime command ")]), played_s] == [
+        (0, 0, 0, ["Realtime command transcript=arrived words=2 wake_prefix=none outcome=none drop=barge_in"]), 12.8]
+
+
+@pytest.mark.parametrize("first, final_after_s", [
+    ("Tell me what to wear tonight.", 1.2), ("", None)],
+    ids=["not spoken to Reachy", "words only a partial"])
+def test_a_what_s_this_reachy_takes_no_photo_for_is_dropped_as_a_remark(monkeypatch, caplog, first, final_after_s):
+    """As above with photos on. "What's this?" takes no photo when it is not spoken to Reachy (a request after the
+    first one, naming neither Reachy nor Muse) or when its words are only the companion's partial at Reachy's endpoint
+    (the photo rules). Either way it would go to Muse, so the F6 decision drops it: Muse's reply plays on whole."""
+    from test_photo_turns import PHOTO, call_rig
+
+    caplog.set_level("INFO")
+    rig = call_rig(monkeypatch, [PHOTO])
+    rig.hardware.echo_cancelled_input = True
+
+    async def answer(sdk, emit, script):
+        reply_events(sdk, emit, "r1", LONG_REPLY, voiced(12.8))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, photo_requests=True, wake_timeout_s=10)
+    conversation.silence_s = 2.0
+    link = companion_hearing(conversation, forced_endpoints=True)
+    heard = []
+
+    async def user():
+        if first:
+            await say_over_reply(rig, link, first, ((250, 0),) * 6, wake=True)
+        else:
+            await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 8)
+        await room(rig, 3)
+        caplog.clear()
+        before = len(calls.frames)
+        await say_over_reply(rig, link, "What's this?", gapped("What's this?"), final_after_s=final_after_s)
+        await room(rig, 1.6 if final_after_s is None else .4)
+        heard.append((calls.barge_ins, voiced_ms(calls.frames[before:]), echo_frames(calls.frames[before:]),
+                      [line for line in caplog.messages if line.startswith("Realtime command ")]))
+        await rig.wait_until_or_timeout(lambda: not call.audible, 12)
+        heard.append(round(sum(len(chunk) for chunk in rig.hardware.played) / rig.hardware.output_sample_rate, 2))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=45)
+    assert heard == [(0, 0, 0, [
+        "Realtime command transcript=arrived words=2 wake_prefix=none outcome=none drop=barge_in"]), 12.8]
+    assert rig.hardware.captures == []
