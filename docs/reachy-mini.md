@@ -1111,13 +1111,14 @@ they go to Muse as ordinary requests.
 - Before the photo, Reachy points its camera at what your words ask for. It
   finds the subject with its own face detection; the direction your voice came
   from only guides it. Words such as "again", "here", "today" or "together"
-  after the subject leave it as it is. "Take a photo of me", "of me smiling",
-  "can you see me?" and "how do I look?" frame your face: the face nearest
-  where your voice came from, or without that direction, the largest face in
-  view, or else the largest seen in the last 30 seconds. "What am I holding?",
-  "what's in my hand?" and "take a photo of my outfit" turn Reachy level toward
-  you instead, since what you hold may hide your face; with no face in view and
-  no direction, Reachy keeps its view. "Take a photo of us", "of everyone",
+  after the subject leave it as it is. "Take a photo of me", "of me sitting
+  down", "can you see me?", "how do I look?" and "tell me what I look like"
+  frame your face: the face nearest where your voice came from, or without that
+  direction, the largest face in view, or else the largest seen in the last 30
+  seconds. "What am I holding?", "what's in my hand?", "take a photo of my
+  outfit" and "of me in my new dress" turn Reachy level toward you instead,
+  since what you hold may hide your face; with no face in view and no
+  direction, Reachy keeps its view. "Take a photo of us", "of everyone",
   "of the whole family" and "how many people do you see?" frame everyone who
   fits in view, you included. "Take a photo of my friend", "of him", "of her"
   or "of this person" frames the person who is not speaking, or without your
