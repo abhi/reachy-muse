@@ -330,6 +330,55 @@ def test_without_faces_or_doa_the_photo_shows_what_reachy_faces(people, caplog):
     assert aimed(caplog) == aim_fields("subject=me aim=no_faces bearing=no source=none faces=0 turns=0 off_deg=none")
 
 
+def test_a_subject_whose_face_is_gone_at_the_check_is_lost(people, caplog):
+    """The owner steps out of view after the first pass; Reachy still faces where they were."""
+    rig, controller, robot, scene = people
+    scene.doa = None
+    moves_after_the_first_pass(scene, [(-25, .12)])
+    camera, _ = ask(people, caplog, "chat", "take a photo of me")
+    assert camera.shots == [(30, 0, 10)]
+    assert aimed(caplog) == aim_fields("subject=me aim=lost bearing=no source=fresh faces=2 turns=1 off_deg=none")
+
+
+def test_without_time_for_a_correction_the_photo_is_unlocked(people, caplog, monkeypatch):
+    """The owner steps 12 degrees after the first pass, and the aim's deadline leaves no time to turn again."""
+    rig, controller, robot, scene = people
+    monkeypatch.setattr("reachy_muse.conversation.PHOTO_AIM_S", 1.3)
+    scene.doa = None
+    moves_after_the_first_pass(scene, [(18, .35), (-25, .12)])
+    camera, _ = ask(people, caplog, "chat", "take a photo of me")
+    assert camera.shots == [(30, 0, 10)]
+    assert aimed(caplog) == aim_fields("subject=me aim=unlocked bearing=no source=fresh faces=2 turns=1 off_deg=12")
+
+
+def test_a_move_that_keeps_the_head_past_the_aim_s_patience_leaves_the_photo_where_it_points(people, caplog):
+    """Muse's move holds the head from just before the grant for longer than the aim retries its turn, 1.05 s, and
+    than the photo then waits for a still head, a second."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    scene.doa = None
+    rig.hardware.run_command = controller.run_command
+    camera = PoseCamera(rig, controller, robot)
+    service, _ = photo_service(rig, "chat", "Reachy, take a photo of me.")
+    rig.session = InvokedSession(rig.recording, muse_answers)
+    moved = {}
+
+    async def user():
+        for _ in range(35):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+        moving = asyncio.create_task(rig.session.invoke("reachy.move", {"yaw": -20, "duration": .3, "hold": 2.5}))
+        await until(rig, lambda: controller.view_changing)
+        rig.say(voiced_s=0)
+        moved["result"] = await moving
+        await until(rig, lambda: answered(rig), 8)
+
+    run(rig, service, user, rest=("listening", "idle"))
+    assert moved["result"]["ok"] is True
+    assert camera.shots == [(-20, -3, 0)]
+    assert aimed(caplog) == aim_fields("subject=me aim=busy bearing=no source=fresh faces=2 turns=0 off_deg=none")
+
+
 def test_a_thinking_motion_at_the_grant_fades_before_the_aim_s_turn(people, caplog):
     """A thinking loop starts while Reachy transcribes the request, and still sways the head at the grant."""
     rig, controller, robot, scene = people
