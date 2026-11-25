@@ -714,7 +714,8 @@ def test_a_reply_the_sdk_drops_after_a_device_command_is_not_a_silent_answer(mon
 
 
 def test_muse_moving_reachy_answers_a_request_while_working_stays_on(monkeypatch, caplog):
-    """On SDK 734263d Working stays on when Muse never settles a turn by name."""
+    """On SDK 734263d Working stays on when Muse never settles a turn by name. Once the nod answers the request,
+    Reachy listens: Working alone no longer shows Muse at work."""
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
     acts = []
@@ -744,7 +745,7 @@ def test_muse_moving_reachy_answers_a_request_while_working_stays_on(monkeypatch
         await wait_for(rig, lambda: len(turn_outcomes(caplog)) == 2, 2)
         assert call.working
 
-    events = run(rig, conversation, user, rest=("thinking",), timeout=30)
+    events = run(rig, conversation, user, rest=("listening",), timeout=30)
     assert [(row["ordinal"], row["outcome"]) for row in turn_outcomes(caplog)] == [("1", "answered"), ("2", "silent")]
     assert recoveries(caplog) == []
     assert LOST not in played(events)

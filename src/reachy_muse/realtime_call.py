@@ -531,7 +531,8 @@ class RealtimeCall:
     """One call: the SDK ``VoiceCall`` plus Reachy's microphone feed, speaker and reply motion.
 
     ``latest_response`` is the reply Muse started last, and ``muse_moved`` whether Muse has moved
-    Reachy itself since then.
+    Reachy itself since then. ``on_working`` hears each Working event, and ``on_working(True)`` each
+    response Muse starts or finishes while Working is on.
     """
 
     def __init__(self, feed: MicrophoneFeed, speaker: RealtimeSpeaker, motion: ReplyMotion, *,
@@ -786,6 +787,8 @@ class RealtimeCall:
                 self._on_working(event.working)
             elif kind == "PlaybackFlushed":
                 self.motion.flushed(event.response_ids)
+            if kind in ("ResponseStarted", "ResponseDone") and self.working:
+                self._on_working(True)
         except Exception as exc:
             log.warning("Reachy's realtime motion failed on a %s event (%s)", kind, type(exc).__name__)
 

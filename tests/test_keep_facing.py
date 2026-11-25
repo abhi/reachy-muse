@@ -1,4 +1,5 @@
-"""Reachy keeps facing the person it follows while audio pauses its camera.
+"""Reachy keeps facing the person it follows while audio pauses its camera, and looks thoughtful only while Muse
+really works.
 
 Conversations run through ReachyService.serve with the real microphone loop and TimedWake, the real motion owner, a
 real FaceFollower and the controller's own VisionBudget. Fakes stand in only at the edges: the microphone's audio,
@@ -20,7 +21,7 @@ from reachy_muse.hardware import ReachyController
 from reachy_muse.local_face_tracking import FACE_LOSS_SECONDS, FaceCapture, FaceFollower, _Face
 from reachy_muse.motion import MotionStyle
 from reachy_muse.speaker_direction import DoAReading
-from test_device_command_turns import LongVoice, never_asked, run, service as make_service
+from test_device_command_turns import LongVoice, never_asked, played, run, service as make_service
 from test_hardware import FakeRobot, pose_factory
 from test_person_gaze import PeopleHardware, PlacedWake
 from test_photo_capture import Encoder
@@ -575,3 +576,63 @@ def test_a_look_requested_while_the_camera_pauses_keeps_the_face_it_follows():
         assert item.target().observed_at == 40.0
     finally:
         item.close()
+
+
+# ---- thinking only while Muse really works
+
+
+def realtime(rig, answer, *texts, **fields):
+    calls = ScriptedCalls(answer=answer, every_turn=True)
+    service = make_service(rig, never_asked, StreamingTranscripts(*texts), wake_detector=TimedWake(),
+                           muse_path="realtime", voice_link=calls.link, voice_call=calls,
+                           wake_timeout_s=fields.pop("wake_timeout_s", 10), **fields)
+    return service, calls
+
+
+def states_since(rig, start):
+    return [event["state"] for event in rig.recording.events[start:] if event.get("robot") == "set_state"]
+
+
+async def states_while_talking(rig, voiced_s=1.0):
+    """The user's voice, then half a second of quiet; returns Reachy's state at each 20 ms of the voice."""
+    return await say_live(rig, voiced_s=voiced_s, watch=lambda: rig.states()[-1])
+
+
+def test_working_left_on_after_muse_s_answers_never_shows_the_thinking_pose_over_the_owner(camera_room, caplog):
+    """The robot's SDK leaves Working on after Muse's first answer, as on 11-24. Muse's later events all belong to its
+    spoken replies, so nothing shows it at work: Reachy listens after each reply and while the owner talks, and
+    thinks only while a request waits for Muse."""
+    rig, controller, robot, scene = camera_room()
+    caplog.set_level("INFO")
+
+    async def answer(sdk, emit, calls):
+        ordinal = len(calls.answering)
+        if ordinal == 1:
+            emit(sdk.Working(True))
+        await asyncio.sleep(.5)
+        reply_events(sdk, emit, f"r{ordinal}", REPLY, voiced(1.0))
+
+    service, calls = realtime(rig, answer, "What's the weather?", "And tomorrow?")
+    seen = {}
+
+    async def reply_then_rest(count):
+        voice = service._voice[1]
+        await until(rig, lambda: sum(map(len, rig.hardware.played)) > (count - 1) * RATE, 10)
+        replying = len(rig.recording.events)
+        await until(rig, lambda: sum(map(len, rig.hardware.played)) >= count * RATE and not voice.call.audible, 10)
+        await asyncio.sleep(1.0)
+        return states_since(rig, replying)
+
+    async def user():
+        await say_live(rig, wake=True)
+        seen["after_reply"] = await reply_then_rest(1)
+        seen["working"] = service._voice[1].call.working
+        seen["while_talking"] = await states_while_talking(rig)
+        seen["after_second_reply"] = await reply_then_rest(2)
+
+    run(rig, service, user, rest=("listening", "idle"))
+    assert seen["working"] is True
+    assert "thinking" not in seen["after_reply"] and seen["after_reply"][-1:] == ["listening"]
+    assert set(seen["while_talking"]) == {"listening"}
+    assert "thinking" not in seen["after_second_reply"] and seen["after_second_reply"][-1:] == ["listening"]
+    assert set(played(rig.recording.events)) == {"muse"}

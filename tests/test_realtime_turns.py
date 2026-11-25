@@ -2359,11 +2359,16 @@ def test_muse_moving_reachy_during_its_reply_replaces_reachy_s_own_closing(monke
 async def acknowledges_then_works(sdk, emit, script):
     emit(sdk.Working(True))
     reply_events(sdk, emit, "r1", "Sure, one moment.", voiced(1.0))
-    await asyncio.sleep(3.0)
+    await asyncio.sleep(1.5)
+    emit(sdk.ResponseStarted("tool"))
+    emit(sdk.ResponseDone("tool", "completed"))
+    await asyncio.sleep(1.5)
     emit(sdk.Working(False))
 
 
 def test_after_muse_s_spoken_acknowledgement_reachy_looks_thoughtful_until_muse_s_work_settles(monkeypatch):
+    """Muse says it will take a moment, then calls a tool silently. Working alone, which the robot's SDK can leave
+    on, doesn't count once the acknowledgement ends; the tool's response after it does."""
     rig = rig_for(monkeypatch)
     calls = ScriptedCalls(answer=acknowledges_then_works)
     conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, book me a table for two."), calls)

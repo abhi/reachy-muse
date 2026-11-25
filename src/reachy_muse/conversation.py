@@ -784,13 +784,14 @@ class VoiceConversation:
                 or (self.call is not None and self.call.audible))
 
     def _muse_holds_window(self) -> bool:
-        """In an open call, output that is still playing or queued, or Muse still at work, admits speech without a wake.
+        """In an open call, output still playing or queued, or Muse still at work, admits speech without a wake."""
+        return self.call is not None and (self._has_output() or self._muse_at_work())
 
-        Work counts only once an SDK event follows Muse's last finish, since the robot's SDK can leave Working on.
-        """
+    def _muse_at_work(self) -> bool:
+        """Muse works in the open call. Working counts only once an SDK event follows Muse's last finish, since the
+        robot's SDK can leave Working on."""
         call = self.call
-        return call is not None and (self._has_output()
-                                     or call.at_work and call.last_event_at > self._muse_finished_at)
+        return call is not None and call.at_work and call.last_event_at > self._muse_finished_at
 
     def _renew_call_input(self) -> None:
         """Gate the call's microphone afresh; a turn that holds the old gate keeps it."""
@@ -3091,13 +3092,15 @@ class VoiceConversation:
         await asyncio.to_thread(self.hardware.set_state, "speaking")
 
     async def _muse_quiet(self) -> None:
+        """Muse finished speaking or working. Reachy looks thoughtful only while a turn still waits for Muse: Working
+        alone counts once an SDK event follows this finish, and that event brings the thinking pose."""
         self._muse_finished_at = time.monotonic()
-        working = self.call is not None and (self.call.working or bool(self.call.pending))
+        waiting = self._pending_call_decision()
         if self._wake_deadline is not None:
             self._wake_deadline = time.monotonic() + (self.wake_timeout_s or 10.0)
-        await self._plan(plan.OutputIdle(user_speaking=self._playback.user_speaking, turn_open=working,
+        await self._plan(plan.OutputIdle(user_speaking=self._playback.user_speaking, turn_open=waiting,
                                          wake_open=self._wake_deadline is not None))
-        if working and not self._playback.user_speaking:
+        if waiting and not self._playback.user_speaking:
             self._moments.cue(Moment.THINKING)
 
     def _muse_working(self, working: bool) -> None:
@@ -3107,8 +3110,8 @@ class VoiceConversation:
             self._background(self._muse_quiet())
 
     async def _muse_works(self) -> None:
-        """Muse began working on a request: Reachy looks thoughtful unless it is speaking or hearing the user."""
-        if not self._has_output() and not self._playback.user_speaking:
+        """Muse works on a request: Reachy looks thoughtful unless it is speaking or hearing the user."""
+        if self._muse_at_work() and not self._has_output() and not self._playback.user_speaking:
             await self._look_thoughtful()
 
     async def _look_thoughtful(self) -> None:
