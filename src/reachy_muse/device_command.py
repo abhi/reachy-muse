@@ -50,6 +50,18 @@ class WakeWindow(Enum):
     WOKEN = "woken"          # the wake phrase just woke Reachy; it greets the user unless a request follows
 
 
+class PhotoSubject(Enum):
+    """Whom or what a granted photo request asks Reachy to frame."""
+
+    ME = "me"
+    HELD = "held"
+    US = "us"
+    OTHER = "other"
+    THIS = "this"
+    SCENE = "scene"
+    UNPARSED = "unparsed"
+
+
 @dataclass(frozen=True)
 class Spec:
     needs: Need
@@ -335,6 +347,47 @@ def photo_requested(text: str) -> bool:
     match = _PHOTO.fullmatch(spoken)
     return match is not None and _PHOTO_SHARED.isdisjoint(
         (match["question"] or match["shown"] or match["look"] or "").split())
+
+
+_LOOKS_FACE = r"(?:face|smile|eyes|hair|haircut|glasses|makeup|hat|look)"
+_LOOKS_BODY = r"(?:outfit|shirt|dress|shoes|jacket|tie|sweater|hands?)"
+_RELATIVE = (r"(?:friend|guest|mom|mum|mother|dad|father|wife|husband|partner|son|daughter|brother|sister|kid|boy|girl"
+             r"|baby|grandma|grandpa|grandmother|grandfather|boyfriend|girlfriend|roommate|colleague|neighbou?r)")
+_PHOTO_SLOT = re.compile(rf"\b(?:photo|picture|pic|snapshot|selfie) of ({_SUBJECT})|\bphotograph (?!of\b)({_SUBJECT})")
+# The subject a request names, matched whole and in this order.
+_SLOT_SUBJECTS = tuple((re.compile(pattern), subject) for pattern, subject in (
+    (rf"me|myself|my {_LOOKS_FACE}", PhotoSubject.ME),
+    (rf"me (?:holding|wearing|with) .+|my {_LOOKS_BODY}|what i(?:'m| am) (?:holding|wearing)", PhotoSubject.HELD),
+    (r"us(?: (?:both|all|two))?|(?:both|all|the (?:two|three|four|five)) of us|ourselves|everyone|everybody"
+     r"|the (?:group|family|kids|children|guests)|(?:my|our) (?:family|friends|kids|children|guests)", PhotoSubject.US),
+    (rf"him|her|them|someone else|somebody else|the other person|my {_RELATIVE}(?: [a-z']+)?", PhotoSubject.OTHER),
+    (r"(?:this|these)(?: [a-z']+){0,2}", PhotoSubject.THIS),
+    (r"(?:the|this|my) (?:room|view|table|desk|kitchen|counter|shelf|window|wall|floor)", PhotoSubject.SCENE),
+))
+# Without a named subject, what the request asks about, searched for in this order.
+_ASKED_SUBJECTS = tuple((re.compile(pattern), subject) for pattern, subject in (
+    (r"\bus\b|\bourselves\b|\beveryone\b|\beverybody\b|\bhow many people\b|\bselfie\b", PhotoSubject.US),
+    (rf"\bwhat am i (?:holding|showing|wearing)|\bi(?:'m| am) holding\b|\bin my hands?\b|\bam i holding\b"
+     rf"|\bhow many fingers\b|\bmy {_LOOKS_BODY}\b", PhotoSubject.HELD),
+    (rf"\b(?:see|describe) me\b|\bhow do i look\b|\bdo i look\b|\bmy {_LOOKS_FACE}\b", PhotoSubject.ME),
+    (r"\bthis\b|\bthese\b", PhotoSubject.THIS),
+))
+
+
+def photo_subject(text: str) -> PhotoSubject:
+    """Whom or what a request that ``photo_requested`` granted asks Reachy to frame: the subject it names, as in "a
+    photo of my friend", or else what it asks about, as in "what am I holding?". It never grants a photo.
+
+    A named subject it does not know, such as "my coffee" or "Sarah", is UNPARSED; a request about nobody and
+    nothing in particular is the SCENE.
+    """
+    spoken = _spoken(text)
+    slot = _PHOTO_SLOT.search(spoken)
+    if slot is not None:
+        words = _TRAILING_TAIL.sub("", next(group for group in slot.groups() if group))
+        return next((subject for pattern, subject in _SLOT_SUBJECTS if pattern.fullmatch(words)),
+                    PhotoSubject.UNPARSED)
+    return next((subject for pattern, subject in _ASKED_SUBJECTS if pattern.search(spoken)), PhotoSubject.SCENE)
 
 
 _NAMES = frozenset(("muse", "reachy"))

@@ -1,11 +1,12 @@
 """Which spoken words ask Reachy for a photo, and which never do."""
 
 import asyncio
+from collections import Counter
 
 import pytest
 
-from reachy_muse.device_command import (Commands, DeviceCommand, gaze_requested, names_reachy, photo_requested,
-                                       whole_command)
+from reachy_muse.device_command import (Commands, DeviceCommand, PhotoSubject, gaze_requested, names_reachy,
+                                       photo_requested, photo_subject, whole_command)
 from reachy_muse.turn_timeline import TurnTimeline
 from test_device_command import FakeModel
 
@@ -315,3 +316,59 @@ def test_most_natural_requests_take_a_photo_and_the_rest_are_refused_on_purpose(
         "Is my shirt on inside out?", "Which one is bigger?",
         "Take a photo of this receipt for my records.",  # keeps the photo
     ]
+
+
+# What each granted request asks Reachy to frame.
+SUBJECTS = {
+    PhotoSubject.ME: [
+        "take a photo of me", "take a picture of me please", "take a photo of myself", "photograph me",
+        "take a photo of my face", "take a photo of my hair", "can you see me", "do you see me", "describe me",
+        "how do i look", "do i look okay", "do i look presentable", "what do you think about my hair",
+        "can you see my face", "can you see my hair", "take a selfie of me"],
+    PhotoSubject.HELD: [
+        "what am i holding", "what am i holding up", "what am i wearing", "what am i showing you", "what's in my hand",
+        "what's in my hands", "what do i have in my hand", "what's this i'm holding", "can you see what i'm holding",
+        "how many fingers am i holding up", "how many fingers do you see", "what do you see in my hand",
+        "take a photo of my outfit", "what do you think of my outfit", "take a photo, what am i holding?"],
+    PhotoSubject.US: [
+        "take a photo of us", "take a selfie", "take a selfie of us", "take a picture of us both",
+        "take a photo of both of us", "take a photo of all of us", "take a photo of the two of us",
+        "take a photo of everyone", "take a photo of my family", "take a photo of the kids", "can you see us",
+        "describe us", "how many people do you see", "how many people can you see"],
+    PhotoSubject.OTHER: [
+        "take a photo of my friend", "take a photo of him", "take a photo of her", "take a photo of them",
+        "take a photo of my guest", "take a photo of my mom", "take a photo of my friend sarah", "photograph my friend"],
+    PhotoSubject.THIS: [
+        "take a photo of this", "photograph this", "take a photo of this plant", "what is this", "what's this",
+        "what kind of plant is this", "what color is this", "read this label", "read this", "what does this say",
+        "what does this label say", "tell me what this is", "identify this", "look at this, what is it?",
+        "look at this and tell me what it is", "show this to muse", "show muse this", "can you see this",
+        "describe this"],
+    PhotoSubject.SCENE: [
+        "what do you see", "what can you see", "what am i pointing at", "what do you see here",
+        "what do you see on the table", "what's on the table", "what's on my desk", "what's in front of you",
+        "what are you seeing", "tell me what you see", "describe what you see", "describe the room",
+        "describe what's in front of you", "can you see my dog", "can you see my plant", "take a photo",
+        "take a photo for muse", "send muse a photo", "take a picture and send it to muse",
+        "take a photo and tell me what you see", "take a picture, what do you see?", "take a photo of the room",
+        "take a photo of my desk"],
+    PhotoSubject.UNPARSED: [
+        "take a picture of my screen", "take a photo of my morning coffee", "take a photo of the kids' drawing",
+        "take a photo of sarah", "take a photo of her dog", "take a photo of my friend's dog"],
+}
+
+
+@pytest.mark.parametrize("text, subject", [(text, subject) for subject, phrases in SUBJECTS.items()
+                                           for text in phrases])
+def test_photo_subject_resolves_each_table_row(text, subject):
+    assert (photo_requested(text), photo_subject(text)) == (True, subject)
+
+
+def test_every_granted_request_resolves_to_one_subject():
+    granted = {text: photo_subject(text) for text in [*REQUESTS, *MORE_ADDRESSED_QUESTIONS, *NATURAL, *BACKGROUND]
+               if photo_requested(text)}
+    assert len(granted) == 170
+    assert {subject.value: count for subject, count in Counter(map(photo_subject, REQUESTS)).items()} == {
+        "scene": 27, "this": 23, "unparsed": 9, "held": 7, "me": 5, "us": 2}
+    assert {subject.value: count for subject, count in Counter(granted.values()).items()} == {
+        "scene": 73, "this": 50, "held": 17, "unparsed": 14, "us": 9, "me": 7}
