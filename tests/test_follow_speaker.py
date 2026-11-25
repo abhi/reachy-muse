@@ -210,10 +210,16 @@ def test_the_waker_s_request_heard_during_the_wake_turn_gets_no_second_turn(peop
 
     run(rig, service, user)
     yaws = [(at, controller._pose_parameters(head)["yaw"]) for at, head, _, _ in robot.frames]
-    crossing = {mark: next(at for at, yaw in yaws if yaw >= mark) for mark in (3, 27)}
+
+    def crossed(mark):
+        """When the head's yaw reached ``mark``, between the motion frames either side of it."""
+        (before, low), (after, high) = next(pair for pair in itertools.pairwise(yaws) if pair[1][1] >= mark)
+        return before + (after - before) * (mark - low) / (high - low)
+
     assert [line for line in caplog.messages if line.startswith("Wake direction decision=ok")] != []
-    # The eased 0.65 s wake turn passes 10% (3 degrees) and 90% (27 degrees) of its way 0.3 s apart, once.
-    assert round(crossing[27] - crossing[3], 1) == .3
+    # The eased 0.65 s wake turn passes 10% (3 degrees) and 90% (27 degrees) of its way 0.33 s apart, once; one
+    # restarted between them takes 0.47 s or more.
+    assert crossed(27) - crossed(3) == pytest.approx(.33, abs=.07)
     assert [line for line in caplog.messages if line.startswith("Speaker gaze")] == [
         "Speaker gaze yaw=30.0 body_yaw=10.0 decision=turn"]
     assert followed(caplog) == ["outcome=same delta_deg=0"]
