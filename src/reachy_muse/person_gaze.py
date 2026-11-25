@@ -438,7 +438,8 @@ class PersonGaze:
 
     async def _turn_for_photo(self, point: _AimPoint, deadline: float, stop: Callable[[], bool]) -> bool:
         """Turn toward ``point`` with the held person turn, retrying while other motion refuses it, then wait until
-        the turn ends and the head has kept still; False when Reachy gave up first or ``stop`` was set."""
+        the turn ends and the head has kept still, unless ``stop`` is set first; False when Reachy gave the turn up,
+        or ``stop`` was set before it began."""
         hardware = self.hardware
         while not hardware.look_at_person(point.yaw, 0.0 if point.pitch is None else point.pitch):
             if stop() or time.monotonic() >= deadline - _AIM_BUSY_MARGIN_S:
@@ -446,9 +447,8 @@ class PersonGaze:
             await asyncio.sleep(_AIM_RETRY_S)
         self._aim_turned = True
         await self._until(lambda: not hardware.person_turning, min(deadline, time.monotonic() + _AIM_TURN_S), stop)
-        if stop():
-            return False
-        await asyncio.sleep(max(0.0, min(_AIM_STILL_S, deadline - time.monotonic())))
+        if not stop():
+            await asyncio.sleep(max(0.0, min(_AIM_STILL_S, deadline - time.monotonic())))
         return True
 
     @staticmethod

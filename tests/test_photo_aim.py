@@ -634,8 +634,8 @@ def test_never_mind_during_the_aim_reads_no_photo_frame(people, caplog):
 
     events = run(rig, service, user, rest=("listening", "idle"))
     assert camera.shots == []
-    assert {key: fields(photo_lines(caplog)[0])[key] for key in ("outcome", "aim")} == {
-        "outcome": "cancelled", "aim": "cancelled"}
+    assert {key: fields(photo_lines(caplog)[0])[key] for key in ("outcome", "aim", "turns")} == {
+        "outcome": "cancelled", "aim": "cancelled", "turns": "1"}
     assert sent(events) == []
     assert played(events) == ["tts:Okay, I'll drop that."]
 
@@ -674,7 +674,7 @@ def test_muse_s_move_waits_out_the_turn_of_an_aim_never_mind_ends(people, caplog
     run(rig, service, user, rest=("listening", "idle"))
     assert holds == [(True, False), (False, True)]
     assert moved["result"]["ok"] is True, moved["result"]
-    assert fields(photo_lines(caplog)[0])["aim"] == "cancelled"
+    assert {key: fields(photo_lines(caplog)[0])[key] for key in ("aim", "turns")} == {"aim": "cancelled", "turns": "1"}
     yaws = [controller._pose_parameters(pose)["yaw"] for _, pose, _, _ in list(robot.frames)]
     faced = next(index for index, yaw in enumerate(yaws) if round(yaw) == 30)
     assert (round(max(yaws[:faced + 1])), round(min(yaws[faced:]))) == (30, -20)
