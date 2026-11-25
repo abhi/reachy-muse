@@ -610,9 +610,15 @@ class RealtimeCall:
         self._closing = False
         self._transcripts: dict[Optional[str], str] = {}
 
-    def accept_turn(self, *, endpoint_at: float, speech_end_at: float, words: int, awaits_answer: bool = True) -> bool:
+    def accept_turn(self, *, endpoint_at: float, speech_end_at: float, words: int, awaits_answer: bool = True,
+                    queued: bool = False) -> bool:
+        """``queued``: the turn's audio has only now gone into the microphone feed, which sends it in real time, so
+        its clock starts once the feed has sent it."""
         self.turns += 1
-        turn = PendingTurn(self.turns, endpoint_at, speech_end_at, words, self.feed.sent, endpoint_at)
+        clock_from = endpoint_at
+        if queued:
+            clock_from = max(endpoint_at, time.monotonic() + self.feed.backlog_bytes / (2 * SAMPLE_RATE))
+        turn = PendingTurn(self.turns, endpoint_at, speech_end_at, words, self.feed.sent, clock_from)
         replied_at = self.speaker.reply_started
         if replied_at is not None and replied_at >= speech_end_at:
             self._outcome(turn, "answered", replied_at)
@@ -709,9 +715,10 @@ class RealtimeCall:
     def check_pending(self, *, paused: bool, window_expired: bool) -> tuple[list[int], Optional[str]]:
         """Advance the pending turns' clocks: the turns now due a waiting cue, and why to recover the call, if so.
 
-        A turn's clock runs from its endpoint, but not before the call is ready, while ``paused``, or
-        while Muse shows progress. A later turn is a retry only if it ended after the earlier one's
-        cue. ``window_expired`` recovers the call only while the clock runs, once a turn had its cue.
+        A turn's clock runs from its endpoint, or from when Muse has all of its audio, if that comes later,
+        but not before the call is ready, while ``paused``, or while Muse shows progress. A later turn is
+        a retry only if it ended after the earlier one's cue. ``window_expired`` recovers the call only
+        while the clock runs, once a turn had its cue.
         """
         now = time.monotonic()
         running = self.ready_at is not None and not paused and not self._progress_suspended(now)
@@ -719,7 +726,7 @@ class RealtimeCall:
         for turn in self.pending:
             start = max(turn.checked_at, self.ready_at or now)
             elapsed = max(0.0, now - start)
-            turn.checked_at = now
+            turn.checked_at = max(now, turn.checked_at)
             if self.last_event_at is not None and self.last_event_at >= start:
                 turn.event_silence_s = 0.0
                 event_elapsed = now - self.last_event_at

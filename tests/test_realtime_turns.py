@@ -1672,6 +1672,52 @@ def test_a_device_command_over_a_long_reply_is_obeyed_and_muse_never_answers_it(
     assert (voice_to_muse[0] > 0, muse_played_after(rig, obeyed[0])) == (heard, 0.0)
 
 
+def test_reachy_never_nods_that_muse_is_slow_while_a_request_its_endpoint_confirmed_still_reaches_muse(
+        monkeypatch, caplog):
+    """A long request said over Muse's reply in short words, with a pause in it, is confirmed only at Reachy's
+    endpoint, and reaches Muse at the SDK's pace for longer than Reachy waits before nodding that Muse is slow. Muse
+    answers once the request has gone 0.6 s without voice, as its own voice detector does. Reachy's wait starts once
+    Muse has the whole request, so it never nods."""
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    replies = []
+
+    async def answer(sdk, emit, script):
+        replies.append(len(replies) + 1)
+        if replies == [1]:
+            reply_events(sdk, emit, "r1", LONG_REPLY, voiced(12.8))
+        elif replies == [1, 2]:
+            while True:
+                loud = [at for frame, at in zip(script.frames, script.frame_times)
+                        if np.frombuffer(frame, "<i2").max() >= 5000]
+                if time.monotonic() - loud[-1] >= .6:
+                    break
+                await asyncio.sleep(.02)
+            reply_events(sdk, emit, "r2", "A navy shirt would work well.", voiced(2))
+
+    calls = ScriptedCalls(answer=answer, every_turn=True, paced=True)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=10)
+    conversation.silence_s = 2.0
+    link = companion_hearing(conversation, forced_endpoints=True)
+    gapped = STRETCHES["each word its own stretch"]
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, 2.5)
+        caplog.clear()
+        await say_over_reply(rig, link, "Reachy, I'm going to a dinner tonight at a fancy place downtown, what "
+                             "should I wear to look good?",
+                             gapped[:8] + ((280, 60),) + gapped[:2] + ((280, 1000),) + gapped[:6] + ((280, 0),))
+        await room(rig, 12)
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=60)
+    assert [line.split(" voice_to_reply_ms=")[0] for line in caplog.messages
+            if line.startswith("Realtime turn ordinal=2 ")] == ["Realtime turn ordinal=2 outcome=answered words=19"]
+
+
 NUMBER_REPLY = ("Right now it's 72 degrees and sunny, and by eight tonight it will drop to 64, so bring a jacket "
                 "if you go out later.")
 

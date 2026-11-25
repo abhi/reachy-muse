@@ -793,9 +793,22 @@ window closes, so Reachy's local chat does not answer greetings in a call.
   for at least 120 ms. Two words are required, except for stop commands. Reply
   transcript deltas filter echo, including single words and quoted stop commands.
   Until that evidence arrives, Muse receives silence; a confirmed interruption
-  releases up to two seconds of buffered audio so its opening words survive.
-  Without verified hardware echo
+  releases up to eight seconds of buffered audio so its opening words survive.
+  Held sound that the recognizer heard no words in is dropped after 0.75 s of
+  quiet. Without verified hardware echo
   cancellation, the call is half duplex and Muse's voice mutes the microphone.
+- Words said over Muse's reply in short stretches, or whose partial words come
+  late, are confirmed instead by the turn's final words. These need 300 ms of
+  voice, and must not be mostly Muse's own words, as Muse's echo transcribed
+  with a word changed would be. Such a request goes to Muse only if Reachy does
+  not take it as a device command or photo request, and it comes late. Muse's
+  reply plays on until Reachy's end of the turn, 1.5 to 2 s after the last
+  word, and the request then reaches Muse in real time, taking as long as it
+  took to say. A nine-word request finishes reaching Muse about 4.7 s after its
+  last word, and Muse answers after that. Reachy nods when Muse has not answered
+  a request after 4 s, and for such a request it counts from when Muse has all
+  of it. A reply that Muse begins before such a request is confirmed ends the
+  turn, and the request is dropped.
 - The call ends when the follow-up window closes, or when Muse ends it.
 - If a call fails before any audio reached Muse, the request goes to Muse by
   chat. If Muse may have heard it, Reachy asks the user to say it again and the

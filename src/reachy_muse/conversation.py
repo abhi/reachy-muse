@@ -2947,7 +2947,8 @@ class VoiceConversation:
             return await self._photo_in_call(endpoint, request, text, follow_up=follow_up)
         # The turn is Muse's: words that only its endpoint confirmed reach Muse now, and cut off the reply they were
         # said over.
-        if request.call_input is not None and request.call_input.release() and request.call.audible:
+        released = request.call_input is not None and request.call_input.release()
+        if released and request.call.audible:
             await request.call.barge_in()
         if (follow_up and self._photo is not None
                 and classify_follow_up(text) in (FollowUp.CANCEL, FollowUp.SILENCE)):
@@ -2964,7 +2965,7 @@ class VoiceConversation:
         # A short remark over Muse's own reply, such as "okay, thanks", can cut it off but asks for no answer.
         pending = call.accept_turn(endpoint_at=request.timeline.marks["endpoint"],
                                    speech_end_at=request.timeline.marks["speech_end"], words=len(text.split()),
-                                   awaits_answer=not (request.over_muse and word_count(text) <= 2))
+                                   awaits_answer=not (request.over_muse and word_count(text) <= 2), queued=released)
         if call.failed:
             await self._call_lost(call)
             return TurnOutcome.EMPTY
