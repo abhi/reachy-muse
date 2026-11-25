@@ -435,7 +435,7 @@ class PersonGaze:
                 found.yaw, 0.0 if found.pitch is None else found.pitch):
             return replace(aim, outcome="unlocked")
         await self._until(lambda: not hardware.person_turning, time.monotonic() + _AIM_WAIT_S, stop)
-        return replace(aim, outcome="corrected", turns=2)
+        return replace(aim, outcome="cancelled" if stop() else "corrected", turns=2)
 
     async def _turn_for_photo(self, point: _AimPoint, deadline: float, stop: Callable[[], bool]) -> bool:
         """Turn toward ``point`` with the held person turn, retrying while other motion refuses it, then wait until

@@ -304,6 +304,28 @@ def test_a_subject_who_moves_during_the_aim_gets_one_correction(people, caplog):
     assert scene.passes == 2
 
 
+def test_never_mind_during_the_correction_cancels_the_aim(people):
+    """The owner steps 12 degrees after the first pass, and "never mind" lands as Reachy turns to correct for it."""
+    rig, controller, robot, scene = people
+    moves_after_the_first_pass(scene, [(18, .35), (-25, .12)])
+    turns = []
+    look_at_person = rig.hardware.look_at_person
+
+    def turn(yaw, pitch):
+        turns.append(round(math.degrees(yaw)))
+        return look_at_person(yaw, pitch)
+
+    rig.hardware.look_at_person = turn
+    gaze = PersonGaze(rig.hardware, hearing=lambda: None)
+
+    async def photo_of_me():
+        async with gaze.photo_aim(PhotoSubject.ME, None, time.monotonic() + 2.5, stop=lambda: len(turns) == 2) as aim:
+            return aim
+
+    aim = asyncio.run(asyncio.wait_for(photo_of_me(), 10))
+    assert (aim.outcome, aim.turns, turns) == ("cancelled", 2, [30, 18])
+
+
 def test_a_group_member_the_second_pass_misses_stays_in_the_frame(people, caplog):
     """The friend at +10 is missed by the confirming pass, as small faces often are, so Reachy keeps framing them
     with the owner at +30 rather than turning to the owner alone."""
