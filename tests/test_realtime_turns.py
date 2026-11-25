@@ -1582,17 +1582,28 @@ def test_a_device_command_over_a_long_reply_is_obeyed_and_muse_never_answers_it(
     assert (voice_to_muse[0] > 0, muse_played_after(rig, obeyed[0])) == (heard, 0.0)
 
 
-@pytest.mark.parametrize("stretches", list(STRETCHES))
+NUMBER_REPLY = ("Right now it's 72 degrees and sunny, and by eight tonight it will drop to 64, so bring a jacket "
+                "if you go out later.")
+
+
+@pytest.mark.parametrize("reply, words, stretches", [
+    *((LONG_REPLY, "Tell me what you're wearing and I'll suggest something", stretches) for stretches in STRETCHES),
+    (LONG_REPLY, "Tell me what you are wearing and I'll suggest", "each word its own stretch"),
+    (NUMBER_REPLY, "it's seventy two degrees and sunny and by eight", "each word its own stretch"),
+    (LONG_REPLY, "Tell me what your wearing and I'll suggest something", "each word its own stretch"),
+    (LONG_REPLY, "wearing suggest something tonight ask about the weather first", "each word its own stretch")],
+    ids=[*STRETCHES, "a contraction written out", "a number written out", "a substitution", "fragments"])
 def test_muse_s_echo_heard_in_gapped_stretches_over_its_reply_never_reaches_it_at_reachy_s_endpoint(
-        monkeypatch, caplog, stretches):
+        monkeypatch, caplog, reply, words, stretches):
     """As the request above, but the sound is Muse's own reply coming back through the speaker, and the companion
-    hears its words: with the robot's 2 s of silence, the turn's words at Reachy's endpoint confirm nothing."""
+    hears its words: with the robot's 2 s of silence, the turn's words at Reachy's endpoint confirm nothing. So too
+    when the companion writes a word differently from Muse's transcript, or hears only some of the words."""
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
     rig.hardware.echo_cancelled_input = True
 
     async def answer(sdk, emit, script):
-        reply_events(sdk, emit, "r1", LONG_REPLY, voiced(12.8))
+        reply_events(sdk, emit, "r1", reply, voiced(12.8))
 
     calls = ScriptedCalls(answer=answer)
     conversation = realtime_service(rig, None, calls, wake_timeout_s=10)
@@ -1607,8 +1618,7 @@ def test_muse_s_echo_heard_in_gapped_stretches_over_its_reply_never_reaches_it_a
         await room(rig, 3)
         caplog.clear()
         before = len(calls.frames)
-        await say_over_reply(rig, link, "Tell me what you're wearing and I'll suggest something", STRETCHES[stretches],
-                             sound=muse_heard(1))
+        await say_over_reply(rig, link, words, STRETCHES[stretches], sound=muse_heard(1))
         await room(rig, 1.5)
         heard.append((voiced_ms(calls.frames[before:]), echo_frames(calls.frames[before:]), calls.barge_ins, [
             line for line in caplog.messages

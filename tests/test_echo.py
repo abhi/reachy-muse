@@ -30,6 +30,41 @@ def test_words_heard_over_reachys_lines_are_an_echo_only_when_the_lines_hold_the
     assert is_echo(text, heard_over) is expected
 
 
+LONG_REPLY = ("I can't see you from here, but I can still help. Tell me what you're wearing and I'll suggest "
+              "something for tonight, or ask me about the weather first.")
+NUMBER_REPLY = ("Right now it's 72 degrees and sunny, and by eight tonight it will drop to 64, so bring a jacket "
+                "if you go out later.")
+STORY = ("Once upon a time there was a little robot who lived in a workshop by the sea. Every morning it would roll "
+         "to the window and watch the boats come in, and it would wonder what it would be like to sail. One day the "
+         "old fisherman who ran the workshop asked if it would like to come along, and the robot said yes right away. "
+         "They packed a lunch, checked the weather, and set out before the sun was up. Can you guess what it asked "
+         "the fisherman for the next morning? It asked if it could take a picture of the two of them on the boat, so "
+         "it would never forget the day. Do you want me to tell you another one, or would you like to know more "
+         "about the sea?")
+
+
+@pytest.mark.parametrize("text, line, expected", [
+    ("Tell me what you're wearing and I'll suggest something", LONG_REPLY, True),
+    ("Tell me what you are wearing and I'll suggest", LONG_REPLY, True),
+    ("it's seventy two degrees and sunny and by eight", NUMBER_REPLY, True),
+    ("Tell me what your wearing and I'll suggest something", LONG_REPLY, True),
+    ("wearing suggest something tonight ask about the weather first", LONG_REPLY, True),
+    ("Reachy, what should I wear to the dinner tonight?", LONG_REPLY, False),
+    ("Can you take a photo of me now, Reachy?", LONG_REPLY, False),
+    ("Got it.", LONG_REPLY, False),
+    ("Reachy, can you take a photo of me now?", STORY, False),
+    ("and the one after that", STORY, False),
+    ("", LONG_REPLY, False),
+], ids=["exact", "a contraction written out", "a number written out", "a substitution", "fragments",
+        "a request", "a request opening with a word of the reply", "a remark", "a request over a long story",
+        "a remark over a long story", "no words"])
+def test_muse_s_words_written_back_with_some_changed_or_missed_are_its_echo_and_a_request_is_not(
+        text, line, expected):
+    from reachy_muse.follow_up import echoes_playback
+
+    assert echoes_playback(text, (line,)) is expected
+
+
 @pytest.mark.parametrize("text, heard_over", [
     ("Not eight, nine.", "Eight, not nine."),
     ("Yes.", "Yes, I can do that."),

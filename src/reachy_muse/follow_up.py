@@ -128,6 +128,32 @@ def repeats_playback(text: str, heard_over: Tuple[str, ...]) -> bool:
     return bool(words) and _matches_spoken_phrase(words, heard_over)
 
 
+def echoes_playback(text: str, heard_over: Tuple[str, ...]) -> bool:
+    """Whether the words are mostly a line heard over, as a recognizer writes that line back with words changed,
+    split or missed: at least three in five of them occur in the line's order, within a stretch of it twice as long
+    as they are. The stretch keeps a long line's scattered common words from adding up to the user's request."""
+    words = spoken_words(text)
+    if not words:
+        return False
+    known = set(words)
+    for line in heard_over:
+        said = spoken_words(line)
+        for start, word in enumerate(said):
+            if word in known and 5 * _in_order(words, said[start:start + 2 * len(words)]) >= 3 * len(words):
+                return True
+    return False
+
+
+def _in_order(words: List[str], said: List[str]) -> int:
+    """How many of ``words`` ``said`` holds in the same order, gaps allowed: their longest common subsequence."""
+    best = [0] * (len(said) + 1)
+    for word in words:
+        previous = best[:]
+        for index, other in enumerate(said, 1):
+            best[index] = previous[index - 1] + 1 if word == other else max(previous[index], best[index - 1])
+    return best[-1]
+
+
 def interrupts_playback(text: str, heard_over: Tuple[str, ...]) -> bool:
     """Require distinct recognized words before microphone VAD can pause output.
 

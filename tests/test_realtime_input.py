@@ -164,9 +164,10 @@ def test_a_turn_reachy_takes_at_its_endpoint_never_reaches_muse_and_later_speech
 
 
 @pytest.mark.parametrize("voice, partial, final", [
-    (True, "", "sunny tomorrow"), (True, "", "Okay."), (False, "", "What about Friday then?"),
-    (True, "sunny tomorrow", "What about Friday then?")],
-    ids=["echo words", "one word", "no voice", "voice held only under echo words"])
+    (True, "", "sunny tomorrow"), (True, "", "It'll be sunny tomorrow."), (True, "", "Okay."),
+    (False, "", "What about Friday then?"), (True, "sunny tomorrow", "What about Friday then?")],
+    ids=["echo words", "echo with a word written differently", "one word", "no voice",
+         "voice held only under echo words"])
 def test_a_turn_s_final_words_release_nothing_without_distinct_words_over_held_voice(voice, partial, final):
     feed = Feed()
     gate = CallInput(feed, 1000)

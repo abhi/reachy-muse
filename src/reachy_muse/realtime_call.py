@@ -30,7 +30,7 @@ from musegadget.streaming import HTTPStatusError
 from reachy_muse.motion.reply_alignment import SAMPLE_RATE
 from reachy_muse.motion.reply_motion import Mark, ReplyMotion
 from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlayback
-from reachy_muse.follow_up import FollowUp, classify_follow_up, repeats_playback, word_count
+from reachy_muse.follow_up import FollowUp, classify_follow_up, echoes_playback, repeats_playback, word_count
 from reachy_muse.person_gaze import MuseActivity
 
 log = logging.getLogger(__name__)
@@ -128,10 +128,11 @@ class CallInput:
         return False
 
     def finish(self, text: str, heard_over: tuple[str, ...]) -> bool:
-        """Confirm on a finished turn's words and all its held voice. The audio stays held, with whatever follows it,
+        """Confirm on a finished turn's words and all its held voice, unless the words are mostly Muse's own, as its
+        voice heard back and written with a word changed would be. The audio stays held, with whatever follows it,
         until ``release`` or ``discard``: the utterance can go on past the turn."""
         if (not self.confirmed and self._voiced_samples >= BARGE_IN_SPEECH_S * self.rate
-                and self._distinct(text, heard_over)):
+                and self._distinct(text, heard_over) and not echoes_playback(text, heard_over)):
             self.confirmed = self._held_for_turn = True
         return self.confirmed
 
