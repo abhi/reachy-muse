@@ -176,21 +176,24 @@ KEPT = "aim=view bearing=no source=none faces=none turns=0 off_deg=none"
 # The listening pose looks 3 degrees up; a turn toward someone levels the head.
 STRAIGHT_AHEAD = [(0, -3, 0)]
 FRAMED = [
-    ("take a photo of me", None, [(30, 0, 10)], f"subject=me {LOCKED} turns=1 off_deg=0", 2),
-    ("can you see me?", None, [(30, 0, 10)], f"subject=me {LOCKED} turns=1 off_deg=0", 2),
-    ("take a photo of me", [(30, .35, 10), (-25, .12)], [(30, -10, 10)], f"subject=me {LOCKED} turns=1 off_deg=0", 2),
-    ("what am I holding?", [(30, .35, 10), (-25, .12)], [(30, 0, 10)], f"subject=held {LOCKED} turns=1 off_deg=0",
-     2),
+    pytest.param("take a photo of me", None, [(30, 0, 10)], f"subject=me {LOCKED} turns=1 off_deg=0", 2, id="me"),
+    pytest.param("can you see me?", None, [(30, 0, 10)], f"subject=me {LOCKED} turns=1 off_deg=0", 2,
+                 id="see_me"),
+    pytest.param("take a photo of me", [(30, .35, 10), (-25, .12)], [(30, -10, 10)],
+                 f"subject=me {LOCKED} turns=1 off_deg=0", 2, id="me_standing"),
+    pytest.param("what am I holding?", [(30, .35, 10), (-25, .12)], [(30, 0, 10)],
+                 f"subject=held {LOCKED} turns=1 off_deg=0", 2, id="held_standing"),
     # The middle of the two, +5, is already within 6 degrees of the camera's axis.
-    ("take a photo of my friend", [(30, .35), (-20, .12)], STRAIGHT_AHEAD,
-     f"subject=other {LOCKED} turns=0 off_deg=5", 1),
-    ("take a photo of my friend", [(30, .35), (-10, .12)], [(10, 0, 0)], f"subject=other {LOCKED} turns=1 off_deg=0",
-     2),
-    ("take a photo of us", [(30, .35), (10, .12)], [(20, 0, 0)], f"subject=us {LOCKED} turns=1 off_deg=0", 2),
-    ("what is this?", None, STRAIGHT_AHEAD, f"subject=this {KEPT}", 0),
-    ("what do you see?", None, STRAIGHT_AHEAD, f"subject=scene {KEPT}", 0),
-    ("what am I pointing at?", None, STRAIGHT_AHEAD, f"subject=scene {KEPT}", 0),
-    ("take a photo of my coffee", None, STRAIGHT_AHEAD, f"subject=unparsed {KEPT}", 0),
+    pytest.param("take a photo of my friend", [(30, .35), (-20, .12)], STRAIGHT_AHEAD,
+                 f"subject=other {LOCKED} turns=0 off_deg=5", 1, id="friend_centred"),
+    pytest.param("take a photo of my friend", [(30, .35), (-10, .12)], [(10, 0, 0)],
+                 f"subject=other {LOCKED} turns=1 off_deg=0", 2, id="friend"),
+    pytest.param("take a photo of us", [(30, .35), (10, .12)], [(20, 0, 0)], f"subject=us {LOCKED} turns=1 off_deg=0",
+                 2, id="us"),
+    pytest.param("what is this?", None, STRAIGHT_AHEAD, f"subject=this {KEPT}", 0, id="this"),
+    pytest.param("what do you see?", None, STRAIGHT_AHEAD, f"subject=scene {KEPT}", 0, id="scene"),
+    pytest.param("what am I pointing at?", None, STRAIGHT_AHEAD, f"subject=scene {KEPT}", 0, id="pointing"),
+    pytest.param("take a photo of my coffee", None, STRAIGHT_AHEAD, f"subject=unparsed {KEPT}", 0, id="unparsed"),
 ]
 
 
