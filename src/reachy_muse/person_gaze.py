@@ -617,16 +617,17 @@ def _span(members) -> float:
 
 
 def _refind(point: _AimPoint, subject: PhotoSubject, view) -> _AimPoint | None:
-    """The subject in a later pass ``view``, or None when it is gone: a group's members each by the face within
-    15 degrees of its yaw, keeping the speaker's bearing; the speaker by the face nearest their bearing within
-    20 degrees, framed as ``subject`` asks; or else the face nearest the point within 15 degrees of yaw."""
+    """The subject in a later pass ``view``, or None when it is gone. A group's members are found by the faces
+    within 15 degrees of their yaws, and any the pass misses stay where they were, as the speaker's bearing does;
+    the group is gone only when the pass finds none of them. The speaker is found by the face nearest their bearing
+    within 20 degrees, framed as ``subject`` asks, and anyone else by the face nearest the point within 15 degrees
+    of yaw."""
     if point.members:
-        found = []
-        for yaw, pitch in point.members:
-            face = None if pitch is None else _nearest(view.faces, yaw, _AIM_FOUND)
-            if pitch is None or face is not None:
-                found.append(((yaw, None) if face is None else (face.yaw, face.pitch), point.source))
-        return _group(found) if any(pitch is not None for (_, pitch), _ in found) else None
+        faces = [None if pitch is None else _nearest(view.faces, yaw, _AIM_FOUND) for yaw, pitch in point.members]
+        if not any(faces):
+            return None
+        return _group([(member if face is None else (face.yaw, face.pitch), point.source)
+                       for member, face in zip(point.members, faces)])
     if point.source == "bearing":
         face = _nearest(view.faces, point.yaw, _SPEAKER_ARC)
         return None if face is None else _AimPoint(face.yaw, None if subject in _LEVEL else face.pitch, "bearing")

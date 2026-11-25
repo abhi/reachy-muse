@@ -1123,15 +1123,17 @@ they go to Muse as ordinary requests.
   even while other vision pauses for speech, turns, keeps still for 0.2 seconds
   and looks again. The photo is taken once the subject is within 6 degrees of
   the camera's center, or as near as the head turns; if the subject moved,
-  Reachy turns once more. With one turn, the photo is taken about 1.3 seconds
-  after your request. The aim takes at most 2.5 seconds, and past that the photo
-  shows wherever Reachy points. Reachy holds the camera still until it has the
-  frame; the thinking pose and other expressive motion are faded by the turn,
-  or held at once without one. Afterwards Reachy keeps facing whoever it
-  framed. A gaze held on another person ends first, as it does for any next
-  request. Without [local face following](#local-face-following), Reachy turns
-  level toward your voice for "me", "what am I holding?" and "us", and keeps its
-  view otherwise.
+  Reachy turns once more. Someone in a group whom the second look misses is
+  framed where the first look saw them. With one turn, the photo is taken
+  about 1.3 seconds after your request. The aim takes at most 2.5 seconds, and
+  past that the photo shows wherever Reachy points. Reachy holds the camera
+  still until it has the frame; the thinking pose and other expressive motion
+  are faded by the turn, or held at once without one. Afterwards Reachy keeps
+  facing whoever it framed. A gaze held on another person ends first, as it
+  does for any next request. Without
+  [local face following](#local-face-following), Reachy turns level toward
+  your voice for "me", "what am I holding?" and "us", and keeps its view
+  otherwise.
 - From the aim until the frame is read, no other turn or motion starts. Face
   following stops steering the head but leaves it facing whoever it followed,
   so a photo of that person needs no turn. Muse's moves and expressions wait

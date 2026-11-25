@@ -300,6 +300,17 @@ def test_a_subject_who_moves_during_the_aim_gets_one_correction(people, caplog):
     assert scene.passes == 2
 
 
+def test_a_group_member_the_second_pass_misses_stays_in_the_frame(people, caplog):
+    """The friend at +10 is missed by the confirming pass, as small faces often are, so Reachy keeps framing them
+    with the owner at +30 rather than turning to the owner alone."""
+    rig, controller, robot, scene = people
+    scene.faces, scene.doa = [(30, .35), (10, .12)], None
+    moves_after_the_first_pass(scene, [(30, .35)])
+    camera, _ = ask(people, caplog, "chat", "take a photo of us")
+    assert camera.shots == [(20, 0, 0)]
+    assert aimed(caplog) == aim_fields("subject=us aim=locked bearing=no source=fresh faces=2 turns=1 off_deg=0")
+
+
 def test_a_camera_pass_never_steers_the_head_while_the_view_is_held(people, caplog):
     """The owner steps 4 degrees further after the first pass, and the photo thread starts late. The second pass
     finds them within the tolerance, and the face follower would have eased the head toward them meanwhile."""
