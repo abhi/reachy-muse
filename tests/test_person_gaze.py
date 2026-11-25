@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from reachy_muse.capabilities import Partial
 from reachy_muse.device_command import gaze_requested
 from reachy_muse.hardware import ReachyController
 from reachy_muse.local_face_tracking import FaceFollower, _Face
@@ -1090,6 +1091,47 @@ def test_rejected_echo_keeps_person_gaze_through_the_reply(people, caplog):
     run(rig, service, user)
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
         'Reachy gaze request outcome=turned source=fresh faces=2']
+
+
+def test_a_remark_only_its_endpoint_confirms_keeps_person_gaze_through_the_reply(people, caplog):
+    """Reachy faces the friend while Muse greets them, and the user says "got it" over the greeting, its partial only
+    the first word. Only the turn's final words confirm it, and it asks Muse nothing, so Reachy drops it: Muse's
+    greeting plays on whole, and Reachy keeps facing the friend."""
+    rig, controller, robot, scene = people
+    rig.hardware.echo_cancelled_input = True
+    caplog.set_level('INFO')
+    reply = voiced(3)
+
+    async def answer(sdk, emit, script):
+        await rig.wait_until_or_timeout(lambda: controller._person_hold)
+        reply_events(sdk, emit, 'r1', 'Hello, nice to meet you!', reply)
+
+    class FirstWordFirst(StreamingTranscripts):
+        def open_turn(self):
+            turn = super().open_turn()
+            if turn.partial.text == 'Got it.':
+                turn.partial = Partial('Got', 1, turn.partial.utterance_id)
+            return turn
+
+    calls = ScriptedCalls(answer=answer)
+    service = realtime_service(rig, FirstWordFirst('Say hi to my friend.', 'Got it.'), calls)
+
+    async def user():
+        await say_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: 'muse' in played(rig.recording.events))
+        await say_live(rig, voiced_s=.5)
+        await rig.wait_until_or_timeout(lambda: any('drop=barge_in' in line for line in caplog.messages))
+        assert controller._person_hold
+        await rig.wait_until_or_timeout(lambda: not service._voice[1].call.audible, 5)
+        assert controller._person_hold
+        assert math.degrees(controller.head_yaw) == pytest.approx(-25, abs=.2)
+
+    run(rig, service, user)
+    assert calls.barge_ins == 0
+    assert [line for line in caplog.messages if line.startswith('Realtime command transcript=arrived words=2 ')] == [
+        'Realtime command transcript=arrived words=2 wake_prefix=none outcome=none drop=barge_in']
+    np.testing.assert_array_equal(np.concatenate(rig.hardware.played),
+                                  np.frombuffer(reply, '<i2').astype(np.float32) / 32768)
 
 
 @pytest.mark.parametrize('text, logged', [

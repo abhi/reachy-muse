@@ -38,7 +38,8 @@ from reachy_muse.device_command import (COMMANDS, VOLUME_FAILED, DeviceCommand, 
                                        command_after_wake, executable, names_reachy, photo_requested,
                                        whole_command)
 from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, interrupts_playback, only_fillers,
-                                   request_topic, too_short_for_follow_up, repeats_playback, word_count)
+                                   request_topic, too_short_for_follow_up, repeats_playback, word_count,
+                                   words_besides_back_channels)
 from reachy_muse.contract.intent import Intent, maybe_chat
 from reachy_muse.morning_briefing import MorningRoutine, briefing_lines
 from reachy_muse.recent import Recent
@@ -1527,8 +1528,10 @@ class VoiceConversation:
                 # A reply Muse began after the turn's last word ended the turn before Muse heard any of it.
                 if (self.call is call and self._muse_began_at < recorded.speech_end_at
                         and gate.finish(text, recorded.heard_over)):
-                    self._gaze.admit(recorded.gaze_generation)
-                    if not confirmed:
+                    if confirmed:
+                        self._gaze.admit(recorded.gaze_generation)
+                    else:
+                        # The turn takes the gaze in _realtime_turn, once Reachy knows whether it drops the words.
                         call_holds[recorded.ended] = gate
                 else:
                     transcript = endpoint.text if endpoint is not None else None
@@ -2935,22 +2938,37 @@ class VoiceConversation:
                 self._log_realtime_command(endpoint.text, decision,
                                            transcript=request.timeline.facts.get("command_transcript"), drop="echo")
             return TurnOutcome.EMPTY
+        # A remark such as "got it", said over Muse's reply in words only its endpoint confirmed, would cut Muse off two
+        # seconds after it, so it is dropped as unconfirmed unless it is a command: until then it takes neither the gaze
+        # nor the first request after the wake phrase. A short question such as "what's this?" asks for a photo.
+        remark = (gate is not None and request.over_muse and words_besides_back_channels(text) <= 2
+                  and classify_follow_up(text) not in (FollowUp.CANCEL, FollowUp.SILENCE) and not photo_requested(text))
+        if gate is not None and not remark:
+            self._gaze.admit(request.gaze_generation)
         if text.strip():
-            self._claim_wake_request(text, request.timeline)
+            if not remark:
+                self._claim_wake_request(text, request.timeline)
         elif prefix != "none" and not request.open_mic:
             # The wake phrase alone opens the next request to Reachy, unless Muse kept the microphone open to hear it.
             self._open_wake_request()
         self._presence.mark("voice", started)
         command = await self._obey(text, started, request.timeline) if text.strip() else None
+        if remark and command is not None:
+            self._gaze.admit(request.gaze_generation)
+            self._claim_wake_request(text, request.timeline)
         photo = command is None and not endpoint.partial and self._photo_requested(text, request.timeline)
         # Muse still owes an answer to an earlier call turn; a barge-in would cut it off.
         waiting = photo and bool(request.call.pending)
+        unconfirmed = remark and command is None
         if request.timeline.facts.get("command_transcript") != "deadline":
             self._log_realtime_command(endpoint.text, decision, transcript=request.timeline.facts.get("command_transcript"),
                                        outcome=command.name if command is not None
-                                       else "PHOTO" if photo and not waiting else "none")
+                                       else "PHOTO" if photo and not waiting else "none",
+                                       drop="barge_in" if unconfirmed else "none")
         if command is not None:
             return TurnOutcome.ACCEPTED
+        if unconfirmed:
+            return TurnOutcome.EMPTY
         if waiting:
             PhotoLog("realtime", "busy").write()
             await self._announce(BUSY_CUE, started=None, defer_playback=True)

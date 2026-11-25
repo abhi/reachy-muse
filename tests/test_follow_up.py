@@ -1,6 +1,6 @@
 import pytest
 
-from reachy_muse.follow_up import FollowUp, classify_follow_up, request_topic
+from reachy_muse.follow_up import FollowUp, classify_follow_up, request_topic, words_besides_back_channels
 
 
 @pytest.mark.parametrize("utterance, expected", [
@@ -67,3 +67,9 @@ def test_only_fillers_hesitate_and_ask_nothing(text, fillers):
     from reachy_muse.follow_up import only_fillers
 
     assert only_fillers(text) is fillers
+
+
+@pytest.mark.parametrize("text, words", [
+    ("Got it.", 2), ("Oh, nice.", 1), ("Mm-hmm, okay.", 1), ("Uh huh.", 0), ("Um, what time is it?", 4), ("", 0)])
+def test_back_channel_sounds_are_not_counted_among_the_words(text, words):
+    assert words_besides_back_channels(text) == words

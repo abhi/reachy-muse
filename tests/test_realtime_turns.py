@@ -1680,6 +1680,26 @@ def test_a_short_request_opening_with_a_word_of_muse_s_reply_reaches_muse_at_rea
         f"Realtime command transcript=arrived words={len(words.split())} wake_prefix=none outcome=none drop=none"])
 
 
+@pytest.mark.parametrize("words", ["Got it.", "Oh, nice.", "Mm-hmm, okay."])
+def test_a_short_remark_only_its_endpoint_confirms_never_cuts_muse_off(monkeypatch, caplog, words):
+    """A remark of two words or fewer besides back-channel sounds, said in short words over Muse's reply, is confirmed
+    only at Reachy's endpoint, two seconds after it. It asks Muse nothing, so it is dropped as unconfirmed: none of it
+    reaches Muse, and Muse's reply plays on whole."""
+    assert said_over_reply(monkeypatch, caplog, words, gapped(words)) == [(0, 0, 0, [
+        f"Realtime command transcript=arrived words={len(words.split())} wake_prefix=none outcome=none drop=barge_in"]),
+        12.8]
+
+
+@pytest.mark.parametrize("words, outcome", [("Never mind.", "STOP_TALKING"), ("Stop talking.", "STOP_TALKING")])
+def test_a_cancel_or_silence_phrase_only_its_endpoint_confirms_still_cuts_muse_off(monkeypatch, caplog, words, outcome):
+    """As the remark above, but the words ask Muse to stop: Reachy stops Muse's reply at its endpoint."""
+    heard = said_over_reply(monkeypatch, caplog, words, gapped(words))
+    assert heard[0][0] == 1
+    assert heard[0][3] == [
+        f"Realtime command transcript=arrived words=2 wake_prefix=none outcome={outcome} drop=none"]
+    assert heard[1] < 12.8
+
+
 @pytest.mark.parametrize("words, stretches, outcome, heard", [
     ("Reachy, turn the volume down please.", STRETCHES["fluent, ending on a long stretch"][3:], "VOLUME_DOWN", True),
     ("Reachy, turn the volume down please.", STRETCHES["each word its own stretch"][3:], "VOLUME_DOWN", False),
