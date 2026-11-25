@@ -15,11 +15,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
+    from reachy_muse.device_command import PhotoSubject
     from reachy_muse.turn_timeline import TurnTimeline
 
 log = logging.getLogger(__name__)
 
 PHOTO_REQUEST_TTL_S = 30.0
+PHOTO_AIM_S = 2.5
 PHOTO_CAPTURE_S = 2.0
 PHOTO_SEND_TIMEOUT_S = 20.0
 PHOTO_MIME_TYPE = "image/jpeg"
@@ -56,6 +58,7 @@ class PhotoRequest:
 
     words: str = field(repr=False)   # sent to Muse with the photo
     heard_at: float                  # the turn's endpoint, on the monotonic clock
+    speaker_bearing: float | None = None  # the speaker's DoA bearing latched at that endpoint, if Reachy heard one
 
     def expired(self, now: float) -> bool:
         return now - self.heard_at > PHOTO_REQUEST_TTL_S
@@ -71,6 +74,24 @@ def photo_allowed(timeline: TurnTimeline) -> bool:
 
 
 @dataclass(frozen=True)
+class PhotoAim:
+    """How Reachy pointed its camera for one photo. Content-free."""
+
+    subject: PhotoSubject
+    # locked within the tolerance; limit as near as the head reaches; corrected by a second turn, not checked again;
+    # unlocked off-centre or unconfirmed when time ran out; lost when the subject's face had gone; bearing when Reachy
+    # turned toward a bearing and saw no face there; view, no_faces or no_other when it kept its view; busy when other
+    # motion kept the head; off without motion; or cancelled
+    outcome: str = "view"
+    bearing: bool = False          # Reachy heard where the speaker was
+    source: str = "none"           # where the first aim point came from: fresh, memory, bearing or none
+    faces: int | None = None       # faces in the first camera pass; None when none ran or it failed
+    turns: int = 0
+    off_deg: int | None = None     # the aim point's larger offset from the camera's axis at the last look
+    aim_ms: int = 0
+
+
+@dataclass(frozen=True)
 class PhotoCapture:
     """One capture attempt: a JPEG and how it was made, or why there is none."""
 
@@ -79,7 +100,7 @@ class PhotoCapture:
     width: int | None = None
     height: int | None = None
     quality: int | None = None
-    capture_ms: int | None = None  # from the request to a frame, including the wait for a still head
+    capture_ms: int | None = None  # from the aim's end to a frame, including the wait for a still head
     encode_ms: int | None = None
 
 
@@ -96,6 +117,10 @@ class PhotoLog:
     capture_ms: int | None = None
     encode_ms: int | None = None
     upload_ms: int | None = None
+    aim: PhotoAim | None = None
+
+    def aimed(self, aim: PhotoAim) -> None:
+        self.aim = aim
 
     def captured(self, capture: PhotoCapture) -> None:
         self.width, self.height, self.quality = capture.width, capture.height, capture.quality
@@ -103,10 +128,15 @@ class PhotoLog:
         self.capture_ms, self.encode_ms = capture.capture_ms, capture.encode_ms
 
     def write(self) -> None:
-        log.info("Reachy photo outcome=%s path=%s width=%s height=%s quality=%s bytes=%s capture_ms=%s "
-                 "encode_ms=%s upload_ms=%s", self.outcome, self.path,
+        aim = self.aim
+        aimed = (None,) * 8 if aim is None else (
+            aim.subject.value, aim.outcome, "yes" if aim.bearing else "no", aim.source, aim.faces, aim.turns,
+            aim.off_deg, aim.aim_ms)
+        log.info("Reachy photo outcome=%s path=%s subject=%s aim=%s bearing=%s source=%s faces=%s turns=%s "
+                 "off_deg=%s aim_ms=%s width=%s height=%s quality=%s bytes=%s capture_ms=%s encode_ms=%s "
+                 "upload_ms=%s", self.outcome, self.path,
                  *("none" if value is None else value for value in (
-                     self.width, self.height, self.quality, self.size, self.capture_ms, self.encode_ms,
+                     *aimed, self.width, self.height, self.quality, self.size, self.capture_ms, self.encode_ms,
                      self.upload_ms)))
 
 

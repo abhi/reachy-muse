@@ -64,7 +64,8 @@ class PeopleHardware(CallHardware):
         super().__init__(recording)
         self.controller = controller
         for name in ('face_snapshot', 'refresh_faces', 'recent_faces', 'look_at_speaker', 'follow_speaker',
-                     'look_at_person', 'face_speaker', 'release_person_gaze', 'allow_face_tracking'):
+                     'look_at_person', 'face_speaker', 'release_person_gaze', 'allow_face_tracking',
+                     'hold_view_for_photo', 'capture_photo', 'play_motion'):
             setattr(self, name, getattr(controller, name))
 
     def set_state(self, state, **kwargs):
@@ -90,6 +91,10 @@ class PeopleHardware(CallHardware):
     @property
     def person_turning(self):
         return self.controller.person_turning
+
+    @property
+    def view_changing(self):
+        return self.controller.view_changing
 
 
 class DelayedWake(TimedWake):
@@ -124,11 +129,14 @@ class PlacedWake(TimedWake):
 
 
 @pytest.fixture
-def people(monkeypatch):
+def people(monkeypatch, request):
+    """Reachy's rig with a real controller; ``faces=False`` as an indirect parameter starts it without a face
+    worker."""
     rig = Rig(monkeypatch)
     robot = FakeRobot()
+    # ``view_deg``, when set, is half the camera's horizontal view: the detector finds no face beyond it.
     scene = SimpleNamespace(faces=[(30, .35), (-25, .12)], camera=True, busy=True, passes=0, doa=math.pi / 3,
-                            age=0.0, before_capture=None, frame_reads=[])
+                            age=0.0, before_capture=None, frame_reads=[], view_deg=None)
     robot.media.camera = SimpleNamespace(K=np.array([[900., 0, 640], [0, 900, 360], [0, 0, 1]]), D=np.zeros(5))
     camera_threads = []
 
@@ -148,6 +156,8 @@ def people(monkeypatch):
                 angle, lift = math.radians(yaw), math.radians(above[0] if above else 0)
                 x, y, z = frame[:3, :3].T @ [math.cos(lift) * math.cos(angle), math.cos(lift) * math.sin(angle),
                                              math.sin(lift)]
+                if scene.view_deg is not None and abs(math.degrees(math.atan2(y, x))) > scene.view_deg:
+                    continue
                 faces.append(_Face((.1 if yaw == 30 else .7, .3, width, .3), math.atan2(y, x),
                                    math.atan2(-z, math.hypot(x, y)), .95))
             return faces
@@ -157,12 +167,17 @@ def people(monkeypatch):
             if scene.before_capture is not None:
                 scene.before_capture()
             captured = capture_frame(**options)
-            return replace(captured, captured_at=captured.captured_at - scene.age) if captured is not None else None
+            if captured is None:
+                return None
+            half_view = captured.half_view if scene.view_deg is None else (math.radians(scene.view_deg),
+                                                                            captured.half_view[1])
+            return replace(captured, captured_at=captured.captured_at - scene.age, half_view=half_view)
         return FaceFollower(capture, *args, **kwargs, detector_factory=lambda *args: Detect())
 
     controller = ReachyController(robot_factory=lambda **kwargs: robot, pose_factory=pose_factory,
                                  pose_interpolator=lambda a, b, t: a * (1 - t) + b * t,
-                                 face_follow_model='fake', face_follower_factory=factory,
+                                 face_follow_model='fake' if getattr(request, 'param', {}).get('faces', True) else None,
+                                 face_follower_factory=factory,
                                  sleep_on_close=False, style=MotionStyle(breathing=False, expression_clips=False))
     controller.vision_budget = SimpleNamespace(delay=lambda: math.inf if scene.busy else 1.0)
     controller.start()

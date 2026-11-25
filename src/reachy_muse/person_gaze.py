@@ -7,13 +7,16 @@ Never owns conversation input or reply audio.
 """
 
 import asyncio
-from dataclasses import dataclass
+import contextlib
+from dataclasses import dataclass, replace
 import logging
 import math
 import time
-from typing import Callable
+from typing import AsyncIterator, Callable
 
-from reachy_muse.device_command import gaze_requested
+from reachy_muse.device_command import PhotoSubject, gaze_requested
+from reachy_muse.local_face_tracking import ObservedFace
+from reachy_muse.photo import PhotoAim
 from reachy_muse.speaker_direction import DirectionDecision
 
 log = logging.getLogger(__name__)
@@ -29,6 +32,21 @@ _LABEL_WAIT_S = 1.0
 _HANDOFF_S = .1                       # left before Muse's deadline for an answer to reach the SDK
 _HEARD_KEPT = 16
 _SPEAKERS = {"owner": "owner", "other": "someone_else"}
+# A photo's subject is centred within _AIM_TOLERANCE of the camera's axis, and found again within _AIM_FOUND of yaw.
+_AIM_TOLERANCE = math.radians(6)
+_AIM_FOUND = math.radians(15)
+_AIM_WAIT_S = .75          # for a turn or move under way to end
+_AIM_TURN_S = 1.15         # for the aim's turn, with a fade first
+_AIM_CORRECT_S = .85       # left for one correction
+_AIM_STILL_S = .2          # still after the turn before the confirming pass, for the camera's lag behind the pose
+_AIM_RETRY_S = .05
+_AIM_BUSY_MARGIN_S = 1.45  # left when Reachy stops retrying a turn other motion refuses
+_GROUP_SHARE = .8          # of the camera's view that a group may span
+# Within a degree of POSE_LIMITS' 35 degrees of yaw and 20 of pitch, the head turns no further.
+_YAW_REACH = math.radians(34)
+_PITCH_REACH = math.radians(19)
+_KEEPS_VIEW = frozenset((PhotoSubject.SCENE, PhotoSubject.UNPARSED))
+_LEVEL = frozenset((PhotoSubject.HELD, PhotoSubject.THIS))
 
 
 @dataclass(frozen=True)
@@ -67,6 +85,16 @@ class _Heard:
         return self.bearing if self.request else self.bearing_so_far()
 
 
+@dataclass(frozen=True)
+class _AimPoint:
+    """Where a photo's subject is, in world radians, with yaw positive to the left and pitch positive below."""
+
+    yaw: float
+    pitch: float | None            # None frames it level, with the head's pitch held at 0
+    source: str                    # fresh, memory or bearing
+    members: tuple[tuple[float, float | None], ...] = ()  # a group's (yaw, pitch), with no pitch for the bearing
+
+
 def people_result(speaker: str, snapshot) -> dict:
     """The reachy.people payload: ``speaker`` and the faces of a snapshot at most about 10 seconds old."""
     if not _within(snapshot, _VISIBLE_MAX_AGE_S):
@@ -94,15 +122,17 @@ class PersonGaze:
         self._holding = False
         self._facing = False           # Muse turned Reachy toward the speaker since the latest admission
         self._choosing = False         # a turn toward someone else waits for its camera pass
+        self._aiming = False           # a photo's aim holds the camera, from its start until its frame is read
+        self._aim_turned = False       # the aim made a person turn, which its end releases
         self._looking: asyncio.Future | None = None   # the camera pass in flight
         self._heard: dict[int, _Heard] = {}
 
     @property
     def holding(self) -> bool:
-        """A look this conversation chose still stands, so Reachy's own closing must not end it: a hold on
-        someone else until a command or wake turn ends it, or the speaker Muse turned Reachy toward, until the
-        next request begins."""
-        return self._holding and self.hardware.person_gaze_held or self._facing
+        """A look this conversation chose still stands, so Reachy's own closing must not end it: a photo's aim
+        until its frame is read, a hold on someone else until a command or wake turn ends it, or the speaker Muse
+        turned Reachy toward, until the next request begins."""
+        return self._aiming or self._holding and self.hardware.person_gaze_held or self._facing
 
     def begin(self) -> int:
         self._generation += 1
@@ -153,10 +183,10 @@ class PersonGaze:
         per utterance: after ``_FOLLOW_AFTER_S`` of its voiced speech with a steady bearing, or at its end if it
         ends as a request first. ``direction`` decides that bearing from the speech heard so far.
 
-        While the user has switched face tracking off, a person turn is chosen or holds Reachy, a turn Muse asked
-        for since Reachy admitted the utterance stands, other motion owns the head, or Reachy turned toward a later
-        speaker moments ago, it waits as long as the utterance goes on, and never turns for it later. Each decision
-        logs one line.
+        While the user has switched face tracking off, a person turn is chosen or holds Reachy, a photo's aim holds
+        the camera, a turn Muse asked for since Reachy admitted the utterance stands, other motion owns the head, or
+        Reachy turned toward a later speaker moments ago, it waits as long as the utterance goes on, and never turns
+        for it later. Each decision logs one line.
         """
         heard = self._heard.get(generation)
         if (heard is None or heard.followed or generation != self._admitted_generation
@@ -165,7 +195,7 @@ class PersonGaze:
         angle = direction().angle
         if angle is None:
             outcome, delta = "unknown", None
-        elif self._choosing:
+        elif self._choosing or self._aiming:
             outcome, delta = "held", None
         elif self._facing:
             outcome, delta = "busy", None
@@ -209,9 +239,11 @@ class PersonGaze:
         """Face the speaker of the latest request Muse is answering, or someone else as a request to greet them
         does, with any camera pass done by ``deadline``.
 
-        As with Muse's other motion commands, sleep, motion turned off, or a person turn that is still being
-        chosen, queued or moving makes it busy.
+        As with Muse's other motion commands, sleep, motion turned off, a photo's aim, or a person turn that is
+        still being chosen, queued or moving makes it busy.
         """
+        if self._aiming:
+            return "busy"
         requests = self._answering(time.monotonic(), activity, chat)
         bearing = requests[-1].speaker_bearing() if requests else None
         if bearing is None:
@@ -261,8 +293,10 @@ class PersonGaze:
         takes at most ``within_s``.
 
         Returns the outcome, the source of the faces used and how many were in view. A remembered
-        bearing that the current view covered is dropped: the camera just looked there.
+        bearing that the current view covered is dropped: the camera just looked there. A photo's aim makes it busy.
         """
+        if self._aiming:
+            return "busy", "none", 0
         if speaker_bearing is None:
             return "no_speaker_bearing", "none", 0
         cached = self.hardware.face_snapshot()
@@ -280,20 +314,14 @@ class PersonGaze:
         if not _within(view, _SNAPSHOT_MAX_AGE_S):
             view = None
         faces = view.faces if view is not None else ()
-        speaker = math.pi / 2 - speaker_bearing
-        others = _away_from(speaker, faces)
-        if not others:
-            remembered = self.hardware.recent_faces(time.monotonic() - _REMEMBERED_S)
-            if view is not None:
-                remembered = [face for face in remembered if not view.covers(face)]
-            remembered = _away_from(speaker, remembered)
-            if remembered:
-                others, source = remembered, "memory"
-        if not others:
+        target, found = _choose_other(math.pi / 2 - speaker_bearing, faces, self._remembered(view),
+                                      self.hardware.head_yaw)
+        if target is None:
             if view is not None:
                 return "no_other" if faces else "no_faces", source, len(faces)
             return "stale" if cached is not None else "no_faces", "none", 0
-        target = min(others, key=lambda face: abs(face.yaw - self.hardware.head_yaw))
+        if found == "memory":
+            source = found
         turned = self.hardware.look_at_person(target.yaw, target.pitch)
         if turned:
             self._holding = True
@@ -310,6 +338,120 @@ class PersonGaze:
             return await asyncio.wait_for(asyncio.shield(self._looking), within_s)
         except asyncio.TimeoutError:
             return None
+
+    def _remembered(self, view) -> list:
+        """Faces seen in the last 30 seconds, except those ``view`` saw and any where it looked, since the camera
+        just looked there."""
+        faces = self.hardware.recent_faces(time.monotonic() - _REMEMBERED_S)
+        return [face for face in faces if view is None or face not in view.faces and not view.covers(face)]
+
+    @contextlib.asynccontextmanager
+    async def photo_aim(self, subject: PhotoSubject, speaker_bearing: float | None, deadline: float, *,
+                        stop: Callable[[], bool] = lambda: False) -> AsyncIterator[PhotoAim]:
+        """Point the camera at the photo's subject and keep it there until the block ends; on exit Reachy keeps
+        facing it, with nothing turning back.
+
+        Reachy finds the subject with its own camera passes, which the speaker's DoA ``speaker_bearing`` only
+        guides, turns with the held person turn, and checks with a second pass, all by ``deadline``; ``stop``
+        cancels the aim at its next step. Until the block ends nothing else turns Reachy.
+        """
+        started = time.monotonic()
+        hold = getattr(self.hardware, "hold_view_for_photo", None)
+        self._aiming = True
+        if hold is not None:
+            hold(True)
+        try:
+            speaker_yaw = None if speaker_bearing is None else math.pi / 2 - speaker_bearing
+            aim = await self._aim(subject, speaker_yaw, deadline, stop)
+            yield replace(aim, bearing=speaker_bearing is not None,
+                          aim_ms=round((time.monotonic() - started) * 1000))
+        finally:
+            if self._aim_turned:
+                self.hardware.release_person_gaze(turn_back=False)
+            self._aiming = self._aim_turned = False
+            if hold is not None:
+                hold(False)
+
+    async def _aim(self, subject: PhotoSubject, speaker_yaw: float | None, deadline: float,
+                   stop: Callable[[], bool]) -> PhotoAim:
+        """Wait out a view change, look for the subject, and turn toward it unless it is already centred."""
+        hardware = self.hardware
+        if subject in _KEEPS_VIEW or subject is PhotoSubject.THIS and speaker_yaw is None:
+            return PhotoAim(subject)
+        if not getattr(hardware, "motion_enabled", True) or not callable(getattr(hardware, "look_at_person", None)):
+            return PhotoAim(subject, "off")
+        await self._until(lambda: not hardware.view_changing, min(deadline, time.monotonic() + _AIM_WAIT_S), stop)
+        if stop():
+            return PhotoAim(subject, "cancelled")
+        view = await self._fresh_pass(min(_FRESH_PASS_S, deadline - time.monotonic()))
+        snapshot = view if view is not None else hardware.face_snapshot()
+        point = _aim_point(subject, speaker_yaw, view, self._remembered(view), hardware.head_yaw,
+                           snapshot.half_view if snapshot is not None else (0.0, 0.0))
+        aim = PhotoAim(subject, faces=None if view is None else len(view.faces))
+        if isinstance(point, str):
+            return replace(aim, outcome=point)
+        aim = replace(aim, source=point.source)
+        if point.source == "fresh":
+            centred = _centred(point, view)
+            if centred is not None:
+                return replace(aim, outcome=centred, off_deg=_off_deg(point, view))
+        if stop():
+            return replace(aim, outcome="cancelled")
+        if not await self._turn_for_photo(point, deadline, stop):
+            return replace(aim, outcome="cancelled" if stop() else "busy")
+        return await self._confirm(replace(aim, turns=1), point, deadline, stop)
+
+    async def _confirm(self, aim: PhotoAim, point: _AimPoint, deadline: float,
+                       stop: Callable[[], bool]) -> PhotoAim:
+        """Look for the subject again with the head still after its turn, and turn once more if it is off-centre."""
+        if stop():
+            return replace(aim, outcome="cancelled")
+        settled = time.monotonic()
+        if settled >= deadline:
+            return replace(aim, outcome="unlocked")
+        view = await self._fresh_pass(min(_FRESH_PASS_S, deadline - settled))
+        if view is not None and view.captured_at < settled:
+            view = await self._fresh_pass(min(_FRESH_PASS_S, deadline - time.monotonic()))
+        if view is None or view.captured_at < settled:
+            return replace(aim, outcome="bearing" if point.source == "bearing" else "unlocked")
+        found = _refind(point, aim.subject, view)
+        if found is None:
+            if point.source == "bearing":
+                return replace(aim, outcome="bearing", off_deg=_off_deg(point, view))
+            return replace(aim, outcome="lost")
+        aim = replace(aim, off_deg=_off_deg(found, view))
+        centred = _centred(found, view)
+        if centred is not None:
+            return replace(aim, outcome=centred)
+        if stop():
+            return replace(aim, outcome="cancelled")
+        hardware = self.hardware
+        if deadline - time.monotonic() < _AIM_CORRECT_S or not hardware.look_at_person(
+                found.yaw, 0.0 if found.pitch is None else found.pitch):
+            return replace(aim, outcome="unlocked")
+        await self._until(lambda: not hardware.person_turning, time.monotonic() + _AIM_WAIT_S, stop)
+        return replace(aim, outcome="corrected", turns=2)
+
+    async def _turn_for_photo(self, point: _AimPoint, deadline: float, stop: Callable[[], bool]) -> bool:
+        """Turn toward ``point`` with the held person turn, retrying while other motion refuses it, then wait until
+        the turn ends and the head has kept still; False when Reachy gave up first or ``stop`` was set."""
+        hardware = self.hardware
+        while not hardware.look_at_person(point.yaw, 0.0 if point.pitch is None else point.pitch):
+            if stop() or time.monotonic() >= deadline - _AIM_BUSY_MARGIN_S:
+                return False
+            await asyncio.sleep(_AIM_RETRY_S)
+        self._aim_turned = True
+        await self._until(lambda: not hardware.person_turning, min(deadline, time.monotonic() + _AIM_TURN_S), stop)
+        if stop():
+            return False
+        await asyncio.sleep(max(0.0, min(_AIM_STILL_S, deadline - time.monotonic())))
+        return True
+
+    @staticmethod
+    async def _until(ready: Callable[[], bool], until: float, stop: Callable[[], bool]) -> None:
+        """Wait until ``ready`` holds, checking every 50 ms, unless ``until`` passes or ``stop`` is set first."""
+        while not ready() and not stop() and time.monotonic() < until:
+            await asyncio.sleep(_AIM_RETRY_S)
 
     @staticmethod
     def _log(outcome: str, source: str = "none", faces: int = 0) -> None:
@@ -358,3 +500,146 @@ def _answered_by(requests: list[_Heard], starts: list[float], responses: int) ->
 
 def _away_from(speaker_yaw: float, faces) -> list:
     return [face for face in faces if abs(face.yaw - speaker_yaw) > _SPEAKER_ARC]
+
+
+def _aim_point(subject: PhotoSubject, speaker_yaw: float | None, view, remembered, head_yaw: float,
+               half_view: tuple[float, float]) -> _AimPoint | str:
+    """Where to point the camera for ``subject``, from the first pass's ``view`` and the faces ``remembered``
+    outside it, or why Reachy keeps its view: view, no_faces or no_other.
+
+    "Me" frames the speaker's face and "held" the speaker level; "us" frames everyone the view fits, the speaker
+    included; "other" frames the person who is not speaking or, without a bearing, everyone when the view fits them;
+    "this" turns level only toward a speaker outside the view.
+    """
+    faces = view.faces if view is not None else ()
+    if subject is PhotoSubject.THIS:
+        if speaker_yaw is None or view is None or _in_view(speaker_yaw, view):
+            return "view"
+        return _AimPoint(speaker_yaw, None, "bearing")
+    members = [((face.yaw, face.pitch), "fresh") for face in faces] + [
+        ((face.yaw, face.pitch), "memory") for face in remembered]
+    span = _GROUP_SHARE * 2 * half_view[0]
+    if subject is PhotoSubject.OTHER:
+        if not members:
+            return "no_faces"
+        if speaker_yaw is None:
+            if len(members) == 1:
+                return "no_other"
+            if _span(members) <= span:
+                return _group(members)
+            speaker_yaw = _speaker_face(None, faces, remembered, head_yaw)[0].yaw
+        face, source = _choose_other(speaker_yaw, faces, remembered, head_yaw)
+        return "no_other" if face is None else _AimPoint(face.yaw, face.pitch, source)
+    speaker, source = _speaker_face(speaker_yaw, faces, () if subject is PhotoSubject.HELD else remembered,
+                                    head_yaw)
+    if subject is PhotoSubject.US:
+        anchor = (speaker_yaw, None) if speaker is None else (speaker.yaw, speaker.pitch)
+        if speaker is None and speaker_yaw is not None:
+            members.append((anchor, "bearing"))
+        if len(members) > 1:
+            return _group_point(members, span, anchor, head_yaw)
+    if speaker is not None:
+        return _AimPoint(speaker.yaw, None if subject is PhotoSubject.HELD else speaker.pitch, source)
+    return "no_faces" if speaker_yaw is None else _AimPoint(speaker_yaw, None, "bearing")
+
+
+def _speaker_face(speaker_yaw: float | None, faces, remembered,
+                  head_yaw: float) -> tuple[ObservedFace | None, str]:
+    """Whoever asked, in view before memory: the face nearest their bearing within 20 degrees or, without one, the
+    largest face by box area, a tie going to the face nearest the head's yaw; and where it was found."""
+    for found, source in ((faces, "fresh"), (remembered, "memory")):
+        if speaker_yaw is not None:
+            near = _nearest(found, speaker_yaw, _SPEAKER_ARC)
+            if near is not None:
+                return near, source
+        elif found:
+            return max(found, key=lambda face: (face.box[2] * face.box[3], -abs(face.yaw - head_yaw))), source
+    return None, "none"
+
+
+def _choose_other(speaker_yaw: float, faces, remembered, head_yaw: float) -> tuple[ObservedFace | None, str]:
+    """Whoever is not speaking, in view before memory: of the faces more than 20 degrees from the speaker, the one
+    needing the smallest head turn; and where it was found."""
+    for found, source in ((faces, "fresh"), (remembered, "memory")):
+        others = _away_from(speaker_yaw, found)
+        if others:
+            return min(others, key=lambda face: abs(face.yaw - head_yaw)), source
+    return None, "none"
+
+
+def _group_point(members, span: float, anchor: tuple[float, float | None], head_yaw: float) -> _AimPoint:
+    """Frame the most ``members`` within ``span`` of yaw that include the speaker's ``anchor``, a tie going to the
+    smaller turn. Each member is ((yaw, pitch), source)."""
+    ordered = sorted(members, key=lambda member: member[0][0])
+    runs = [ordered[start:end] for start in range(len(ordered)) for end in range(start + 1, len(ordered) + 1)
+            if _span(ordered[start:end]) <= span and any(point == anchor for point, _ in ordered[start:end])]
+    return _group(max(runs, key=lambda run: (len(run), -abs(_group(run).yaw - head_yaw))))
+
+
+def _group(members) -> _AimPoint:
+    """The middle of ``members``' yaws, at the mean pitch of those with a face, or level without one; it comes
+    from the camera's pass if any member does. A single member is a point of its own."""
+    points = tuple(point for point, _ in members)
+    pitches = [pitch for _, pitch in points if pitch is not None]
+    sources = {source for _, source in members}
+    return _AimPoint((min(yaw for yaw, _ in points) + max(yaw for yaw, _ in points)) / 2,
+                     sum(pitches) / len(pitches) if pitches else None,
+                     next(source for source in ("fresh", "memory", "bearing") if source in sources),
+                     points if len(points) > 1 else ())
+
+
+def _span(members) -> float:
+    yaws = [yaw for (yaw, _), _ in members]
+    return max(yaws) - min(yaws)
+
+
+def _refind(point: _AimPoint, subject: PhotoSubject, view) -> _AimPoint | None:
+    """The subject in a later pass ``view``, or None when it is gone: a group's members each by the face within
+    15 degrees of its yaw, keeping the speaker's bearing; the speaker by the face nearest their bearing within
+    20 degrees, framed as ``subject`` asks; or else the face nearest the point within 15 degrees of yaw."""
+    if point.members:
+        found = []
+        for yaw, pitch in point.members:
+            face = None if pitch is None else _nearest(view.faces, yaw, _AIM_FOUND)
+            if pitch is None or face is not None:
+                found.append(((yaw, None) if face is None else (face.yaw, face.pitch), point.source))
+        return _group(found) if any(pitch is not None for (_, pitch), _ in found) else None
+    if point.source == "bearing":
+        face = _nearest(view.faces, point.yaw, _SPEAKER_ARC)
+        return None if face is None else _AimPoint(face.yaw, None if subject in _LEVEL else face.pitch, "bearing")
+    face = _nearest(view.faces, point.yaw, _AIM_FOUND)
+    return None if face is None else _AimPoint(face.yaw, None if point.pitch is None else face.pitch, point.source)
+
+
+def _nearest(faces, yaw: float, within: float) -> ObservedFace | None:
+    return min((face for face in faces if abs(face.yaw - yaw) <= within), key=lambda face: abs(face.yaw - yaw),
+               default=None)
+
+
+def _aim_error(point: _AimPoint, view) -> tuple[float, float | None]:
+    """How far ``point`` lies from ``view``'s camera axis in yaw and, when it frames a face, in pitch."""
+    return (math.remainder(point.yaw - view.heading, math.tau),
+            None if point.pitch is None else point.pitch - view.elevation)
+
+
+def _at_limit(point: _AimPoint, view) -> bool:
+    """Every axis is within the tolerance, or the head is at its limit there with ``point`` beyond it."""
+    return all(error is None or abs(error) <= _AIM_TOLERANCE or abs(axis) >= reach and error * axis > 0
+               for error, axis, reach in zip(_aim_error(point, view), (view.heading, view.elevation),
+                                             (_YAW_REACH, _PITCH_REACH)))
+
+
+def _centred(point: _AimPoint, view) -> str | None:
+    """locked when ``point`` is within the tolerance of ``view``'s axis, limit when it is as near as the head
+    reaches, or None while a turn can bring it nearer."""
+    if all(error is None or abs(error) <= _AIM_TOLERANCE for error in _aim_error(point, view)):
+        return "locked"
+    return "limit" if _at_limit(point, view) else None
+
+
+def _off_deg(point: _AimPoint, view) -> int:
+    return round(math.degrees(max(abs(error) for error in _aim_error(point, view) if error is not None)))
+
+
+def _in_view(yaw: float, view) -> bool:
+    return abs(math.remainder(yaw - view.heading, math.tau)) <= view.half_view[0]
