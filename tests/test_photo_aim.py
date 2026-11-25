@@ -250,13 +250,16 @@ def test_a_question_about_how_a_thing_looks_keeps_the_view(people, caplog, path,
     assert (aimed(caplog), camera.shots, scene.passes) == (aim_fields(f"subject=this {KEPT}"), STRAIGHT_AHEAD, 0)
 
 
-@pytest.mark.parametrize("question", ["does this look good on me", "do these look okay on me"])
+@pytest.mark.parametrize("words", [
+    "take a photo, does this look good on me", "take a photo, do these look okay on me",
+    "take a picture and tell me if this looks good on me",
+])
 @pytest.mark.parametrize("suffix", ["", ", please", ", Reachy"])
 @pytest.mark.parametrize("path", ["realtime", "chat"])
-def test_a_look_question_ending_on_me_frames_the_speaker(people, caplog, path, question, suffix):
+def test_a_look_question_ending_on_me_frames_the_speaker(people, caplog, path, words, suffix):
     rig, controller, robot, scene = people
     scene.doa = None
-    camera, _ = ask(people, caplog, path, f"take a photo, {question}{suffix}?")
+    camera, _ = ask(people, caplog, path, f"{words}{suffix}?")
     assert camera.shots == [(30, 0, 10)]
     assert aimed(caplog) == aim_fields(
         "subject=me aim=locked bearing=no source=fresh faces=2 turns=1 off_deg=0")

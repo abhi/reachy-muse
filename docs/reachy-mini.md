@@ -1113,9 +1113,9 @@ they go to Muse as ordinary requests.
   from only guides it. Words such as "again", "here", "today" or "together"
   after the subject leave it as it is. "Take a photo of me", "of me sitting
   down", "can you see me?", "how do I look?" and "take a photo and tell me what
-  I look like" frame your face. So do look questions ending in "on me", such
-  as "does this look good on me?". Reachy picks the face nearest where your
-  voice came from, or without that direction, the largest face in view, or else
+  I look like" frame your face. Look questions with "on me" frame you.
+  Reachy picks the face nearest where your voice came from, or without that
+  direction, the largest face in view, or else
   the largest seen in the last 30 seconds. If Reachy looks at someone's old
   place again and finds nobody nearby, it forgets that sighting.
   "What am I holding?", "what's in my

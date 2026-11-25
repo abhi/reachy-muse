@@ -323,6 +323,12 @@ SUBJECTS = {
     PhotoSubject.ME: [
         "take a photo of my new glasses",
         "take a photo, does this look good on me?", "take a photo, do these look okay on me?",
+        "take a picture and tell me if this looks good on me",
+        "take a picture and tell me whether this looks good on me",
+        "take a photo, does it look good on me?", "take a photo, does that look good on me?",
+        "take a photo, do they look good on me?",
+        "take a photo, does this look good on me or not?", "take a photo, does this look good on me today?",
+        "take a photo and tell me how this looks on me", "take a photo and tell me how these look on me",
         "take a photo, does this look good on me, please?", "take a photo, do these look okay on me, please?",
         "take a photo, does this look good on me, Reachy?", "take a photo, do these look okay on me, Reachy?",
         "take a photo, does this look good on me, thank you, Muse?",
@@ -339,6 +345,7 @@ SUBJECTS = {
         "take a photo and tell me how old i look", "take a photo and tell me if i'm smiling",
         "take a photo and tell me does this hat look good on me"],
     PhotoSubject.HELD: [
+        "take a photo, does this shirt look good on me?",
         "take a photo of my new shirt",
         "take a photo of my red dress",
         "take a photo of my whole outfit",
@@ -364,6 +371,9 @@ SUBJECTS = {
         "take a photo of my little sister", "take a photo of my uncle", "take a photo of my cousin",
         "take a photo of the man", "take a photo of the baby"],
     PhotoSubject.THIS: [
+        "take a photo, does this look good on the table?", "take a photo, does this look good on my wall?",
+        "take a photo, does this look right on the shelf?",
+        "take a photo, does this look good on metal?",
         "take a photo, how can i look into this?", "take a photo, how should i look through these?",
         "look at this and tell me if these look okay",
         "look at this, does this look like mold?",

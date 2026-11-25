@@ -386,7 +386,7 @@ _ASKED_SUBJECTS = tuple((re.compile(pattern), subject) for pattern, subject in (
      rf"(?! (?:after|up|into|through)\b)|\bwhat i look like\b|\b(?:i'm|i am|am i) smiling\b"
      rf"|\b(?:my|think (?:of|about) (?:this|these)) {_LOOKS_FACE}\b"
      rf"|\b(?:does|do|if|whether) (?:this|these) {_WORN}\b"
-     rf"|\b(?:does|do|if|whether) (?:this|these) look(?: [a-z']+)* on me(?: {_TAIL})*$", PhotoSubject.ME),
+     r"|\b(?:does|do|if|whether|how) (?:this|these|it|that|they) looks?\b.*\bon me\b", PhotoSubject.ME),
     (r"\bthis\b|\bthese\b", PhotoSubject.THIS),
 ))
 
