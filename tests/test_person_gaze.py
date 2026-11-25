@@ -1268,3 +1268,61 @@ def test_limited_person_turn_does_not_reseed_on_the_speaker(people, caplog):
     assert calls.barge_ins == 0
     assert [line for line in caplog.messages if line.startswith('Reachy gaze request')] == [
         'Reachy gaze request outcome=turned source=fresh faces=2']
+
+
+def test_a_back_channel_said_straight_on_past_a_dropped_remark_keeps_the_look_on_the_friend(people, caplog):
+    """Reachy faces the friend while Muse greets them. Over the greeting the user says "Nice voice." in short words;
+    the companion's final for it arrives just as the user goes straight on with "Mm-hmm.", and Reachy's command model
+    weighs "Nice voice." for 0.3 s. Both turns ask Muse nothing and are dropped, so Muse's greeting plays on whole, and
+    Reachy keeps facing the friend and shows no listening for either."""
+    from test_device_command_turns import FakeModel
+    from test_realtime_turns import companion_hearing, gapped, say_over_reply
+    from reachy_muse.protocol import HearEndpoint, HearPartial, encode
+
+    rig, controller, robot, scene = people
+    rig.hardware.echo_cancelled_input = True
+    caplog.set_level('INFO')
+    greeting = voiced(8)
+
+    async def answer(sdk, emit, script):
+        await rig.wait_until_or_timeout(lambda: controller._person_hold, 5)
+        reply_events(sdk, emit, 'r1', 'Hello, nice to meet you! It is lovely to have you here with us today.',
+                     greeting)
+
+    calls = ScriptedCalls(answer=answer)
+    service = realtime_service(rig, None, calls, wake_timeout_s=10, model=FakeModel(None, delay_s=.3))
+    service.silence_s = 2.0
+    link = companion_hearing(service, forced_endpoints=True)
+    heard = []
+
+    async def user():
+        await say_over_reply(rig, link, 'Say hi to my friend.', ((250, 0),) * 5, wake=True)
+        quiet = asyncio.ensure_future(room(rig, 4))
+        await rig.wait_until_or_timeout(lambda: controller._person_hold and service._voice[1].call.audible, 6)
+        quiet.cancel()
+        await room(rig, 1)
+        call = service._voice[1].call
+        caplog.clear()
+        seen, known, streams, voice = len(rig.recording.events), set(link._connection.hearing), [], []
+        for voiced_ms_, quiet_ms in gapped('Nice voice.'):
+            voice += [True] * (voiced_ms_ // 20) + [False] * (quiet_ms // 20)
+        said_on = len(voice) + 30
+        voice += [False] * 30 + [True] * 10 + [False] * 3 + [True] * 10 + [False] * 40
+        for frame, voiced_ in enumerate(voice):
+            rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE if voiced_ else 0, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+            streams += [stream for stream in link._connection.hearing if stream not in known and stream not in streams]
+            if frame == said_on:
+                link._receive(link._connection, encode(HearEndpoint(streams[0], 'Nice voice.', False)))
+            if len(streams) > 1 and frame == said_on + 30:
+                link._receive(link._connection, encode(HearPartial(streams[1], 1, 'Mm-hmm.')))
+        await room(rig, 2.5)
+        heard.append((calls.barge_ins, controller._person_hold is not None, round(math.degrees(controller.head_yaw)),
+                      [event["state"] for event in rig.recording.events[seen:] if event.get("robot") == "set_state"],
+                      [line for line in caplog.messages if line.startswith('Realtime command ')]))
+        await rig.wait_until_or_timeout(lambda: not call.audible, 10)
+
+    run(rig, service, user, rest=('listening', 'idle', 'thinking', 'speaking'), timeout=40)
+    assert heard == [(0, True, -25, [], [
+        'Realtime command transcript=arrived words=2 wake_prefix=none outcome=none drop=barge_in',
+        'Realtime command transcript=arrived words=1 wake_prefix=none outcome=none drop=barge_in'])]

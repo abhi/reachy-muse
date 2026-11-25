@@ -162,6 +162,10 @@ class CallInput:
         played = spoken_between(spoken, self._voiced_from - ECHO_TIMING_S, self._voiced_until + ECHO_TIMING_S)
         return echoes_playback(text, (played,))
 
+    @property
+    def holding(self) -> bool:
+        return self._held_for_turn
+
     def release(self) -> bool:
         """Send Muse the audio held for a turn it takes, and let what follows flow on; whether any was held."""
         if not self._held_for_turn:
