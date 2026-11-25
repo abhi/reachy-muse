@@ -179,11 +179,11 @@ def echoes_playback(text: str, heard_over: Tuple[str, ...]) -> bool:
 
 def _alike(word: str, other: str) -> bool:
     """Whether a recognizer may have written one word for the other: the same word but for a contraction, as "you"
-    for "you're", or one opening the other with three letters or more, as "rain" for "rainy"."""
+    for "you're", or one opening the other with four letters or more, as "rain" for "rainy"."""
     if word.split("'")[0] == other.split("'")[0]:
         return True
     short, long = sorted((word.replace("'", ""), other.replace("'", "")), key=len)
-    return len(short) >= 3 and long.startswith(short)
+    return len(short) >= 4 and long.startswith(short)
 
 
 def _in_order(words: List[str], said: List[str]) -> int:

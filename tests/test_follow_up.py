@@ -73,3 +73,14 @@ def test_only_fillers_hesitate_and_ask_nothing(text, fillers):
     ("Got it.", 2), ("Oh, nice.", 1), ("Mm-hmm, okay.", 1), ("Uh huh.", 0), ("Um, what time is it?", 4), ("", 0)])
 def test_back_channel_sounds_are_not_counted_among_the_words(text, words):
     assert words_besides_back_channels(text) == words
+
+
+@pytest.mark.parametrize("word, other, expected", [
+    ("the", "there", False), ("for", "forecast", False), ("can", "cancel", False), ("you", "your", False),
+    ("your", "you're", True), ("rain", "rainy", True), ("you", "you're", True), ("it's", "it", True),
+    ("the", "the", True), ("rain", "train", False)])
+def test_alike_words_need_four_letters_for_a_prefix_but_keep_contractions(word, other, expected):
+    from reachy_muse.follow_up import _alike
+
+    assert _alike(word, other) is expected
+    assert _alike(other, word) is expected

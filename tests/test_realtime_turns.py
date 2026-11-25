@@ -3247,3 +3247,13 @@ def test_a_take_up_said_straight_on_after_a_dropped_remark_reaches_muse(monkeypa
     # The take-up's opening said while the remark was weighed is lost (R2-6, out of scope), so its voice isn't asserted.
     assert (barge_ins, echo, lines[-1]) == (
         1, 0, "Realtime command transcript=arrived words=7 wake_prefix=none outcome=none drop=none")
+
+
+def test_a_question_sharing_only_common_words_with_what_muse_says_meanwhile_reaches_muse(monkeypatch, caplog):
+    """Contract 2: "Is there parking there?" said over "...and the cafe is on the second floor, next to the gift
+    shop." The alike-word rule takes "there" for "the", so three in four of the words are alike words Muse played
+    in order, and the question is taken for Muse's echo."""
+    turns = [(word_steps("Is there parking there?"), 0)]
+    assert spoken_over_reply(monkeypatch, caplog, MUSEUM_REPLY, turns, after_s=4.0) == (
+        1, 800, 0,
+        ["Realtime command transcript=arrived words=4 wake_prefix=none outcome=none drop=none"])
