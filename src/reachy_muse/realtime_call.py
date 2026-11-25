@@ -62,12 +62,14 @@ QUIET_SETTLE_S = 1.0
 class CallInput:
     """Hold playback-time audio until sustained speech has words distinct from Muse's.
 
-    Silence keeps the remote VAD clock moving while local recognition catches up. Only
-    a confirmed interruption releases the held audio, preserving its first words. A partial
-    confirms within the recognition window of a sustained stretch of speech; a turn's final words
-    confirm on all the voice held for it, however long its silence before the endpoint.
-    Echo and unrecognized room sounds never enter Muse's microphone stream. One gate serves
-    one utterance, which can run on past the endpoint of a turn within it.
+    Silence keeps the remote VAD clock moving while local recognition catches up. A partial
+    confirms within the recognition window of a sustained stretch of speech, and the held audio
+    goes to Muse at once, preserving its first words. A turn's final words confirm on all the
+    voice held for it, however long its silence before the endpoint, but its audio then waits
+    for whoever takes the turn: ``release`` sends it to Muse, and ``discard`` drops it when
+    Reachy takes the turn itself. Echo and unrecognized room sounds never enter Muse's
+    microphone stream. One gate serves one utterance, which can run on past the endpoint of a
+    turn within it.
     """
 
     def __init__(self, feed, sample_rate: int):
@@ -82,6 +84,7 @@ class CallInput:
         self._speech_samples = 0
         self._distinct_samples = 0
         self._quiet_samples = 0
+        self._held_for_turn = False
         self.confirmed = False
         self.sent_speech = False
         self.heard_speech = False
@@ -89,6 +92,10 @@ class CallInput:
     def push(self, samples, *, speaking: bool, text: str, playback: bool,
              heard_over: tuple[str, ...], quiet_s: float = 0.0) -> bool:
         self.heard_speech = self.heard_speech or speaking
+        if self._held_for_turn:
+            self._hold(samples)
+            self.feed.push(np.zeros_like(samples))
+            return speaking
         if not playback or self.confirmed:
             self.feed.push(samples, silent=quiet_s >= len(samples) / self.rate + FRAME_SAMPLES / SAMPLE_RATE)
             self.sent_speech = self.sent_speech or speaking
@@ -107,10 +114,7 @@ class CallInput:
                 self.feed.push(np.zeros_like(samples))
                 return False
             self.reset()
-        self._pending.append(samples.copy())
-        self._samples += len(samples)
-        while self._pending and self._samples > self.rate * INTERRUPTION_BUFFER_S:
-            self._samples -= len(self._pending.popleft())
+        self._hold(samples)
         if speaking:
             self._speech_samples = min(self._speech_samples + len(samples), self._samples)
             self._voiced_samples = min(self._voiced_samples + len(samples), self._samples)
@@ -124,12 +128,31 @@ class CallInput:
         return False
 
     def finish(self, text: str, heard_over: tuple[str, ...]) -> bool:
-        """Confirm on a finished turn's words and all its held voice. Held audio stays: the utterance can go on past
-        the turn."""
+        """Confirm on a finished turn's words and all its held voice. The audio stays held, with whatever follows it,
+        until ``release`` or ``discard``: the utterance can go on past the turn."""
         if (not self.confirmed and self._voiced_samples >= BARGE_IN_SPEECH_S * self.rate
                 and self._distinct(text, heard_over)):
-            self._confirm()
+            self.confirmed = self._held_for_turn = True
         return self.confirmed
+
+    def release(self) -> bool:
+        """Send Muse the audio held for a turn it takes, and let what follows flow on; whether any was held."""
+        if not self._held_for_turn:
+            return False
+        self._held_for_turn = False
+        self._confirm()
+        return True
+
+    def discard(self) -> None:
+        """Drop the audio held for a turn Reachy takes itself; speech that follows is weighed afresh."""
+        if self._held_for_turn:
+            self.reset()
+
+    def _hold(self, samples) -> None:
+        self._pending.append(samples.copy())
+        self._samples += len(samples)
+        while self._pending and self._samples > self.rate * INTERRUPTION_BUFFER_S:
+            self._samples -= len(self._pending.popleft())
 
     def _distinct(self, text: str, heard_over: tuple[str, ...]) -> bool:
         enough_words = word_count(text) >= 2 or classify_follow_up(text) in (

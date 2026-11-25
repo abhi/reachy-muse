@@ -36,6 +36,9 @@ def test_distinct_sustained_user_words_release_the_opening_audio_before_barge_in
     assert seen == [False, False, False, True]
     assert feed.samples == [0.0] * 300 + [.5] * 400
     assert gate.confirmed is True
+    assert gate.release() is False
+    gate.discard()
+    assert gate.confirmed is True
     gate.reset()
     assert gate.push(np.ones(100), speaking=True, text="sunny", playback=True,
                      heard_over=("It will be sunny tomorrow.",)) is False
@@ -128,13 +131,36 @@ def held_turn(gate, *, voice, partial):
 
 def test_a_turn_s_final_words_release_all_its_voice_after_the_recognition_window():
     """No stretch lasts 300 ms, so no partial confirms the words, and the recognition window closes long before the
-    endpoint. The turn's final words still confirm, and Muse gets every word with the pauses the gate held."""
+    endpoint. The turn's final words still confirm, but the audio waits until the turn is Muse's: Muse then gets
+    every word with the pauses the gate held, and after them the speech that ran on past the endpoint."""
     feed = Feed()
     gate = CallInput(feed, 1000)
+    reply = ("It will be sunny tomorrow.",)
     held_turn(gate, voice=True, partial="What about")
     assert (gate.confirmed, feed.samples) == (False, [0.0] * 3100)
-    assert gate.finish("What about Friday then?", ("It will be sunny tomorrow.",)) is True
-    assert feed.samples == [0.0] * 3100 + ([.5] * 200 + [0.0] * 100) * 3 + [.5] * 200 + [0.0] * 700
+    assert gate.finish("What about Friday then?", reply) is True
+    gate.push(np.full(100, .25), speaking=True, text="", playback=True, heard_over=reply)
+    assert feed.samples == [0.0] * 3200
+    assert gate.release() is True
+    gate.push(np.full(100, .75), speaking=True, text="", playback=True, heard_over=reply)
+    assert feed.samples == ([0.0] * 3200 + ([.5] * 200 + [0.0] * 100) * 3 + [.5] * 200 + [0.0] * 700
+                            + [.25] * 100 + [.75] * 100)
+
+
+def test_a_turn_reachy_takes_at_its_endpoint_never_reaches_muse_and_later_speech_must_confirm_afresh():
+    """The final words confirm a device command, which Reachy takes itself: its audio, and the speech that ran on past
+    its endpoint, never reach Muse, and the speech after that must confirm on its own."""
+    feed = Feed()
+    gate = CallInput(feed, 1000)
+    reply = ("It will be sunny tomorrow.",)
+    held_turn(gate, voice=True, partial="Turn the")
+    assert gate.finish("Turn the volume down.", reply) is True
+    gate.push(np.full(100, .25), speaking=True, text="", playback=True, heard_over=reply)
+    gate.discard()
+    assert (gate.confirmed, gate.release()) == (False, False)
+    for _ in range(4):
+        gate.push(np.full(100, .75), speaking=True, text="", playback=True, heard_over=reply)
+    assert (gate.confirmed, feed.samples) == (False, [0.0] * 3600)
 
 
 @pytest.mark.parametrize("voice, partial, final", [

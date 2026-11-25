@@ -350,7 +350,12 @@ def companion_hearing(conversation, *, forced_endpoints=False):
 
 
 class CallHardware(SpeakerHardware):
-    """Muse's realtime voice has no text label; it is recorded as ``muse``, with its sentence motion."""
+    """Muse's realtime voice has no text label; it is recorded as ``muse``, with its sentence motion.
+    ``muse_played`` holds when each chunk of it played, and its samples."""
+
+    def __init__(self, recording, chunk_s=0.0):
+        super().__init__(recording, chunk_s)
+        self.muse_played = []
 
     def play_audio(self, samples, *, sentence=None, accents=()):
         if sentence is not None:
@@ -362,23 +367,32 @@ class CallHardware(SpeakerHardware):
         if self.recording.events[-1:] != [event]:
             self.recording.add(event)
         self.played.append(samples.copy())
+        self.muse_played.append((time.monotonic(), len(samples)))
 
     def finish_sentence(self):
         pass
 
 
+def muse_played_after(rig, mark):
+    """Seconds of Muse's voice Reachy played after the time ``mark``."""
+    samples = sum(count for at, count in rig.hardware.muse_played if at > mark)
+    return round(samples / rig.hardware.output_sample_rate, 2)
+
+
 class ScriptedCalls:
     """Stands in for the SDK ``VoiceCall``: once the microphone frames it receives show the user
     spoke and then paused, it plays ``answer`` (by default ``reply``'s transcript, audio and
-    lifecycle events), for the first request only unless ``every_turn``. ``hang_up`` ends the
-    call with an error from inside an answer."""
+    lifecycle events), for the first request only unless ``every_turn``. ``paced`` takes the
+    frames as the SDK sends them to Muse, no faster than real time. ``hang_up`` ends the call
+    with an error from inside an answer."""
 
     def __init__(self, *, reply=REPLY, reply_s=1.0, fail=None, fail_after_frames=0, answer_early=False,
-                 answer=None, every_turn=False):
+                 answer=None, every_turn=False, paced=False):
         self.reply = reply
         self.reply_s = reply_s
         self.answer_early = answer_early
         self.every_turn = every_turn
+        self.paced = paced
         self.answer = answer or (answers(reply, reply_s) if reply is not None else None)
         self.loud_after_reply = 0
         self.fail = fail
@@ -457,7 +471,7 @@ class _Call:
 
         loud = paused = 0
         answered = False
-        async for frame in source:
+        async for frame in (self._paced(source) if self.script.paced else source):
             self.frames.append(frame)
             self.script.frames.append(frame)
             self.script.frame_times.append(time.monotonic())
@@ -477,6 +491,14 @@ class _Call:
                 else:
                     answered = True
         await asyncio.Event().wait()
+
+    @staticmethod
+    async def _paced(source):
+        next_send = time.monotonic()
+        async for frame in source:
+            await asyncio.sleep(max(0, next_send - time.monotonic()))
+            yield frame
+            next_send = time.monotonic() + len(frame) / (2 * RATE)
 
     async def barge_in(self):
         self.script.barge_ins += 1
@@ -600,8 +622,11 @@ def test_the_user_talking_over_muse_stops_its_reply(monkeypatch):
     assert len(rig.hardware.played) < 6.0 * 8000 / 400
 
 
-@pytest.mark.parametrize("recognition", ["partial", "final"])
-def test_words_recognized_after_speech_still_interrupt_playback(monkeypatch, recognition):
+@pytest.mark.parametrize("recognition, heard", [("partial", True), ("final", False)])
+def test_words_recognized_after_speech_still_interrupt_playback(monkeypatch, recognition, heard):
+    """The user says "stop talking" over Muse's reply, and its words are recognized only after it is said. Muse hears
+    it when a partial confirms it in the recognition window; when only its final words do, the command is Reachy's
+    alone, and Muse never hears it."""
     rig = rig_for(monkeypatch)
     rig.hardware.echo_cancelled_input = True
     calls = ScriptedCalls(reply_s=6)
@@ -639,7 +664,10 @@ def test_words_recognized_after_speech_still_interrupt_playback(monkeypatch, rec
 
     events = run(rig, conversation, user)
     assert calls.barge_ins == 1
-    assert calls.loud_after_reply >= 10
+    if heard:
+        assert calls.loud_after_reply >= 10
+    else:
+        assert calls.loud_after_reply == 0
     assert sent_to_muse(events) == []
 
 
@@ -1502,21 +1530,35 @@ def test_a_request_over_a_long_reply_that_no_partial_confirms_reaches_muse_at_re
     assert heard[1] < 12.8
 
 
-def test_a_device_command_over_a_long_reply_that_no_partial_confirms_is_obeyed_at_reachy_s_endpoint(
-        monkeypatch, caplog):
-    """As the request above, with a command said in stretches each under 300 ms: Reachy's endpoint confirms it, and
-    Reachy turns its volume down."""
+@pytest.mark.parametrize("words, stretches, outcome, heard", [
+    ("Reachy, turn the volume down please.", STRETCHES["fluent, ending on a long stretch"][3:], "VOLUME_DOWN", True),
+    ("Reachy, turn the volume down please.", STRETCHES["each word its own stretch"][3:], "VOLUME_DOWN", False),
+    ("Stop talking.", ((200, 120), (240, 0)), "STOP_TALKING", False)],
+    ids=["volume down confirmed while said", "volume down", "stop talking"])
+def test_a_device_command_over_a_long_reply_is_obeyed_and_muse_never_answers_it(
+        monkeypatch, caplog, words, stretches, outcome, heard):
+    """As the request above, with a device command. Said in stretches each under 300 ms, it is confirmed only at
+    Reachy's endpoint: Reachy obeys it and cuts Muse off, and Muse never hears it. Muse answers every turn it hears,
+    and the call takes the microphone at the SDK's pace, so a command handed to Muse at its endpoint would reach Muse
+    after Reachy's cut and be answered. Said fluently, a partial confirms it as it is said, so Muse hears it, and
+    Reachy's cut drops Muse's answer. Either way, none of Muse's voice plays once Reachy has obeyed."""
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
     rig.hardware.echo_cancelled_input = True
+    replies = []
 
     async def answer(sdk, emit, script):
-        reply_events(sdk, emit, "r1", LONG_REPLY, voiced(12.8))
+        replies.append(len(replies) + 1)
+        if replies == [1]:
+            reply_events(sdk, emit, "r1", LONG_REPLY, voiced(12.8))
+        else:
+            reply_events(sdk, emit, f"r{len(replies)}", "Okay, done.", voiced(2))
 
-    calls = ScriptedCalls(answer=answer)
+    calls = ScriptedCalls(answer=answer, every_turn=True, paced=True)
     conversation = realtime_service(rig, None, calls, wake_timeout_s=10)
     conversation.silence_s = 2.0
     link = companion_hearing(conversation, forced_endpoints=True)
+    obeyed, voice_to_muse = [], []
 
     async def user():
         await speak_live(rig, wake=True)
@@ -1524,15 +1566,20 @@ def test_a_device_command_over_a_long_reply_that_no_partial_confirms_is_obeyed_a
         await rig.wait_until_or_timeout(lambda: call.audible, 5)
         await room(rig, 3)
         caplog.clear()
-        await say_over_reply(rig, link, "Reachy, turn the volume down please.",
-                             STRETCHES["each word its own stretch"][3:])
-        await room(rig, 2)
+        before = len(calls.frames)
+        await say_over_reply(rig, link, words, stretches)
+        await room(rig, 1.6)
+        await rig.wait_until_or_timeout(
+            lambda: any(line.startswith("Realtime command ") for line in caplog.messages), .2)
+        obeyed.append(time.monotonic())
+        await room(rig, 5)
+        voice_to_muse.append(voiced_ms(calls.frames[before:]))
 
     run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
-    assert rig.hardware.volume_steps == [-10]
-    assert calls.barge_ins == 2
     assert [line for line in caplog.messages if line.startswith("Realtime command ")] == [
-        "Realtime command transcript=arrived words=6 wake_prefix=none outcome=VOLUME_DOWN drop=none"]
+        f"Realtime command transcript=arrived words={len(words.split())} wake_prefix=none outcome={outcome} drop=none"]
+    assert rig.hardware.volume_steps == ([-10] if outcome == "VOLUME_DOWN" else [])
+    assert (voice_to_muse[0] > 0, muse_played_after(rig, obeyed[0])) == (heard, 0.0)
 
 
 @pytest.mark.parametrize("stretches", list(STRETCHES))
