@@ -323,6 +323,10 @@ SUBJECTS = {
     PhotoSubject.ME: [
         "take a photo of my new glasses",
         "take a photo, does this look good on me?", "take a photo, do these look okay on me?",
+        "take a photo, does this look good on me, please?", "take a photo, do these look okay on me, please?",
+        "take a photo, does this look good on me, Reachy?", "take a photo, do these look okay on me, Reachy?",
+        "take a photo, does this look good on me, thank you, Muse?",
+        "take a photo, do these look okay on me, Reachy, please?",
         "take a photo, how do i look for my interview?",
         "take a photo of me", "take a picture of me please", "take a photo of myself", "photograph me",
         "take a photo of my face", "take a photo of my hair", "can you see me", "do you see me", "describe me",

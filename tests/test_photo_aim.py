@@ -250,6 +250,19 @@ def test_a_question_about_how_a_thing_looks_keeps_the_view(people, caplog, path,
     assert (aimed(caplog), camera.shots, scene.passes) == (aim_fields(f"subject=this {KEPT}"), STRAIGHT_AHEAD, 0)
 
 
+@pytest.mark.parametrize("question", ["does this look good on me", "do these look okay on me"])
+@pytest.mark.parametrize("suffix", ["", ", please", ", Reachy"])
+@pytest.mark.parametrize("path", ["realtime", "chat"])
+def test_a_look_question_ending_on_me_frames_the_speaker(people, caplog, path, question, suffix):
+    rig, controller, robot, scene = people
+    scene.doa = None
+    camera, _ = ask(people, caplog, path, f"take a photo, {question}{suffix}?")
+    assert camera.shots == [(30, 0, 10)]
+    assert aimed(caplog) == aim_fields(
+        "subject=me aim=locked bearing=no source=fresh faces=2 turns=1 off_deg=0")
+    assert scene.passes == 2
+
+
 def test_with_doa_the_speaker_s_own_face_is_framed_not_the_largest(people, caplog):
     """The friend, whose face is the smaller, asks; people2 has already turned Reachy toward them."""
     rig, controller, robot, scene = people
