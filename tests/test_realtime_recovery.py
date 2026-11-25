@@ -89,7 +89,8 @@ def test_silent_call_acknowledges_retries_then_recovers_without_replaying(monkey
     events = run(rig, conversation, user, rest=("listening", "idle"), timeout=30)
     assert played(events).count(LOST) == 1
     assert sent_to_muse(events) == []
-    assert thinking_cues == [1, 0]
+    # Reachy listens to the request said while it looks thoughtful, then looks thoughtful again.
+    assert thinking_cues == [1, 1]
     assert [name for name, _ in gestures] == ["nod", "nod"]
     assert [4 <= at - endpoint < 4.3 for (_, at), endpoint in zip(gestures, endpoints)] == [True, True]
     assert stall_cues(caplog) == ["Realtime turn ordinal=2 cue=still_waiting", "Realtime turn ordinal=3 cue=still_waiting"]

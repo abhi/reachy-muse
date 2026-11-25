@@ -578,7 +578,7 @@ def test_a_look_requested_while_the_camera_pauses_keeps_the_face_it_follows():
         item.close()
 
 
-# ---- thinking only while Muse really works
+# ---- thinking only while Muse really works, and listening when the user speaks
 
 
 def realtime(rig, answer, *texts, **fields):
@@ -636,3 +636,32 @@ def test_working_left_on_after_muse_s_answers_never_shows_the_thinking_pose_over
     assert set(seen["while_talking"]) == {"listening"}
     assert "thinking" not in seen["after_second_reply"] and seen["after_second_reply"][-1:] == ["listening"]
     assert set(played(rig.recording.events)) == {"muse"}
+
+
+def test_the_owner_speaking_while_reachy_looks_thoughtful_gets_it_listening(camera_room, caplog):
+    """Muse is slow to answer, so the request waits and Reachy looks thoughtful. The owner adds something meanwhile,
+    and Reachy listens to them; their admitted speech, not Muse's work, decides the pose."""
+    rig, controller, robot, scene = camera_room()
+    caplog.set_level("INFO")
+    released = asyncio.Event()
+
+    async def answer(sdk, emit, calls):
+        ordinal = len(calls.answering)
+        if ordinal == 1:
+            await released.wait()
+            reply_events(sdk, emit, "r1", REPLY, voiced(.5))
+
+    service, calls = realtime(rig, answer, "Book me a table for two.", "For seven o'clock.")
+    seen = {}
+
+    async def user():
+        await say_live(rig, wake=True)
+        voice = service._voice[1]
+        await until(rig, lambda: voice.call.pending and rig.states()[-1:] == ["thinking"], 10)
+        seen["while_talking"] = await states_while_talking(rig)
+        released.set()
+        await until(rig, lambda: rig.hardware.played and not voice.call.audible, 10)
+
+    run(rig, service, user, rest=("listening", "idle"))
+    assert seen["while_talking"].index("listening") <= 10
+    assert seen["while_talking"][-1] == "listening"

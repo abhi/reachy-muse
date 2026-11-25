@@ -54,6 +54,12 @@ RESTING_STATES = {
          (4, UserSpeech(speaking=False, output=True, turn_running=True, turns_waiting=False)),
          (5, UserSpeech(speaking=False, output=False, turn_running=False, turns_waiting=False))],
         [(0, (LISTENING,)), (1, (LISTENING,)), (2, ()), (3, (THINKING,)), (4, ()), (5, ())]),
+    "user speech while Reachy rests in its thinking pose listens": (
+        [(0, Working(output=False, user_speaking=False)),
+         (1, UserSpeech(speaking=True, output=False, turn_running=False, turns_waiting=False)),
+         (2, UserSpeech(speaking=False, output=False, turn_running=False, turns_waiting=False)),
+         (3, UserSpeech(speaking=True, output=False, turn_running=False, turns_waiting=False))],
+        [(0, (THINKING,)), (1, (LISTENING,)), (2, ()), (3, ())]),
     "work shows thinking unless Reachy speaks or the user talks": (
         [(0, Working(output=False, user_speaking=False)),
          (1, Working(output=True, user_speaking=False)),
