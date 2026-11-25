@@ -354,12 +354,16 @@ _LOOKS_BODY = r"(?:outfit|shirt|dress|shoes|jacket|tie|sweater|hands?)"
 _RELATIVE = (r"(?:friend|guest|mom|mum|mother|dad|father|wife|husband|partner|son|daughter|brother|sister|kid|boy|girl"
              r"|baby|grandma|grandpa|grandmother|grandfather|boyfriend|girlfriend|roommate|colleague|neighbou?r)")
 _PHOTO_SLOT = re.compile(rf"\b(?:photo|picture|pic|snapshot|selfie) of ({_SUBJECT})|\bphotograph (?!of\b)({_SUBJECT})")
+# Words after a photo's subject that leave whom it frames as it is, as in "of me again" or "of us together".
+_SUBJECT_TAIL = re.compile(rf"(?: (?:{_TAIL}|again|here|there|today|together|too|also|as well"
+                           r"|(?:right|over) (?:here|there)|this time|one more time|once more))+$")
 # The subject a request names, matched whole and in this order.
 _SLOT_SUBJECTS = tuple((re.compile(pattern), subject) for pattern, subject in (
-    (rf"me|myself|my {_LOOKS_FACE}", PhotoSubject.ME),
+    (rf"me(?: [a-z']+ing)?|myself|my {_LOOKS_FACE}", PhotoSubject.ME),
     (rf"me (?:holding|wearing|with) .+|my {_LOOKS_BODY}|what i(?:'m| am) (?:holding|wearing)", PhotoSubject.HELD),
     (r"us(?: (?:both|all|two))?|(?:both|all|the (?:two|three|four|five)) of us|ourselves|everyone|everybody"
-     r"|the (?:group|family|kids|children|guests)|(?:my|our) (?:family|friends|kids|children|guests)", PhotoSubject.US),
+     r"|the (?:whole )?(?:group|family|kids|children|guests)"
+     r"|(?:my|our) (?:whole )?(?:family|friends|kids|children|guests)", PhotoSubject.US),
     (rf"him|her|them|someone else|somebody else|the other person|my {_RELATIVE}(?: [a-z']+)?", PhotoSubject.OTHER),
     (r"(?:this|these)(?: [a-z']+){0,2}", PhotoSubject.THIS),
     (r"(?:the|this|my) (?:room|view|table|desk|kitchen|counter|shelf|window|wall|floor)", PhotoSubject.SCENE),
@@ -367,9 +371,10 @@ _SLOT_SUBJECTS = tuple((re.compile(pattern), subject) for pattern, subject in (
 # Without a named subject, what the request asks about, searched for in this order.
 _ASKED_SUBJECTS = tuple((re.compile(pattern), subject) for pattern, subject in (
     (r"\bus\b|\bourselves\b|\beveryone\b|\beverybody\b|\bhow many people\b|\bselfie\b", PhotoSubject.US),
-    (rf"\bwhat am i (?:holding|showing|wearing)|\bi(?:'m| am) holding\b|\bin my hands?\b|\bam i holding\b"
-     rf"|\bhow many fingers\b|\bmy {_LOOKS_BODY}\b", PhotoSubject.HELD),
-    (rf"\b(?:see|describe) me\b|\bhow do i look\b|\bdo i look\b|\bmy {_LOOKS_FACE}\b", PhotoSubject.ME),
+    (rf"\bwhat (?:am i|i(?:'m| am)) (?:holding|showing|wearing)|\bi(?:'m| am) holding\b|\bin my hands?\b"
+     rf"|\bam i holding\b|\bhow many fingers\b|\bmy {_LOOKS_BODY}\b", PhotoSubject.HELD),
+    (rf"\b(?:see|describe) me\b|\bhow (?:do )?i look\b|\b(?:do|if|whether) i look\b|\bmy {_LOOKS_FACE}\b",
+     PhotoSubject.ME),
     (r"\bthis\b|\bthese\b", PhotoSubject.THIS),
 ))
 
@@ -384,7 +389,7 @@ def photo_subject(text: str) -> PhotoSubject:
     spoken = _spoken(text)
     slot = _PHOTO_SLOT.search(spoken)
     if slot is not None:
-        words = _TRAILING_TAIL.sub("", next(group for group in slot.groups() if group))
+        words = _SUBJECT_TAIL.sub("", next(group for group in slot.groups() if group))
         return next((subject for pattern, subject in _SLOT_SUBJECTS if pattern.fullmatch(words)),
                     PhotoSubject.UNPARSED)
     return next((subject for pattern, subject in _ASKED_SUBJECTS if pattern.search(spoken)), PhotoSubject.SCENE)

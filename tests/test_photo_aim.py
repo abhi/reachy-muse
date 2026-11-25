@@ -179,6 +179,9 @@ FRAMED = [
     pytest.param("take a photo of me", None, [(30, 0, 10)], f"subject=me {LOCKED} turns=1 off_deg=0", 2, id="me"),
     pytest.param("can you see me?", None, [(30, 0, 10)], f"subject=me {LOCKED} turns=1 off_deg=0", 2,
                  id="see_me"),
+    # The words an owner says next after a photo that missed them, as on 11-24.
+    pytest.param("take a photo of me again", None, [(30, 0, 10)], f"subject=me {LOCKED} turns=1 off_deg=0", 2,
+                 id="me_again"),
     pytest.param("take a photo of me", [(30, .35, 10), (-25, .12)], [(30, -10, 10)],
                  f"subject=me {LOCKED} turns=1 off_deg=0", 2, id="me_standing"),
     pytest.param("what am I holding?", [(30, .35, 10), (-25, .12)], [(30, 0, 10)],
