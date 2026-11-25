@@ -477,7 +477,8 @@ The wake gaze eases over 0.65 seconds alongside the greeting and the existing
 one-second sleep lift. Small angles turn the head; beyond 20 degrees the body
 also turns to reduce neck twist. SDK head yaw is absolute, so head and body yaw
 do not add. Both retain the app's 35-degree limit, even for a speaker farther
-to the side. An existing clip or motion command takes priority. After the turn,
+to the side. An existing clip or motion command takes priority, as does a
+photo's aim, and the wake then logs `decision=busy`. After the turn,
 face tracking can take over; without a face, Reachy holds the gaze. Sleep and
 explicit motion commands release it. With `--no-motion`, Reachy neither samples nor turns.
 Direction logs contain only angles and decisions.
@@ -503,7 +504,8 @@ anyone while face tracking is switched off, as after "stop looking at me". It
 waits while a turn toward a person is still chosen, pending or moving, or holds
 Reachy on someone else, while a turn Muse asked for during that utterance
 stands, and while a motion command, clip, generated motion such as the thinking
-motion, or photo owns the head. It waits only as long as the utterance goes on,
+motion, or photo owns the head, and while Reachy aims a photo, when it logs
+`held`. It waits only as long as the utterance goes on,
 and never turns for it afterwards. Each decision logs one line, such as
 `Reachy follows speaker outcome=turned delta_deg=-55`. The outcome is `turned`,
 `same`, `too_soon`, `unknown`, `off`, `held` or `busy`, and `delta_deg` is how
@@ -552,7 +554,8 @@ back to the gaze it replaced, usually toward the speaker. Sleep releases it to
 the sleep pose. An explicit motion command returns an error only
 while Reachy is still turning toward the person. Once Reachy faces them, the
 command runs and releases this gaze, as commands release the wake gaze. Reachy
-skips its own closing expression for a reply while it holds this gaze. Logs
+skips its own closing expression for a reply while it holds this gaze or aims a
+photo. A request to greet someone while Reachy aims a photo gets `busy`. Logs
 contain only the outcome, the source of the faces it used (`snapshot`, `fresh`,
 `memory` or `none`) and the number of faces in view.
 
@@ -580,10 +583,10 @@ reply; like a wake turn, it lasts until a motion command or sleep. Target
 `other` runs the same selection and hold as a spoken request to greet someone
 else, and the next request releases it. Muse gets only the outcome: `turned`,
 `no_other`, `no_faces`, `no_speaker_bearing`, `stale` or `busy`. It is `busy`
-while Reachy is asleep or its motion is off, and while a person turn is still
-being chosen, queued or moving, whether Reachy started it by itself for "say hi
-to my friend" or Muse asked for it. The log line names only the target and
-outcome, as in `Reachy look_at target=other outcome=turned`.
+while Reachy is asleep or its motion is off, while Reachy aims a photo, and while
+a person turn is still being chosen, queued or moving, whether Reachy started it
+by itself for "say hi to my friend" or Muse asked for it. The log line names only
+the target and outcome, as in `Reachy look_at target=other outcome=turned`.
 
 With `--wave-wake`, a wave also turns Reachy toward the person before face
 tracking takes over. The detected person's position takes priority over recent
@@ -1097,12 +1100,40 @@ they go to Muse as ordinary requests.
   photo. So does one heard in a call while Reachy still handles your previous
   turn, or while Muse still owes an answer to an earlier call turn; that answer
   is not cut off, and Muse hears the request in the call as an ordinary one.
-- The camera is in the head, so Reachy waits up to a second for its head to
-  finish turning toward you or a move Muse asked for, then holds the camera still
-  until it has the frame. The thinking pose and other expressive motion are held
-  at once, not waited out. A gaze held on another person ends first, as it does
-  for any next request, so the photo shows what Reachy faces afterwards, usually
-  you.
+- Before the photo, Reachy points its camera at what your words ask for. It
+  finds the subject with its own face detection; the direction your voice came
+  from only guides it. "Take a photo of me", "can you see me?" and "how do I
+  look?" frame your face: the face nearest where your voice came from, or
+  without that direction, the largest face in view, or else the largest seen in
+  the last 30 seconds. "What am I holding?", "what's in my hand?" and "take a
+  photo of my outfit" turn Reachy level toward you instead, since what you hold
+  may hide your face; with no face in view and no direction, Reachy keeps its
+  view. "Take a photo of us", "of everyone" and "how many people do you see?"
+  frame everyone who fits in view, you included. "Take a photo of my friend",
+  "of him" or "of her" frames the person who is not speaking, or without your
+  direction, everyone in view if they fit. "What is this?" and "read this label"
+  keep the view unless your voice came from outside it. Questions about the
+  scene, such as "what do you see?", "describe the room" or "what am I pointing
+  at?", and photos of things or people Reachy does not know, such as "take a
+  photo of my coffee" or "of Sarah", keep the view.
+- Reachy first waits up to 0.75 seconds for a turn toward you, or a move Muse
+  asked for, to finish. It then looks with its local face detector, which runs
+  even while other vision pauses for speech, turns, keeps still for 0.2 seconds
+  and looks again. The photo is taken once the subject is within 6 degrees of
+  the camera's center, or as near as the head turns; if the subject moved,
+  Reachy turns once more. With one turn, the photo is taken about 1.3 seconds
+  after your request. The aim takes at most 2.5 seconds, and past that the photo
+  shows wherever Reachy points. Reachy holds the camera still until it has the
+  frame; the thinking pose and other expressive motion are faded by the turn,
+  or held at once without one. Afterwards Reachy keeps facing whoever it
+  framed. A gaze held on another person ends first, as it does for any next
+  request. Without [local face following](#local-face-following), Reachy turns
+  level toward your voice for "me", "what am I holding?" and "us", and keeps its
+  view otherwise.
+- From the aim until the frame is read, nothing else moves Reachy's head. Muse's
+  moves and expressions wait and run afterwards, `reachy.look_at` answers
+  `busy`, and Reachy neither follows a new speaker, turns for a wake phrase,
+  greets anyone nor nods. Muse cannot aim the camera.
 - In a [realtime call](#realtime-voice-calls), Muse hears the request too.
   Reachy cuts off Muse's spoken answer, as it does for a device command, and
   speaks Muse's answer to the photo in its own voice. The call stays open. A
@@ -1133,14 +1164,28 @@ guest's included. Speech not spoken to Reachy, such as a television's, takes no
 photo unless it names Muse or Reachy. People in view are not asked. The shutter
 sound is the only notice.
 
-Each request logs one line, such as `Reachy photo outcome=sent path=chat
-width=1280 height=720 quality=80 bytes=98304 capture_ms=120 encode_ms=18
-upload_ms=640`. The outcome is `sent`, `busy`, `expired`, `camera_busy`,
-`no_frame`, `camera_failed`, `too_large`, `rejected`, `send_timeout`,
-`no_answer`, `cancelled`, or `interrupted` when the turn ended another way.
-`capture_ms` includes the wait for a still head. In a call, the `Realtime
-command` line shows `outcome=PHOTO`. Logs never contain your words, Muse's
-answer, the image or its base64.
+Each request logs one line, such as `Reachy photo outcome=sent path=realtime
+subject=me aim=locked bearing=no source=fresh faces=2 turns=1 off_deg=0
+aim_ms=1310 width=1280 height=720 quality=80 bytes=113882 capture_ms=148
+encode_ms=41 upload_ms=576`. The outcome is `sent`, `busy`, `expired`,
+`camera_busy`, `no_frame`, `camera_failed`, `too_large`, `rejected`,
+`send_timeout`, `no_answer`, `cancelled`, or `interrupted` when the turn ended
+another way. `subject` is what your words asked Reachy to frame: `me`, `held`,
+`us`, `other`, `this`, `scene` or `unparsed`. `aim` is how Reachy pointed the
+camera: `locked` within 6 degrees, `limit` as near as its head turns,
+`corrected` after a second turn, `unlocked` when time ran out first, `lost` when
+the subject's face had gone, `bearing` when it turned toward your voice and saw
+no face there, `view` when it kept its view, `no_faces` or `no_other` when it
+saw no one to frame, `busy` when other motion kept the head, `off` without
+motion, or `cancelled`. `bearing` says whether Reachy heard where you were,
+`source` where it first placed the subject (`fresh` from its camera pass,
+`memory`, `bearing` or `none`), `faces` how many faces its first pass saw,
+`turns` how often it turned, `off_deg` how far from the camera's center it last
+saw the subject, in degrees, and `aim_ms` how long the aim took. `capture_ms`
+starts after the aim and includes the wait for a still head. A request that
+takes no photo, such as a busy or expired one, logs `none` for each aim field.
+In a call, the `Realtime command` line shows `outcome=PHOTO`. Logs never
+contain your words, Muse's answer, the image or its base64.
 
 ## Morning briefing
 
