@@ -225,7 +225,7 @@ def first_audio(trials: int):
         async def nothing():
             pass
 
-        speaker = RealtimeSpeaker(hardware, motion, on_audible=lambda text, until: None,
+        speaker = RealtimeSpeaker(hardware, motion, on_audible=lambda text, until, line: None,
                                   on_start=nothing, on_idle=nothing)
         motion.words("r1", REPLIES[0])
         first = pcm[:CHUNK].tobytes()
@@ -245,7 +245,7 @@ def first_audio(trials: int):
         async def nothing():
             pass
 
-        speaker = RealtimeSpeaker(hardware, motion, on_audible=lambda text, until: None,
+        speaker = RealtimeSpeaker(hardware, motion, on_audible=lambda text, until, line: None,
                                   on_start=nothing, on_idle=nothing)
         began = time.process_time()
         motion.words("r1", REPLIES[0])

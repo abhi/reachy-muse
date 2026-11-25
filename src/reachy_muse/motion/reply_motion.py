@@ -47,6 +47,7 @@ class Mark:
     accent: Optional[str] = None
     revised: bool = False
     ends: bool = False
+    index: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -193,7 +194,7 @@ class ReplyMotion:
             if reply.unended:
                 marks.append(Mark(at - offset, ends=True))
             reply.unended = shown
-            marks.append(Mark(at - offset, sentence=motion if shown else None, text=sentence.text))
+            marks.append(Mark(at - offset, sentence=motion if shown else None, text=sentence.text, index=sentence.index))
         clearance = ACCENT_CLEARANCE_S * SAMPLE_RATE
         remaining = []
         for accent in reply.accents:
@@ -207,6 +208,17 @@ class ReplyMotion:
                 reply.accented += 1
         reply.accents = remaining
         return sorted(marks, key=lambda mark: (mark.sample, not mark.ends, mark.accent is not None))
+
+    def sentence_text(self, response_id: Optional[str], index: Optional[int]) -> Optional[str]:
+        """The cutter's current words for a sentence, including words received after its first audio."""
+        reply = self._replies.get(response_id)
+        if reply is None or index is None:
+            return None
+        for sentence in reply.sentences:
+            if sentence.index == index:
+                return sentence.text
+        pending = reply.cutter.pending()
+        return pending.text if pending is not None and pending.index == index else None
 
     def _due(self, reply: _Reply):
         for sentence in reply.sentences:

@@ -160,12 +160,12 @@ def test_repeated_playback_keeps_its_order_when_guarding_a_split_wake(batched):
     async def run():
         conversation = VoiceConversation(SimpleNamespace(), SimpleNamespace(echo_cancelled_input=True),
                                          backends=SimpleNamespace(motion=None))
-        conversation._muse_audible("Muse is here.", 98)
-        conversation._muse_audible("Hey,", 100)
+        conversation._muse_audible("Muse is here.", 98, object())
+        conversation._muse_audible("Hey,", 100, object())
         buffer = _CaptureBuffer(16000)
         if batched:
             buffer.push(np.full(800, .1), wake_context=conversation._wake_capture_context(100))
-        conversation._muse_audible("Muse is here.", 100.1)
+        conversation._muse_audible("Muse is here.", 100.1, object())
         buffer.push(np.full(800, .1), wake_context=conversation._wake_capture_context(100.1))
         captured = await buffer.get()
         local, detector = Local(), Detector()
@@ -185,8 +185,8 @@ def test_batching_repeated_playback_snapshots_does_not_invent_a_wake_phrase():
     async def run():
         conversation = VoiceConversation(SimpleNamespace(), SimpleNamespace(echo_cancelled_input=True),
                                          backends=SimpleNamespace(motion=None))
-        conversation._muse_audible("Muse is here.", 100)
-        conversation._muse_audible("Hey,", 100.1)
+        conversation._muse_audible("Muse is here.", 100, object())
+        conversation._muse_audible("Hey,", 100.1, object())
         buffer = _CaptureBuffer(16000)
         for _ in range(2):
             buffer.push(np.full(800, .1), wake_context=conversation._wake_capture_context(100.1))

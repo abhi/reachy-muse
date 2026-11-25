@@ -1598,13 +1598,14 @@ async def say_over_reply(rig, link, words, stretches, *, final_after_s=None, par
         voice += [True] * (voiced_ms_ // 20) + [False] * (quiet_ms // 20)
         ends.append((len(voice) - quiet_ms // 20) * .02)
     known, stream, shown = set(link._connection.hearing), None, 0
+    began = time.monotonic()
     for frame in range(len(voice) + round(((final_after_s or 0) + COMPANION_LAG_S + .1) / .02)):
         voiced = frame < len(voice) and voice[frame]
         chunk = np.full(CHUNK, VOICE_SAMPLE if voiced else 0, np.float32)
         if voiced and sound is not None:
             chunk = sound[frame * CHUNK % len(sound):][:CHUNK].copy()
         rig.hardware.samples.put(chunk)
-        await asyncio.sleep(CHUNK / 16000)
+        await asyncio.sleep(max(0.0, began + (frame + 1) * CHUNK / 16000 - time.monotonic()))
         if stream is None:
             stream = next((opened for opened in link._connection.hearing if opened not in known), None)
         if stream is None or stream not in link._connection.hearing:
@@ -2986,3 +2987,137 @@ def test_after_muse_s_spoken_acknowledgement_reachy_looks_thoughtful_until_muse_
 
     run(rig, conversation, user)
     assert seen == ["thinking", "listening"]
+
+
+async def quiet_until(rig, deadline):
+    """A quiet room at real-time pace until ``deadline``, paced by the clock: test_realtime_turns.room sleeps 20 ms
+    per frame and falls behind under load, so the user would speak later than meant."""
+    began, frames = time.monotonic(), 0
+    while time.monotonic() < deadline:
+        rig.hardware.samples.put(np.zeros(CHUNK, np.float32))
+        frames += 1
+        await asyncio.sleep(max(0.0, began + frames * CHUNK / 16000 - time.monotonic()))
+
+
+async def stream_reply(sdk, emit, response_id, text, pcm, regime):
+    """Muse's reply as a call streams it: audio at real-time pace, one chunk ahead, and words per ``regime``."""
+    emit(sdk.ResponseStarted(response_id))
+    words = text.split(" ")
+    starts = [said_at(text, " ".join(words[index:])) if index else 0.0 for index in range(len(words))]
+    sent = 0
+
+    def words_before(seconds):
+        nonlocal sent
+        while sent < len(words) and starts[sent] < seconds:
+            emit(sdk.TranscriptDelta(response_id, words[sent] + " "))
+            sent += 1
+
+    if regime == "ahead":
+        words_before(float("inf"))
+    step = round(0.2 * RATE) * 2
+    began = time.monotonic()
+    for offset in range(0, len(pcm), step):
+        end_s = (offset + step) / 2 / RATE
+        if regime == "with_audio":
+            words_before(end_s)
+        elif regime == "late":
+            # Now is one chunk before this one is due: words whose audio playback has reached.
+            words_before(offset / 2 / RATE - 0.2)
+        emit(sdk.AudioChunk(response_id, offset // 2, pcm[offset:offset + step]))
+        await asyncio.sleep(max(0.0, began + end_s - 0.2 - time.monotonic()))
+    words_before(float("inf"))
+    emit(sdk.TranscriptDone(response_id, text))
+    emit(sdk.ResponseDone(response_id, "completed"))
+
+
+def said_over_streamed_reply(monkeypatch, caplog, words, stretches, *, reply, regime, after_s, sound=None,
+                             reply_s=12.8):
+    """Say ``words`` ``after_s`` into Muse's 12.8 s ``reply`` streamed per ``regime``. Returns the barge-ins, the
+    user's voiced ms and the frames of Muse's own voice that reached Muse, Reachy's command lines, and where Reachy
+    cut Muse's reply off, once Reachy's endpoint has passed; then how many seconds of the reply played."""
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+
+    async def answer(sdk, emit, script):
+        await stream_reply(sdk, emit, "r1", reply, voiced(reply_s), regime)
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=10)
+    conversation.silence_s = 2.0
+    link = companion_hearing(conversation, forced_endpoints=True)
+    heard = []
+    barged_at = []
+    barge_in = _Call.barge_in
+
+    async def timed_barge_in(self):
+        barged_at.append(time.monotonic())
+        await barge_in(self)
+
+    monkeypatch.setattr(_Call, "barge_in", timed_barge_in)
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        playing_since = time.monotonic()
+        await quiet_until(rig, playing_since + after_s)
+        caplog.clear()
+        before = len(calls.frames)
+        await say_over_reply(rig, link, words, stretches, sound=sound)
+        await room(rig, 1.6)
+        cut = [round(at - playing_since) for at in barged_at]
+        heard.append((calls.barge_ins, voiced_ms(calls.frames[before:]), echo_frames(calls.frames[before:]),
+                      [line for line in caplog.messages if line.startswith("Realtime command ")], cut))
+        await rig.wait_until_or_timeout(lambda: not call.audible, reply_s + 2)
+        heard.append(round(sum(len(chunk) for chunk in rig.hardware.played) / rig.hardware.output_sample_rate, 2))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=60)
+    return heard
+
+
+ECHOES = {
+    "a substitution": (LONG_REPLY, "Tell me", "Tell me what your wearing and I'll suggest something"),
+    "a number written out": (NUMBER_REPLY, "it's 72", "it's seventy two degrees and sunny and by eight"),
+    "four in eight words wrong": (WEATHER_REPLY, "and the weekend", "the week and looks rain he so you"),
+}
+
+
+@pytest.mark.parametrize("regime", ["ahead", "with_audio", "late"])
+@pytest.mark.parametrize("case", list(ECHOES))
+def test_muse_s_echo_never_reaches_it_or_cuts_it_off_whatever_order_its_words_and_audio_arrive_in(
+        monkeypatch, caplog, case, regime):
+    """Contract 1: Muse's echo heard over its reply, transcribed with a word changed, never reaches Muse and never
+    cuts its reply off, at Reachy's endpoint too. Here the echo is played when Muse says those words, and Muse's
+    words reach Reachy before, with, or just after their audio."""
+    reply, said, words = ECHOES[case]
+    assert said_over_streamed_reply(monkeypatch, caplog, words, gapped(words), reply=reply, regime=regime,
+                                    after_s=said_at(reply, said), sound=muse_heard(1)) == [(0, 0, 0, [
+        f"Realtime command transcript=arrived words={len(words.split())} wake_prefix=none outcome=none drop=barge_in"],
+        []), 12.8]
+
+
+
+def test_identical_chat_lines_played_apart_keep_their_own_echo_times(monkeypatch):
+    rig = rig_for(monkeypatch)
+    rig.hardware.face_tracking_enabled = True
+    rig.hardware.allow_face_tracking = lambda enabled: None
+    calls = ScriptedCalls(reply=None)
+    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, follow my face.", "Follow my face."),
+                                    calls, wake_timeout_s=20)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        await rig.wait_until_or_timeout(lambda: len(played(rig.recording.events)) == 1, 5)
+        await room(rig, 11)
+        await speak_live(rig)
+        await rig.wait_until_or_timeout(lambda: len(played(rig.recording.events)) == 2, 5)
+        await room(rig, .3)
+        lines = conversation._voice[1]._audible
+        heard.append([line.text for line in lines])
+        heard.append(len(lines) == 2 and lines[1].started - lines[0].started > 10)
+
+    run(rig, conversation, user, rest=("idle", "listening", "thinking", "speaking"), timeout=30)
+    assert heard == [["Okay, I'll look at you.", "Okay, I'll look at you."], True]
+

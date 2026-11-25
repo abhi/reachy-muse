@@ -346,7 +346,7 @@ class RealtimeSpeaker:
     ``reply_started`` is when the latest reply's first chunk began to play.
     """
 
-    def __init__(self, hardware, motion: ReplyMotion, *, on_audible: Callable[[Optional[str], float], None],
+    def __init__(self, hardware, motion: ReplyMotion, *, on_audible: Callable[[Optional[str], float, object], None],
                  on_start: Callable[[], Awaitable[None]], on_idle: Callable[[], Awaitable[None]],
                  own_speaker=None) -> None:
         self._hardware = hardware
@@ -368,7 +368,7 @@ class RealtimeSpeaker:
         self._speaking = False
         self._sentence_open = False
         self._extras: dict = {}
-        self._audible_text: Optional[str] = None
+        self._audible_index: Optional[int] = None
         self._response_id: Optional[str] = None
         self._audible_responses: dict[Optional[str], float] = {}
         self._replies: list = []
@@ -451,7 +451,7 @@ class RealtimeSpeaker:
         self._cursor.end = 0.0
         self._sentence_open = False
         self._extras = {}
-        self._audible_text = None
+        self._audible_index = None
         self._replies = []
         try:
             if self._owner is not None:
@@ -489,6 +489,8 @@ class RealtimeSpeaker:
                 self._replies.append(item.response_id)
                 self.reply_started = time.monotonic()
                 await self._on_start()
+            if self._response_id != item.response_id:
+                self._audible_index = None
             self._response_id = item.response_id
             count = len(item.pcm) // 2
             marks = self._motion.marks(item.response_id, item.offset, count)
@@ -516,7 +518,7 @@ class RealtimeSpeaker:
             if self._timed and self._sentence_open:
                 self._hardware.finish_sentence()
             self._sentence_open = mark.sentence is not None
-            self._audible_text = mark.text
+            self._audible_index = mark.index
             if mark.sentence is not None and self._timed:
                 self._extras["sentence"] = mark.sentence
         if mark.accent is not None and self._timed:
@@ -539,7 +541,8 @@ class RealtimeSpeaker:
         self._audible_responses[self._response_id] = until
         if len(self._audible_responses) > 8:
             del self._audible_responses[min(self._audible_responses, key=self._audible_responses.get)]
-        self._on_audible(self._audible_text, until)
+        text = self._motion.sentence_text(self._response_id, self._audible_index)
+        self._on_audible(text, until, (self._response_id, self._audible_index))
         if cancelled:
             raise asyncio.CancelledError
 
@@ -550,7 +553,6 @@ class RealtimeSpeaker:
         if self._timed and self._sentence_open:
             self._hardware.finish_sentence()
         self._sentence_open = False
-        self._audible_text = None
         replies, self._replies = self._replies, []
         for response_id in replies:
             self._pending_replies.discard(response_id)

@@ -710,6 +710,7 @@ class VoiceConversation:
         self._echo_until = 0.0
         # Each line Reachy played recently, and when it played: its echo dies away ECHO_TAIL_S after its sound.
         self._audible: deque[Spoken] = deque(maxlen=16)
+        self._audible_line: object = None
         self._input_overflow = False
         self._turn_started = None
         self._logged_activity = None
@@ -3127,15 +3128,16 @@ class VoiceConversation:
             log.info("Reachy stopped Muse's realtime reply for the user's speech")
             self._barging = self._background(self.call.barge_in())
 
-    def _muse_audible(self, text: str | None, until: float, *, speech: bool = True) -> None:
+    def _muse_audible(self, text: str | None, until: float, line: object, *, speech: bool = True) -> None:
         self._echo_until = max(self._echo_until, until + ECHO_TAIL_S)
         if speech and not text:
             self._wake_unknown_output_until = max(self._wake_unknown_output_until, until + ECHO_TAIL_S + 1.5)
         if text:
-            if self._audible and self._audible[-1].text == text:
-                self._audible[-1] = self._audible[-1]._replace(until=until)
+            if self._audible and self._audible_line == line:
+                self._audible[-1] = self._audible[-1]._replace(text=text, until=until)
             else:
                 self._audible.append(Spoken(text, time.monotonic(), until))
+            self._audible_line = line
 
     async def _muse_speaks(self) -> None:
         if self.call is not None:
@@ -3552,6 +3554,7 @@ class VoiceConversation:
         samples_played = 0
         expression_task = None
         announced = False
+        audible_line = object()
         hush_floor = self._hush_floor
         write_timing = {"dispatch_ms_max": 0.0, "write_ms_max": 0.0, "return_ms_max": 0.0}
         started = self._turn_started if turn_started is None else turn_started
@@ -3611,7 +3614,7 @@ class VoiceConversation:
                 raise _SpeechSuperseded
             self._audio_clear_attempted = False
             self._muted = True
-            self._muse_audible(line.text, time.monotonic() + .13, speech=line.role != "cue")
+            self._muse_audible(line.text, time.monotonic() + .13, audible_line, speech=line.role != "cue")
             current_sentence = sentence
             if timed_motion and samples_played == 0 and expression_task is not None:
                 if expression_task.done() and not expression_task.cancelled():

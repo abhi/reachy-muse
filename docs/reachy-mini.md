@@ -810,7 +810,8 @@ window closes, so Reachy's local chat does not answer greetings in a call.
   voice in all, including any under an opening word that Muse's reply also
   holds. They must not be mostly the words Reachy's speaker was playing while
   they were heard, as Muse's echo would be, even with some words written
-  differently or missed. Words Muse said before then can be the user's, as when
+  differently or missed. Each playing line keeps all its words as they arrive;
+  repeated lines keep separate times. Words Muse said before then can be the user's, as when
   the user takes up Muse's offer in its words. Such a request goes to Muse only
   if Reachy does not take it as a device command or photo request, and it comes
   late. Muse's reply plays on until Reachy's end of the turn, 1.5 to 2 s after
