@@ -192,6 +192,25 @@ def test_a_turn_s_final_words_release_nothing_without_distinct_words_over_held_v
     assert feed.samples == [0.0] * 3100
 
 
+@pytest.mark.parametrize("words, kept", [("", False), ("Reachy,", True)], ids=["no words", "a word"])
+def test_voice_held_past_the_recognition_window_stays_only_if_words_were_heard_in_it(words, kept):
+    """A sound, then a pause past the recognition window, then a request that a partial confirms. Voice the recognizer
+    heard a word in waits with the request for Muse, though the partial is gone by then, as at a turn's end. Sound it
+    heard no word in, such as Muse's echo, is dropped."""
+    feed = Feed()
+    gate = CallInput(feed, 1000)
+    reply = ("It will be sunny tomorrow.",)
+    for _ in range(3):
+        gate.push(np.full(100, .25), speaking=True, text=words, playback=True, heard_over=reply)
+    for _ in range(10):
+        gate.push(np.zeros(100), speaking=False, text="", playback=True, heard_over=reply)
+    for _ in range(3):
+        gate.push(np.full(100, .5), speaking=True, text=f"{words} what about Friday".strip(), playback=True,
+                  heard_over=reply)
+    assert gate.confirmed is True
+    assert feed.samples == [0.0] * 1500 + ([.25] * 300 + [0.0] * 700 if kept else [0.0] * 300) + [.5] * 300
+
+
 def test_separate_short_sounds_do_not_combine_into_sustained_speech():
     feed = Feed()
     gate = CallInput(feed, 1000)

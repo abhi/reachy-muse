@@ -85,6 +85,7 @@ class CallInput:
         self._speech_samples = 0
         self._distinct_samples = 0
         self._quiet_samples = 0
+        self._words_heard = False
         self._held_for_turn = False
         self.confirmed = False
         self.sent_speech = False
@@ -106,13 +107,15 @@ class CallInput:
             self.reset()
             self.feed.push(np.zeros_like(samples))
             return False
+        self._words_heard = self._words_heard or word_count(text) > 0
         if speaking and self._quiet_samples:
             self._speech_samples = 0
             self._distinct_samples = 0
         self._quiet_samples = 0 if speaking else self._quiet_samples + len(samples)
         if self._quiet_samples > self.rate * INTERRUPTION_RECOGNITION_S:
-            if self._voiced_samples:
-                # Words recognized this late confirm nothing, but the held voice waits for its turn's final words.
+            if self._voiced_samples and self._words_heard:
+                # Words recognized this late confirm nothing, but voice with words waits for its turn's final words.
+                # Voice no words were heard in is unrecognized sound, such as echo, and goes.
                 self.feed.push(np.zeros_like(samples))
                 return False
             self.reset()

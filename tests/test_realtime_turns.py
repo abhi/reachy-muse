@@ -1721,6 +1721,48 @@ def test_muse_s_echo_heard_in_gapped_stretches_over_its_reply_never_reaches_it_a
         (0, 0, 0, ["Realtime command transcript=arrived words=9 wake_prefix=none outcome=none drop=barge_in"]), 12.8]
 
 
+def test_echo_the_companion_hears_no_words_in_never_reaches_muse_ahead_of_the_request_after_it(monkeypatch):
+    """Muse's voice comes back through the speaker in three short bursts the companion finds no words in, and a second
+    later the user asks something in the same breath, fluently enough that a partial confirms it. Muse gets the
+    request alone, as on main, and not its own voice in front of it."""
+    from reachy_muse.protocol import HearPartial, encode
+
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+
+    async def answer(sdk, emit, script):
+        reply_events(sdk, emit, "r1", LONG_REPLY, voiced(12.8))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=10)
+    conversation.silence_s = 2.0
+    link = companion_hearing(conversation, forced_endpoints=True)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, 3)
+        before, known, echo = len(calls.frames), set(link._connection.hearing), muse_heard(1)
+        sounds = (["echo"] * 10 + [None] * 5 + ["echo"] * 9 + [None] * 5 + ["echo"] * 10 + [None] * 50
+                  + ["user"] * 25 + [None] * 5 + ["user"] * 25 + [None] * 40)
+        # Each partial shows COMPANION_LAG_S after the user's stretch of voice that ends it.
+        partials = {113 + 24: "What about", 143 + 24: "What about Friday then"}
+        for frame, sound in enumerate(sounds):
+            chunk = (echo[frame * CHUNK % len(echo):][:CHUNK].copy() if sound == "echo"
+                     else np.full(CHUNK, VOICE_SAMPLE if sound == "user" else 0, np.float32))
+            rig.hardware.samples.put(chunk)
+            await asyncio.sleep(CHUNK / 16000)
+            stream = next((opened for opened in link._connection.hearing if opened not in known), None)
+            if stream is not None and frame in partials:
+                link._receive(link._connection, encode(HearPartial(stream, frame, partials[frame])))
+        heard.append((voiced_ms(calls.frames[before:]), echo_frames(calls.frames[before:]), calls.barge_ins))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
+    assert heard == [(1000, 0, 1)]
+
+
 @pytest.mark.parametrize("muse, barge_ins, pending", [("works", 0, [1, 2, 3]), ("talks", 1, [2, 3]),
                                                      ("has finished", 0, [2, 3])])
 def test_speech_that_runs_on_past_a_companion_endpoint_reaches_muse_without_a_gap(monkeypatch, muse, barge_ins, pending):
