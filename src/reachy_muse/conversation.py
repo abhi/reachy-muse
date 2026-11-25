@@ -743,6 +743,19 @@ class VoiceConversation:
         self.muse_moving = 0
         self.notifications: Notifications | None = None
 
+    @property
+    def call(self):
+        return self._call
+
+    @call.setter
+    def call(self, call) -> None:
+        """Muse may answer in an open call at any time, so the hardware hears whether one is open: face following goes
+        on while it is, even in the closed window's pose."""
+        self._call = call
+        set_call_open = getattr(self.hardware, "set_call_open", None)
+        if callable(set_call_open):
+            set_call_open(call is not None)
+
     async def _plan(self, event: plan.Event) -> None:
         for cue in self._planner.on(event, time.monotonic()):
             await self._apply_cue(cue)

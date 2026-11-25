@@ -75,6 +75,9 @@ class PeopleHardware(CallHardware):
         super().gesture(name)
         self.controller.gesture(name)
 
+    def set_call_open(self, call_open):
+        self.controller.set_call_open(call_open)
+
     @property
     def head_yaw(self):
         return self.controller.head_yaw

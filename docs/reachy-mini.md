@@ -846,7 +846,8 @@ deadline, so closing it never hangs up a tool call that sends no events. If no
 request waits for Muse and no event since Muse last finished shows it at work,
 speech then needs the wake phrase again, and Reachy shows the pose it shows
 when the window closes, not the listening pose. The call stays open, so Muse's
-late answer still plays, and the window then runs on as after any reply. Say
+late answer still plays, and the window then runs on as after any reply. Face
+following goes on meanwhile, so that answer plays facing you. Say
 "Hey Muse" to open the window again in the same call. Reachy logs one
 content-free line when this begins, and one when it ends, with how long it
 lasted.
@@ -1013,7 +1014,8 @@ to the tracked gaze. The main motion thread combines these offsets after clip
 crossfades; the detector never writes motor targets.
 
 Tracking pauses during explicit robot commands and resumes when they finish.
-By default, it also pauses while waiting for the wake phrase. Add
+By default, it also pauses while waiting for the wake phrase, except while a
+realtime call stays open, since Muse may still answer in it. Add
 `--face-follow-idle` alongside `--face-follow` to keep watching while idle at
 two frames per second, including in still mode with `REACHY_MUSE_BREATHING=0`.
 Idle following pauses during sleep and morning arrival watching.
@@ -1024,7 +1026,7 @@ toward losing that face: once the camera looks again, a face that has gone is
 dropped after the usual 0.8 seconds. A later turn drops the held face, whether
 it is a wake turn, a turn toward a later speaker or another person, or one
 Muse asks for with `reachy.look_at`. Sleep, idle without `--face-follow-idle`
-and "stop looking at me" still end following. At other
+once no call is open, and "stop looking at me" still end following. At other
 times the rates above are ceilings: each detector also respects a measured
 compute budget. Two-second capture and wake-processing windows below 95% coverage
 throttle, then suspend vision. Recovery requires 20 healthy seconds per step.

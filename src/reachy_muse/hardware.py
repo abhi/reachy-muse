@@ -299,6 +299,7 @@ class ReachyController:
         self._face_follower = None
         self._face_failure_logged = False
         self._face_tracking_on = True
+        self._call_open = False
         self._face_tracking_status = None
         self._head_angles = (0.0, 0.0)
         self._face_half_view = (0.0, 0.0)
@@ -434,6 +435,13 @@ class ReachyController:
     def allow_face_tracking(self, enabled: bool) -> None:
         with self._state_lock:
             self._face_tracking_on = enabled
+
+    def set_call_open(self, call_open: bool) -> None:
+        """Whether a realtime call to Muse is open. Muse may answer in it at any time, and its reply pauses the camera,
+        so while it is open, face following goes on as in conversation even in the idle pose, which Reachy shows
+        while only Muse's Working flag holds the call open past the follow-up window."""
+        with self._state_lock:
+            self._call_open = call_open
 
     def change_volume(self, step: int) -> int | None:
         """The daemon plays a short sound at the new level."""
@@ -1473,7 +1481,7 @@ class ReachyController:
             reason = "sleeping"
         elif commanded:
             reason = "command"
-        elif state in ("listening", "thinking", "speaking"):
+        elif state in ("listening", "thinking", "speaking") or state == "idle" and self._call_open:
             reason = "conversation"
         elif self._watching:
             reason = "arrival watching"

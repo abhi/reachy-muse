@@ -762,3 +762,83 @@ def test_speech_the_microphone_does_not_admit_leaves_reachy_thoughtful(camera_ro
     run(rig, service, user, rest=("thinking", "listening", "idle"))
     assert set(seen["while_talking"]) == {"thinking"}
     assert seen["reached_muse_ms"] == 0
+
+
+# ---- the closed window's pose while only Working holds the call open
+
+
+def yaw_span(samples):
+    """The lowest and highest head yaw among ``Watch`` samples, in whole degrees."""
+    yaws = [round(yaw) for yaw, _ in samples]
+    return min(yaws), max(yaws)
+
+
+@pytest.mark.parametrize("face_follow_idle", [False, True], ids=["default", "idle follow"])
+def test_while_only_working_holds_the_call_reachy_keeps_facing_the_owner_through_muse_s_late_answer(
+        camera_room, caplog, face_follow_idle):
+    """The owner at +15 degrees, whom Reachy faces by face following alone. Muse answers, the robot's SDK leaves
+    Working on, and the owner stays quiet past the follow-up window: Reachy shows the closed window's pose, but the
+    call stays open and Muse may still answer in it. With or without idle follow, Reachy keeps following the owner,
+    and Muse's late answer, which pauses the camera, plays facing them, as any reply in a call does."""
+    rig, controller, robot, scene = camera_room(face_follow_idle=face_follow_idle)
+    caplog.set_level("INFO")
+    scene.faces = [(15, .4, .3)]
+    released = asyncio.Event()
+
+    async def answer(sdk, emit, calls):
+        emit(sdk.Working(True))
+        reply_events(sdk, emit, "r1", REPLY, voiced(1.0))
+        await released.wait()
+        reply_events(sdk, emit, "r2", "And warm all week.", voiced(2.0))
+
+    service, calls = realtime(rig, answer, "What's the weather?", wake_timeout_s=3)
+    seen = {}
+
+    async def user():
+        await say_live(rig, wake=True)
+        voice = service._voice[1]
+        await until(rig, lambda: rig.hardware.played and not voice.call.audible, 10)
+        await until(rig, lambda: near(controller, 15), 3)
+        await until(rig, lambda: rig.states()[-1:] == ["idle"], 8)
+        watching = Watch(controller)
+        await asyncio.sleep(2.0)
+        seen["closed"] = (rig.states()[-1], voice.call is not None and not voice.call.done,
+                          yaw_span(await watching.stop()))
+        released.set()
+        await until(rig, lambda: voice.call.audible, 5)
+        watching = Watch(controller)
+        await until(rig, lambda: sum(map(len, rig.hardware.played)) >= 3 * RATE and not voice.call.audible, 10)
+        seen["late_answer"] = yaw_span(await watching.stop())
+
+    run(rig, service, user, rest=("listening", "idle", "thinking"), timeout=40)
+    assert seen["closed"][:2] == ("idle", True)
+    assert seen["closed"][2] in ((14, 14), (14, 15), (15, 15))
+    assert seen["late_answer"] in ((14, 14), (14, 15), (15, 15))
+
+
+def test_once_the_window_closes_and_hangs_up_the_call_reachy_stops_following_without_idle_follow(camera_room, caplog):
+    """Muse answers and its work settles, so the follow-up window closes and hangs up the call. Without idle follow,
+    Reachy stops following the owner and settles straight ahead, as when any window closes."""
+    rig, controller, robot, scene = camera_room()
+    caplog.set_level("INFO")
+    scene.faces = [(15, .4, .3)]
+
+    async def answer(sdk, emit, calls):
+        emit(sdk.Working(True))
+        reply_events(sdk, emit, "r1", REPLY, voiced(1.0))
+        emit(sdk.Working(False))
+
+    service, calls = realtime(rig, answer, "What's the weather?", wake_timeout_s=2)
+    seen = {}
+
+    async def user():
+        await say_live(rig, wake=True)
+        voice = service._voice[1]
+        await until(rig, lambda: rig.hardware.played and not voice.call.audible, 10)
+        await until(rig, lambda: near(controller, 15), 3)
+        await until(rig, lambda: voice.call is None, 8)
+        await rig.wait_until_or_timeout(lambda: near(controller, 0, .5), 6)
+        seen["closed"] = (rig.states()[-1], facing(controller, robot))
+
+    run(rig, service, user, rest=("idle",), timeout=30)
+    assert seen["closed"] == ("idle", (0, 0))
