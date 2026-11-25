@@ -159,7 +159,8 @@ class CallInput:
         return self.confirmed
 
     def _echoes(self, text: str, spoken: tuple[Spoken, ...]) -> bool:
-        played = spoken_between(spoken, self._voiced_from - ECHO_TIMING_S, self._voiced_until + ECHO_TIMING_S)
+        played = spoken_between(spoken, self._voiced_from - ECHO_TIMING_S, self._voiced_until + ECHO_TIMING_S,
+                                time.monotonic())
         return echoes_playback(text, (played,))
 
     @property

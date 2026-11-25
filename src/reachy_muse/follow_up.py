@@ -142,22 +142,25 @@ class Spoken(NamedTuple):
     until: float
 
 
-# How fast the words of a line still playing are taken to sound: the rate Reachy's reply aligner starts from.
-SPOKEN_CHARS_PER_S = 15.0
+SPOKEN_CHARS_PER_S_RANGE = (11.0, 19.0)
 
 
-def spoken_between(lines: Sequence[Spoken], start: float, end: float) -> str:
-    """The words of ``lines``, oldest line first, that began to sound from ``start`` to ``end``, in the order they
-    sounded. Each line's words are spread over the time it played, and the last line's over at least the time they
-    take at ``SPOKEN_CHARS_PER_S``, since it may still be playing."""
-    timed = []
-    for index, line in enumerate(lines):
+def spoken_between(lines: Sequence[Spoken], start: float, end: float, now: float) -> str:
+    """Words that may have started in the window, by line and then word. Playing lines use a band of speaking
+    rates; finished lines use their measured span."""
+    words = []
+    slow, fast = SPOKEN_CHARS_PER_S_RANGE
+    for line in sorted(lines, key=lambda line: line.started):
         text = line.text.replace("’", "'").casefold()
-        span = line.until - line.started
-        if index == len(lines) - 1:
-            span = max(span, len(text) / SPOKEN_CHARS_PER_S)
-        timed += [(line.started + span * word.start() / len(text), word.group()) for word in _WORD.finditer(text)]
-    return " ".join(word for at, word in sorted(timed) if start <= at <= end)
+        for word in _WORD.finditer(text):
+            if line.until > now:
+                earliest = line.started + word.start() / fast
+                latest = line.started + word.start() / slow
+            else:
+                earliest = latest = line.started + (line.until - line.started) * word.start() / len(text)
+            if earliest <= end and latest >= start:
+                words.append(word.group())
+    return " ".join(words)
 
 
 def echoes_playback(text: str, heard_over: Tuple[str, ...]) -> bool:

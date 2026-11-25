@@ -3419,3 +3419,21 @@ def test_a_fluent_request_gets_its_waiting_nod_from_the_endpoint_despite_command
     run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=30)
     assert [record.created - ended[0] for record in caplog.records
             if record.getMessage() == "Realtime turn ordinal=1 cue=still_waiting"] == [pytest.approx(4.83, abs=.12)]
+
+
+LONG_SENTENCE = ("Tomorrow will be sunny and warm in the morning with a light breeze from the west and a high of "
+                 "seventy two by the afternoon and you should expect some light rain after dark so take an "
+                 "umbrella if you go out late tonight.")
+
+
+@pytest.mark.parametrize("chars_per_s", [11.0, 12.0, 13.0, 15.0, 17.5, 18.0])
+def test_muse_s_echo_late_in_a_long_sentence_never_reaches_it_whatever_muse_s_speaking_rate(
+        monkeypatch, caplog, chars_per_s):
+    """Garbled echo late in a playing sentence is rejected across Muse's speaking rates."""
+    words = "and you should expect sum light rain after dark"
+    before = LONG_SENTENCE.index("and you should expect some")
+    assert said_over_streamed_reply(monkeypatch, caplog, words, gapped(words), reply=LONG_SENTENCE, regime="ahead",
+                                    after_s=before / chars_per_s, sound=muse_heard(1),
+                                    reply_s=round(len(LONG_SENTENCE) / chars_per_s, 1)) == [(0, 0, 0, [
+        "Realtime command transcript=arrived words=9 wake_prefix=none outcome=none drop=barge_in"], []),
+        round(len(LONG_SENTENCE) / chars_per_s, 1)]

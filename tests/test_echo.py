@@ -74,13 +74,20 @@ def test_muse_s_words_written_back_with_some_changed_or_missed_are_its_echo_and_
     assert echoes_playback(text, (line,)) is expected
 
 
-def test_the_words_spoken_between_two_times_are_placed_by_when_their_line_played():
-    """A finished line's words spread over the time it played; the last line's over at least the time they take at
-    15 characters a second, since it may still be playing."""
+@pytest.mark.parametrize("now, expected", [
+    (12.5, "be sunny would you"), (13.0, "be sunny would you like the")])
+def test_the_words_spoken_between_two_times_are_placed_by_when_their_line_played(now, expected):
     from reachy_muse.follow_up import Spoken, spoken_between
 
     lines = (Spoken("Tomorrow will be sunny.", 10.0, 12.0), Spoken("Would you like the forecast too?", 12.0, 13.0))
-    assert spoken_between(lines, 11.0, 12.5) == "be sunny would you"
+    assert spoken_between(lines, 11.0, 12.5, now) == expected
+
+
+def test_overlapping_word_times_keep_line_and_word_order():
+    from reachy_muse.follow_up import Spoken, spoken_between
+
+    lines = (Spoken("One two three.", 10.0, 14.0), Spoken("Four five.", 10.5, 13.0))
+    assert spoken_between(tuple(reversed(lines)), 10.0, 13.0, 12.0) == "one two three four five"
 
 
 @pytest.mark.parametrize("text, heard_over", [
