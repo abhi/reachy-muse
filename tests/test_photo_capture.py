@@ -12,6 +12,7 @@ import pytest
 np = pytest.importorskip("numpy")
 
 from reachy_muse.hardware import PHOTO_FRAME_S, PHOTO_SETTLE_S, PHOTO_STILL_S, ReachyController
+from reachy_muse.local_face_tracking import FaceTarget
 from reachy_muse.motion import MotionStyle
 from reachy_muse.photo import JPEG_MAGIC, PHOTO_MAX_BYTES, fit_jpeg, opencv_jpeg
 from test_hardware import FakeRobot, start_controller
@@ -491,3 +492,47 @@ def test_while_a_photo_holds_the_view_no_wake_or_follow_turn_starts(caplog):
     assert facing == (0, 0)
     assert [line for line in caplog.messages if line.startswith("Speaker gaze")] == [
         "Speaker gaze yaw=30.0 body_yaw=10.0 decision=busy"]
+
+
+def test_a_person_turn_that_starts_as_the_view_is_held_keeps_facing_that_person():
+    """Reachy follows a face 15 degrees to its right when a photo holds the view, and a turn toward the person at +30
+    starts in that moment, which this follower stretches. Once the turn ends, Reachy keeps facing that person rather
+    than the face it followed before."""
+    robot = FakeRobot()
+    controller = start_controller(robot, photo_encoder=Encoder(),
+                                  style=MotionStyle(breathing=False, expression_clips=False))
+    holding = threading.get_ident()
+
+    class Follower:
+        failure = None
+        active = False
+
+        def set_active(self, active, *, idle=False):
+            self.active = active
+
+        def hold_center(self, yaw):
+            pass
+
+        def target(self):
+            target = FaceTarget(math.radians(-15), 0.0, time.monotonic()) if self.active else None
+            if threading.get_ident() == holding:
+                threading.Thread(target=controller.look_at_person, args=(math.radians(30), 0.0)).start()
+                until(lambda: controller._speaker_turn is not None, .3)
+            return target
+
+        def close(self):
+            pass
+
+    controller._face_follower = Follower()
+    try:
+        controller.set_state("listening")
+        assert until(lambda: round(math.degrees(controller.head_yaw)) == -15)
+        controller.hold_view_for_photo(True)
+        assert until(lambda: controller._speaker_turn is not None)
+        assert until(lambda: controller._speaker_turn is None)
+        time.sleep(.5)
+        facing = round(math.degrees(controller.head_yaw))
+        controller.hold_view_for_photo(False)
+    finally:
+        controller.close()
+    assert facing == 30

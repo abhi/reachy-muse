@@ -1189,9 +1189,8 @@ class ReachyController:
         turns still run. Released while one moves, the view stays held until it ends, so the waiting commands then
         run rather than being refused for interrupting it."""
         follower = self._face_follower
-        target = follower.target() if active and follower is not None else None
         with self._state_lock:
-            self._photo_view_target = target
+            self._photo_view_target = follower.target() if active and follower is not None else None
             self._photo_view_ending = not active and self._turning_to_person()
             if active:
                 self._photo_view.set()
