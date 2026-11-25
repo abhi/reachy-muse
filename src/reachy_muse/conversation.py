@@ -36,7 +36,7 @@ from reachy_muse.capabilities import EMOJI, MARKUP, WAKE_CUE, Backends, Capabili
 from reachy_muse.protocol import MAX_LINE_BYTES
 from reachy_muse.device_command import (COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow,
                                        command_after_wake, executable, names_reachy, photo_requested,
-                                       whole_command)
+                                       photo_subject, whole_command)
 from reachy_muse.follow_up import (FollowUp, Spoken, classify_follow_up, is_echo, interrupts_playback,
                                    only_fillers, request_topic, too_short_for_follow_up, repeats_playback, word_count,
                                    takes_floor, words_besides_back_channels)
@@ -56,7 +56,7 @@ from reachy_muse.voice_audio import PRE_ROLL_S
 from reachy_muse.speaker_direction import DirectionDecision, DirectionSnapshot, WakeDirection, speaker_yaw
 from reachy_muse.presence import PresenceFusion
 from reachy_muse.person_gaze import MuseActivity, PersonGaze, people_result
-from reachy_muse.photo import (PHOTO_CAPTURE_S, PHOTO_FAILURE_LINES, PHOTO_FILENAME, PHOTO_MIME_TYPE,
+from reachy_muse.photo import (PHOTO_AIM_S, PHOTO_CAPTURE_S, PHOTO_FAILURE_LINES, PHOTO_FILENAME, PHOTO_MIME_TYPE,
                                PHOTO_SEND_TIMEOUT_S, PhotoCapture, PhotoLog, PhotoRequest, photo_allowed,
                                shutter_cue)
 from reachy_muse.inbox import Inbox, outcome, owner_binding
@@ -2229,7 +2229,7 @@ class VoiceConversation:
                 if gaze_generation is not None:
                     await self._gaze.request(text, speaker_bearing, gaze_generation)
                 if photo is None and self._photo_requested(text, timeline):
-                    photo = PhotoRequest(text, timeline.marks.get("endpoint", started))
+                    photo = PhotoRequest(text, timeline.marks.get("endpoint", started), speaker_bearing)
                 if photo is not None:
                     outcome = await self._photo_turn(photo, wav, started=started, defer_playback=defer_playback,
                                                      timeline=timeline)
@@ -2394,18 +2394,25 @@ class VoiceConversation:
 
     async def _send_photo(self, request: PhotoRequest, wav: bytes, report: PhotoLog, *, started: float,
                           defer_playback: bool, timeline: TurnTimeline) -> MuseJob | None:
-        """Capture the photo, then send it; the job Muse works on, or None with the reason in ``report``.
+        """Aim the camera at what the words ask Reachy to frame, capture the photo, then send it; the job Muse works
+        on, or None with the reason in ``report``.
 
         The JPEG goes out of scope when this returns.
         """
-        try:
-            capture = await asyncio.wait_for(asyncio.to_thread(self.hardware.capture_photo, PHOTO_CAPTURE_S),
-                                             PHOTO_CAPTURE_S + .5)
-        except asyncio.TimeoutError:
-            capture = PhotoCapture("camera_busy")
-        except Exception as exc:
-            log.warning("Reachy's photo capture failed: %s", type(exc).__name__)
-            capture = PhotoCapture("camera_failed")
+        async with self._gaze.photo_aim(photo_subject(request.words), request.speaker_bearing,
+                                        time.monotonic() + PHOTO_AIM_S, stop=self._photo.cancelled.is_set) as aim:
+            report.aimed(aim)
+            if self._photo.cancelled.is_set():
+                report.outcome = "cancelled"
+                return None
+            try:
+                capture = await asyncio.wait_for(asyncio.to_thread(self.hardware.capture_photo, PHOTO_CAPTURE_S),
+                                                 PHOTO_CAPTURE_S + .5)
+            except asyncio.TimeoutError:
+                capture = PhotoCapture("camera_busy")
+            except Exception as exc:
+                log.warning("Reachy's photo capture failed: %s", type(exc).__name__)
+                capture = PhotoCapture("camera_failed")
         report.captured(capture)
         if capture.failure is not None:
             report.outcome = capture.failure
@@ -3070,8 +3077,9 @@ class VoiceConversation:
             await self._announce(BUSY_CUE, started=None, defer_playback=True)
             return TurnOutcome.ACCEPTED
         return await self.turn(endpoint.audio, wake_strip_required=False, recognized_text=text, defer_playback=True,
-                               timeline=request.timeline, gaze_generation=request.gaze_generation,
-                               photo=PhotoRequest(text, request.timeline.marks["endpoint"]))
+                               timeline=request.timeline, speaker_bearing=request.speaker_bearing,
+                               gaze_generation=request.gaze_generation,
+                               photo=PhotoRequest(text, request.timeline.marks["endpoint"], request.speaker_bearing))
 
     def _pending_call_decision(self) -> bool:
         return bool(self.call is not None and self.call.pending)

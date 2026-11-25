@@ -463,3 +463,25 @@ def test_seen_faces_keep_their_capture_times_within_a_bound(monkeypatch):
         assert [face.captured_at for face in item.seen_since(15)] == [20.0, 20.0]
     finally:
         item.close()
+
+
+def test_recent_views_keep_empty_passes_and_expire_within_the_same_bound(monkeypatch):
+    monkeypatch.setattr('reachy_muse.local_face_tracking.SEEN_FACES', 3)
+    now = [10.0]
+
+    class Detector:
+        def detect(self, frame):
+            return [] if now[0] == 20.0 else [face(yaw=-10), face(x=.7, yaw=20)]
+
+    item = FaceFollower(captures(lambda: object(), lambda: now[0]), camera_matrix=None,
+                        detector_factory=lambda *args: Detector(), clock=lambda: now[0])
+    item.start()
+    try:
+        for captured_at in (10.0, 20.0, 30.0, 40.0):
+            now[0] = captured_at
+            assert item.refresh() is not None
+        assert [(view.captured_at, tuple(round(math.degrees(face.yaw)) for face in view.faces))
+                for view in item.views_since(0)] == [(20.0, ()), (30.0, (-10, 20)), (40.0, (-10, 20))]
+        assert [view.captured_at for view in item.views_since(35)] == [40.0]
+    finally:
+        item.close()

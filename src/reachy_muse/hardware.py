@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from reachy_muse.arrival import WatchPose
+    from reachy_muse.local_face_tracking import FaceTarget
     from reachy_muse.motion.layers import ClipTimeline
     from reachy_muse.motion.sentence import SentenceMotion
 
@@ -324,6 +325,9 @@ class ReachyController:
         self._photo_encoder = photo_encoder
         self._photo_lock = threading.Lock()
         self._photo_hold = threading.Event()
+        self._photo_view = threading.Event()
+        self._photo_view_target: FaceTarget | None = None  # the face follower's, frozen while the view is held
+        self._photo_view_ending = False    # released while a person turn moved, so held until that turn ends
         self._camera_hold: _CameraHold | None = None
         self._head_still_since: float | None = None
         from reachy_muse.vision_budget import VisionBudget
@@ -435,6 +439,8 @@ class ReachyController:
     def allow_face_tracking(self, enabled: bool) -> None:
         with self._state_lock:
             self._face_tracking_on = enabled
+            if not enabled:
+                self._photo_view_target = None
 
     def set_call_open(self, call_open: bool) -> None:
         """Whether a realtime call to Muse is open. Muse may answer in it at any time, and its reply pauses the camera,
@@ -549,7 +555,7 @@ class ReachyController:
             return False
         with self._state_lock:
             if (self._command_active or self._clip is not None or self._generated is not None
-                    or self._pending_motion is not None or self._deferred is not None):
+                    or self._pending_motion is not None or self._deferred is not None or self._photo_view.is_set()):
                 log.info("Speaker gaze yaw=%.1f body_yaw=%.1f decision=busy", target.head, target.body)
                 return False
             self._speaker_pending = _SpeakerPending(target, time.monotonic() + 1.0, angle)
@@ -577,7 +583,7 @@ class ReachyController:
                     or self._turning_to_person() or self._speaker_pending is not None
                     or self._command_active or self._deferred is not None or self._clip is not None
                     or self._generated_busy()
-                    or self._photo_hold.is_set()):
+                    or self._photo_hold.is_set() or self._photo_view.is_set()):
                 return "busy", None
             turn = self._speaker_turn
             delta = target.head - (turn.target.head if turn is not None else self._gaze_yaw)
@@ -700,6 +706,9 @@ class ReachyController:
         self._person_pending = self._person_hold = None
         self._person_release = False
         self._command_active = False
+        self._photo_view.clear()
+        self._photo_view_target = None
+        self._photo_view_ending = False
         from reachy_muse.motion.layers import MotionLayers, Ramp
         self._layers = MotionLayers(self._style)
         self._generated_gain = Ramp(1.0)
@@ -915,7 +924,7 @@ class ReachyController:
         if name not in HEAD_GESTURES and name != "wave":
             raise ValueError(f"Unknown head gesture: {name}")
         with self._state_lock:
-            if name in HEAD_GESTURES and self.person_gaze_held:
+            if name in HEAD_GESTURES and (self.person_gaze_held or self._photo_view.is_set()):
                 return
             now = time.monotonic()
             if name == "wave":
@@ -958,7 +967,7 @@ class ReachyController:
         pending = _PendingMotion(_Frames(poses, fps, loop, self._head), frozenset(during),
                                  time.monotonic() + start_within_s)
         with self._state_lock:
-            if self._person_hold is not None or self._person_pending is not None:
+            if self._person_hold is not None or self._person_pending is not None or self._photo_view.is_set():
                 return
             self._pending_motion = pending
 
@@ -1195,6 +1204,26 @@ class ReachyController:
         angles = (math.radians(coordinates["yaw"] - origin), math.radians(coordinates["pitch"]))
         return FaceCapture(frame, angles, pose[:3, :3], captured_at, self._face_half_view)
 
+    def hold_view_for_photo(self, active: bool) -> None:
+        """From a photo's aim until its frame is read, Muse's commands wait untaken in the queue, and no head
+        gesture, generated motion, wake turn or follow turn starts. The face follower's target is frozen where it
+        was, so the head keeps facing whoever it followed until a turn, a command or sleep ends that gaze; person
+        turns still run. Released while one moves, the view stays held until it ends, so the waiting commands then
+        run rather than being refused for interrupting it."""
+        follower = self._face_follower
+        with self._state_lock:
+            self._photo_view_target = (follower.target() if active and follower is not None
+                                       and self._speaker_turn is None else None)
+            self._photo_view_ending = not active and self._turning_to_person()
+            if active:
+                self._photo_view.set()
+            elif not self._photo_view_ending:
+                self._photo_view.clear()
+
+    @property
+    def view_changing(self) -> bool:
+        return self._view_changing()
+
     def capture_photo(self, timeout_s: float = PHOTO_CAPTURE_S) -> PhotoCapture:
         """One JPEG of what the camera sees now, made within ``timeout_s``; call it off the event loop.
 
@@ -1291,6 +1320,10 @@ class ReachyController:
     def recent_faces(self, since: float) -> tuple:
         follower = self._face_follower
         return follower.seen_since(since) if follower is not None else ()
+
+    def recent_views(self, since: float) -> tuple:
+        follower = self._face_follower
+        return follower.views_since(since) if follower is not None else ()
 
     def _wave_still(self) -> bool:
         return (not self._stop.is_set()
@@ -1511,7 +1544,12 @@ class ReachyController:
             return pose
         follower = self._face_follower
         look = self._speaker_look
-        target = follower.target() if follower is not None and self._speaker_turn is None else None
+        if follower is None or self._speaker_turn is not None:
+            target = None
+        elif self._photo_view.is_set():
+            target = self._photo_view_target
+        else:
+            target = follower.target()
         if target is None:
             if look is None:
                 return pose
@@ -1542,7 +1580,7 @@ class ReachyController:
         if self._speaker_look is not None and self._face_follower is not None:
             # A face target is a head yaw from the gaze it was seen from; with that gaze gone, it points elsewhere.
             self._face_follower.hold_center(self._face_center)
-        self._speaker_look = self._speaker_turn = None
+        self._speaker_look = self._speaker_turn = self._photo_view_target = None
 
     def _drop_speaker_pending(self) -> None:
         """Forget a turn toward a speaker that has not started; a turn toward a later speaker logs that it never came."""
@@ -1565,7 +1603,7 @@ class ReachyController:
     def _turn_toward(self, look: SpeakerYaw | None, now: float, *, toward_person: bool = False) -> None:
         """Ease head and body to ``look``; without one, the head settles back to its resting yaw."""
         self._speaker_look = look
-        self._speaker_turn = None
+        self._speaker_turn = self._photo_view_target = None
         if look is not None:
             self._speaker_gaze = look.head
             self._speaker_turn = _SpeakerTurn(look, now, self._pose_parameters(self._last_pose)["yaw"],
@@ -1573,6 +1611,9 @@ class ReachyController:
 
     def _update_person(self, now: float, state: str) -> None:
         with self._state_lock:
+            if self._photo_view_ending and not self._turning_to_person():
+                self._photo_view_ending = False
+                self._photo_view.clear()
             release, self._person_release = self._person_release, False
             if state == "sleeping":
                 if self._person_hold is not None or self._person_pending is not None:
@@ -1698,7 +1739,7 @@ class ReachyController:
                 self._pending_motion = pending = None
             free = (self._clip is None and self._generated is None and self._deferred is None
                     and self._speaker_pending is None and self._speaker_turn is None
-                    and self._person_pending is None and self._person_hold is None)
+                    and self._person_pending is None and self._person_hold is None and not self._photo_view.is_set())
             if pending is not None and free and state in pending.states:
                 self._pending_motion = None
             else:
@@ -1843,7 +1884,7 @@ class ReachyController:
                 # A command clip keeps the queue waiting, as every other command does.
                 commanded = self._clip is not None and self._clip.request is not None
                 request, self._deferred = self._deferred, None
-                if request is None and not commanded:
+                if request is None and not commanded and not self._photo_view.is_set():
                     try:
                         request = self._commands.get_nowait()
                     except queue.Empty:
@@ -1859,7 +1900,7 @@ class ReachyController:
                         if request is not None or commanded:
                             self._end_person_hold()
                             self._drop_speaker_pending()
-                            self._speaker_look = self._speaker_turn = None
+                            self._speaker_look = self._speaker_turn = self._photo_view_target = None
                             self._sentences.cancel()
                             self._sentence_active = False
                             self._sentence_terminal = None

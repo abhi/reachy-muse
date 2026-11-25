@@ -1,11 +1,12 @@
 """Which spoken words ask Reachy for a photo, and which never do."""
 
 import asyncio
+from collections import Counter
 
 import pytest
 
-from reachy_muse.device_command import (Commands, DeviceCommand, gaze_requested, names_reachy, photo_requested,
-                                       whole_command)
+from reachy_muse.device_command import (Commands, DeviceCommand, PhotoSubject, gaze_requested, names_reachy,
+                                       photo_requested, photo_subject, whole_command)
 from reachy_muse.turn_timeline import TurnTimeline
 from test_device_command import FakeModel
 
@@ -315,3 +316,127 @@ def test_most_natural_requests_take_a_photo_and_the_rest_are_refused_on_purpose(
         "Is my shirt on inside out?", "Which one is bigger?",
         "Take a photo of this receipt for my records.",  # keeps the photo
     ]
+
+
+# What each granted request asks Reachy to frame.
+SUBJECTS = {
+    PhotoSubject.ME: [
+        "take a photo of my new glasses",
+        "take a photo, does this look good on me?", "take a photo, do these look okay on me?",
+        "take a picture and tell me if this looks good on me",
+        "take a picture and tell me whether this looks good on me",
+        "take a photo, does it look good on me?", "take a photo, does that look good on me?",
+        "take a photo, do they look good on me?",
+        "take a photo, does this look good on me or not?", "take a photo, does this look good on me today?",
+        "take a photo and tell me how this looks on me", "take a photo and tell me how these look on me",
+        "take a photo, does this look good on me, please?", "take a photo, do these look okay on me, please?",
+        "take a photo, does this look good on me, Reachy?", "take a photo, do these look okay on me, Reachy?",
+        "take a photo, does this look good on me, thank you, Muse?",
+        "take a photo, do these look okay on me, Reachy, please?",
+        "take a photo, how do i look for my interview?",
+        "take a photo of me", "take a picture of me please", "take a photo of myself", "photograph me",
+        "take a photo of my face", "take a photo of my hair", "can you see me", "do you see me", "describe me",
+        "how do i look", "do i look okay", "do i look presentable", "what do you think about my hair",
+        "can you see my face", "can you see my hair", "take a selfie of me", "take a photo of me again",
+        "take a photo of me here", "take a photo of me today", "take a photo of me smiling",
+        "take a photo and tell me how i look", "what do you think of this haircut", "take a photo of me sitting down",
+        "take a photo of me doing yoga", "take a photo of me on the couch", "take a photo of me looking at you",
+        "take a photo of myself sitting down", "take a photo and tell me what i look like",
+        "take a photo and tell me how old i look", "take a photo and tell me if i'm smiling",
+        "take a photo and tell me does this hat look good on me"],
+    PhotoSubject.HELD: [
+        "take a photo, does this shirt look good on me?",
+        "take a photo of my new shirt",
+        "take a photo of my red dress",
+        "take a photo of my whole outfit",
+        "what am i holding", "what am i holding up", "what am i wearing", "what am i showing you", "what's in my hand",
+        "what's in my hands", "what do i have in my hand", "what's this i'm holding", "can you see what i'm holding",
+        "how many fingers am i holding up", "how many fingers do you see", "what do you see in my hand",
+        "take a photo of my outfit", "what do you think of my outfit", "take a photo, what am i holding?",
+        "take a photo and tell me what i'm wearing", "what do you think of this outfit",
+        "take a photo of me in my new dress", "take a photo of me showing you this",
+        "take a photo and tell me if this shirt looks good"],
+    PhotoSubject.US: [
+        "take a photo of us", "take a selfie", "take a selfie of us", "take a picture of us both",
+        "take a photo of both of us", "take a photo of all of us", "take a photo of the two of us",
+        "take a photo of everyone", "take a photo of my family", "take a photo of the kids", "can you see us",
+        "describe us", "how many people do you see", "how many people can you see", "take a photo of us together",
+        "take a photo of all of us together", "take a photo of everyone here", "take a photo of the whole family",
+        "take a photo of everyone in the room", "take a photo of us in the kitchen", "take a photo of us with the cake",
+        "take a photo of these people", "take a photo of my parents"],
+    PhotoSubject.OTHER: [
+        "take a photo of my friend", "take a photo of him", "take a photo of her", "take a photo of them",
+        "take a photo of my guest", "take a photo of my mom", "take a photo of my friend sarah", "photograph my friend",
+        "take a photo of this person", "take a photo of that guy", "take a photo of my best friend",
+        "take a photo of my little sister", "take a photo of my uncle", "take a photo of my cousin",
+        "take a photo of the man", "take a photo of the baby"],
+    PhotoSubject.THIS: [
+        "take a photo, does this look good on the table?", "take a photo, does this look good on my wall?",
+        "take a photo, does this look right on the shelf?",
+        "take a photo, does this look good on metal?",
+        "take a photo, how can i look into this?", "take a photo, how should i look through these?",
+        "look at this and tell me if these look okay",
+        "look at this, does this look like mold?",
+        "look at this, does this look okay?",
+        "look at this, does this look right?",
+        "look at this, does this look ripe to you?",
+        "take a photo and tell me does this look good",
+        "take a photo and tell me if these look ripe",
+        "take a photo and tell me whether these look the same",
+        "take a photo, do these look real?",
+        "take a photo, do these look the same?",
+        "take a photo, does this look like poison ivy?",
+        "take a photo, does this look ripe?",
+        "take a photo, how can i look after this?",
+        "take a photo, how can i look up what this is?",
+        "take a photo, how do these look?",
+        "take a photo, how does this look?",
+        "take a photo, how should i look after this plant?",
+        "take a picture and tell me if these look fresh",
+        "take a picture, does this look broken?",
+        "take a picture, does this look healthy?",
+        "take a picture, how can i look up what this is?",
+        "take a picture, how do i look after this?",
+        "take a photo of this", "photograph this", "take a photo of this plant", "what is this", "what's this",
+        "what kind of plant is this", "what color is this", "read this label", "read this", "what does this say",
+        "what does this label say", "tell me what this is", "identify this", "look at this, what is it?",
+        "look at this and tell me what it is", "show this to muse", "show muse this", "can you see this",
+        "describe this"],
+    PhotoSubject.SCENE: [
+        "what do you see", "what can you see", "what am i pointing at", "what do you see here",
+        "what do you see on the table", "what's on the table", "what's on my desk", "what's in front of you",
+        "what are you seeing", "tell me what you see", "describe what you see", "describe the room",
+        "describe what's in front of you", "can you see my dog", "can you see my plant", "take a photo",
+        "take a photo for muse", "send muse a photo", "take a picture and send it to muse",
+        "take a photo and tell me what you see", "take a picture, what do you see?", "take a photo of the room",
+        "take a photo of my desk"],
+    PhotoSubject.UNPARSED: [
+        "take a photo of my friend's face", "take a photo of my daughter's dress",
+        "take a photo of my friends' glasses", "take a photo of my daughters' outfit",
+        "take a photo of everyone on my screen",
+        "take a photo of everyone on my tv",
+        "take a photo of everyone on my phone",
+        "take a photo of everyone on my laptop",
+        "take a photo of everyone on the screen",
+        "take a photo of everyone on the tv",
+        "take a photo of everyone on the phone",
+        "take a photo of everyone on the laptop",
+        "take a picture of my screen", "take a photo of my morning coffee", "take a photo of the kids' drawing",
+        "take a photo of sarah", "take a photo of her dog", "take a photo of my friend's dog"],
+}
+
+
+@pytest.mark.parametrize("text, subject", [(text, subject) for subject, phrases in SUBJECTS.items()
+                                           for text in phrases])
+def test_photo_subject_resolves_each_table_row(text, subject):
+    assert (photo_requested(text), photo_subject(text)) == (True, subject)
+
+
+def test_every_granted_request_resolves_to_one_subject():
+    granted = {text: photo_subject(text) for text in [*REQUESTS, *MORE_ADDRESSED_QUESTIONS, *NATURAL, *BACKGROUND]
+               if photo_requested(text)}
+    assert len(granted) == 170
+    assert {subject.value: count for subject, count in Counter(map(photo_subject, REQUESTS)).items()} == {
+        "scene": 27, "this": 23, "unparsed": 9, "held": 7, "me": 5, "us": 2}
+    assert {subject.value: count for subject, count in Counter(granted.values()).items()} == {
+        "scene": 73, "this": 50, "held": 17, "unparsed": 14, "us": 9, "me": 7}

@@ -107,10 +107,11 @@ def test_a_spoken_photo_request_sends_one_photo_with_the_words_and_speaks_the_an
     assert rig.hardware.captures == [2.0]
     assert played(events) == ["shutter", "tts:A red mug with a cat on it."]
     [line] = photo_lines(caplog)
-    assert {key: value for key, value in fields(line).items() if key != "upload_ms"} == {
-        "outcome": "sent", "path": "chat", "width": "1280", "height": "720", "quality": "80", "bytes": "120000",
-        "capture_ms": "40", "encode_ms": "12"}
-    assert fields(line)["upload_ms"].isdigit()
+    assert {key: value for key, value in fields(line).items() if key not in ("aim_ms", "upload_ms")} == {
+        "outcome": "sent", "path": "chat", "subject": "held", "aim": "off", "bearing": "no", "source": "none",
+        "faces": "none", "turns": "0", "off_deg": "none", "width": "1280", "height": "720", "quality": "80",
+        "bytes": "120000", "capture_ms": "40", "encode_ms": "12"}
+    assert fields(line)["aim_ms"].isdigit() and fields(line)["upload_ms"].isdigit()
     assert any("photo=sent" in message for message in caplog.messages if message.startswith("Reachy turn timeline"))
     logged = "\n".join(record.getMessage() for record in caplog.records)
     for secret in ("holding", "Holding", "red mug", "/9j/", "\\xff\\xd8", "\xff\xd8"):
@@ -212,8 +213,9 @@ def test_a_photo_request_while_muse_works_on_another_request_gets_the_busy_line(
     assert rig.hardware.captures == []
     assert played(events) == ["tts:Hmm, good question.", "tts:One at a time, please.", "tts:Sunny tomorrow."]
     assert [fields(line) for line in photo_lines(caplog)] == [{
-        "outcome": "busy", "path": "chat", "width": "none", "height": "none", "quality": "none", "bytes": "none",
-        "capture_ms": "none", "encode_ms": "none", "upload_ms": "none"}]
+        "outcome": "busy", "path": "chat", "subject": "none", "aim": "none", "bearing": "none", "source": "none",
+        "faces": "none", "turns": "none", "off_deg": "none", "aim_ms": "none", "width": "none", "height": "none",
+        "quality": "none", "bytes": "none", "capture_ms": "none", "encode_ms": "none", "upload_ms": "none"}]
 
 
 class RejectsPhotos(PinSession):

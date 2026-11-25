@@ -12,6 +12,7 @@ import pytest
 np = pytest.importorskip("numpy")
 
 from reachy_muse.hardware import PHOTO_FRAME_S, PHOTO_SETTLE_S, PHOTO_STILL_S, ReachyController
+from reachy_muse.local_face_tracking import FaceTarget
 from reachy_muse.motion import MotionStyle
 from reachy_muse.photo import JPEG_MAGIC, PHOTO_MAX_BYTES, fit_jpeg, opencv_jpeg
 from test_hardware import FakeRobot, start_controller
@@ -353,3 +354,185 @@ def test_a_photo_holds_the_pose_a_muse_move_left_when_the_move_ends_during_the_r
         controller.close()
     assert results[0]["ok"] is True and results[1].failure is None
     assert read_yaws == [20]
+
+
+def until(condition, timeout=3):
+    deadline = time.monotonic() + timeout
+    while not condition() and time.monotonic() < deadline:
+        time.sleep(.01)
+    return condition()
+
+
+def test_while_a_photo_holds_the_view_muse_s_command_waits_untouched():
+    robot = FakeRobot()
+    controller = start_controller(robot, photo_encoder=Encoder(),
+                                  style=MotionStyle(breathing=False, expression_clips=False))
+    moved = []
+    try:
+        controller.set_state("listening")
+        controller.hold_view_for_photo(True)
+        assert controller.look_at_person(math.radians(30), 0.0)
+        assert until(lambda: not controller.person_turning)
+        command = threading.Thread(target=lambda: moved.append(
+            controller.run_command("reachy.move", {"yaw": -20, "duration": .3, "hold": 0}, 5000)))
+        command.start()
+        time.sleep(.5)
+        waiting = (list(moved), round(math.degrees(controller.head_yaw)), controller.person_gaze_held,
+                   controller.view_changing)
+        released_at = time.monotonic()
+        controller.hold_view_for_photo(False)
+        command.join(3)
+    finally:
+        controller.close()
+    assert waiting == ([], 30, True, False)
+    assert moved[0]["ok"] is True
+    yaws = [controller._pose_parameters(pose)["yaw"] for _, pose, _, _ in written_since(robot, released_at)]
+    assert round(min(yaws)) == -20
+
+
+def test_a_view_released_while_a_person_turn_moves_lets_muse_s_command_run_once_it_ends():
+    robot = FakeRobot()
+    controller = start_controller(robot, photo_encoder=Encoder(),
+                                  style=MotionStyle(breathing=False, expression_clips=False))
+    moved = []
+    try:
+        controller.set_state("listening")
+        controller.hold_view_for_photo(True)
+        command = threading.Thread(target=lambda: moved.append(
+            controller.run_command("reachy.move", {"yaw": -20, "duration": .3, "hold": 0}, 5000)))
+        command.start()
+        assert controller.look_at_person(math.radians(30), 0.0)
+        assert until(lambda: controller._speaker_turn is not None)
+        controller.release_person_gaze(turn_back=False)
+        controller.hold_view_for_photo(False)
+        released = controller.person_turning, list(moved)
+        command.join(3)
+    finally:
+        controller.close()
+    assert released == (True, [])
+    assert moved[0]["ok"] is True
+    yaws = [controller._pose_parameters(pose)["yaw"] for _, pose, _, _ in list(robot.frames)]
+    faced = next(index for index, yaw in enumerate(yaws) if round(yaw) == 30)
+    assert round(min(yaws[faced:])) == -20
+
+
+def test_while_a_photo_holds_the_view_no_head_gesture_or_generated_motion_starts():
+    robot = FakeRobot()
+    controller = start_controller(robot, photo_encoder=Encoder(),
+                                  style=MotionStyle(breathing=False, expression_clips=False))
+    poses = np.zeros((50, 9))
+    poses[:, 5] = 10 * np.sin(np.linspace(0, 2 * math.pi, 50, endpoint=False))
+    poses[:, 6:8] = -10, 10
+
+    def nod_and_sway():
+        controller.gesture("nod")
+        controller.play_motion(poses, 25, during={"idle"}, loop=True)
+
+    try:
+        time.sleep(.3)
+        controller.hold_view_for_photo(True)
+        nod_and_sway()
+        held_from = time.monotonic()
+        time.sleep(.5)
+        held = camera_poses(written_since(robot, held_from))
+        controller.hold_view_for_photo(False)
+        nod_and_sway()
+        time.sleep(.8)
+        moving_after = camera_poses(written_since(robot, time.monotonic() - .5))
+    finally:
+        controller.close()
+    assert (len(held), len(moving_after) > 1) == (1, True)
+
+
+def test_a_generated_motion_waiting_when_the_view_is_held_starts_only_after_its_release():
+    """The swaying motion was asked for while a turn toward the speaker at +30 still moved, so it waits for that
+    turn to end; the view is held by then."""
+    robot = FakeRobot()
+    controller = start_controller(robot, photo_encoder=Encoder(),
+                                  style=MotionStyle(breathing=False, expression_clips=False))
+    poses = np.zeros((50, 9))
+    poses[:, 5] = 10 * np.sin(np.linspace(0, 2 * math.pi, 50, endpoint=False))
+
+    def yaws(since):
+        return [round(controller._pose_parameters(pose)["yaw"]) for _, pose, _, _ in written_since(robot, since)]
+
+    try:
+        controller.set_state("listening")
+        assert controller.face_speaker(math.radians(60))
+        assert until(lambda: controller._speaker_turn is not None)
+        controller.play_motion(poses, 25, during={"listening"}, loop=True, start_within_s=5)
+        controller.hold_view_for_photo(True)
+        assert until(lambda: controller._speaker_turn is None)
+        held_from = time.monotonic()
+        time.sleep(.6)
+        held = set(yaws(held_from))
+        controller.hold_view_for_photo(False)
+        released_at = time.monotonic()
+        time.sleep(1)
+        swayed = yaws(released_at)
+    finally:
+        controller.close()
+    assert (held, max(swayed) - min(swayed) > 10) == ({30}, True)
+
+
+def test_while_a_photo_holds_the_view_no_wake_or_follow_turn_starts(caplog):
+    caplog.set_level("INFO")
+    robot = FakeRobot()
+    controller = start_controller(robot, photo_encoder=Encoder(),
+                                  style=MotionStyle(breathing=False, expression_clips=False))
+    try:
+        controller.set_state("listening")
+        controller.hold_view_for_photo(True)
+        decided = controller.look_at_speaker(math.radians(60)), controller.follow_speaker(math.radians(60))
+        time.sleep(.3)
+        facing = round(math.degrees(controller.head_yaw)), round(math.degrees(robot.body_yaw))
+    finally:
+        controller.close()
+    assert decided == (False, ("busy", None))
+    assert facing == (0, 0)
+    assert [line for line in caplog.messages if line.startswith("Speaker gaze")] == [
+        "Speaker gaze yaw=30.0 body_yaw=10.0 decision=busy"]
+
+
+def test_a_person_turn_that_starts_as_the_view_is_held_keeps_facing_that_person():
+    """Reachy follows a face 15 degrees to its right when a photo holds the view, and a turn toward the person at +30
+    starts in that moment, which this follower stretches. Once the turn ends, Reachy keeps facing that person rather
+    than the face it followed before."""
+    robot = FakeRobot()
+    controller = start_controller(robot, photo_encoder=Encoder(),
+                                  style=MotionStyle(breathing=False, expression_clips=False))
+    holding = threading.get_ident()
+
+    class Follower:
+        failure = None
+        active = False
+
+        def set_active(self, active, *, idle=False):
+            self.active = active
+
+        def hold_center(self, yaw):
+            pass
+
+        def target(self):
+            target = FaceTarget(math.radians(-15), 0.0, time.monotonic()) if self.active else None
+            if threading.get_ident() == holding:
+                threading.Thread(target=controller.look_at_person, args=(math.radians(30), 0.0)).start()
+                until(lambda: controller._speaker_turn is not None, .3)
+            return target
+
+        def close(self):
+            pass
+
+    controller._face_follower = Follower()
+    try:
+        controller.set_state("listening")
+        assert until(lambda: round(math.degrees(controller.head_yaw)) == -15)
+        controller.hold_view_for_photo(True)
+        assert until(lambda: controller._speaker_turn is not None)
+        assert until(lambda: controller._speaker_turn is None)
+        time.sleep(.5)
+        facing = round(math.degrees(controller.head_yaw))
+        controller.hold_view_for_photo(False)
+    finally:
+        controller.close()
+    assert facing == 30
