@@ -42,6 +42,7 @@ class DirectionDecision:
     mad_deg: float = math.nan
     inlier: float = 0.0
     angle: float | None = None
+    reads: int = 0                 # DoA reads answered in the window, speech or not
 
 
 @dataclass(frozen=True)
@@ -49,12 +50,15 @@ class DirectionSnapshot:
     samples: tuple[tuple[float, float], ...]
     captured_at: float
     empty_reason: str
+    cleared_at: float = -math.inf
+    reads: tuple[float, ...] = ()
 
     def decide(self, phrase_end: float | None) -> DirectionDecision:
         if phrase_end is None:
             return DirectionDecision("untimed")
         samples = [(at, angle) for at, angle in self.samples
                    if phrase_end - 1.5 <= at <= phrase_end]
+        reads = sum(phrase_end - 1.5 <= at <= phrase_end for at in self.reads)
         for index in range(len(samples) - 1, 0, -1):
             if samples[index][0] - samples[index - 1][0] > .35:
                 samples = samples[index:]
@@ -67,7 +71,8 @@ class DirectionSnapshot:
         mad = median(deviations) if deviations else math.nan
         inlier = sum(delta <= math.radians(20) for delta in deviations) / len(samples) if samples else 0.0
         if not samples:
-            reason = self.empty_reason
+            # Only a clear since the window opened can have removed its speech.
+            reason = self.empty_reason if self.cleared_at >= phrase_end - 1.5 else "too_few"
         elif not 0 <= age <= 1.0 or last_age > .45:
             reason = "stale"
         elif len(samples) < 2 or span < .1:
@@ -78,7 +83,7 @@ class DirectionSnapshot:
             reason = "ok"
         return DirectionDecision(reason, len(samples), span * 1000, age * 1000,
                                  last_age * 1000, math.degrees(mad), inlier,
-                                 direction if reason == "ok" else None)
+                                 direction if reason == "ok" else None, reads)
 
 
 def speaker_yaw(angle: float) -> SpeakerYaw:
@@ -98,6 +103,8 @@ class WakeDirection:
 
     ``eligible`` must exclude robot output even when the microphone has AEC.
     Clearing the history also invalidates any read already in flight.
+    ``wanted`` only pauses reading, as in a quiet room: the bearings already
+    heard stay, for a keyword found after its speaker has stopped.
     """
 
     def __init__(self, read: Callable[[], DoAReading | None], *, clock: Callable = time.monotonic,
@@ -106,29 +113,39 @@ class WakeDirection:
         self._clock = clock
         self._sleep = sleep
         self._samples: deque[tuple[float, float]] = deque(maxlen=80)
+        self._reads: deque[float] = deque(maxlen=80)
         self._generation = 0
         self._empty_reason = "too_few"
+        self._cleared_at = -math.inf
 
     def clear(self, reason: str = "too_few") -> None:
         self._generation += 1
         self._samples.clear()
+        self._reads.clear()
         self._empty_reason = reason
+        self._cleared_at = self._clock()
 
     def snapshot(self) -> DirectionSnapshot:
-        return DirectionSnapshot(tuple(self._samples), self._clock(), self._empty_reason)
+        return DirectionSnapshot(tuple(self._samples), self._clock(), self._empty_reason, self._cleared_at,
+                                 tuple(self._reads))
 
     def discard_through(self, at: float) -> None:
         while self._samples and self._samples[0][0] <= at:
             self._samples.popleft()
+        while self._reads and self._reads[0] <= at:
+            self._reads.popleft()
 
     def samples_between(self, start: float, end: float) -> tuple[tuple[float, float], ...]:
         return tuple((at, angle) for at, angle in self._samples if start <= at <= end)
 
-    async def sample_while(self, eligible: Callable[[], bool]) -> None:
+    async def sample_while(self, eligible: Callable[[], bool], wanted: Callable[[], bool]) -> None:
         try:
             while True:
                 if not eligible():
                     self.clear("ineligible")
+                    await self._sleep(.05)
+                    continue
+                if not wanted():
                     await self._sleep(.05)
                     continue
                 generation = self._generation
@@ -145,10 +162,12 @@ class WakeDirection:
                 elif reading is None:
                     self.clear("unavailable")
                     delay = 1.0
-                elif reading.speech_detected:
-                    self._samples.append((started, reading.angle))
-                    while self._samples and self._samples[0][0] < started - 3:
-                        self._samples.popleft()
+                else:
+                    self._reads.append(started)
+                    if reading.speech_detected:
+                        self._samples.append((started, reading.angle))
+                        while self._samples and self._samples[0][0] < started - 3:
+                            self._samples.popleft()
                 await self._sleep(delay)
         finally:
             self.clear()

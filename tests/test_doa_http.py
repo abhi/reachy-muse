@@ -104,7 +104,7 @@ def test_sampler_shutdown_finishes_during_stalled_connection_setup(stalled_doa_s
 
     async def run():
         direction = WakeDirection(controller.read_doa)
-        task = asyncio.create_task(direction.sample_while(lambda: True))
+        task = asyncio.create_task(direction.sample_while(lambda: True, lambda: True))
         try:
             assert await asyncio.to_thread(state.entered.wait, 2)
         finally:
@@ -143,7 +143,7 @@ def test_sampler_cancellation_does_not_wait_for_an_unfinished_source():
 
     async def run():
         direction = WakeDirection(read)
-        task = asyncio.create_task(direction.sample_while(lambda: True))
+        task = asyncio.create_task(direction.sample_while(lambda: True, lambda: True))
         try:
             assert await asyncio.to_thread(entered.wait, 2)
             task.cancel()
