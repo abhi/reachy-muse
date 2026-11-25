@@ -790,10 +790,11 @@ class VoiceConversation:
         return self.call is not None and (self._has_output() or self._muse_at_work())
 
     def _muse_at_work(self) -> bool:
-        """Muse works in the open call. Working counts only once an SDK event follows Muse's last finish, since the
-        robot's SDK can leave Working on."""
+        """Muse works in the open call. Working counts only once an SDK event that shows Muse at work follows its last
+        finish, since the robot's SDK can leave Working on; a reply's late ResponseDone or a cancelled response shows
+        none."""
         call = self.call
-        return call is not None and call.at_work and call.last_event_at > self._muse_finished_at
+        return call is not None and call.at_work and call.worked_at > self._muse_finished_at
 
     def _working_alone_holds_window(self) -> bool:
         """The wake window is past its deadline, and only the call's raw Working flag keeps it open: no recording runs,
@@ -3124,9 +3125,9 @@ class VoiceConversation:
         await asyncio.to_thread(self.hardware.set_state, "speaking")
 
     async def _muse_quiet(self) -> None:
-        """Muse finished speaking or working. Reachy looks thoughtful only while a turn still waits for Muse: Working
-        alone counts once an SDK event follows this finish, and a response Muse then starts, or completes without
-        audio, brings the thinking pose."""
+        """Muse finished speaking or working. Reachy looks thoughtful now only while a turn still waits for Muse;
+        later, an SDK event that shows Muse at work brings the thinking pose: Working coming on, or a response Muse
+        starts, or completes without audio, while Working is on."""
         self._muse_finished_at = time.monotonic()
         waiting = self._pending_call_decision()
         if self._wake_deadline is not None:

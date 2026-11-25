@@ -2341,6 +2341,61 @@ def test_a_request_waiting_for_muse_past_the_window_keeps_reachy_thoughtful_whil
     assert seen["logged"] == []
 
 
+def answers_then_an_event_that_shows_no_work(event, after_s, sent):
+    """Muse answers while the robot's SDK leaves Working on. ``after_s`` after the reply's audio streamed in, one more
+    SDK event arrives that shows no new work, and ``sent`` is set: the reply's own ResponseDone, held up by the
+    network, or the ResponseDone of a response begun while the reply streamed, which Muse cancelled."""
+    async def answer(sdk, emit, script):
+        emit(sdk.Working(True))
+        emit(sdk.ResponseStarted("r1"))
+        pcm = voiced(1.0)
+        for offset in range(0, len(pcm), 9600):
+            emit(sdk.AudioChunk("r1", offset // 2, pcm[offset:offset + 9600]))
+        emit(sdk.TranscriptDone("r1", REPLY))
+        if event == "cancelled":
+            emit(sdk.ResponseDone("r1", "completed"))
+            emit(sdk.ResponseStarted("r2"))
+        await asyncio.sleep(after_s)
+        emit(sdk.ResponseDone("r2", "cancelled") if event == "cancelled" else sdk.ResponseDone("r1", "completed"))
+        sent.set()
+    return answer
+
+
+@pytest.mark.parametrize("event, after_s", [("reply_done", 1.8), ("reply_done", 5.0), ("cancelled", 5.0)],
+                         ids=["the reply's done within the window", "the reply's done past it",
+                              "a cancelled response's done past it"])
+def test_an_event_that_shows_no_work_never_lets_speech_reach_muse_in_the_closed_window_s_pose(
+        monkeypatch, caplog, event, after_s):
+    """Muse answers, and the robot's SDK leaves Working on. One more SDK event arrives that shows no new work, within
+    the 2 s follow-up window or once only Working holds the call open past it. It is no sign that Muse works, so past
+    the window Reachy shows the closed window's pose, and its hearing agrees: speech without the wake phrase never
+    reaches Muse. The call stays open, and the log shows one hold, which ends with the session."""
+    caplog.set_level("INFO", logger="reachy_muse.conversation")
+    rig = rig_for(monkeypatch)
+    sent = asyncio.Event()
+    calls = ScriptedCalls(answer=answers_then_an_event_that_shows_no_work(event, after_s, sent))
+    conversation = realtime_service(rig, StreamingTranscripts("What's the weather?", "And tomorrow?"), calls)
+    seen = {}
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        await room_until(rig, lambda: sent.is_set() and time.monotonic() > voice._wake_deadline, 12)
+        await room(rig, .3)
+        before = len(calls.frames)
+        speaking = asyncio.create_task(speak_live(rig))
+        states = []
+        while not speaking.done():
+            states.append(rig.states()[-1])
+            await asyncio.sleep(.02)
+        seen["heard"] = (voiced_ms(calls.frames[before:]), sorted(set(states)), voice.call is call, call.working)
+
+    run(rig, conversation, user, rest=("idle", "listening", "thinking"), timeout=30)
+    assert seen["heard"] == (0, ["idle"], True, True)
+    assert ["began" if entry == "began" else "ended" for entry in working_holds(caplog)] == ["began", "ended"]
+
+
 def test_speech_admitted_before_the_wake_deadline_can_finish_after_it(monkeypatch):
     rig = rig_for(monkeypatch)
     calls = ScriptedCalls(answer=keeps_working)

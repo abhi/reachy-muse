@@ -534,8 +534,9 @@ class RealtimeCall:
     Reachy itself since then. ``on_working`` hears each Working event, and ``on_working(True)`` each
     response Muse starts while Working is on, and each that completes then without audio, as a tool
     call's does. A spoken reply's ResponseDone shows no further work: it can come after the reply's
-    audio has played. ``face_follow_seconds`` gives the robot's running totals of paused and held
-    face following, for the call's summary.
+    audio has played. ``worked_at`` is when the last event that shows Muse at work came: Working
+    coming on, or one of those responses. ``face_follow_seconds`` gives the robot's running totals
+    of paused and held face following, for the call's summary.
     """
 
     def __init__(self, feed: MicrophoneFeed, speaker: RealtimeSpeaker, motion: ReplyMotion, *,
@@ -561,6 +562,7 @@ class RealtimeCall:
         self.ready_at: Optional[float] = None
         self.link_reused = False
         self.last_event_at: Optional[float] = None
+        self.worked_at: Optional[float] = None
         self._quiet_since: Optional[float] = None
         self._moved_at: Optional[float] = None
         self._working_since: Optional[float] = None
@@ -654,10 +656,10 @@ class RealtimeCall:
     def at_work(self) -> bool:
         """Muse is working on a request: Working is on and its work has not gone stale.
 
-        The robot's SDK can leave Working on after Muse stops, so Working with no SDK event for
-        ``WORKING_STALE_S`` no longer counts.
+        The robot's SDK can leave Working on after Muse stops, so Working no longer counts once no
+        event has shown Muse at work for ``WORKING_STALE_S``.
         """
-        return self.working and self._events_fresh(time.monotonic())
+        return self.working and self.worked_at is not None and time.monotonic() - self.worked_at < WORKING_STALE_S
 
     def _progress_suspended(self, now: float) -> bool:
         if not self._events_fresh(now):
@@ -780,6 +782,11 @@ class RealtimeCall:
                 self._quiet_since = None
             elif self._quiet_since is None:
                 self._quiet_since = self.last_event_at
+        done = self._responses.get(event.response_id) if kind == "ResponseDone" else None
+        new_work = self.working and (kind == "ResponseStarted"
+                                     or done is not None and done.completed and not done.audio_bytes)
+        if new_work or kind == "Working" and event.working:
+            self.worked_at = self.last_event_at
         try:
             if kind == "AudioChunk":
                 self.motion.audio(event.response_id, event.offset, event.pcm)
@@ -796,9 +803,7 @@ class RealtimeCall:
                 self._on_working(event.working)
             elif kind == "PlaybackFlushed":
                 self.motion.flushed(event.response_ids)
-            done = self._responses.get(event.response_id) if kind == "ResponseDone" else None
-            if self.working and (kind == "ResponseStarted"
-                                 or done is not None and done.completed and not done.audio_bytes):
+            if new_work:
                 self._on_working(True)
         except Exception as exc:
             log.warning("Reachy's realtime motion failed on a %s event (%s)", kind, type(exc).__name__)
