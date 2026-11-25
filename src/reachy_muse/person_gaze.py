@@ -295,7 +295,8 @@ class PersonGaze:
         takes at most ``within_s``.
 
         Returns the outcome, the source of the faces used and how many were in view. A remembered
-        bearing that the current view covered is dropped: the camera just looked there. A photo's aim makes it busy.
+        bearing that the current view covered is dropped: the camera just looked there. A photo's aim makes it busy,
+        even one that begins during the camera pass.
         """
         if self._aiming:
             return "busy", "none", 0
@@ -311,7 +312,7 @@ class PersonGaze:
                 view, source = await self._fresh_pass(min(_FRESH_PASS_S, within_s)), "fresh"
             finally:
                 self._choosing = False
-        if generation != self._admitted_generation:
+        if generation != self._admitted_generation or self._aiming:
             return "busy", "none", 0
         if not _within(view, _SNAPSHOT_MAX_AGE_S):
             view = None

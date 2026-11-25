@@ -15,6 +15,8 @@ import time
 import numpy as np
 import pytest
 
+from reachy_muse.device_command import PhotoSubject
+from reachy_muse.person_gaze import PersonGaze
 from reachy_muse.photo import shutter_cue
 from reachy_muse.speaker_direction import DoAReading
 from test_device_command_turns import played, run, service as make_service
@@ -610,6 +612,51 @@ def test_nothing_else_turns_reachy_during_the_aim(people, caplog, monkeypatch):
                      "facing": (30, 10)}
     assert camera.shots == [(30, 0, 10)]
     assert aimed(caplog) == aim_fields("subject=me aim=locked bearing=no source=fresh faces=2 turns=1 off_deg=0")
+
+
+def test_a_greeting_whose_camera_pass_began_before_the_aim_leaves_the_aim_alone(people, caplog):
+    """The owner at +30 asks Reachy to greet their friend, and its camera pass is still under way when a photo of
+    the owner begins its aim, which shares that pass. The greeting is then busy, so only the aim turns Reachy."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    looking, released = threading.Event(), threading.Event()
+
+    def hold_up_the_pass():
+        looking.set()
+        released.wait(5)
+
+    scene.before_capture = hold_up_the_pass
+    holds = recording_holds(rig, controller)
+    turns = []
+    look_at_person = rig.hardware.look_at_person
+
+    def turn(yaw, pitch):
+        turns.append(round(math.degrees(yaw)))
+        return look_at_person(yaw, pitch)
+
+    rig.hardware.look_at_person = turn
+    gaze = PersonGaze(rig.hardware, hearing=lambda: None)
+
+    async def photo_of_me():
+        async with gaze.photo_aim(PhotoSubject.ME, None, time.monotonic() + 2.5) as aim:
+            return aim
+
+    async def race():
+        greeting = asyncio.create_task(gaze.request("Say hi to my friend.", bearing(30), gaze.begin()))
+        await until(rig, looking.is_set)
+        aiming = asyncio.create_task(photo_of_me())
+        await until(rig, lambda: holds)
+        scene.before_capture = None
+        released.set()
+        await greeting
+        return await aiming
+
+    try:
+        aim = asyncio.run(asyncio.wait_for(race(), 10))
+    finally:
+        released.set()
+    assert gaze_lines(caplog) == ["Reachy gaze request outcome=busy source=none faces=0"]
+    assert (aim.outcome, aim.turns, turns, facing(controller, robot)) == ("locked", 1, [30], (30, 10))
 
 
 def test_never_mind_during_the_aim_reads_no_photo_frame(people, caplog):
