@@ -431,6 +431,8 @@ class ReachyController:
     def allow_face_tracking(self, enabled: bool) -> None:
         with self._state_lock:
             self._face_tracking_on = enabled
+            if not enabled:
+                self._photo_view_target = None
 
     def change_volume(self, step: int) -> int | None:
         """The daemon plays a short sound at the new level."""

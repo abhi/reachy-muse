@@ -387,6 +387,25 @@ def test_the_face_reachy_follows_when_asked_stays_framed(people, caplog, words, 
     assert {key: aimed(caplog)[key] for key in ("subject", "turns")} == {"subject": subject, "turns": "0"}
 
 
+def test_disabling_face_tracking_recentres_the_head_while_the_photo_view_is_held(people):
+    rig, controller, robot, scene = people
+    scene.faces, scene.doa, scene.busy = [(15, .35)], None, False
+    controller.set_state("listening")
+
+    async def stop_looking():
+        await until(rig, lambda: abs(controller._pose_parameters(robot.pose)["yaw"] - 15) < 1)
+        controller.hold_view_for_photo(True)
+        try:
+            controller.allow_face_tracking(False)
+            await rig.wait_until_or_timeout(lambda: abs(controller._pose_parameters(robot.pose)["yaw"]) < 1, 5)
+            assert controller._photo_view.is_set()
+            assert controller._pose_parameters(robot.pose)["yaw"] == pytest.approx(0, abs=1)
+        finally:
+            controller.hold_view_for_photo(False)
+
+    asyncio.run(stop_looking())
+
+
 @pytest.mark.parametrize("words, shots, aim", [
     ("take a photo of me", [(30, 0, 10)], "subject=me aim=locked bearing=no source=memory faces=0 turns=1 off_deg=0"),
     ("what am I holding?", STRAIGHT_AHEAD,
