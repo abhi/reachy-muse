@@ -532,8 +532,10 @@ class RealtimeCall:
 
     ``latest_response`` is the reply Muse started last, and ``muse_moved`` whether Muse has moved
     Reachy itself since then. ``on_working`` hears each Working event, and ``on_working(True)`` each
-    response Muse starts or finishes while Working is on. ``face_follow_seconds`` gives the robot's
-    running totals of paused and held face following, for the call's summary.
+    response Muse starts while Working is on, and each that completes then without audio, as a tool
+    call's does. A spoken reply's ResponseDone shows no further work: it can come after the reply's
+    audio has played. ``face_follow_seconds`` gives the robot's running totals of paused and held
+    face following, for the call's summary.
     """
 
     def __init__(self, feed: MicrophoneFeed, speaker: RealtimeSpeaker, motion: ReplyMotion, *,
@@ -794,7 +796,9 @@ class RealtimeCall:
                 self._on_working(event.working)
             elif kind == "PlaybackFlushed":
                 self.motion.flushed(event.response_ids)
-            if kind in ("ResponseStarted", "ResponseDone") and self.working:
+            done = self._responses.get(event.response_id) if kind == "ResponseDone" else None
+            if self.working and (kind == "ResponseStarted"
+                                 or done is not None and done.completed and not done.audio_bytes):
                 self._on_working(True)
         except Exception as exc:
             log.warning("Reachy's realtime motion failed on a %s event (%s)", kind, type(exc).__name__)

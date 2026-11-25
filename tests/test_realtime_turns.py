@@ -2384,3 +2384,79 @@ def test_after_muse_s_spoken_acknowledgement_reachy_looks_thoughtful_until_muse_
 
     run(rig, conversation, user)
     assert seen == ["thinking", "listening"]
+
+
+def answers_and_reports_it_done(after_s):
+    """Muse answers while the robot's SDK leaves Working on, and the reply's ResponseDone comes ``after_s`` after its
+    audio streamed in: at once, or once that audio has played out, as network jitter delivers it."""
+    async def answer(sdk, emit, script):
+        emit(sdk.Working(True))
+        emit(sdk.ResponseStarted("r1"))
+        pcm = voiced(1.0)
+        for offset in range(0, len(pcm), 9600):
+            emit(sdk.AudioChunk("r1", offset // 2, pcm[offset:offset + 9600]))
+        emit(sdk.TranscriptDone("r1", REPLY))
+        await asyncio.sleep(after_s)
+        emit(sdk.ResponseDone("r1", "completed"))
+    return answer
+
+
+@pytest.mark.parametrize("after_s", [0.0, 1.8])
+def test_working_left_on_and_a_late_response_done_never_shows_the_thinking_pose_after_the_reply(monkeypatch, after_s):
+    """No request waits once Muse has answered. The reply's own ResponseDone, arriving after its audio, is no sign
+    that Muse works on anything, so Reachy rests listening, as it does when the ResponseDone comes first."""
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(answer=answers_and_reports_it_done(after_s))
+    conversation = realtime_service(rig, StreamingTranscripts("What's the weather?"), calls, wake_timeout_s=10)
+    seen = {}
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+        replying = len(rig.recording.events)
+        await rig.wait_until_or_timeout(lambda: not voice.call.audible, 5)
+        await asyncio.sleep(1.5)
+        seen["since_reply"] = [event["state"] for event in rig.recording.events[replying:]
+                               if event.get("robot") == "set_state"]
+        seen["working"] = voice.call.working
+        seen["pending"] = len(voice.call.pending)
+
+    run(rig, conversation, user, rest=("listening", "thinking", "idle"))
+    assert (seen["working"], seen["pending"]) == (True, 0)
+    assert seen["since_reply"] == ["listening"]
+
+
+def acknowledges_then_a_silent_response_ends(status):
+    """Muse's spoken aside, then a response without audio, as a tool call's is, that starts while the aside plays and
+    ends ``status`` once it has played out; Working, left on, settles later."""
+    async def answer(sdk, emit, script):
+        emit(sdk.Working(True))
+        reply_events(sdk, emit, "r1", "Sure, one moment.", voiced(1.0))
+        emit(sdk.ResponseStarted("tool"))
+        await asyncio.sleep(2.5)
+        emit(sdk.ResponseDone("tool", status))
+        await asyncio.sleep(1.5)
+        emit(sdk.Working(False))
+    return answer
+
+
+@pytest.mark.parametrize("status, after_done", [("completed", "thinking"), ("cancelled", "listening")])
+def test_a_response_completing_without_audio_after_muse_s_aside_shows_it_at_work(monkeypatch, status, after_done):
+    """The silent response started while Reachy spoke, so only its completion can show Muse at work: Reachy looks
+    thoughtful once it completes, until Working settles. A cancelled one shows no work, and Reachy keeps listening."""
+    rig = rig_for(monkeypatch)
+    calls = ScriptedCalls(answer=acknowledges_then_a_silent_response_ends(status))
+    conversation = realtime_service(rig, StreamingTranscripts("Hey Muse, book me a table for two."), calls,
+                                    wake_timeout_s=10)
+    seen = []
+
+    async def user():
+        rig.say(wake=True)
+        await rig.wait_until_or_timeout(lambda: "muse" in played(rig.recording.events), 5)
+        for wait_s in (2.0, 1.0, 1.5):
+            await asyncio.sleep(wait_s)
+            seen.append(rig.states()[-1])
+
+    run(rig, conversation, user, rest=("listening", "idle"))
+    assert seen == ["listening", after_done, "listening"]

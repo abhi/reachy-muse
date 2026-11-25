@@ -3093,7 +3093,8 @@ class VoiceConversation:
 
     async def _muse_quiet(self) -> None:
         """Muse finished speaking or working. Reachy looks thoughtful only while a turn still waits for Muse: Working
-        alone counts once an SDK event follows this finish, and that event brings the thinking pose."""
+        alone counts once an SDK event follows this finish, and a response Muse then starts, or completes without
+        audio, brings the thinking pose."""
         self._muse_finished_at = time.monotonic()
         waiting = self._pending_call_decision()
         if self._wake_deadline is not None:
