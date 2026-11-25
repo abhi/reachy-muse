@@ -914,7 +914,8 @@ def test_reply_diagnostics_use_each_turns_last_voiced_sample(monkeypatch, caplog
         "Realtime call_ready elapsed_ms=0 link=new queued_feed_frames=0"]
     assert [line for line in caplog.messages if line.startswith("Realtime call_summary ")] == [
         "Realtime call_summary duration_ms=2125 turns=2 answered=2 silent=0 unanswered=0 recovered=0 not_awaited=0 "
-        "responses=1 audio_bytes=14400 feed_sent=49 feed_evictions=0 max_queue_age_ms=0"]
+        "responses=1 audio_bytes=14400 feed_sent=49 feed_evictions=0 max_queue_age_ms=0 working_s=0.0 "
+        "face_paused_s=0.0 face_held_s=0.0"]
     assert stall_cues(caplog) == []
     assert set(played(events)) == {"muse"}
 

@@ -424,6 +424,13 @@ class ReachyController:
     def face_seen_at(self) -> float | None:
         return getattr(self._face_follower, "last_seen_at", None)
 
+    @property
+    def face_follow_seconds(self) -> tuple[float, float]:
+        """Seconds the face follower has waited out paused vision while following, and of those, seconds it kept
+        facing someone through the pause."""
+        follower = self._face_follower
+        return (follower.paused_s, follower.held_s) if follower is not None else (0.0, 0.0)
+
     def allow_face_tracking(self, enabled: bool) -> None:
         with self._state_lock:
             self._face_tracking_on = enabled

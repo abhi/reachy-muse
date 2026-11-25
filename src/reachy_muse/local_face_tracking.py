@@ -256,7 +256,8 @@ class FaceFollower:
     While the budget pauses detection, the follower keeps its target: Reachy
     goes on facing the person it followed. The pause never counts toward losing
     that face, so once vision looks again a face that has gone is dropped as
-    any unseen face is.
+    any unseen face is. ``paused_s`` counts the seconds following waited out a
+    pause, and ``held_s`` those of them it kept a target through.
     """
 
     def __init__(self, capture_frame: Callable[..., FaceCapture | None], model_path: Path | None = None, *,
@@ -284,6 +285,8 @@ class FaceFollower:
         self._request: _FaceRequest | None = None
         self._hold_center: float | None = None
         self._paused_at: float | None = None
+        self.paused_s = 0.0
+        self.held_s = 0.0
         self.last_seen_at: float | None = None
         self._failure: Exception | None = None
         self._thread: threading.Thread | None = None
@@ -452,4 +455,9 @@ class FaceFollower:
         that began here, or earlier, stops the clock that loses its face."""
         if self._paused_at is None:
             self._paused_at = now
+        holding = self._current() is not None
         self._condition.wait(.1)
+        waited = self._clock() - now
+        self.paused_s += waited
+        if holding:
+            self.held_s += waited

@@ -532,11 +532,13 @@ class RealtimeCall:
 
     ``latest_response`` is the reply Muse started last, and ``muse_moved`` whether Muse has moved
     Reachy itself since then. ``on_working`` hears each Working event, and ``on_working(True)`` each
-    response Muse starts or finishes while Working is on.
+    response Muse starts or finishes while Working is on. ``face_follow_seconds`` gives the robot's
+    running totals of paused and held face following, for the call's summary.
     """
 
     def __init__(self, feed: MicrophoneFeed, speaker: RealtimeSpeaker, motion: ReplyMotion, *,
-                 on_working: Callable[[bool], None], on_reply_done: Callable[[Optional[str]], None]) -> None:
+                 on_working: Callable[[bool], None], on_reply_done: Callable[[Optional[str]], None],
+                 face_follow_seconds: Callable[[], tuple[float, float]] = lambda: (0.0, 0.0)) -> None:
         self.voice_call = None
         self.feed = feed
         self.input = CallInput(feed, feed.input_rate)
@@ -560,6 +562,9 @@ class RealtimeCall:
         self._quiet_since: Optional[float] = None
         self._moved_at: Optional[float] = None
         self._working_since: Optional[float] = None
+        self._worked_s = 0.0
+        self._face_follow_seconds = face_follow_seconds
+        self._face_follow_at_open = face_follow_seconds()
         self._responses: dict[Optional[str], _Response] = {}
         self._response_count = 0
         self._audio_bytes = 0
@@ -762,6 +767,8 @@ class RealtimeCall:
         elif kind == "Working":
             if event.working and not self.working:
                 self._working_since = self.last_event_at
+            elif self.working and not event.working:
+                self._worked_s += self.last_event_at - self._working_since
             self.working = event.working
         elif kind == "ResponseStarted":
             self.latest_response = event.response_id
@@ -827,13 +834,18 @@ class RealtimeCall:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             self.finish_pending("unanswered")
+            now = time.monotonic()
+            worked = self._worked_s + (now - self._working_since if self.working else 0.0)
+            totals = zip(self._face_follow_seconds(), self._face_follow_at_open)
+            paused, held = (total - at_open for total, at_open in totals)
             log.info("Realtime call_summary duration_ms=%d turns=%d answered=%d silent=%d unanswered=%d recovered=%d "
-                     "not_awaited=%d responses=%d audio_bytes=%d feed_sent=%d feed_evictions=%d max_queue_age_ms=%d",
-                     round((time.monotonic() - self.opened_at) * 1000), self.turns,
+                     "not_awaited=%d responses=%d audio_bytes=%d feed_sent=%d feed_evictions=%d max_queue_age_ms=%d "
+                     "working_s=%.1f face_paused_s=%.1f face_held_s=%.1f",
+                     round((now - self.opened_at) * 1000), self.turns,
                      self.outcomes["answered"], self.outcomes["silent"], self.outcomes["unanswered"],
                      self.outcomes["recovered"], self.outcomes["not_awaited"],
                      self._response_count, self._audio_bytes, self.feed.sent, self.feed.evictions,
-                     round(self.feed.max_queue_age_s * 1000))
+                     round(self.feed.max_queue_age_s * 1000), worked, paused, held)
 
     async def _ready(self) -> None:
         await self.voice_call.ready.wait()
@@ -958,7 +970,8 @@ class RealtimeVoice:
         call = RealtimeCall(MicrophoneFeed(hardware.sample_rate),
                             RealtimeSpeaker(hardware, motion, on_audible=on_audible, on_start=on_start,
                                             on_idle=on_idle, own_speaker=own_speaker),
-                            motion, on_working=on_working, on_reply_done=on_reply_done)
+                            motion, on_working=on_working, on_reply_done=on_reply_done,
+                            face_follow_seconds=lambda: getattr(hardware, "face_follow_seconds", (0.0, 0.0)))
         call.start(self._build)
         log.info("Muse realtime call opening, %s duplex", "half" if self.half_duplex else "full")
         return call

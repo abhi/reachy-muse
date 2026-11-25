@@ -10,6 +10,7 @@ import asyncio
 import math
 from pathlib import Path
 import queue
+import re
 import threading
 import time
 from types import SimpleNamespace
@@ -99,6 +100,10 @@ class RoomHardware(PeopleHardware):
         super().__init__(recording, controller)
         self.vision_budget = controller.vision_budget
         self._next = time.monotonic()
+
+    @property
+    def face_follow_seconds(self):
+        return self.controller.face_follow_seconds
 
     def read_audio(self):
         wait = self._next - time.monotonic()
@@ -237,6 +242,13 @@ async def wake_from(rig, service, scene, wake, yaw):
         await rig.wait_until_or_timeout(lambda: wake.examined > examined)
 
 
+def summary(caplog):
+    """The working, paused and held seconds of the call's summary line."""
+    line, = logged(caplog, "Realtime call_summary ")
+    return tuple(float(value) for value in re.search(
+        r" working_s=(\d+\.\d) face_paused_s=(\d+\.\d) face_held_s=(\d+\.\d)$", line).groups())
+
+
 @pytest.mark.parametrize("path", ["realtime", "chat"])
 def test_reachy_keeps_facing_the_owner_while_audio_pauses_its_camera_and_follows_once_it_looks_again(
         camera_room, caplog, path):
@@ -261,6 +273,8 @@ def test_reachy_keeps_facing_the_owner_while_audio_pauses_its_camera_and_follows
         scene.faces = [(5, .4, .3)]
         await until(rig, lambda: near(controller, 5))
         seen["moved"] = facing(controller, robot)
+        if path == "realtime":
+            await until(rig, lambda: logged(caplog, "Realtime call_summary "), 10)
 
     run(rig, service, user)
     yaws = [yaw for yaw, _ in seen["conversation"]]
@@ -269,6 +283,11 @@ def test_reachy_keeps_facing_the_owner_while_audio_pauses_its_camera_and_follows
     assert seen["body"] == 0
     assert seen["moved"] in ((4, 0), (5, 0), (6, 0))
     assert logged(caplog, "Speaker gaze") == []
+    if path == "realtime":
+        working, paused, held = summary(caplog)
+        assert working == pytest.approx(.5, abs=.2)
+        assert paused >= REPLY_S
+        assert held == pytest.approx(paused, abs=.3)
 
 
 @pytest.mark.parametrize("path", ["realtime", "chat"])
