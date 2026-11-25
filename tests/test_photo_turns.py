@@ -1287,6 +1287,72 @@ def test_a_photo_request_muse_s_reply_ends_needs_its_final_words_and_a_silent_us
 
 
 @realtime
+@pytest.mark.parametrize("stretches, partial_words", [
+    ("each word its own stretch", None), ("one long stretch before the partial has two words", None),
+    ("fluent, ending on a long stretch", 1)],
+    ids=["each word its own stretch", "a long stretch before the partial has two words", "partials stall at one word"])
+def test_a_photo_request_over_a_long_reply_that_no_partial_confirms_takes_the_photo_at_the_companion_s_endpoint(
+        monkeypatch, caplog, stretches, partial_words):
+    """The owner asks for a photo over Muse's reply, as the robot hears it: gaps between the words, the companion's
+    partials behind the voice, its final 1.2 s after the last word, and the robot's 2 s of silence. No partial
+    confirms the request while it is said; its final words do, so Muse's reply is cut off, the photo goes, and Reachy
+    speaks Muse's chat answer. Muse's call never hears the request: it answers each turn it hears, taking the
+    microphone at the SDK's pace, and would say that it cannot see."""
+    from test_realtime_turns import (LONG_REPLY, STRETCHES, companion_hearing, muse_played_after, room,
+                                     say_over_reply, speak_live, voiced_ms)
+
+    caplog.set_level(logging.INFO)
+    rig = call_rig(monkeypatch, [PHOTO])
+    rig.hardware.echo_cancelled_input = True
+    replies = []
+
+    async def answer(sdk, emit, script):
+        replies.append(len(replies) + 1)
+        if replies == [1]:
+            reply_events(sdk, emit, "r1", LONG_REPLY, voiced(12.8))
+        else:
+            reply_events(sdk, emit, f"r{len(replies)}", "I can't see you, but tell me what you're wearing.",
+                         voiced(2))
+
+    calls = ScriptedCalls(answer=answer, every_turn=True, paced=True)
+    conversation = realtime_service(rig, None, calls, muse=answers("You look ready for tonight."),
+                                    photo_requests=True, wake_timeout_s=10)
+    conversation.silence_s = 2.0
+    link = companion_hearing(conversation, forced_endpoints=True)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        voice = conversation._voice[1]
+        call = voice.call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, 3)
+        caplog.clear()
+        before = len(calls.frames)
+        await say_over_reply(rig, link, "Reachy, can you take a photo of me now?", STRETCHES[stretches],
+                             final_after_s=1.2, partial_words=partial_words)
+        await rig.wait_until_or_timeout(lambda: "shutter" in played(rig.recording.events), 5)
+        shutter = time.monotonic()
+        await rig.wait_until_or_timeout(lambda: "tts:You look ready for tonight." in played(rig.recording.events), 5)
+        await room(rig, 4)
+        heard.append((voiced_ms(calls.frames[before:]), voice.call is call and not call.done,
+                      muse_played_after(rig, shutter)))
+
+    events = run(rig, conversation, user, rest=("listening", "idle"), timeout=45)
+    assert heard == [(0, True, 0.0)]
+    assert calls.barge_ins == 1
+    assert rig.hardware.captures == [2.0]
+    assert [(event["muse"], event["text"]) for event in sent(events)] == [
+        ("send_image", PHOTO_MESSAGE.format("Reachy, can you take a photo of me now?"))]
+    assert played(events)[-2:] == ["shutter", "tts:You look ready for tonight."]
+    assert set(played(events)[:-2]) == {"muse"}
+    assert realtime_command_lines(caplog) == [
+        "Realtime command transcript=arrived words=9 wake_prefix=none outcome=PHOTO drop=none"]
+    assert [(fields(line)["outcome"], fields(line)["path"]) for line in photo_lines(caplog)] == [("sent", "realtime")]
+    assert not [line for line in caplog.messages if "could not transcribe" in line]
+
+
+@realtime
 @pytest.mark.parametrize("final_s, photo", [(1, True), (None, False)], ids=["final words", "no final words"])
 def test_a_photo_request_muse_s_reply_ends_on_reachy_s_own_recognition_needs_its_final_words(
         monkeypatch, caplog, final_s, photo):

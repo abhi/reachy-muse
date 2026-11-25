@@ -801,9 +801,39 @@ window closes, so Reachy's local chat does not answer greetings in a call.
   for at least 120 ms. Two words are required, except for stop commands. Reply
   transcript deltas filter echo, including single words and quoted stop commands.
   Until that evidence arrives, Muse receives silence; a confirmed interruption
-  releases up to two seconds of buffered audio so its opening words survive.
-  Without verified hardware echo
+  releases up to eight seconds of buffered audio so its opening words survive.
+  Held sound that the recognizer heard no words in is dropped after 0.75 s of
+  quiet, and its echo window is forgotten. Dropping a held turn also resets
+  the window for speech that follows. Without verified hardware echo
   cancellation, the call is half duplex and Muse's voice mutes the microphone.
+- Words said over Muse's reply in short stretches, or whose partial words come
+  late, are confirmed instead by the turn's final words. These need 300 ms of
+  voice in all, including any under an opening word that Muse's reply also
+  holds. They must not be mostly the words Reachy's speaker was playing while
+  they were heard, as Muse's echo would be, even with some words written
+  differently or missed. Each playing line keeps all its words as they arrive;
+  repeated lines keep separate times. While a line still plays, words are
+  placed within a band of 11 to 19 characters a second. Finished lines use
+  their measured duration. Words Muse said before then can be the user's, as when
+  the user takes up Muse's offer in its words. Such a request goes to Muse only
+  if Reachy does not take it as a device command or photo request, and it comes
+  late. Muse's reply plays on until Reachy's end of the turn, 1.5 to 2 s after
+  the last word, and the request then reaches Muse in real time, taking as long
+  as it took to say. A nine-word request finishes reaching Muse about 4.7 s
+  after its last word, and Muse answers after that. Reachy nods when Muse has
+  not answered a request after 4 s, counted from when Muse has all of it, as
+  for a request that a partial confirmed late. For fluent speech, the wait
+  starts at the endpoint; command classification adds no delay. Only a feed
+  backlog beyond 0.4 s delays that clock. A reply that Muse begins before
+  such a request reaches it ends the turn, and the request is dropped. A remark
+  of two words or fewer besides back-channel sounds, such as "got it", is
+  dropped only if Muse is still audible when the turn would be released.
+  "Yes, please" as Muse finishes reaches Muse and waits for an answer.
+  "Wait, wait" and "Hold on" take the floor even when short; they stop the reply
+  without cancelling work.
+  A cancel or silence phrase, such as "never mind", still stops Muse. A short
+  photo phrase such as "What's this?" gets the remark rule unless Reachy takes
+  the photo.
 - The call ends when the follow-up window closes, or when Muse ends it.
 - If a call fails before any audio reached Muse, the request goes to Muse by
   chat. If Muse may have heard it, Reachy asks the user to say it again and the

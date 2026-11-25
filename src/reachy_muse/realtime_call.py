@@ -30,7 +30,8 @@ from musegadget.streaming import HTTPStatusError
 from reachy_muse.motion.reply_alignment import SAMPLE_RATE
 from reachy_muse.motion.reply_motion import Mark, ReplyMotion
 from reachy_muse.speech_playback import PCMPlayer, PlaybackCursor, SpeechPlayback
-from reachy_muse.follow_up import FollowUp, classify_follow_up, repeats_playback, word_count
+from reachy_muse.follow_up import (FollowUp, Spoken, classify_follow_up, echoes_playback, repeats_playback,
+                                   spoken_between, spoken_words, takes_floor, word_count)
 from reachy_muse.person_gaze import MuseActivity
 
 log = logging.getLogger(__name__)
@@ -48,8 +49,12 @@ CALL_LIMIT_S = 900.0
 NATURAL_ENDS = frozenset({"remote_stop", "idle_timeout", "overall_timeout"})
 BARGE_IN_SPEECH_S = 0.3
 DISTINCT_WORDS_S = 0.12
-INTERRUPTION_BUFFER_S = 2.0
+# Held audio covers a whole request said over Muse's reply, which may confirm only at its endpoint.
+INTERRUPTION_BUFFER_S = 8.0
 INTERRUPTION_RECOGNITION_S = 0.75
+# Words Reachy's speaker played up to this long before or after the voice a gate heard may be that voice's echo: echo
+# comes just after its sound, and where a word falls in its line is an estimate.
+ECHO_TIMING_S = 1.0
 WAITING_CUE_S = 4.0
 NO_EVENT_S = 15.0
 WORKING_STALE_S = 30.0
@@ -61,50 +66,79 @@ QUIET_SETTLE_S = 1.0
 class CallInput:
     """Hold playback-time audio until sustained speech has words distinct from Muse's.
 
-    Silence keeps the remote VAD clock moving while local recognition catches up. Only
-    a confirmed interruption releases the bounded pre-roll, preserving its first words.
-    Echo and unrecognized room sounds never enter Muse's microphone stream. One gate serves
-    one utterance, which can run on past the endpoint of a turn within it.
+    Silence keeps the remote VAD clock moving while local recognition catches up. A partial
+    confirms within the recognition window of a sustained stretch of speech, and the held audio
+    goes to Muse at once, preserving its first words. A turn's final words confirm on all the
+    voice held for it, however long its silence before the endpoint, but its audio then waits
+    for whoever takes the turn: ``release`` sends it to Muse, and ``discard`` drops it when
+    Reachy takes the turn itself. Echo and unrecognized room sounds never enter Muse's
+    microphone stream. One gate serves one utterance, which can run on past the endpoint of a
+    turn within it.
     """
 
     def __init__(self, feed, sample_rate: int):
         self.feed = feed
         self.rate = sample_rate
+        # Exact echo can erase held audio without erasing the voice covered by the turn's final words.
+        self._voiced_from: Optional[float] = None
+        self._voiced_until = 0.0
         self.reset()
 
     def reset(self) -> None:
         self._pending = deque()
         self._samples = 0
+        self._voiced_samples = 0
         self._speech_samples = 0
         self._distinct_samples = 0
         self._quiet_samples = 0
+        self._words_heard = False
+        self._held_for_turn = False
         self.confirmed = False
         self.sent_speech = False
         self.heard_speech = False
 
     def push(self, samples, *, speaking: bool, text: str, playback: bool,
-             heard_over: tuple[str, ...], quiet_s: float = 0.0) -> bool:
+             heard_over: tuple[str, ...], quiet_s: float = 0.0, at: Optional[float] = None) -> bool:
+        """``at`` is when the samples were captured, if not just now."""
         self.heard_speech = self.heard_speech or speaking
+        if self._held_for_turn:
+            self._hold(samples)
+            self.feed.push(np.zeros_like(samples))
+            return speaking
         if not playback or self.confirmed:
             self.feed.push(samples, silent=quiet_s >= len(samples) / self.rate + FRAME_SAMPLES / SAMPLE_RATE)
             self.sent_speech = self.sent_speech or speaking
             return speaking
-        if repeats_playback(text, heard_over):
+        if speaking:
+            self._voiced_until = time.monotonic() if at is None else at
+            if self._voiced_from is None:
+                self._voiced_from = self._voiced_until
+        echo = repeats_playback(text, heard_over)
+        if echo and len(spoken_words(text)) > 1:
             self.reset()
             self.feed.push(np.zeros_like(samples))
             return False
+        self._words_heard = self._words_heard or word_count(text) > 0
         if speaking and self._quiet_samples:
             self._speech_samples = 0
             self._distinct_samples = 0
         self._quiet_samples = 0 if speaking else self._quiet_samples + len(samples)
         if self._quiet_samples > self.rate * INTERRUPTION_RECOGNITION_S:
+            if self._voiced_samples and self._words_heard:
+                # Words recognized this late confirm nothing, but voice with words waits for its turn's final words.
+                # Voice no words were heard in is unrecognized sound, such as echo, and goes.
+                self.feed.push(np.zeros_like(samples))
+                return False
             self.reset()
-        self._pending.append(samples.copy())
-        self._samples += len(samples)
-        while self._pending and self._samples > self.rate * INTERRUPTION_BUFFER_S:
-            self._samples -= len(self._pending.popleft())
+            self._voiced_from = None
+        self._hold(samples)
         if speaking:
             self._speech_samples = min(self._speech_samples + len(samples), self._samples)
+            self._voiced_samples = min(self._voiced_samples + len(samples), self._samples)
+        if echo:
+            # A single word of Muse's may be its echo or open the user's request: what is held stays, and no partial
+            # confirms on the voice heard so far, but the turn's final words weigh all of it.
+            self._speech_samples = 0
         distinct = self._distinct(text, heard_over)
         self._distinct_samples = self._distinct_samples + len(samples) if distinct else 0
         if (self._speech_samples >= BARGE_IN_SPEECH_S * self.rate
@@ -114,12 +148,46 @@ class CallInput:
         self.feed.push(np.zeros_like(samples))
         return False
 
-    def finish(self, text: str, heard_over: tuple[str, ...]) -> bool:
-        """Confirm on a finished turn's words. Held audio stays: the utterance can go on past the turn."""
-        if (not self.confirmed and self._speech_samples >= BARGE_IN_SPEECH_S * self.rate
-                and self._distinct(text, heard_over)):
-            self._confirm()
+    def finish(self, text: str, heard_over: tuple[str, ...], spoken: tuple[Spoken, ...]) -> bool:
+        """Confirm on a finished turn's words and all its held voice, unless the words are mostly those of ``spoken``
+        that Reachy's speaker played while the voice was heard, as Muse's voice heard back and written with words
+        changed would be. Words Muse said before then can be the user's, taking up Muse's offer. The audio stays held,
+        with whatever follows it, until ``release`` or ``discard``: the utterance can go on past the turn."""
+        distinct = self._distinct(text, heard_over) or (
+            takes_floor(text) and bool(heard_over) and not repeats_playback(text, heard_over))
+        if (not self.confirmed and self._voiced_samples >= BARGE_IN_SPEECH_S * self.rate
+                and distinct and not self._echoes(text, spoken)):
+            self.confirmed = self._held_for_turn = True
         return self.confirmed
+
+    def _echoes(self, text: str, spoken: tuple[Spoken, ...]) -> bool:
+        played = spoken_between(spoken, self._voiced_from - ECHO_TIMING_S, self._voiced_until + ECHO_TIMING_S,
+                                time.monotonic())
+        return echoes_playback(text, (played,))
+
+    @property
+    def holding(self) -> bool:
+        return self._held_for_turn
+
+    def release(self) -> bool:
+        """Send Muse the audio held for a turn it takes, and let what follows flow on; whether any was held."""
+        if not self._held_for_turn:
+            return False
+        self._held_for_turn = False
+        self._confirm()
+        return True
+
+    def discard(self) -> None:
+        """Drop the audio held for a turn Reachy takes itself; speech that follows is weighed afresh."""
+        if self._held_for_turn:
+            self.reset()
+            self._voiced_from = None
+
+    def _hold(self, samples) -> None:
+        self._pending.append(samples.copy())
+        self._samples += len(samples)
+        while self._pending and self._samples > self.rate * INTERRUPTION_BUFFER_S:
+            self._samples -= len(self._pending.popleft())
 
     def _distinct(self, text: str, heard_over: tuple[str, ...]) -> bool:
         enough_words = word_count(text) >= 2 or classify_follow_up(text) in (
@@ -286,7 +354,7 @@ class RealtimeSpeaker:
     ``reply_started`` is when the latest reply's first chunk began to play.
     """
 
-    def __init__(self, hardware, motion: ReplyMotion, *, on_audible: Callable[[Optional[str], float], None],
+    def __init__(self, hardware, motion: ReplyMotion, *, on_audible: Callable[[Optional[str], float, object], None],
                  on_start: Callable[[], Awaitable[None]], on_idle: Callable[[], Awaitable[None]],
                  own_speaker=None) -> None:
         self._hardware = hardware
@@ -308,12 +376,13 @@ class RealtimeSpeaker:
         self._speaking = False
         self._sentence_open = False
         self._extras: dict = {}
-        self._audible_text: Optional[str] = None
+        self._audible_index: Optional[int] = None
         self._response_id: Optional[str] = None
         self._audible_responses: dict[Optional[str], float] = {}
         self._replies: list = []
         self._pending_replies: set[Optional[str]] = set()
         self.reply_started: Optional[float] = None
+        self._begun: deque[Optional[str]] = deque(maxlen=16)
 
     @property
     def busy(self) -> bool:
@@ -391,7 +460,7 @@ class RealtimeSpeaker:
         self._cursor.end = 0.0
         self._sentence_open = False
         self._extras = {}
-        self._audible_text = None
+        self._audible_index = None
         self._replies = []
         try:
             if self._owner is not None:
@@ -427,8 +496,12 @@ class RealtimeSpeaker:
                 self._owner = owner
             if item.response_id not in self._replies:
                 self._replies.append(item.response_id)
-                self.reply_started = time.monotonic()
+                if item.response_id is None or item.response_id not in self._begun:
+                    self._begun.append(item.response_id)
+                    self.reply_started = time.monotonic()
                 await self._on_start()
+            if self._response_id != item.response_id:
+                self._audible_index = None
             self._response_id = item.response_id
             count = len(item.pcm) // 2
             marks = self._motion.marks(item.response_id, item.offset, count)
@@ -456,7 +529,7 @@ class RealtimeSpeaker:
             if self._timed and self._sentence_open:
                 self._hardware.finish_sentence()
             self._sentence_open = mark.sentence is not None
-            self._audible_text = mark.text
+            self._audible_index = mark.index
             if mark.sentence is not None and self._timed:
                 self._extras["sentence"] = mark.sentence
         if mark.accent is not None and self._timed:
@@ -479,7 +552,8 @@ class RealtimeSpeaker:
         self._audible_responses[self._response_id] = until
         if len(self._audible_responses) > 8:
             del self._audible_responses[min(self._audible_responses, key=self._audible_responses.get)]
-        self._on_audible(self._audible_text, until)
+        text = self._motion.sentence_text(self._response_id, self._audible_index)
+        self._on_audible(text, until, (self._response_id, self._audible_index))
         if cancelled:
             raise asyncio.CancelledError
 
@@ -490,7 +564,6 @@ class RealtimeSpeaker:
         if self._timed and self._sentence_open:
             self._hardware.finish_sentence()
         self._sentence_open = False
-        self._audible_text = None
         replies, self._replies = self._replies, []
         for response_id in replies:
             self._pending_replies.discard(response_id)
@@ -568,8 +641,14 @@ class RealtimeCall:
         self._transcripts: dict[Optional[str], str] = {}
 
     def accept_turn(self, *, endpoint_at: float, speech_end_at: float, words: int, awaits_answer: bool = True) -> bool:
+        """The turn's clock starts once the microphone feed has sent Muse all of it. The feed sends in real time, and
+        audio held over Muse's reply until a late confirmation may still be on its way."""
         self.turns += 1
-        turn = PendingTurn(self.turns, endpoint_at, speech_end_at, words, self.feed.sent, endpoint_at)
+        backlog_s = self.feed.backlog_bytes / (2 * SAMPLE_RATE)
+        clock_from = endpoint_at
+        if backlog_s > CATCH_UP_FRAMES * FRAME_SAMPLES / SAMPLE_RATE:
+            clock_from = max(endpoint_at, time.monotonic() + backlog_s)
+        turn = PendingTurn(self.turns, endpoint_at, speech_end_at, words, self.feed.sent, clock_from)
         replied_at = self.speaker.reply_started
         if replied_at is not None and replied_at >= speech_end_at:
             self._outcome(turn, "answered", replied_at)
@@ -666,9 +745,10 @@ class RealtimeCall:
     def check_pending(self, *, paused: bool, window_expired: bool) -> tuple[list[int], Optional[str]]:
         """Advance the pending turns' clocks: the turns now due a waiting cue, and why to recover the call, if so.
 
-        A turn's clock runs from its endpoint, but not before the call is ready, while ``paused``, or
-        while Muse shows progress. A later turn is a retry only if it ended after the earlier one's
-        cue. ``window_expired`` recovers the call only while the clock runs, once a turn had its cue.
+        A turn's clock runs from its endpoint, or from when Muse has all of its audio, if that comes later,
+        but not before the call is ready, while ``paused``, or while Muse shows progress. A later turn is
+        a retry only if it ended after the earlier one's cue. ``window_expired`` recovers the call only
+        while the clock runs, once a turn had its cue.
         """
         now = time.monotonic()
         running = self.ready_at is not None and not paused and not self._progress_suspended(now)
@@ -676,7 +756,7 @@ class RealtimeCall:
         for turn in self.pending:
             start = max(turn.checked_at, self.ready_at or now)
             elapsed = max(0.0, now - start)
-            turn.checked_at = now
+            turn.checked_at = max(now, turn.checked_at)
             if self.last_event_at is not None and self.last_event_at >= start:
                 turn.event_silence_s = 0.0
                 event_elapsed = now - self.last_event_at

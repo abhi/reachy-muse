@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from enum import Enum
-from typing import List, Tuple
+from typing import List, NamedTuple, Sequence, Tuple
 
 
 class FollowUp(Enum):
@@ -20,6 +20,8 @@ class FollowUp(Enum):
     SILENCE = "silence"        # stop the answer being spoken; a cancel when none is
 
 
+_FLOOR_PHRASES: Tuple[Tuple[str, ...], ...] = (
+    ("wait",), ("hold", "on"), ("hang", "on"), ("one", "sec"), ("one", "second"), ("one", "moment"), ("excuse", "me"))
 _SILENCE_PHRASES: Tuple[Tuple[str, ...], ...] = (("stop", "talking"), ("shut", "up"), ("be", "quiet"))
 _CANCEL_PHRASES: Tuple[Tuple[str, ...], ...] = (
     ("never", "mind"), ("nevermind",), ("cancel",), ("stop", "stop"), ("stop",),
@@ -56,7 +58,16 @@ def spoken_words(text: str) -> List[str]:
 
 def word_count(text: str) -> int:
     """How many words ``text`` holds: none when it is only back-channel sounds, such as "mm-hmm" or "uh huh"."""
-    words = spoken_words(text)
+    return len(spoken_words(text)) if words_besides_back_channels(text) else 0
+
+
+def words_besides_back_channels(text: str) -> int:
+    """How many of the words are not back-channel sounds: one in "mm-hmm, okay"."""
+    return len(_without_back_channels(spoken_words(text)))
+
+
+def _without_back_channels(words: List[str]) -> List[str]:
+    kept = []
     start = 0
     while start < len(words):
         if "".join(words[start:start + 2]) in _BACK_CHANNELS:
@@ -64,8 +75,24 @@ def word_count(text: str) -> int:
         elif words[start] in _BACK_CHANNELS:
             start += 1
         else:
-            return len(words)
-    return 0
+            kept.append(words[start])
+            start += 1
+    return kept
+
+
+def takes_floor(text: str) -> bool:
+    """Ask Muse to stop speaking without cancelling its work, as in "wait, wait" or "sorry, hold on"."""
+    words = _without_back_channels(spoken_words(text))
+    while words and words[0] in ("no", "sorry"):
+        words = words[1:]
+    found = False
+    while words:
+        phrase = next((phrase for phrase in _FLOOR_PHRASES if tuple(words[:len(phrase)]) == phrase), None)
+        if phrase is None:
+            return False
+        found = True
+        words = words[len(phrase):]
+    return found
 
 
 def classify_follow_up(text: str) -> FollowUp:
@@ -126,6 +153,73 @@ def repeats_playback(text: str, heard_over: Tuple[str, ...]) -> bool:
     """Match even single words and stop phrases when filtering a call's microphone."""
     words = spoken_words(text)
     return bool(words) and _matches_spoken_phrase(words, heard_over)
+
+
+class Spoken(NamedTuple):
+    """A line Reachy's speaker played: its words, when it began to sound, and when its latest sound ends."""
+
+    text: str
+    started: float
+    until: float
+
+
+SPOKEN_CHARS_PER_S_RANGE = (11.0, 19.0)
+
+
+def spoken_between(lines: Sequence[Spoken], start: float, end: float, now: float) -> str:
+    """Words that may have started in the window, by line and then word. Playing lines use a band of speaking
+    rates; finished lines use their measured span."""
+    words = []
+    slow, fast = SPOKEN_CHARS_PER_S_RANGE
+    for line in sorted(lines, key=lambda line: line.started):
+        text = line.text.replace("’", "'").casefold()
+        for word in _WORD.finditer(text):
+            if line.until > now:
+                earliest = line.started + word.start() / fast
+                latest = line.started + word.start() / slow
+            else:
+                earliest = latest = line.started + (line.until - line.started) * word.start() / len(text)
+            if earliest <= end and latest >= start:
+                words.append(word.group())
+    return " ".join(words)
+
+
+def echoes_playback(text: str, heard_over: Tuple[str, ...]) -> bool:
+    """Whether the words are mostly a line heard over, as a recognizer writes that line back with words changed,
+    split or missed: at least three in five of them are alike words of the line, in its order and within a stretch
+    of it twice as long as they are. The stretch keeps a long line's scattered common words from adding up to the
+    user's request."""
+    words = spoken_words(text)
+    if not words:
+        return False
+    for line in heard_over:
+        said = spoken_words(line)
+        for start, word in enumerate(said):
+            if (any(_alike(mine, word) for mine in words)
+                    and 5 * _in_order(words, said[start:start + 2 * len(words)]) >= 3 * len(words)):
+                return True
+    return False
+
+
+def _alike(word: str, other: str) -> bool:
+    """Whether a recognizer may have written one word for the other: the same word but for a contraction, as "you"
+    for "you're", or one opening the other with four letters or more, as "rain" for "rainy"."""
+    if word.split("'")[0] == other.split("'")[0]:
+        return True
+    short, long = sorted((word.replace("'", ""), other.replace("'", "")), key=len)
+    return len(short) >= 4 and long.startswith(short)
+
+
+def _in_order(words: List[str], said: List[str]) -> int:
+    """How many of ``words`` are alike words that ``said`` holds in the same order, gaps allowed: their longest
+    common subsequence."""
+    best = [0] * (len(said) + 1)
+    for word in words:
+        previous = best[:]
+        for index, other in enumerate(said, 1):
+            best[index] = (previous[index - 1] + 1 if _alike(word, other)
+                           else max(previous[index], best[index - 1]))
+    return best[-1]
 
 
 def interrupts_playback(text: str, heard_over: Tuple[str, ...]) -> bool:

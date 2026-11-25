@@ -296,7 +296,7 @@ def test_muse_audio_plays_through_the_speaker_and_a_flush_clears_it():
         async def idle():
             lifecycle.append("idle")
 
-        speaker = RealtimeSpeaker(hardware, ReplyMotion(), on_audible=lambda text, until: None,
+        speaker = RealtimeSpeaker(hardware, ReplyMotion(), on_audible=lambda text, until, line: None,
                                   on_start=started, on_idle=idle)
         for offset in range(0, 48000, 4800):
             speaker.chunk("r1", offset // 2, tone(1.0)[offset:offset + 4800])

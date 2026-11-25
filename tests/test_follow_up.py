@@ -1,6 +1,6 @@
 import pytest
 
-from reachy_muse.follow_up import FollowUp, classify_follow_up, request_topic
+from reachy_muse.follow_up import FollowUp, classify_follow_up, request_topic, words_besides_back_channels
 
 
 @pytest.mark.parametrize("utterance, expected", [
@@ -67,3 +67,33 @@ def test_only_fillers_hesitate_and_ask_nothing(text, fillers):
     from reachy_muse.follow_up import only_fillers
 
     assert only_fillers(text) is fillers
+
+
+@pytest.mark.parametrize("text, words", [
+    ("Got it.", 2), ("Oh, nice.", 1), ("Mm-hmm, okay.", 1), ("Uh huh.", 0), ("Um, what time is it?", 4), ("", 0)])
+def test_back_channel_sounds_are_not_counted_among_the_words(text, words):
+    assert words_besides_back_channels(text) == words
+
+
+@pytest.mark.parametrize("word, other, expected", [
+    ("the", "there", False), ("for", "forecast", False), ("can", "cancel", False), ("you", "your", False),
+    ("your", "you're", True), ("rain", "rainy", True), ("you", "you're", True), ("it's", "it", True),
+    ("the", "the", True), ("rain", "train", False)])
+def test_alike_words_need_four_letters_for_a_prefix_but_keep_contractions(word, other, expected):
+    from reachy_muse.follow_up import _alike
+
+    assert _alike(word, other) is expected
+    assert _alike(other, word) is expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Wait", True), ("hold on", True), ("hang on", True), ("one sec", True), ("one second", True),
+    ("one moment", True), ("excuse me", True), ("wait, wait", True), ("Mm-hmm, wait, uh-huh", True),
+    ("No, hold on", True), ("Sorry, excuse me", True), ("Oh, no, wait, wait, um", True),
+    ("Got it.", False), ("Oh, nice.", False), ("Mm-hmm, okay.", False), ("Wait for the bus", False),
+    ("One second place medal", False), ("Please excuse me from class", False), ("Sorry", False), ("", False)])
+def test_floor_phrases_are_requests_to_stop_speaking_without_cancelling_work(text, expected):
+    from reachy_muse.follow_up import takes_floor
+
+    assert takes_floor(text) is expected
+    assert classify_follow_up(text) is FollowUp.NEW

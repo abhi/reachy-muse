@@ -30,6 +30,66 @@ def test_words_heard_over_reachys_lines_are_an_echo_only_when_the_lines_hold_the
     assert is_echo(text, heard_over) is expected
 
 
+LONG_REPLY = ("I can't see you from here, but I can still help. Tell me what you're wearing and I'll suggest "
+              "something for tonight, or ask me about the weather first.")
+NUMBER_REPLY = ("Right now it's 72 degrees and sunny, and by eight tonight it will drop to 64, so bring a jacket "
+                "if you go out later.")
+STORY = ("Once upon a time there was a little robot who lived in a workshop by the sea. Every morning it would roll "
+         "to the window and watch the boats come in, and it would wonder what it would be like to sail. One day the "
+         "old fisherman who ran the workshop asked if it would like to come along, and the robot said yes right away. "
+         "They packed a lunch, checked the weather, and set out before the sun was up. Can you guess what it asked "
+         "the fisherman for the next morning? It asked if it could take a picture of the two of them on the boat, so "
+         "it would never forget the day. Do you want me to tell you another one, or would you like to know more "
+         "about the sea?")
+
+
+@pytest.mark.parametrize("text, line, expected", [
+    ("Tell me what you're wearing and I'll suggest something", LONG_REPLY, True),
+    ("Tell me what you are wearing and I'll suggest", LONG_REPLY, True),
+    ("it's seventy two degrees and sunny and by eight", NUMBER_REPLY, True),
+    ("Tell me what your wearing and I'll suggest something", LONG_REPLY, True),
+    ("wearing suggest something tonight ask about the weather first", LONG_REPLY, True),
+    ("Reachy, what should I wear to the dinner tonight?", LONG_REPLY, False),
+    ("Can you take a photo of me now, Reachy?", LONG_REPLY, False),
+    ("Got it.", LONG_REPLY, False),
+    ("Reachy, can you take a photo of me now?", STORY, False),
+    ("and the one after that", STORY, False),
+    ("", LONG_REPLY, False),
+    ("tell me what your wear in and I just", "Tell me what you're wearing and I'll suggest something", True),
+    ("the week and looks rain he so you", "and the weekend looks rainy, so you might want", True),
+    ("some four tonight", "and I'll suggest something for tonight, or ask", True),
+    ("Yes, the forecast for next week please.", "Would you like the forecast for next week too?", True),
+    ("Yes, the forecast for next week please.", "week too? I can also tell you about the pollen count", False),
+], ids=["exact", "a contraction written out", "a number written out", "a substitution", "fragments",
+        "a request", "a request opening with a word of the reply", "a remark", "a request over a long story",
+        "a remark over a long story", "no words", "five in nine words wrong", "four in eight words wrong",
+        "two in three words wrong", "an offer taken up, against the offer",
+        "an offer taken up, against what followed"])
+def test_muse_s_words_written_back_with_some_changed_or_missed_are_its_echo_and_a_request_is_not(
+        text, line, expected):
+    """Words alone cannot tell the user taking up Muse's offer from Muse's echo of it: the gate weighs them only
+    against the words Muse played while the voice was heard."""
+    from reachy_muse.follow_up import echoes_playback
+
+    assert echoes_playback(text, (line,)) is expected
+
+
+@pytest.mark.parametrize("now, expected", [
+    (12.5, "be sunny would you"), (13.0, "be sunny would you like the")])
+def test_the_words_spoken_between_two_times_are_placed_by_when_their_line_played(now, expected):
+    from reachy_muse.follow_up import Spoken, spoken_between
+
+    lines = (Spoken("Tomorrow will be sunny.", 10.0, 12.0), Spoken("Would you like the forecast too?", 12.0, 13.0))
+    assert spoken_between(lines, 11.0, 12.5, now) == expected
+
+
+def test_overlapping_word_times_keep_line_and_word_order():
+    from reachy_muse.follow_up import Spoken, spoken_between
+
+    lines = (Spoken("One two three.", 10.0, 14.0), Spoken("Four five.", 10.5, 13.0))
+    assert spoken_between(tuple(reversed(lines)), 10.0, 13.0, 12.0) == "one two three four five"
+
+
 @pytest.mark.parametrize("text, heard_over", [
     ("Not eight, nine.", "Eight, not nine."),
     ("Yes.", "Yes, I can do that."),

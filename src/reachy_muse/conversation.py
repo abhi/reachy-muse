@@ -37,8 +37,9 @@ from reachy_muse.protocol import MAX_LINE_BYTES
 from reachy_muse.device_command import (COMMANDS, VOLUME_FAILED, DeviceCommand, WakeWindow,
                                        command_after_wake, executable, names_reachy, photo_requested,
                                        whole_command)
-from reachy_muse.follow_up import (FollowUp, classify_follow_up, is_echo, interrupts_playback, only_fillers,
-                                   request_topic, too_short_for_follow_up, repeats_playback, word_count)
+from reachy_muse.follow_up import (FollowUp, Spoken, classify_follow_up, is_echo, interrupts_playback,
+                                   only_fillers, request_topic, too_short_for_follow_up, repeats_playback, word_count,
+                                   takes_floor, words_besides_back_channels)
 from reachy_muse.contract.intent import Intent, maybe_chat
 from reachy_muse.morning_briefing import MorningRoutine, briefing_lines
 from reachy_muse.recent import Recent
@@ -92,6 +93,9 @@ _SPEECH_SERIALS = itertools.count(1)
 _MICROPHONE_READER = threading.Lock()
 # What Reachy says when the wake phrase alone wakes it, the same words as "wake up".
 WAKE_GREETING = COMMANDS[DeviceCommand.WAKE_UP].reply
+# A call turn heard over Muse's reply that its gate never confirmed, or not before Muse's next reply began: Muse never
+# heard it, and Reachy drops it.
+_UNCONFIRMED_TURN = Endpoint(b"", None)
 
 
 @contextlib.contextmanager
@@ -704,8 +708,9 @@ class VoiceConversation:
         self._sequence_order = deque()
         self._muted = False
         self._echo_until = 0.0
-        # Each line Reachy played recently, and when its echo has died away.
-        self._audible: deque[tuple[str, float]] = deque(maxlen=8)
+        # Each line Reachy played recently, and when it played: its echo dies away ECHO_TAIL_S after its sound.
+        self._audible: deque[Spoken] = deque(maxlen=16)
+        self._audible_line: object = None
         self._input_overflow = False
         self._turn_started = None
         self._logged_activity = None
@@ -936,7 +941,8 @@ class VoiceConversation:
     def _wake_capture_context(self, now):
         return WakeContext(blocked=self._input_blocked() or now < self._wake_unknown_output_until,
                            speaking=self._muted or now < self._echo_until,
-                           playback=tuple(text for text, until in tuple(self._audible) if until > now - 2.5))
+                           playback=tuple(line.text for line in tuple(self._audible)
+                                          if line.until + ECHO_TAIL_S > now - 2.5))
 
     async def run(self) -> None:
         await self.session.registered.wait()
@@ -1250,7 +1256,7 @@ class VoiceConversation:
                     replies = self.call.audible_transcripts(ECHO_TAIL_S)
                     over_muse = over_muse or bool(replies)
                     heard_over.update(replies)
-                heard_over.update(text for text, until in self._audible if until > endpoint_at)
+                heard_over.update(line.text for line in self._audible if line.until + ECHO_TAIL_S > endpoint_at)
             heard = recorder.take()
             # One feed can end a rejected utterance and start the next.
             if utterance is not None and utterance.utterance_id != recorder.utterance_id:
@@ -1310,8 +1316,8 @@ class VoiceConversation:
                         call_pre_roll = None
                     call.input.push(sample, speaking=speaking and quiet_s == 0,
                                     text=partial.text if partial else "", playback=playback,
-                                    heard_over=tuple(heard_over), quiet_s=quiet_s)
-                    speaking = speaking and (not playback or call.input.confirmed)
+                                    heard_over=tuple(heard_over), quiet_s=quiet_s, at=captured_at)
+                    speaking = speaking and (not playback or call.input.confirmed and not call.input.holding)
                     if call.audible and call.input.confirmed and not confirmed_before:
                         self._barge_in_call()
                 elif streaming and len(sample):
@@ -1483,6 +1489,9 @@ class VoiceConversation:
         turn_task = None
         pending_turns = deque()
         call_recognitions = {}
+        # The gate holding a call turn's audio, for a turn whose own final words confirmed it over Muse's reply. That
+        # turn alone settles where the audio goes, though later turns in the same breath share the gate.
+        call_holds = {}
         wake_epoch = 0
         active_wake_epoch = 0
         held = None
@@ -1517,16 +1526,22 @@ class VoiceConversation:
                 text = (endpoint.text or "") if endpoint is not None else ""
                 if self.wake_detector is not None:
                     text = self._without_wake(text)
-                if self.call is call and gate.finish(text, recorded.heard_over):
-                    self._gaze.admit(recorded.gaze_generation)
-                    if call.audible:
-                        await call.barge_in()
+                confirmed = gate.confirmed
+                # A reply Muse began after the turn's last word ended the turn before Muse heard any of it.
+                if (self.call is call and self._muse_began_at < recorded.speech_end_at
+                        and gate.finish(text, recorded.heard_over, tuple(self._audible))):
+                    if confirmed:
+                        self._gaze.admit(recorded.gaze_generation)
+                    else:
+                        # The turn takes the gaze in _realtime_turn, once Reachy knows whether it drops the words.
+                        call_holds[recorded.ended] = gate
                 else:
                     transcript = endpoint.text if endpoint is not None else None
                     self._log_realtime_command(transcript,
                                                self._wake_prefix(transcript or "", self._wake_strip_required),
                                                transcript=timeline.facts.get("command_transcript"), drop="barge_in")
-                    return None
+                    # A failed call takes no more requests: the user is asked to say it again, by chat.
+                    return None if call.failed else _UNCONFIRMED_TURN
             if timeline.facts.get("command_transcript") == "deadline":
                 self._log_realtime_command(None, self._wake_prefix("", self._wake_strip_required),
                                            transcript="deadline", drop="deadline")
@@ -1540,6 +1555,8 @@ class VoiceConversation:
                     endpoint = await call_recognitions[request.ended]
                 else:
                     endpoint = await request.ended.endpoint()
+                if endpoint is _UNCONFIRMED_TURN:
+                    return held
                 if endpoint is None:
                     transcription_failed(request.call)
                     return held
@@ -1547,12 +1564,15 @@ class VoiceConversation:
                 if endpoint.text is not None:
                     request.timeline.mark("transcript")
                 if request.call is not None and (request.call.audio_sent or not request.call.failed):
-                    await self._realtime_turn(endpoint, request, follow_up=True)
+                    await self._realtime_turn(endpoint, request, follow_up=True, gate=call_holds.get(request.ended))
                     return held
                 return await self._follow_up(endpoint, request, held)
             finally:
                 call_recognitions.pop(request.ended, None)
                 turns_awaiting_transcript.discard(request.ended)
+                gate = call_holds.pop(request.ended, None)
+                if gate is not None:
+                    gate.discard()
         async def queue_turn(recorded: _RecordedTurn) -> None:
             nonlocal recorder
             if recorded.ended.truncated:
@@ -1695,6 +1715,8 @@ class VoiceConversation:
                                 endpoint = await call_recognitions[request.ended]
                             else:
                                 endpoint = await request.ended.endpoint()
+                            if endpoint is _UNCONFIRMED_TURN:
+                                return TurnOutcome.EMPTY
                             if endpoint is None:
                                 transcription_failed(request.call)
                                 return TurnOutcome.EMPTY
@@ -1702,7 +1724,7 @@ class VoiceConversation:
                             timeline = request.timeline
                             timeline.facts["forced"] = "yes" if endpoint.forced else "no"
                             if call is not None and (call.audio_sent or not call.failed):
-                                return await self._realtime_turn(endpoint, request)
+                                return await self._realtime_turn(endpoint, request, gate=call_holds.get(request.ended))
                             if endpoint.text is None:
                                 return await self.turn(endpoint.audio,
                                     wake_strip_required=request.wake_strip_required, timeline=timeline,
@@ -1719,6 +1741,9 @@ class VoiceConversation:
                         finally:
                             call_recognitions.pop(request.ended, None)
                             turns_awaiting_transcript.discard(request.ended)
+                            gate = call_holds.pop(request.ended, None)
+                            if gate is not None:
+                                gate.discard()
                     turn_task = asyncio.create_task(process())
                 if (turn_task is None and follow_up_task is None and held is None and not pending_turns
                         and self._briefing_slots):
@@ -2851,7 +2876,8 @@ class VoiceConversation:
             self._wake_deadline = None
             await self._close_call()
         elif self.call is not None:
-            # Muse heard the command too; Reachy has handled it, so Muse's answer to it is dropped.
+            # Reachy has handled the command, so Muse's reply stops: its answer, if Muse heard the command as it was
+            # said, or else the reply the command was said over.
             await self.call.barge_in()
         if spec.silence_speech:
             self._hush()
@@ -2895,8 +2921,11 @@ class VoiceConversation:
         log.info("Realtime command transcript=%s words=%d wake_prefix=%s outcome=%s drop=%s",
                  transcript, len(text.split()), prefix, outcome, drop)
 
-    async def _realtime_turn(self, endpoint: Endpoint, request: _QueuedTurn, *, follow_up: bool = False) -> TurnOutcome:
-        """A turn Muse already heard in a realtime call: Reachy acts only on its own device commands and photo requests.
+    async def _realtime_turn(self, endpoint: Endpoint, request: _QueuedTurn, *, follow_up: bool = False,
+                             gate=None) -> TurnOutcome:
+        """A turn in a realtime call: Reachy acts only on its own device commands and photo requests, and Muse takes the
+        rest. Muse heard the turn as it was said, unless only its final words confirmed it over Muse's reply: then
+        ``gate`` holds its audio, which reaches Muse only if the turn is Muse's.
 
         ``follow_up`` is a turn heard while another one is still handled.
         """
@@ -2911,27 +2940,52 @@ class VoiceConversation:
                 self._log_realtime_command(endpoint.text, decision,
                                            transcript=request.timeline.facts.get("command_transcript"), drop="echo")
             return TurnOutcome.EMPTY
+        # A late remark can cut Muse off two seconds after it was said. Its gaze and wake claim wait until it is kept.
+        short = (gate is not None and request.over_muse and words_besides_back_channels(text) <= 2
+                 and classify_follow_up(text) not in (FollowUp.CANCEL, FollowUp.SILENCE) and not takes_floor(text))
+        remark = short and not photo_requested(text)
+        if gate is not None and not remark:
+            self._gaze.admit(request.gaze_generation)
         if text.strip():
-            self._claim_wake_request(text, request.timeline)
+            if not remark:
+                self._claim_wake_request(text, request.timeline)
         elif prefix != "none" and not request.open_mic:
             # The wake phrase alone opens the next request to Reachy, unless Muse kept the microphone open to hear it.
             self._open_wake_request()
         self._presence.mark("voice", started)
         command = await self._obey(text, started, request.timeline) if text.strip() else None
+        if remark and command is not None:
+            self._gaze.admit(request.gaze_generation)
+            self._claim_wake_request(text, request.timeline)
         photo = command is None and not endpoint.partial and self._photo_requested(text, request.timeline)
         # Muse still owes an answer to an earlier call turn; a barge-in would cut it off.
         waiting = photo and bool(request.call.pending)
+        # Held words that are Muse's reach it only if Muse has begun no reply since they were said, as while Reachy's
+        # command model weighed them: that reply ended the turn before Muse heard any of it.
+        unconfirmed = gate is not None and command is None and not photo and (
+            (short and request.call.audible) or self._muse_began_at >= request.timeline.marks["speech_end"])
         if request.timeline.facts.get("command_transcript") != "deadline":
             self._log_realtime_command(endpoint.text, decision, transcript=request.timeline.facts.get("command_transcript"),
                                        outcome=command.name if command is not None
-                                       else "PHOTO" if photo and not waiting else "none")
+                                       else "PHOTO" if photo and not waiting else "none",
+                                       drop="barge_in" if unconfirmed else "none")
         if command is not None:
             return TurnOutcome.ACCEPTED
+        if unconfirmed:
+            return TurnOutcome.EMPTY
+        if remark:
+            self._gaze.admit(request.gaze_generation)
+            self._claim_wake_request(text, request.timeline)
         if waiting:
             PhotoLog("realtime", "busy").write()
             await self._announce(BUSY_CUE, started=None, defer_playback=True)
         elif photo:
             return await self._photo_in_call(endpoint, request, text, follow_up=follow_up)
+        # The turn is Muse's: words that only its endpoint confirmed reach Muse now, and cut off the reply they were
+        # said over.
+        released = gate is not None and gate.release()
+        if released and request.call.audible:
+            await request.call.barge_in()
         if (follow_up and self._photo is not None
                 and classify_follow_up(text) in (FollowUp.CANCEL, FollowUp.SILENCE)):
             # Muse answers the cancel in the call; the photo, or Muse's chat answer to it, is dropped. A photo turn
@@ -2947,7 +3001,7 @@ class VoiceConversation:
         # A short remark over Muse's own reply, such as "okay, thanks", can cut it off but asks for no answer.
         pending = call.accept_turn(endpoint_at=request.timeline.marks["endpoint"],
                                    speech_end_at=request.timeline.marks["speech_end"], words=len(text.split()),
-                                   awaits_answer=not (request.over_muse and word_count(text) <= 2))
+                                   awaits_answer=short or not (request.over_muse and word_count(text) <= 2))
         if call.failed:
             await self._call_lost(call)
             return TurnOutcome.EMPTY
@@ -3076,18 +3130,19 @@ class VoiceConversation:
             log.info("Reachy stopped Muse's realtime reply for the user's speech")
             self._barging = self._background(self.call.barge_in())
 
-    def _muse_audible(self, text: str | None, until: float, *, speech: bool = True) -> None:
+    def _muse_audible(self, text: str | None, until: float, line: object, *, speech: bool = True) -> None:
         self._echo_until = max(self._echo_until, until + ECHO_TAIL_S)
         if speech and not text:
             self._wake_unknown_output_until = max(self._wake_unknown_output_until, until + ECHO_TAIL_S + 1.5)
         if text:
-            if self._audible and self._audible[-1][0] == text:
-                self._audible[-1] = (text, until + ECHO_TAIL_S)
+            if self._audible and self._audible_line == line:
+                self._audible[-1] = self._audible[-1]._replace(text=text, until=until)
             else:
-                self._audible.append((text, until + ECHO_TAIL_S))
+                self._audible.append(Spoken(text, time.monotonic(), until))
+            self._audible_line = line
 
     async def _muse_speaks(self) -> None:
-        if self.call is not None:
+        if self.call is not None and self.call.speaker.reply_started != self._muse_began_at:
             self.call.finish_pending("answered", self.call.speaker.reply_started)
             self._muse_began_at = self.call.speaker.reply_started
         self._moments.stop_cue()
@@ -3501,6 +3556,7 @@ class VoiceConversation:
         samples_played = 0
         expression_task = None
         announced = False
+        audible_line = object()
         hush_floor = self._hush_floor
         write_timing = {"dispatch_ms_max": 0.0, "write_ms_max": 0.0, "return_ms_max": 0.0}
         started = self._turn_started if turn_started is None else turn_started
@@ -3560,7 +3616,7 @@ class VoiceConversation:
                 raise _SpeechSuperseded
             self._audio_clear_attempted = False
             self._muted = True
-            self._muse_audible(line.text, time.monotonic() + .13, speech=line.role != "cue")
+            self._muse_audible(line.text, time.monotonic() + .13, audible_line, speech=line.role != "cue")
             current_sentence = sentence
             if timed_motion and samples_played == 0 and expression_task is not None:
                 if expression_task.done() and not expression_task.cancelled():
