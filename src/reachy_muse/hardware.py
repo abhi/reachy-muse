@@ -1702,7 +1702,7 @@ class ReachyController:
                 self._pending_motion = pending = None
             free = (self._clip is None and self._generated is None and self._deferred is None
                     and self._speaker_pending is None and self._speaker_turn is None
-                    and self._person_pending is None and self._person_hold is None)
+                    and self._person_pending is None and self._person_hold is None and not self._photo_view.is_set())
             if pending is not None and free and state in pending.states:
                 self._pending_motion = None
             else:

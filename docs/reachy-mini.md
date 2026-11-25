@@ -1132,12 +1132,14 @@ they go to Muse as ordinary requests.
   request. Without [local face following](#local-face-following), Reachy turns
   level toward your voice for "me", "what am I holding?" and "us", and keeps its
   view otherwise.
-- From the aim until the frame is read, nothing else moves Reachy's head. Face
-  following stops steering it but leaves it facing whoever it followed, so a
-  photo of that person needs no turn. Muse's
-  moves and expressions wait and run afterwards, `reachy.look_at` answers
-  `busy`, and Reachy neither follows a new speaker, turns for a wake phrase,
-  greets anyone nor nods. Muse cannot aim the camera.
+- From the aim until the frame is read, no other turn or motion starts. Face
+  following stops steering the head but leaves it facing whoever it followed,
+  so a photo of that person needs no turn. Muse's moves and expressions wait
+  and run afterwards, `reachy.look_at` answers `busy`, and Reachy neither
+  follows a new speaker, turns for a wake phrase, greets anyone, nods nor starts
+  the thinking motion. Its listening, thinking and speaking poses still apply,
+  as do the motions of speech it plays meanwhile, such as a notice. Muse cannot
+  aim the camera.
 - In a [realtime call](#realtime-voice-calls), Muse hears the request too.
   Reachy cuts off Muse's spoken answer, as it does for a device command, and
   speaks Muse's answer to the photo in its own voice. The call stays open. A

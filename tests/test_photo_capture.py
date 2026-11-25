@@ -443,6 +443,37 @@ def test_while_a_photo_holds_the_view_no_head_gesture_or_generated_motion_starts
     assert (len(held), len(moving_after) > 1) == (1, True)
 
 
+def test_a_generated_motion_waiting_when_the_view_is_held_starts_only_after_its_release():
+    """The swaying motion was asked for while a turn toward the speaker at +30 still moved, so it waits for that
+    turn to end; the view is held by then."""
+    robot = FakeRobot()
+    controller = start_controller(robot, photo_encoder=Encoder(),
+                                  style=MotionStyle(breathing=False, expression_clips=False))
+    poses = np.zeros((50, 9))
+    poses[:, 5] = 10 * np.sin(np.linspace(0, 2 * math.pi, 50, endpoint=False))
+
+    def yaws(since):
+        return [round(controller._pose_parameters(pose)["yaw"]) for _, pose, _, _ in written_since(robot, since)]
+
+    try:
+        controller.set_state("listening")
+        assert controller.face_speaker(math.radians(60))
+        assert until(lambda: controller._speaker_turn is not None)
+        controller.play_motion(poses, 25, during={"listening"}, loop=True, start_within_s=5)
+        controller.hold_view_for_photo(True)
+        assert until(lambda: controller._speaker_turn is None)
+        held_from = time.monotonic()
+        time.sleep(.6)
+        held = set(yaws(held_from))
+        controller.hold_view_for_photo(False)
+        released_at = time.monotonic()
+        time.sleep(1)
+        swayed = yaws(released_at)
+    finally:
+        controller.close()
+    assert (held, max(swayed) - min(swayed) > 10) == ({30}, True)
+
+
 def test_while_a_photo_holds_the_view_no_wake_or_follow_turn_starts(caplog):
     caplog.set_level("INFO")
     robot = FakeRobot()
