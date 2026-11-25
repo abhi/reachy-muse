@@ -1516,6 +1516,9 @@ class ReachyController:
         self._drop_speaker_pending()
         self._person_pending = None
         self._end_person_hold()
+        if self._speaker_look is not None and self._face_follower is not None:
+            # A face target is a head yaw from the gaze it was seen from; with that gaze gone, it points elsewhere.
+            self._face_follower.hold_center(self._face_center)
         self._speaker_look = self._speaker_turn = None
 
     def _drop_speaker_pending(self) -> None:
