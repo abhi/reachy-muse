@@ -3398,3 +3398,24 @@ def test_a_request_held_over_a_reply_that_resumes_after_a_stall_still_reaches_mu
 
     run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
     assert heard == [(960, 1, ["none outcome=none drop=none"], 0, 1)]
+
+
+def test_a_fluent_request_gets_its_waiting_nod_from_the_endpoint_despite_command_latency(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    calls = ScriptedCalls(reply=None)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=10, model=FakeModel(None, delay_s=.3))
+    conversation.silence_s = .8
+    link = companion_hearing(conversation, forced_endpoints=True)
+    ended = []
+
+    async def user():
+        last_voice = await say_over_reply(rig, link, "Tell me a bedtime story so I can sleep.",
+                                          ((300, 0),) * 9, wake=True)
+        ended.append(time.time() - time.monotonic() + last_voice)
+        await room(rig, 6)
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=30)
+    assert [record.created - ended[0] for record in caplog.records
+            if record.getMessage() == "Realtime turn ordinal=1 cue=still_waiting"] == [pytest.approx(4.83, abs=.12)]

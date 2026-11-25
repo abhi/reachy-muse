@@ -641,7 +641,10 @@ class RealtimeCall:
         """The turn's clock starts once the microphone feed has sent Muse all of it. The feed sends in real time, and
         audio held over Muse's reply until a late confirmation may still be on its way."""
         self.turns += 1
-        clock_from = max(endpoint_at, time.monotonic() + self.feed.backlog_bytes / (2 * SAMPLE_RATE))
+        backlog_s = self.feed.backlog_bytes / (2 * SAMPLE_RATE)
+        clock_from = endpoint_at
+        if backlog_s > CATCH_UP_FRAMES * FRAME_SAMPLES / SAMPLE_RATE:
+            clock_from = max(endpoint_at, time.monotonic() + backlog_s)
         turn = PendingTurn(self.turns, endpoint_at, speech_end_at, words, self.feed.sent, clock_from)
         replied_at = self.speaker.reply_started
         if replied_at is not None and replied_at >= speech_end_at:

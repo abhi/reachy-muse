@@ -820,7 +820,9 @@ window closes, so Reachy's local chat does not answer greetings in a call.
   as it took to say. A nine-word request finishes reaching Muse about 4.7 s
   after its last word, and Muse answers after that. Reachy nods when Muse has
   not answered a request after 4 s, counted from when Muse has all of it, as
-  for a request that a partial confirmed late. A reply that Muse begins before
+  for a request that a partial confirmed late. For fluent speech, the wait
+  starts at the endpoint; command classification adds no delay. Only a feed
+  backlog beyond its steady-state allowance delays that clock. A reply that Muse begins before
   such a request reaches it ends the turn, and the request is dropped. A remark
   of two words or fewer besides back-channel sounds, such as "got it", is
   dropped too, so it never cuts Muse off two seconds after it was said. A
