@@ -841,6 +841,16 @@ a `device.guide` that says when such gestures are worth calling.
 [`bench/realtime_expressive.md`](../bench/realtime_expressive.md) has the
 offline measurements.
 
+While Muse's Working flag is on, the follow-up window stays open past its
+deadline, so closing it never hangs up a tool call that sends no events. If no
+request waits for Muse and no event since Muse last finished shows it at work,
+speech then needs the wake phrase again, and Reachy shows the pose it shows
+when the window closes, not the listening pose. The call stays open, so Muse's
+late answer still plays, and the window then runs on as after any reply. Say
+"Hey Muse" to open the window again in the same call. Reachy logs one
+content-free line when this begins, and one when it ends, with how long it
+lasted.
+
 When a call ends, Reachy logs one content-free `Realtime call_summary` line
 with the call's turn outcomes and audio counts. Its `working_s` field is the
 seconds Muse's Working flag stayed on during the call, `face_paused_s` the

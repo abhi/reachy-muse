@@ -57,7 +57,8 @@ class WakeHeard:
 
 @dataclass(frozen=True)
 class WakeClosed:
-    """The wake window expired with nothing said."""
+    """The wake window expired with nothing said, or Muse's Working flag alone holds it open past its deadline, where
+    Reachy hears only the wake phrase."""
 
 
 @dataclass(frozen=True)

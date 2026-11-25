@@ -738,6 +738,8 @@ class VoiceConversation:
         self._call_last_voice_at = 0.0
         self._muse_finished_at = 0.0
         self._muse_began_at = 0.0
+        # While Muse's Working flag alone holds the wake window open past its deadline, when that began.
+        self._working_hold_since: float | None = None
         self.muse_moving = 0
         self.notifications: Notifications | None = None
 
@@ -792,6 +794,29 @@ class VoiceConversation:
         robot's SDK can leave Working on."""
         call = self.call
         return call is not None and call.at_work and call.last_event_at > self._muse_finished_at
+
+    def _working_alone_holds_window(self) -> bool:
+        """The wake window is past its deadline, and only the call's raw Working flag keeps it open: no recording runs,
+        no request waits for Muse, and no SDK event since Muse's last finish shows it at work. The window keeps the raw
+        flag so that closing it never hangs up a silent tool call, yet speech needs the wake phrase again."""
+        call = self.call
+        return (self._wake_deadline is not None and time.monotonic() >= self._wake_deadline
+                and not self._recording_active() and call is not None and call.working
+                and not self._pending_call_decision() and not self._muse_at_work())
+
+    async def _show_working_hold(self, holding: bool) -> None:
+        """While only Working holds the wake window open, Reachy shows the pose of a closed window, since it hears
+        only the wake phrase; the call stays open for Muse's late answer. One line logs each start, and one each end
+        with how long it lasted."""
+        since = self._working_hold_since
+        if holding and since is None:
+            self._working_hold_since = time.monotonic()
+            log.info("Reachy's wake window stays open past its deadline only on Muse's Working flag; "
+                     "speech needs the wake phrase again")
+            await self._plan(plan.WakeClosed())
+        elif not holding and since is not None:
+            self._working_hold_since = None
+            log.info("Reachy's wake window stayed open on Muse's Working flag alone for %.1f s", time.monotonic() - since)
 
     def _renew_call_input(self) -> None:
         """Gate the call's microphone afresh; a turn that holds the old gate keeps it."""
@@ -1747,6 +1772,7 @@ class VoiceConversation:
                     recorder = make_recorder()
                     pre_roll.clear()
                     pre_roll_samples = 0
+                working_holds = False
                 if (self.wake_enabled and not self._input_blocked() and turn_task is None
                         and follow_up_task is None and held is None
                         and not pending_turns and not self._has_output()):
@@ -1778,6 +1804,8 @@ class VoiceConversation:
                             wake_resampler = av.AudioResampler(format="flt", layout="mono", rate=16000)
                         await self._plan(plan.WakeClosed())
                         log.info("Reachy's wake window closed after inactivity")
+                    working_holds = self._working_alone_holds_window()
+                await self._show_working_hold(working_holds)
                 wave_eligible = (self.wave_wake and not (self.call is not None and self.call.working)
                                  and not self._call_tasks
                                  and not self._input_blocked() and not self._has_output()
@@ -2004,6 +2032,7 @@ class VoiceConversation:
             self._wake_direction = None
             self._hearing_open = self._recording_active = lambda: False
             self._heard_now = lambda: None
+            await self._show_working_hold(False)
 
             async def cleanup():
                 try:
