@@ -549,7 +549,7 @@ class ReachyController:
         ``turned``, ``same``, or ``too_soon`` within ``FOLLOW_DWELL_S`` of the last such turn. It is ``off`` while the
         user has turned face tracking off, ``held`` while a person turn holds Reachy on someone or is pending to, and
         ``busy`` while a command, clip, generated motion, photo or another turn owns the head, or Reachy sleeps; head
-        gestures go on through the turn.
+        gestures go on through the turn, and the turn fades the looping thinking motion first.
         """
         target = speaker_yaw(angle)
         with self._state_lock:
@@ -561,7 +561,7 @@ class ReachyController:
             if (not self._enable_motion or self._stop.is_set() or self._state == "sleeping"
                     or self._turning_to_person() or self._speaker_pending is not None
                     or self._command_active or self._deferred is not None or self._clip is not None
-                    or self._generated is not None or self._pending_motion is not None
+                    or self._generated_busy()
                     or self._photo_hold.is_set()):
                 return "busy", None
             turn = self._speaker_turn
@@ -573,6 +573,11 @@ class ReachyController:
                 return "too_soon", delta
             self._speaker_pending = _SpeakerPending(target, now + 1.0, angle, follow=True)
             return "turned", delta
+
+    def _generated_busy(self) -> bool:
+        """Generated motion, showing or about to, keeps a turn toward a later speaker waiting; the looping thinking
+        motion does not, since it never ends by itself, so that turn fades it instead."""
+        return any(motion is not None and not motion.move.loop for motion in (self._generated, self._pending_motion))
 
     def look_at_person(self, yaw: float, pitch: float) -> bool:
         """Face the person at world ``yaw`` and ``pitch`` until released, then turn back to the gaze this replaced."""
@@ -1581,17 +1586,22 @@ class ReachyController:
 
     def _update_speaker(self, now: float, state: str, *, occupied: bool, gesturing: bool) -> None:
         """Start a pending turn toward a speaker, or drop it while other motion holds the head. A wake turn also
-        waits out head gestures; a turn toward a later speaker goes on through one, and ends the wake gaze that
-        stands in for the bearing of a request without one."""
+        waits out head gestures; a turn toward a later speaker goes on through one, fades the looping thinking
+        motion before it starts, and ends the wake gaze that stands in for the bearing of a request without one."""
         with self._state_lock:
             pending = self._speaker_pending
-            if pending is not None and (state != "sleeping" or now > pending.deadline):
+            generated = self._generated
+            if (pending is not None and pending.follow and generated is not None and generated.move.loop
+                    and not occupied and state != "sleeping" and now <= pending.deadline):
+                generated.timeline.stop(now)
+                pending = None
+            elif pending is not None and (state != "sleeping" or now > pending.deadline):
                 self._speaker_pending = None
             else:
                 pending = None
         if pending is not None:
             target = pending.target
-            decision = ("busy" if occupied or gesturing and not pending.follow
+            decision = ("busy" if occupied or generated is not None or gesturing and not pending.follow
                         else "stale" if now > pending.deadline else "turn")
             log.info("Speaker gaze yaw=%.1f body_yaw=%.1f decision=%s", target.head, target.body, decision)
             if decision == "turn":
@@ -1881,8 +1891,8 @@ class ReachyController:
                         with self._state_lock:
                             self._clear_speaker()
                     self._update_speaker(now, state, occupied=(
-                        self._clip is not None or self._generated is not None
-                        or self._deferred is not None or commanded), gesturing=gesture_active and gesture != "wave")
+                        self._clip is not None or self._deferred is not None or commanded),
+                        gesturing=gesture_active and gesture != "wave")
                     self._update_face_tracking(state, commanded=(
                         commanded or self._deferred is not None or self._speaker_turn is not None))
                     if self._motion_epoch != self._sentences.epoch:
