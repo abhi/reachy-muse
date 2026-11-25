@@ -1118,12 +1118,15 @@ they go to Muse as ordinary requests.
   voice came from, or
   without that direction, the largest face in view, or else the largest seen in
   the last 30 seconds. "What am I holding?", "what's in my hand?", "take a photo of my
-  outfit" and "of me in my new dress" turn Reachy level toward you instead,
+  outfit", "of my new shirt" and "of me in my new dress" turn Reachy level
+  toward you instead,
   since what you hold may hide your face; with no face in view and no
   direction, Reachy keeps its view. "Take a photo of us", "of everyone", "of
   these people", "of the whole family" and "how many people do you see?" frame
-  everyone who fits in view, you included. "Take a photo of my friend", "of my
-  uncle", "of him", "of her" or "of this person" frames the person who is not
+  everyone who fits in view, you included. "Everyone on my screen" or "on the
+  tv" keeps the view. "Of my new glasses" frames your face, like "of my glasses".
+  "Take a photo of my friend", "of my uncle", "of him", "of her" or "of this
+  person" frames the person who is not
   speaking, or without your direction, everyone in view if they fit. "What is
   this?", "read this label" and questions about how a thing looks, such as
   "does this look ripe?", keep the view unless your voice came from

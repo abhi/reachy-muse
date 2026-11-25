@@ -363,10 +363,12 @@ _SUBJECT_TAIL = re.compile(rf"(?: (?:{_TAIL}|again|here|there|today|together|too
                            r"|(?:right|over) (?:here|there)|this time|one more time|once more))+$")
 # The subject a request names, matched whole and in this order.
 _SLOT_SUBJECTS = tuple((re.compile(pattern), subject) for pattern, subject in (
-    (rf"(?:me|myself) (?:holding|wearing|showing|with|in) .+|my {_LOOKS_BODY}|what i(?:'m| am) (?:holding|wearing)",
+    (rf"(?:me|myself) (?:holding|wearing|showing|with|in) .+|my (?:[a-z']+ )?{_LOOKS_BODY}"
+     r"|what i(?:'m| am) (?:holding|wearing)",
      PhotoSubject.HELD),
-    (rf"(?:me|myself)(?: [a-z']+)*|my {_LOOKS_FACE}", PhotoSubject.ME),
-    (r"(?:us|everyone|everybody|(?:both|all|the (?:two|three|four|five)) of us)(?: [a-z']+)*|ourselves"
+    (rf"(?:me|myself)(?: [a-z']+)*|my (?:[a-z']+ )?{_LOOKS_FACE}", PhotoSubject.ME),
+    (r"(?!.* on (?:my|the) (?:screen|tv|phone|laptop)\b)"
+     r"(?:us|everyone|everybody|(?:both|all|the (?:two|three|four|five)) of us)(?: [a-z']+)*|ourselves"
      r"|the (?:whole )?(?:group|family|kids|children|guests)|these (?:people|guys|folks|kids|children)"
      r"|(?:my|our) (?:whole )?(?:family|friends|kids|children|guests|parents|grandparents)", PhotoSubject.US),
     (r"him|her|them|someone else|somebody else|the other person"

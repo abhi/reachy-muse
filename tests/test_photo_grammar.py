@@ -321,6 +321,7 @@ def test_most_natural_requests_take_a_photo_and_the_rest_are_refused_on_purpose(
 # What each granted request asks Reachy to frame.
 SUBJECTS = {
     PhotoSubject.ME: [
+        "take a photo of my new glasses",
         "take a photo, does this look good on me?", "take a photo, do these look okay on me?",
         "take a photo, how do i look for my interview?",
         "take a photo of me", "take a picture of me please", "take a photo of myself", "photograph me",
@@ -334,6 +335,9 @@ SUBJECTS = {
         "take a photo and tell me how old i look", "take a photo and tell me if i'm smiling",
         "take a photo and tell me does this hat look good on me"],
     PhotoSubject.HELD: [
+        "take a photo of my new shirt",
+        "take a photo of my red dress",
+        "take a photo of my whole outfit",
         "what am i holding", "what am i holding up", "what am i wearing", "what am i showing you", "what's in my hand",
         "what's in my hands", "what do i have in my hand", "what's this i'm holding", "can you see what i'm holding",
         "how many fingers am i holding up", "how many fingers do you see", "what do you see in my hand",
@@ -393,6 +397,14 @@ SUBJECTS = {
         "take a photo and tell me what you see", "take a picture, what do you see?", "take a photo of the room",
         "take a photo of my desk"],
     PhotoSubject.UNPARSED: [
+        "take a photo of everyone on my screen",
+        "take a photo of everyone on my tv",
+        "take a photo of everyone on my phone",
+        "take a photo of everyone on my laptop",
+        "take a photo of everyone on the screen",
+        "take a photo of everyone on the tv",
+        "take a photo of everyone on the phone",
+        "take a photo of everyone on the laptop",
         "take a picture of my screen", "take a photo of my morning coffee", "take a photo of the kids' drawing",
         "take a photo of sarah", "take a photo of her dog", "take a photo of my friend's dog"],
 }
