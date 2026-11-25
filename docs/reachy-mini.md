@@ -1118,15 +1118,16 @@ they go to Muse as ordinary requests.
   seconds. "What am I holding?", "what's in my hand?", "take a photo of my
   outfit" and "of me in my new dress" turn Reachy level toward you instead,
   since what you hold may hide your face; with no face in view and no
-  direction, Reachy keeps its view. "Take a photo of us", "of everyone",
-  "of the whole family" and "how many people do you see?" frame everyone who
-  fits in view, you included. "Take a photo of my friend", "of him", "of her"
-  or "of this person" frames the person who is not speaking, or without your
-  direction, everyone in view if they fit. "What is this?" and "read this label"
-  keep the view unless your voice came from outside it. Questions about the
-  scene, such as "what do you see?", "describe the room" or "what am I pointing
-  at?", and photos of things or people Reachy does not know, such as "take a
-  photo of my coffee" or "of Sarah", keep the view.
+  direction, Reachy keeps its view. "Take a photo of us", "of everyone", "of
+  these people", "of the whole family" and "how many people do you see?" frame
+  everyone who fits in view, you included. "Take a photo of my friend", "of my
+  uncle", "of him", "of her" or "of this person" frames the person who is not
+  speaking, or without your direction, everyone in view if they fit. "What is
+  this?" and "read this label" keep the view unless your voice came from
+  outside it. Questions about the scene, such as "what do you see?", "describe
+  the room" or "what am I pointing at?", and photos of things or people Reachy
+  does not know, such as "take a photo of my coffee" or "of Sarah", keep the
+  view.
 - Reachy first waits up to 0.75 seconds for a turn toward you, or a move Muse
   asked for, to finish. It then looks with its local face detector, which runs
   even while other vision pauses for speech, turns, keeps still for 0.2 seconds

@@ -351,8 +351,11 @@ def photo_requested(text: str) -> bool:
 
 _LOOKS_FACE = r"(?:face|smile|eyes|hair|haircut|glasses|makeup|hat|look)"
 _LOOKS_BODY = r"(?:outfit|shirt|dress|shoes|jacket|tie|sweater|hands?)"
+# Words before a look that ask about the speaker's own, as in "my hair", "think of this hat" or "does this shirt".
+_ASKED_LOOK = r"(?:my|(?:think (?:of|about)|does|do|if|whether) (?:this|these))"
 _RELATIVE = (r"(?:friend|guest|mom|mum|mother|dad|father|wife|husband|partner|son|daughter|brother|sister|kid|boy|girl"
-             r"|baby|grandma|grandpa|grandmother|grandfather|boyfriend|girlfriend|roommate|colleague|neighbou?r)")
+             r"|baby|grandma|grandpa|grandmother|grandfather|boyfriend|girlfriend|roommate|colleague|neighbou?r"
+             r"|uncle|aunt|auntie|cousin|nephew|niece)")
 _PHOTO_SLOT = re.compile(rf"\b(?:photo|picture|pic|snapshot|selfie) of ({_SUBJECT})|\bphotograph (?!of\b)({_SUBJECT})")
 # Words after a photo's subject that leave whom it frames as it is, as in "of me again" or "of us together".
 _SUBJECT_TAIL = re.compile(rf"(?: (?:{_TAIL}|again|here|there|today|together|too|also|as well"
@@ -362,11 +365,11 @@ _SLOT_SUBJECTS = tuple((re.compile(pattern), subject) for pattern, subject in (
     (rf"(?:me|myself) (?:holding|wearing|showing|with|in) .+|my {_LOOKS_BODY}|what i(?:'m| am) (?:holding|wearing)",
      PhotoSubject.HELD),
     (rf"(?:me|myself)(?: [a-z']+)*|my {_LOOKS_FACE}", PhotoSubject.ME),
-    (r"us(?: (?:both|all|two))?|(?:both|all|the (?:two|three|four|five)) of us|ourselves|everyone|everybody"
-     r"|the (?:whole )?(?:group|family|kids|children|guests)"
-     r"|(?:my|our) (?:whole )?(?:family|friends|kids|children|guests)", PhotoSubject.US),
+    (r"(?:us|everyone|everybody|(?:both|all|the (?:two|three|four|five)) of us)(?: [a-z']+)*|ourselves"
+     r"|the (?:whole )?(?:group|family|kids|children|guests)|these (?:people|guys|folks|kids|children)"
+     r"|(?:my|our) (?:whole )?(?:family|friends|kids|children|guests|parents|grandparents)", PhotoSubject.US),
     (r"him|her|them|someone else|somebody else|the other person"
-     rf"|(?:this|that) (?:person|guy|man|woman|lady|boy|girl|kid)|my (?:[a-z']+ )?{_RELATIVE}(?: [a-z']+)?",
+     rf"|(?:the|this|that) (?:person|guy|man|woman|lady|boy|girl|kid|baby)|my (?:[a-z']+ )?{_RELATIVE}(?: [a-z']+)?",
      PhotoSubject.OTHER),
     (r"(?:this|these)(?: [a-z']+){0,2}", PhotoSubject.THIS),
     (r"(?:the|this|my) (?:room|view|table|desk|kitchen|counter|shelf|window|wall|floor)", PhotoSubject.SCENE),
@@ -375,9 +378,9 @@ _SLOT_SUBJECTS = tuple((re.compile(pattern), subject) for pattern, subject in (
 _ASKED_SUBJECTS = tuple((re.compile(pattern), subject) for pattern, subject in (
     (r"\bus\b|\bourselves\b|\beveryone\b|\beverybody\b|\bhow many people\b|\bselfie\b", PhotoSubject.US),
     (rf"\bwhat (?:am i|i(?:'m| am)) (?:holding|showing|wearing)|\bi(?:'m| am) holding\b|\bin my hands?\b"
-     rf"|\bam i holding\b|\bhow many fingers\b|\b(?:my|think (?:of|about) this) {_LOOKS_BODY}\b", PhotoSubject.HELD),
+     rf"|\bam i holding\b|\bhow many fingers\b|\b{_ASKED_LOOK} {_LOOKS_BODY}\b", PhotoSubject.HELD),
     (rf"\b(?:see|describe) me\b|\bhow (?:[a-z]+ )?i look\b|\b(?:do|if|whether) i look\b|\bwhat i look like\b"
-     rf"|\b(?:i'm|i am|am i) smiling\b|\b(?:my|think (?:of|about) this) {_LOOKS_FACE}\b", PhotoSubject.ME),
+     rf"|\b(?:i'm|i am|am i) smiling\b|\b{_ASKED_LOOK} {_LOOKS_FACE}\b", PhotoSubject.ME),
     (r"\bthis\b|\bthese\b", PhotoSubject.THIS),
 ))
 
