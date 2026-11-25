@@ -361,6 +361,21 @@ def test_a_remembered_face_is_turned_to_for_me_but_not_for_what_am_i_holding(peo
     assert aimed(caplog) == aim_fields(aim)
 
 
+def test_one_person_remembered_twice_is_nobody_else_for_a_photo_of_my_friend(people, caplog):
+    """Ten seconds ago two camera passes saw only the owner, at +30; now the camera sees 15 degrees to each side
+    and nobody, and Reachy hears no bearing. Two sightings of one person are one face, so Reachy keeps its view
+    rather than turning to photograph whoever most likely asks."""
+    rig, controller, robot, scene = people
+    scene.faces, scene.age, scene.doa = [(30, .35)], 10, None
+    for _ in range(2):
+        assert len(controller.refresh_faces().faces) == 1
+    scene.age, scene.view_deg = 0.0, 15
+    camera, _ = ask(people, caplog, "chat", "take a photo of my friend")
+    assert camera.shots == STRAIGHT_AHEAD
+    assert aimed(caplog) == aim_fields(
+        "subject=other aim=no_other bearing=no source=none faces=0 turns=0 off_deg=none")
+
+
 def test_without_faces_or_doa_the_photo_shows_what_reachy_faces(people, caplog):
     rig, controller, robot, scene = people
     scene.faces, scene.doa = [], None

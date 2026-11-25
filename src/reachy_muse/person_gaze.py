@@ -9,8 +9,10 @@ Never owns conversation input or reply audio.
 import asyncio
 import contextlib
 from dataclasses import dataclass, replace
+from itertools import groupby
 import logging
 import math
+from operator import attrgetter
 import time
 from typing import AsyncIterator, Callable
 
@@ -340,10 +342,12 @@ class PersonGaze:
             return None
 
     def _remembered(self, view) -> list:
-        """Faces seen in the last 30 seconds, except those ``view`` saw and any where it looked, since the camera
-        just looked there."""
-        faces = self.hardware.recent_faces(time.monotonic() - _REMEMBERED_S)
-        return [face for face in faces if view is None or face not in view.faces and not view.covers(face)]
+        """The people seen in the last 30 seconds whom ``view`` does not show, each by their latest face, except
+        any where it looked, since the camera just looked there."""
+        shown = view.faces if view is not None else ()
+        sightings = [face for face in self.hardware.recent_faces(time.monotonic() - _REMEMBERED_S)
+                     if view is None or face not in shown and not view.covers(face)]
+        return _people(shown, sightings)
 
     @contextlib.asynccontextmanager
     async def photo_aim(self, subject: PhotoSubject, speaker_bearing: float | None, deadline: float, *,
@@ -500,6 +504,24 @@ def _answered_by(requests: list[_Heard], starts: list[float], responses: int) ->
 
 def _away_from(speaker_yaw: float, faces) -> list:
     return [face for face in faces if abs(face.yaw - speaker_yaw) > _SPEAKER_ARC]
+
+
+def _people(shown, sightings) -> list:
+    """The latest face of each person in ``sightings``, faces from earlier camera passes, who is none of those
+    ``shown`` now. A face within 15 degrees of yaw of someone a later pass saw is that person again, the nearest
+    pairs matched first; the faces of one pass are all different people."""
+    known = list(shown)
+    for _, faces in groupby(sorted(sightings, key=attrgetter("captured_at"), reverse=True),
+                            attrgetter("captured_at")):
+        faces = list(faces)
+        new, unmatched = set(range(len(faces))), set(range(len(known)))
+        for gap, index, other in sorted((abs(face.yaw - person.yaw), index, other)
+                                        for index, face in enumerate(faces) for other, person in enumerate(known)):
+            if gap <= _AIM_FOUND and index in new and other in unmatched:
+                new.discard(index)
+                unmatched.discard(other)
+        known += [face for index, face in enumerate(faces) if index in new]
+    return known[len(shown):]
 
 
 def _aim_point(subject: PhotoSubject, speaker_yaw: float | None, view, remembered, head_yaw: float,
