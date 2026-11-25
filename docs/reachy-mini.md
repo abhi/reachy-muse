@@ -803,7 +803,8 @@ window closes, so Reachy's local chat does not answer greetings in a call.
   Until that evidence arrives, Muse receives silence; a confirmed interruption
   releases up to eight seconds of buffered audio so its opening words survive.
   Held sound that the recognizer heard no words in is dropped after 0.75 s of
-  quiet. Without verified hardware echo
+  quiet, and its echo window is forgotten. Dropping a held turn also resets
+  the window for speech that follows. Without verified hardware echo
   cancellation, the call is half duplex and Muse's voice mutes the microphone.
 - Words said over Muse's reply in short stretches, or whose partial words come
   late, are confirmed instead by the turn's final words. These need 300 ms of

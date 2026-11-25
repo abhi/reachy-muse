@@ -79,8 +79,7 @@ class CallInput:
     def __init__(self, feed, sample_rate: int):
         self.feed = feed
         self.rate = sample_rate
-        # When the gate first heard voice over Muse's playback, and when it last did, through every reset: a turn's
-        # final words cover its speech from the start, though Muse's echo heard in it erased what was held.
+        # Exact echo can erase held audio without erasing the voice covered by the turn's final words.
         self._voiced_from: Optional[float] = None
         self._voiced_until = 0.0
         self.reset()
@@ -131,6 +130,7 @@ class CallInput:
                 self.feed.push(np.zeros_like(samples))
                 return False
             self.reset()
+            self._voiced_from = None
         self._hold(samples)
         if speaking:
             self._speech_samples = min(self._speech_samples + len(samples), self._samples)
@@ -174,6 +174,7 @@ class CallInput:
         """Drop the audio held for a turn Reachy takes itself; speech that follows is weighed afresh."""
         if self._held_for_turn:
             self.reset()
+            self._voiced_from = None
 
     def _hold(self, samples) -> None:
         self._pending.append(samples.copy())

@@ -3121,3 +3121,129 @@ def test_identical_chat_lines_played_apart_keep_their_own_echo_times(monkeypatch
     run(rig, conversation, user, rest=("idle", "listening", "thinking", "speaking"), timeout=30)
     assert heard == [["Okay, I'll look at you.", "Okay, I'll look at you."], True]
 
+
+TAKE_UP = "Yes, the forecast for next week please."
+
+
+def word_steps(words):
+    """Each word its own stretch: (voiced ms, quiet ms, word)."""
+    return [(voice, quiet, word) for (voice, quiet), word in zip(gapped(words), words.split())]
+
+
+async def speak_turns(rig, link, turns):
+    """Say ``turns`` at real-time pace: each a list of (voiced ms, quiet ms, word or None for a sound the companion
+    writes no word for), then the quiet ms before the next turn. The companion's partial holds each word
+    COMPANION_LAG_S after its voice ends. Every turn but the last ends with the companion's own endpoint, sent
+    COMPANION_LAG_S + 0.1 s after its last voice, as the user talks on; Reachy's endpoint ends the last."""
+    from reachy_muse.protocol import HearEndpoint, HearPartial, encode
+
+    frames, events = [], []
+    for number, (steps, after_ms) in enumerate(turns):
+        words = []
+        for voiced_ms_, quiet_ms, word in steps:
+            frames += [True] * (voiced_ms_ // 20)
+            if word is not None:
+                words.append(word)
+                events.append((len(frames) * .02 + COMPANION_LAG_S, number, " ".join(words), False))
+            frames += [False] * (quiet_ms // 20)
+        if number < len(turns) - 1:
+            last_voice = len(frames) - next(i for i, v in enumerate(reversed(frames)) if v)
+            events.append((last_voice * .02 + COMPANION_LAG_S + .1, number, " ".join(words), True))
+        frames += [False] * (after_ms // 20)
+    streams, known = {}, set(link._connection.hearing)
+    sent = 0
+    began = time.monotonic()
+    for frame in range(len(frames) + round((COMPANION_LAG_S + .1) / .02)):
+        voiced_ = frame < len(frames) and frames[frame]
+        rig.hardware.samples.put(np.full(CHUNK, VOICE_SAMPLE if voiced_ else 0, np.float32))
+        await asyncio.sleep(max(0.0, began + (frame + 1) * CHUNK / 16000 - time.monotonic()))
+        opened = [stream for stream in link._connection.hearing if stream not in known]
+        for stream in opened:
+            known.add(stream)
+            streams[len(streams)] = stream
+        while sent < len(events) and events[sent][0] <= (frame + 1) * .02:
+            _, number, text, endpoint = events[sent]
+            stream = streams.get(number)
+            if stream is not None and stream in link._connection.hearing:
+                message = HearEndpoint(stream, text, False) if endpoint else HearPartial(stream, sent + 1, text)
+                link._receive(link._connection, encode(message))
+            sent += 1
+
+
+def spoken_over_reply(monkeypatch, caplog, reply, turns, *, after_s):
+    """Say ``turns`` from ``after_s`` into Muse's 12.8 s ``reply``. Returns the barge-ins, the user's voiced ms and
+    the frames of Muse's own voice that reached Muse, and Reachy's command lines, once Reachy's endpoint has passed."""
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+
+    async def answer(sdk, emit, script):
+        reply_events(sdk, emit, "r1", reply, voiced(12.8))
+
+    calls = ScriptedCalls(answer=answer)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=10)
+    conversation.silence_s = 2.0
+    link = companion_hearing(conversation, forced_endpoints=True)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await quiet_until(rig, time.monotonic() + after_s)
+        caplog.clear()
+        before = len(calls.frames)
+        await speak_turns(rig, link, turns)
+        await room(rig, 1.6)
+        heard.append((calls.barge_ins, voiced_ms(calls.frames[before:]), echo_frames(calls.frames[before:]),
+                      [line for line in caplog.messages if line.startswith("Realtime command ")]))
+        await rig.wait_until_or_timeout(lambda: not call.audible, 12)
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
+    return heard[0]
+
+
+def pause_until(start_s, steps, then_s):
+    """The quiet ms from the end of ``steps`` said from ``start_s`` until ``then_s``."""
+    return round((then_s - start_s) * 1000 - sum(v + q for v, q, _ in steps)) // 20 * 20
+
+OFFER = said_at(FORECAST_REPLY, "the forecast for")
+
+AFTER_OFFER = said_at(FORECAST_REPLY, "I can also") - .3
+
+
+def then_take_up(opening):
+    """``opening`` said from OFFER, then the take-up in short words from AFTER_OFFER, in one turn."""
+    *steps, (voiced_ms_, _, word) = opening
+    return [([*steps, (voiced_ms_, pause_until(OFFER, opening, AFTER_OFFER), word), *word_steps(TAKE_UP)], 0)]
+
+@pytest.mark.parametrize("turns, after_s, words", [
+    ([(word_steps(TAKE_UP), 0)], AFTER_OFFER, 7),
+    (then_take_up(word_steps("Oh,")), OFFER, 8),
+    (then_take_up([(300, 0, None)]), OFFER, 7),
+], ids=["control: the take-up alone", "'Oh,' as Muse makes the offer, then the take-up",
+        "a sound with no words as Muse makes the offer, then the take-up"])
+def test_a_take_up_said_after_muse_s_offer_reaches_muse_whatever_the_turn_heard_before_it(
+        monkeypatch, caplog, turns, after_s, words):
+    """Contract 2: a request that takes up Muse's offer in Muse's words, said after the offer in short stretches,
+    reaches Muse whole at Reachy's endpoint. Here the same turn began while Muse made the offer, about 1.6 to 1.9 s
+    before the take-up's first word: with "Oh," or with a 0.3 s sound the companion wrote no word for, such as a
+    cough. The turn's words are weighed against everything Muse played from 1 s before that first sound. The gate
+    drops the opening sound itself as unrecognized (a back-channel sound counts no words), so Muse gets the take-up's
+    1260 ms."""
+    assert spoken_over_reply(monkeypatch, caplog, FORECAST_REPLY, turns, after_s=after_s) == (
+        1, 1260, 0, [f"Realtime command transcript=arrived words={words} wake_prefix=none outcome=none drop=none"])
+
+@pytest.mark.parametrize("remark", [False, True], ids=["control: the take-up alone", "after the remark"])
+def test_a_take_up_said_straight_on_after_a_dropped_remark_reaches_muse(monkeypatch, caplog, remark):
+    """Contract 2 again: "Got it." said as Muse makes its offer is a remark, and is dropped. The user talks straight
+    on through the companion's endpoint, so the take-up is a second turn on the same gate. Alone at the same moment,
+    the take-up reaches Muse."""
+    said = word_steps("Got it.")
+    # The companion's endpoint for the remark comes 0.58 s after its last voice, while "Yes" is being said.
+    turns = [(said, 360), (word_steps(TAKE_UP), 0)] if remark else [(word_steps(TAKE_UP), 0)]
+    after_s = OFFER + (0 if remark else sum(v + q for v, q, _ in said) / 1000 + .36)
+    barge_ins, _, echo, lines = spoken_over_reply(monkeypatch, caplog, FORECAST_REPLY, turns, after_s=after_s)
+    # The take-up's opening said while the remark was weighed is lost (R2-6, out of scope), so its voice isn't asserted.
+    assert (barge_ins, echo, lines[-1]) == (
+        1, 0, "Realtime command transcript=arrived words=7 wake_prefix=none outcome=none drop=none")
