@@ -389,6 +389,32 @@ def test_while_a_photo_holds_the_view_muse_s_command_waits_untouched():
     assert round(min(yaws)) == -20
 
 
+def test_a_view_released_while_a_person_turn_moves_lets_muse_s_command_run_once_it_ends():
+    robot = FakeRobot()
+    controller = start_controller(robot, photo_encoder=Encoder(),
+                                  style=MotionStyle(breathing=False, expression_clips=False))
+    moved = []
+    try:
+        controller.set_state("listening")
+        controller.hold_view_for_photo(True)
+        command = threading.Thread(target=lambda: moved.append(
+            controller.run_command("reachy.move", {"yaw": -20, "duration": .3, "hold": 0}, 5000)))
+        command.start()
+        assert controller.look_at_person(math.radians(30), 0.0)
+        assert until(lambda: controller._speaker_turn is not None)
+        controller.release_person_gaze(turn_back=False)
+        controller.hold_view_for_photo(False)
+        released = controller.person_turning, list(moved)
+        command.join(3)
+    finally:
+        controller.close()
+    assert released == (True, [])
+    assert moved[0]["ok"] is True
+    yaws = [controller._pose_parameters(pose)["yaw"] for _, pose, _, _ in list(robot.frames)]
+    faced = next(index for index, yaw in enumerate(yaws) if round(yaw) == 30)
+    assert round(min(yaws[faced:])) == -20
+
+
 def test_while_a_photo_holds_the_view_no_head_gesture_or_generated_motion_starts():
     robot = FakeRobot()
     controller = start_controller(robot, photo_encoder=Encoder(),

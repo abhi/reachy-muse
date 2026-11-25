@@ -326,6 +326,7 @@ class ReachyController:
         self._photo_hold = threading.Event()
         self._photo_view = threading.Event()
         self._photo_view_target: FaceTarget | None = None  # the face follower's, frozen while the view is held
+        self._photo_view_ending = False    # released while a person turn moved, so held until that turn ends
         self._camera_hold: _CameraHold | None = None
         self._head_still_since: float | None = None
         from reachy_muse.vision_budget import VisionBudget
@@ -685,6 +686,7 @@ class ReachyController:
         self._command_active = False
         self._photo_view.clear()
         self._photo_view_target = None
+        self._photo_view_ending = False
         from reachy_muse.motion.layers import MotionLayers, Ramp
         self._layers = MotionLayers(self._style)
         self._generated_gain = Ramp(1.0)
@@ -1184,14 +1186,16 @@ class ReachyController:
         """From a photo's aim until its frame is read, Muse's commands wait untaken in the queue, and no head
         gesture, generated motion, wake turn or follow turn starts. The face follower's target is frozen where it
         was, so the head keeps facing whoever it followed until a turn, a command or sleep ends that gaze; person
-        turns still run."""
+        turns still run. Released while one moves, the view stays held until it ends, so the waiting commands then
+        run rather than being refused for interrupting it."""
         follower = self._face_follower
         target = follower.target() if active and follower is not None else None
         with self._state_lock:
             self._photo_view_target = target
+            self._photo_view_ending = not active and self._turning_to_person()
             if active:
                 self._photo_view.set()
-            else:
+            elif not self._photo_view_ending:
                 self._photo_view.clear()
 
     @property
@@ -1575,6 +1579,9 @@ class ReachyController:
 
     def _update_person(self, now: float, state: str) -> None:
         with self._state_lock:
+            if self._photo_view_ending and not self._turning_to_person():
+                self._photo_view_ending = False
+                self._photo_view.clear()
             release, self._person_release = self._person_release, False
             if state == "sleeping":
                 if self._person_hold is not None or self._person_pending is not None:

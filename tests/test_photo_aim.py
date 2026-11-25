@@ -640,6 +640,47 @@ def test_never_mind_during_the_aim_reads_no_photo_frame(people, caplog):
     assert played(events) == ["tts:Okay, I'll drop that."]
 
 
+def test_muse_s_move_waits_out_the_turn_of_an_aim_never_mind_ends(people, caplog):
+    """Muse asks for a move once the aim holds the view, and "Never mind" lands while the aim's turn toward the
+    owner still moves. The move runs once that turn ends, rather than being refused as a turn toward a person."""
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    scene.doa = None
+    looking = threading.Event()
+
+    def slow_pass():
+        looking.set()
+        time.sleep(.25)
+
+    scene.before_capture = slow_pass
+    holds = recording_holds(rig, controller)
+    rig.hardware.run_command = controller.run_command
+    service, _ = photo_service(rig, "chat", "Reachy, take a photo of me.", "Never mind.")
+    rig.session = InvokedSession(rig.recording, muse_answers)
+    moved = {}
+
+    async def move():
+        await until(rig, lambda: holds[:1] == [(True, False)])
+        moved["result"] = await rig.session.invoke("reachy.move", {"yaw": -20, "duration": .3, "hold": 0})
+
+    async def user():
+        moving = asyncio.create_task(move())
+        await say_live(rig)
+        await until(rig, looking.is_set)
+        await say_live(rig, voiced_s=.3)
+        await until(rig, lambda: photo_lines(caplog), 5)
+        await moving
+
+    run(rig, service, user, rest=("listening", "idle"))
+    assert holds == [(True, False), (False, True)]
+    assert moved["result"]["ok"] is True, moved["result"]
+    assert fields(photo_lines(caplog)[0])["aim"] == "cancelled"
+    yaws = [controller._pose_parameters(pose)["yaw"] for _, pose, _, _ in list(robot.frames)]
+    faced = next(index for index, yaw in enumerate(yaws) if round(yaw) == 30)
+    assert (round(max(yaws[:faced + 1])), round(min(yaws[faced:]))) == (30, -20)
+    assert not controller._photo_view.is_set()
+
+
 def test_a_photo_of_me_said_over_muse_s_reply_is_aimed_after_the_barge_in(people, caplog):
     rig, controller, robot, scene = people
     caplog.set_level("INFO")
