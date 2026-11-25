@@ -502,9 +502,10 @@ a bearing, or with dispersed readings, it stays where it is. It does not follow
 anyone while face tracking is switched off, as after "stop looking at me". It
 waits while a turn toward a person is still chosen, pending or moving, or holds
 Reachy on someone else, while a turn Muse asked for during that utterance
-stands, and while a motion command, clip, generated motion such as the thinking
-motion, or photo owns the head. It waits only as long as the utterance goes on,
-and never turns for it afterwards. Each decision logs one line, such as
+stands, and while a motion command, clip, generated motion or photo owns the
+head. The looping thinking motion does not make it wait: the turn fades it
+first, as a turn toward a person does. It waits only as long as the utterance
+goes on, and never turns for it afterwards. Each decision logs one line, such as
 `Reachy follows speaker outcome=turned delta_deg=-55`. The outcome is `turned`,
 `same`, `too_soon`, `unknown`, `off`, `held` or `busy`, and `delta_deg` is how
 far the gaze would turn, or `none` when Reachy did not weigh a turn. When a
@@ -820,13 +821,23 @@ local sentence rules, started where that sentence's speech starts. Reachy
 estimates that sample from the transcript's character position and the
 reply's pauses. Loudness peaks give small nods and antenna flicks, and a pitch
 rise into a pause tilts the head, before the words arrive. Reachy looks
-thoughtful while Muse works and closes a happy or sorry reply with a
-celebration or apology. When Muse calls `reachy.expression` or `reachy.move`
+thoughtful while a request waits for Muse's answer, and while Muse's events
+show it at work: a response it starts, or one it completes without speaking,
+as for a tool call. Muse's Working flag alone, which the robot's SDK can leave
+on, does not count after a reply. When the microphone admits your speech while
+Reachy looks thoughtful, Reachy listens. It closes a happy or sorry reply with
+a celebration or apology. When Muse calls `reachy.expression` or `reachy.move`
 during a call, Muse's gesture plays and Reachy's own reply motion waits until
 it finishes. When the Muse SDK registers device guides, Reachy also gives Muse
 a `device.guide` that says when such gestures are worth calling.
 [`bench/realtime_expressive.md`](../bench/realtime_expressive.md) has the
 offline measurements.
+
+When a call ends, Reachy logs one content-free `Realtime call_summary` line
+with the call's turn outcomes and audio counts. Its `working_s` field is the
+seconds Muse's Working flag stayed on during the call, `face_paused_s` the
+seconds face following waited out paused vision, and `face_held_s` how many of
+those seconds Reachy kept facing someone through the pause.
 
 ## Ask Muse to remember Reachy
 
@@ -989,7 +1000,13 @@ By default, it also pauses while waiting for the wake phrase. Add
 two frames per second, including in still mode with `REACHY_MUSE_BREATHING=0`.
 Idle following pauses during sleep and morning arrival watching.
 Audio takes priority over local vision. New camera/inference work pauses during
-user speech, reply playback, turn processing and wake verification. At other
+user speech, reply playback, turn processing and wake verification. Through the
+pause, Reachy keeps facing the face it was following. The pause never counts
+toward losing that face: once the camera looks again, a face that has gone is
+dropped after the usual 0.8 seconds. A later turn drops the held face, whether
+it is a wake turn, a turn toward a later speaker or another person, or one
+Muse asks for with `reachy.look_at`. Sleep, idle without `--face-follow-idle`
+and "stop looking at me" still end following. At other
 times the rates above are ceilings: each detector also respects a measured
 compute budget. Two-second capture and wake-processing windows below 95% coverage
 throttle, then suspend vision. Recovery requires 20 healthy seconds per step.
