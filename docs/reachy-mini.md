@@ -460,15 +460,23 @@ recording and keeps the listening window open for a fresh question.
 
 Reachy reads the daemon's microphone direction at `/api/state/doa` at no more
 than 5 Hz around microphone activity or while a wake window is open. Idle silence
-does not poll. A single worker reuses its HTTP keep-alive connection, outside audio
-capture and the motion thread. Each reading is transformed
+does not poll, but it keeps the bearings already heard: the keyword detector
+reports "Hey Muse" up to about 0.6 seconds after the phrase ends, often after the
+speaker has stopped to wait for the wake gesture. A single worker reuses its HTTP
+keep-alive connection, outside audio capture and the motion thread. Each reading is transformed
 through the current head rotation into a world bearing. A short ring stores only
 speech bearings and monotonic times. Reachy's own output and echo tail invalidate
-the ring, including with echo-cancelled input. Capture gaps also clear it.
+the ring, including with echo-cancelled input. Capture gaps also clear it, and so
+does a DoA read that fails or takes over 0.15 seconds.
 At the wake candidate, Reachy freezes the ring and its observation time before
 verification, replay and alignment. Capture timing bounds the estimate to the most recent speech segment
 within 1.5 seconds before the keyword boundary. A confident estimate needs at
 least two recent, consistent speech samples; its direction is their median.
+A window without speech bearings logs `too_few`, or `ineligible`, `timeout` or
+`unavailable` when Reachy's own audio or a late or failed read cleared the ring
+after the window opened. The line's `reads` counts the DoA reads the daemon
+answered in the window, with speech or without; with `too_few`, `reads=0` means
+it was never asked, as for a phrase too quiet to count as microphone activity.
 Missing or uncertain direction, including unverified keyword timing, keeps the
 usual wake behavior. Direction HTTP requests have a 0.1-second deadline and a
 4096-byte body limit. Microphone cleanup does not wait for an unfinished read.
