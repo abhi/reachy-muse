@@ -807,7 +807,8 @@ window closes, so Reachy's local chat does not answer greetings in a call.
   cancellation, the call is half duplex and Muse's voice mutes the microphone.
 - Words said over Muse's reply in short stretches, or whose partial words come
   late, are confirmed instead by the turn's final words. These need 300 ms of
-  voice, and must not be mostly Muse's own words, as Muse's echo transcribed
+  voice in all, including any under an opening word that Muse's reply also
+  holds, and must not be mostly Muse's own words, as Muse's echo transcribed
   with a word changed would be. Such a request goes to Muse only if Reachy does
   not take it as a device command or photo request, and it comes late. Muse's
   reply plays on until Reachy's end of the turn, 1.5 to 2 s after the last

@@ -124,9 +124,9 @@ class CallInput:
             self._speech_samples = min(self._speech_samples + len(samples), self._samples)
             self._voiced_samples = min(self._voiced_samples + len(samples), self._samples)
         if echo:
-            # A single word of Muse's may be its echo or open the user's request: what is held stays, but no voice
-            # heard so far counts toward a confirmation.
-            self._speech_samples = self._voiced_samples = 0
+            # A single word of Muse's may be its echo or open the user's request: what is held stays, and no partial
+            # confirms on the voice heard so far, but the turn's final words weigh all of it.
+            self._speech_samples = 0
         distinct = self._distinct(text, heard_over)
         self._distinct_samples = self._distinct_samples + len(samples) if distinct else 0
         if (self._speech_samples >= BARGE_IN_SPEECH_S * self.rate
