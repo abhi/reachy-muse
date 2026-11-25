@@ -1785,12 +1785,14 @@ def test_a_command_its_final_words_confirmed_never_reaches_muse_through_the_turn
     assert heard == [(0, [-10], ["none outcome=none drop=none", "none outcome=VOLUME_DOWN drop=none"])]
 
 
-def test_reachy_never_nods_that_muse_is_slow_while_a_request_its_endpoint_confirmed_still_reaches_muse(
-        monkeypatch, caplog):
-    """A long request said over Muse's reply in short words, with a pause in it, is confirmed only at Reachy's
-    endpoint, and reaches Muse at the SDK's pace for longer than Reachy waits before nodding that Muse is slow. Muse
-    answers once the request has gone 0.6 s without voice, as its own voice detector does. Reachy's wait starts once
-    Muse has the whole request, so it never nods."""
+@pytest.mark.parametrize("last_word_ms", [280, 520], ids=["its endpoint confirms it", "its last word confirms it"])
+def test_reachy_never_nods_that_muse_is_slow_while_a_request_held_over_its_reply_still_reaches_muse(
+        monkeypatch, caplog, last_word_ms):
+    """A long request said over Muse's reply in short words, with a pause in it, is confirmed late: at Reachy's
+    endpoint, or by a partial once its last word is a stretch long enough. Either way it reaches Muse at the SDK's
+    pace for longer than Reachy waits before nodding that Muse is slow. Muse answers once the request has gone 0.6 s
+    without voice, as its own voice detector does. Reachy's wait starts once Muse has the whole request, so it never
+    nods."""
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
     rig.hardware.echo_cancelled_input = True
@@ -1813,7 +1815,7 @@ def test_reachy_never_nods_that_muse_is_slow_while_a_request_its_endpoint_confir
     conversation = realtime_service(rig, None, calls, wake_timeout_s=10)
     conversation.silence_s = 2.0
     link = companion_hearing(conversation, forced_endpoints=True)
-    gapped = STRETCHES["each word its own stretch"]
+    pattern = STRETCHES["each word its own stretch"]
 
     async def user():
         await speak_live(rig, wake=True)
@@ -1822,8 +1824,8 @@ def test_reachy_never_nods_that_muse_is_slow_while_a_request_its_endpoint_confir
         await room(rig, 2.5)
         caplog.clear()
         await say_over_reply(rig, link, "Reachy, I'm going to a dinner tonight at a fancy place downtown, what "
-                             "should I wear to look good?",
-                             gapped[:8] + ((280, 60),) + gapped[:2] + ((280, 1000),) + gapped[:6] + ((280, 0),))
+                             "should I wear to look good?", pattern[:8] + ((280, 60),) + pattern[:2] + ((280, 1000),)
+                             + pattern[:6] + ((last_word_ms, 0),))
         await room(rig, 12)
 
     run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=60)

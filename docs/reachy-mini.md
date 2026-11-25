@@ -815,9 +815,9 @@ window closes, so Reachy's local chat does not answer greetings in a call.
   word, and the request then reaches Muse in real time, taking as long as it
   took to say. A nine-word request finishes reaching Muse about 4.7 s after its
   last word, and Muse answers after that. Reachy nods when Muse has not answered
-  a request after 4 s, and for such a request it counts from when Muse has all
-  of it. A reply that Muse begins before such a request is confirmed ends the
-  turn, and the request is dropped.
+  a request after 4 s, counted from when Muse has all of it, as for a request
+  that a partial confirmed late. A reply that Muse begins before such a request
+  is confirmed ends the turn, and the request is dropped.
 - The call ends when the follow-up window closes, or when Muse ends it.
 - If a call fails before any audio reached Muse, the request goes to Muse by
   chat. If Muse may have heard it, Reachy asks the user to say it again and the

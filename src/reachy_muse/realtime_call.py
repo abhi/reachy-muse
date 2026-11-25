@@ -610,14 +610,11 @@ class RealtimeCall:
         self._closing = False
         self._transcripts: dict[Optional[str], str] = {}
 
-    def accept_turn(self, *, endpoint_at: float, speech_end_at: float, words: int, awaits_answer: bool = True,
-                    queued: bool = False) -> bool:
-        """``queued``: the turn's audio has only now gone into the microphone feed, which sends it in real time, so
-        its clock starts once the feed has sent it."""
+    def accept_turn(self, *, endpoint_at: float, speech_end_at: float, words: int, awaits_answer: bool = True) -> bool:
+        """The turn's clock starts once the microphone feed has sent Muse all of it. The feed sends in real time, and
+        audio held over Muse's reply until a late confirmation may still be on its way."""
         self.turns += 1
-        clock_from = endpoint_at
-        if queued:
-            clock_from = max(endpoint_at, time.monotonic() + self.feed.backlog_bytes / (2 * SAMPLE_RATE))
+        clock_from = max(endpoint_at, time.monotonic() + self.feed.backlog_bytes / (2 * SAMPLE_RATE))
         turn = PendingTurn(self.turns, endpoint_at, speech_end_at, words, self.feed.sent, clock_from)
         replied_at = self.speaker.reply_started
         if replied_at is not None and replied_at >= speech_end_at:
