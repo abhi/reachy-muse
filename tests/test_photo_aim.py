@@ -205,6 +205,12 @@ FRAMED = [
     pytest.param("what do you see?", None, STRAIGHT_AHEAD, f"subject=scene {KEPT}", 0, id="scene"),
     pytest.param("what am I pointing at?", None, STRAIGHT_AHEAD, f"subject=scene {KEPT}", 0, id="pointing"),
     pytest.param("take a photo of my coffee", None, STRAIGHT_AHEAD, f"subject=unparsed {KEPT}", 0, id="unparsed"),
+    pytest.param("take a photo of my friend's face", None, [(0, -3, 0)],
+                 "subject=unparsed aim=view bearing=no source=none faces=none turns=0 off_deg=none", 0,
+                 id="friends_face"),
+    pytest.param("take a photo of my daughter's dress", None, [(0, -3, 0)],
+                 "subject=unparsed aim=view bearing=no source=none faces=none turns=0 off_deg=none", 0,
+                 id="daughters_dress"),
 ]
 
 

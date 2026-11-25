@@ -397,6 +397,8 @@ SUBJECTS = {
         "take a photo and tell me what you see", "take a picture, what do you see?", "take a photo of the room",
         "take a photo of my desk"],
     PhotoSubject.UNPARSED: [
+        "take a photo of my friend's face", "take a photo of my daughter's dress",
+        "take a photo of my friends' glasses", "take a photo of my daughters' outfit",
         "take a photo of everyone on my screen",
         "take a photo of everyone on my tv",
         "take a photo of everyone on my phone",
