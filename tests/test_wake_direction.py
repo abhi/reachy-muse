@@ -282,3 +282,103 @@ def test_candidate_geometry_survives_verification_replay_and_alignment(handoff, 
         ]
 
     asyncio.run(bounded(handoff(run, delayed=True, hardware=hardware)))
+
+
+class SteppedClock:
+    """One virtual clock for the conversation and its DoA sampler. Each sampler sleep ends exactly on time, also
+    while a worker thread holds the microphone loop, as keyword inference does on the robot."""
+
+    def __init__(self, now=100.0):
+        self.now, self.loop, self._next = now, None, None
+        self._wakes, self._resume = asyncio.Queue(), asyncio.Queue()
+
+    async def sleep(self, seconds):
+        await self._wakes.put(self.now + seconds)
+        await self._resume.get()
+
+    async def advance(self, until):
+        if self._next is None:
+            self._next = await self._wakes.get()
+        while self._next <= until:
+            self.now = self._next
+            await self._resume.put(None)
+            self._next = await self._wakes.get()
+        self.now = until
+
+    def spend(self, seconds):
+        """From a worker thread: ``seconds`` pass while the event loop, and the sampler on it, go on."""
+        asyncio.run_coroutine_threadsafe(self.advance(self.now + seconds), self.loop).result(2)
+
+
+@pytest.mark.parametrize("tail, inference, lag, echo, line", [
+    # 17:12:47 on the robot: the candidate came 0.52 s after the keyword's last token, after 79 ms of inference.
+    (.52, .0789, 0, None, "Wake direction decision=ok samples=4 span_ms=600.0 boundary_age_ms=598.9 "
+                          "last_age_ms=30.0 mad_deg=0.0 inlier=1.00 yaw=30.0"),
+    # 17:25:25: 0.32 s and 95 ms, with the streaming model placing the last token 0.2 s after the loud audio.
+    (.32, .0954, .2, None, "Wake direction decision=ok samples=4 span_ms=600.0 boundary_age_ms=415.4 "
+                           "last_age_ms=230.0 mad_deg=0.0 inlier=1.00 yaw=30.0"),
+    # people1's timing: a 0.32 s tail and no inference, so the candidate beats the 0.5 s activity window.
+    (.32, 0, 0, None, "Wake direction decision=ok samples=4 span_ms=600.0 boundary_age_ms=320.0 "
+                      "last_age_ms=30.0 mad_deg=0.0 inlier=1.00 yaw=30.0"),
+    # Reachy's own echo tail covers 100.80-101.00 s of the pause: the phrase's bearings go with it.
+    (.52, .0789, 0, (40, 101.0), "Wake direction decision=too_few samples=0 span_ms=0.0 boundary_age_ms=598.9 "
+                                 "last_age_ms=nan mad_deg=nan inlier=0.00"),
+], ids=["robot-1712", "robot-1725", "people1", "robot-echo"])
+def test_a_pause_after_the_keyword_keeps_its_direction_until_the_robot_s_late_candidate(
+        handoff, monkeypatch, caplog, tail, inference, lag, echo, line):
+    """The user says the 0.68 s phrase of people1's test, then waits for the wake gesture, as the docs say to. The
+    DoA flags speech only while they talk. The keyword is found on the robot's timing, with the robot's verifier."""
+    from reachy_muse.wake_policy import Verification, WakePolicy
+    from test_wake_handoff import Detection
+
+    clock = SteppedClock()
+    monkeypatch.setattr("reachy_muse.conversation.time", SimpleNamespace(monotonic=lambda: clock.now))
+    monkeypatch.setattr("reachy_muse.conversation.WakeDirection",
+                        lambda read: WakeDirection(read, clock=lambda: clock.now, sleep=clock.sleep))
+    hardware = DirectionalHardware()
+    caplog.set_level("INFO")
+
+    async def run(conversation, session, hw, wake, recognition, recordings, accepted, feed):
+        np = pytest.importorskip("numpy")
+        clock.loop = asyncio.get_running_loop()
+        heard = SimpleNamespace(samples=0, boundary=None)
+
+        def spot(audio, align=True):
+            wake.feed_id += 1
+            wake.last_detection = None
+            loud = np.flatnonzero(audio == np.float32(.25))
+            if len(loud):
+                heard.boundary = heard.samples + int(loud[-1]) + 1 + round(lag * 16000)
+            heard.samples += len(audio)
+            if heard.boundary is None or heard.samples - heard.boundary < round(tail * 16000):
+                return False
+            clock.spend(inference)
+            wake.last_detection = Detection(heard.samples - heard.boundary, wake.epoch, wake.feed_id)
+            heard.boundary = None
+            return True
+
+        class Verify:
+            async def verify(self, pcm, phrase):
+                await clock.advance(clock.now + .079)
+                return Verification("timeout", "none")
+
+        wake.feed, wake.candidate_replay = spot, True
+        wake.replay_candidate = lambda threshold: True
+        wake.align_candidate = lambda: clock.spend(.328)
+        conversation._wake_policy = WakePolicy(Verify())
+        frame = 0
+        for marker, frames in ((.25, 34), (0, 60)):
+            hw.speech = bool(marker)
+            for _ in range(frames):
+                frame += 1
+                await clock.advance(100 + frame * .02)
+                if echo is not None and frame == echo[0]:
+                    conversation._echo_until = echo[1]
+                await feed((marker, 1))
+        assert [record.message for record in caplog.records
+                if record.message.startswith("Wake direction")] == [line]
+        assert hw.directions == ([(pytest.approx(math.pi / 3), "idle")] if line.endswith("yaw=30.0") else [])
+        assert conversation._wake_deadline is not None
+        assert session.setup_messages == []
+
+    asyncio.run(bounded(handoff(run, hardware=hardware)))

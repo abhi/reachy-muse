@@ -460,8 +460,10 @@ recording and keeps the listening window open for a fresh question.
 
 Reachy reads the daemon's microphone direction at `/api/state/doa` at no more
 than 5 Hz around microphone activity or while a wake window is open. Idle silence
-does not poll. A single worker reuses its HTTP keep-alive connection, outside audio
-capture and the motion thread. Each reading is transformed
+does not poll, but it keeps the bearings already heard: the keyword detector
+reports "Hey Muse" up to about 0.6 seconds after the phrase ends, often after the
+speaker has stopped to wait for the wake gesture. A single worker reuses its HTTP
+keep-alive connection, outside audio capture and the motion thread. Each reading is transformed
 through the current head rotation into a world bearing. A short ring stores only
 speech bearings and monotonic times. Reachy's own output and echo tail invalidate
 the ring, including with echo-cancelled input. Capture gaps also clear it.

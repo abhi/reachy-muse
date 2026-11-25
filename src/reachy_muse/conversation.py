@@ -898,12 +898,14 @@ class VoiceConversation:
                 and not self._muted and now >= self._echo_until and not self._has_output())
 
     def _direction_poll_eligible(self) -> bool:
+        return not self._muted and time.monotonic() >= self._echo_until and not self._has_output()
+
+    def _direction_wanted(self) -> bool:
+        """Someone may be talking: the microphone heard sound in the last half second, a keyword is being verified,
+        or the listening window is open."""
         now = time.monotonic()
-        return (not self._muted and now >= self._echo_until
-                and not self._has_output()
-                and (now < self._direction_audio_until
-                     or getattr(self._wake_policy, "verifying", False)
-                     or self._wake_deadline is not None and now < self._wake_deadline))
+        return (now < self._direction_audio_until or getattr(self._wake_policy, "verifying", False)
+                or self._wake_deadline is not None and now < self._wake_deadline)
 
     def _attend_wake(self, phrase_end: float | None, *, angle: float | None = None,
                      snapshot: DirectionSnapshot | None = None) -> None:
@@ -1604,7 +1606,8 @@ class VoiceConversation:
                 and callable(getattr(self.hardware, "look_at_speaker", None))
                 and getattr(self.hardware, "motion_enabled", True)):
             self._wake_direction = WakeDirection(self.hardware.read_doa)
-            direction_task = asyncio.create_task(self._wake_direction.sample_while(self._direction_poll_eligible))
+            direction_task = asyncio.create_task(self._wake_direction.sample_while(self._direction_poll_eligible,
+                                                                                   self._direction_wanted))
         ready = False
         blocked_episode = False
         wave_active = False

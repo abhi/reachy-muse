@@ -8,6 +8,7 @@ import asyncio
 import itertools
 import math
 import threading
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -213,6 +214,85 @@ def test_the_waker_s_request_heard_during_the_wake_turn_gets_no_second_turn(peop
     assert [line for line in caplog.messages if line.startswith("Wake direction decision=ok")] != []
     # The eased 0.65 s wake turn passes 10% (3 degrees) and 90% (27 degrees) of its way 0.3 s apart, once.
     assert round(crossing[27] - crossing[3], 1) == .3
+    assert [line for line in caplog.messages if line.startswith("Speaker gaze")] == [
+        "Speaker gaze yaw=30.0 body_yaw=10.0 decision=turn"]
+    assert followed(caplog) == ["outcome=same delta_deg=0"]
+
+
+class RobotWake(TimedWake):
+    """The robot's keyword spotter: it finds the phrase ``tail_s`` of audio after its last loud chunk, spends
+    ``inference_s`` on the decode that finds it, then replays and aligns the candidate as on 2026-11-24."""
+
+    candidate_replay = True
+
+    def __init__(self, tail_s, inference_s):
+        self.tail, self.inference_s, self.after = round(tail_s * 16000), inference_s, None
+
+    def feed(self, samples, align=True):
+        self.feed_id += 1
+        self.last_detection = None
+        loud = np.flatnonzero(samples == WAKE_SAMPLE)
+        if len(loud):
+            self.after = len(samples) - int(loud[-1]) - 1
+            return False
+        if self.after is None:
+            return False
+        self.after += len(samples)
+        if self.after < self.tail:
+            return False
+        time.sleep(self.inference_s)
+        self.last_detection = SimpleNamespace(epoch=self.epoch, feed_id=self.feed_id, post_wake_samples=self.after)
+        self.after = None
+        return True
+
+    def replay_candidate(self, threshold):
+        return True
+
+    def align_candidate(self):
+        time.sleep(.33)
+
+
+@pytest.mark.parametrize("tail_s, inference_s", [(.52, .079), (.32, .095)], ids=["robot-1712", "robot-1725"])
+def test_reachy_turns_to_the_owner_who_waits_for_the_wake_gesture_before_asking(people, caplog, tail_s, inference_s):
+    """The owner says "Hey Muse", waits for the wake gesture as the docs say, then asks. The DoA flags speech only
+    while they talk, and the keyword is found on the robot's 2026-11-24 timing, past the microphone's half second."""
+    from reachy_muse.wake_policy import Verification, WakePolicy
+
+    class TimedOut:
+        async def verify(self, pcm, phrase):
+            await asyncio.sleep(.08)
+            return Verification("timeout", "none")
+
+    rig, controller, robot, scene = people
+    caplog.set_level("INFO")
+    rig.hardware.echo_cancelled_input = True
+    scene.speech = False
+    rig.hardware.read_doa = lambda: DoAReading(scene.doa, scene.speech)
+    calls = answering()
+    service = make_service(rig, never_asked, StreamingTranscripts("What's the weather?"),
+                           wake_detector=RobotWake(tail_s, inference_s), wake_policy=WakePolicy(TimedOut()),
+                           wake_timeout_s=5, muse_path="realtime", voice_link=calls.link, voice_call=calls)
+    seen = {}
+
+    async def user():
+        scene.doa, scene.speech = bearing(OWNER), True
+        for _ in range(30):
+            rig.hardware.samples.put(np.full(CHUNK, WAKE_SAMPLE, np.float32))
+            await asyncio.sleep(CHUNK / 16000)
+        scene.speech = False
+        await room(rig, 1.2)
+        await until(rig, lambda: facing(controller, robot) == (30, 10))
+        seen["wake"] = facing(controller, robot)
+        scene.speech = True
+        await speak_from(rig, scene, OWNER, quiet_s=0)
+        scene.speech = False
+        await room(rig, .5)
+        await replied(rig, service, 1)
+
+    run(rig, service, user)
+    assert seen["wake"] == (30, 10)
+    decisions = [line.split(" ") for line in caplog.messages if line.startswith("Wake direction")]
+    assert [(words[2], words[-1]) for words in decisions] == [("decision=ok", "yaw=30.0")]
     assert [line for line in caplog.messages if line.startswith("Speaker gaze")] == [
         "Speaker gaze yaw=30.0 body_yaw=10.0 decision=turn"]
     assert followed(caplog) == ["outcome=same delta_deg=0"]

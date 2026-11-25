@@ -98,6 +98,8 @@ class WakeDirection:
 
     ``eligible`` must exclude robot output even when the microphone has AEC.
     Clearing the history also invalidates any read already in flight.
+    ``wanted`` only pauses reading, as in a quiet room: the bearings already
+    heard stay, for a keyword found after its speaker has stopped.
     """
 
     def __init__(self, read: Callable[[], DoAReading | None], *, clock: Callable = time.monotonic,
@@ -124,11 +126,14 @@ class WakeDirection:
     def samples_between(self, start: float, end: float) -> tuple[tuple[float, float], ...]:
         return tuple((at, angle) for at, angle in self._samples if start <= at <= end)
 
-    async def sample_while(self, eligible: Callable[[], bool]) -> None:
+    async def sample_while(self, eligible: Callable[[], bool], wanted: Callable[[], bool] = lambda: True) -> None:
         try:
             while True:
                 if not eligible():
                     self.clear("ineligible")
+                    await self._sleep(.05)
+                    continue
+                if not wanted():
                     await self._sleep(.05)
                     continue
                 generation = self._generation
@@ -149,6 +154,8 @@ class WakeDirection:
                     self._samples.append((started, reading.angle))
                     while self._samples and self._samples[0][0] < started - 3:
                         self._samples.popleft()
+                else:
+                    self._empty_reason = "too_few"
                 await self._sleep(delay)
         finally:
             self.clear()
