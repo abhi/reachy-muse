@@ -92,7 +92,8 @@ _SPEECH_SERIALS = itertools.count(1)
 _MICROPHONE_READER = threading.Lock()
 # What Reachy says when the wake phrase alone wakes it, the same words as "wake up".
 WAKE_GREETING = COMMANDS[DeviceCommand.WAKE_UP].reply
-# A call turn heard over Muse's reply that its gate never confirmed: Muse never heard it, and Reachy drops it.
+# A call turn heard over Muse's reply that its gate never confirmed, or not before Muse's next reply began: Muse never
+# heard it, and Reachy drops it.
 _UNCONFIRMED_TURN = Endpoint(b"", None)
 
 
@@ -1518,7 +1519,9 @@ class VoiceConversation:
                 text = (endpoint.text or "") if endpoint is not None else ""
                 if self.wake_detector is not None:
                     text = self._without_wake(text)
-                if self.call is call and gate.finish(text, recorded.heard_over):
+                # A reply Muse began after the turn's last word ended the turn before Muse heard any of it.
+                if (self.call is call and self._muse_began_at < recorded.speech_end_at
+                        and gate.finish(text, recorded.heard_over)):
                     self._gaze.admit(recorded.gaze_generation)
                 else:
                     transcript = endpoint.text if endpoint is not None else None

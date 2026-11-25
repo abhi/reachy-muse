@@ -1436,6 +1436,51 @@ def test_a_remark_that_never_interrupted_muse_is_dropped_when_muse_s_next_reply_
     assert heard == [(0, 1, ["Realtime command transcript=arrived words=1 wake_prefix=none outcome=none drop=barge_in"])]
 
 
+def test_words_muse_s_next_reply_ends_before_they_confirm_are_dropped_though_their_final_words_would_confirm(
+        monkeypatch, caplog):
+    """The user adds "and the one after that" in short words over the end of Muse's acknowledgement, and Muse's own
+    next reply, its answer, starts 0.5 s after the last word and ends the turn. No partial confirmed the words, so
+    Muse never heard them, and that reply cannot answer them: the turn is dropped, as on main, though its final words
+    would confirm it, and Muse's answer plays on whole instead of being cut for words it never heard."""
+    caplog.set_level("INFO")
+    rig = rig_for(monkeypatch)
+    rig.hardware.echo_cancelled_input = True
+    answered = asyncio.Event()
+
+    async def answer(sdk, emit, script):
+        if answered.is_set():
+            return
+        answered.set()
+        reply_events(sdk, emit, "r1", "Let me check the calendar for you.", voiced(3))
+        await asyncio.sleep(3.8)
+        reply_events(sdk, emit, "r2", "You have a dentist appointment at nine tomorrow.", voiced(4))
+
+    calls = ScriptedCalls(answer=answer, every_turn=True, paced=True)
+    conversation = realtime_service(rig, None, calls, wake_timeout_s=10)
+    conversation.silence_s = 2.0
+    link = companion_hearing(conversation, forced_endpoints=True)
+    heard = []
+
+    async def user():
+        await speak_live(rig, wake=True)
+        call = conversation._voice[1].call
+        await rig.wait_until_or_timeout(lambda: call.audible, 5)
+        await room(rig, 2)
+        caplog.clear()
+        before = len(calls.frames)
+        await say_over_reply(rig, link, "and the one after that",
+                             ((200, 120), (160, 60), (200, 100), (160, 40), (240, 0)))
+        await room(rig, 6)
+        heard.append((voiced_ms(calls.frames[before:]), calls.barge_ins,
+                      [line.split(" wake_prefix=")[1] for line in caplog.messages
+                       if line.startswith("Realtime command ")],
+                      [line for line in caplog.messages if line.startswith("Realtime turn ordinal=2 ")]))
+        heard.append(round(sum(count for _, count in rig.hardware.muse_played) / rig.hardware.output_sample_rate, 1))
+
+    run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
+    assert heard == [(0, 0, ["none outcome=none drop=barge_in"], []), 7.0]
+
+
 # A request as Reachy's voice detector hears it over Muse's reply: each word's voiced ms, and the quiet ms after it.
 STRETCHES = {
     "each word its own stretch": ((260, 120), (160, 40), (140, 60), (240, 40), (80, 40), (280, 80), (100, 40),
