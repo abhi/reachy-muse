@@ -26,7 +26,7 @@ from test_device_command_turns import LongVoice, never_asked, played, run, servi
 from test_hardware import FakeRobot, pose_factory
 from test_person_gaze import PeopleHardware, PlacedWake
 from test_photo_capture import Encoder
-from test_pins import CHUNK, VOICE_SAMPLE, WAKE_SAMPLE, Rig
+from test_pins import CHUNK, VOICE_SAMPLE, WAKE_SAMPLE, Rig, Transcripts
 from test_realtime_turns import (RATE, ScriptedCalls, StreamingTranscripts, TimedWake, reply_events, voiced,
                                  voiced_ms)
 
@@ -473,6 +473,45 @@ def test_a_photo_while_the_camera_pauses_is_taken_facing_the_person_followed(own
     assert frames == [pytest.approx(held, abs=.1)]
     after = heads_for(controller, 1.0)
     assert (min(after), max(after)) == (pytest.approx(held, abs=.1), pytest.approx(held, abs=.1))
+
+
+def test_a_photo_the_owner_asks_for_is_framed_on_the_face_reachy_keeps_facing(camera_room, monkeypatch):
+    """The owner at +15, whom Reachy faces by their face alone, asks in chat for a photo of themselves. Audio pauses
+    the camera from their words to the shutter, and a detection takes 0.1 s, about what YuNet takes on the robot.
+    Whatever runs before the shutter, Reachy faces the face it holds when the frame is read."""
+    detect = Faces.detect
+
+    def slow(self, frame):
+        time.sleep(.1)
+        return detect(self, frame)
+
+    monkeypatch.setattr(Faces, "detect", slow)
+    rig, controller, robot, scene = camera_room(face_follow_idle=True, photo_encoder=Encoder())
+    scene.faces = [(15, .4, .3)]
+    read, framed = robot.media.get_frame, []
+
+    def frame():
+        if controller._photo_hold.is_set():
+            framed.append((math.degrees(controller.head_yaw), math.degrees(controller._face_follower.target().yaw)))
+        return read()
+
+    robot.media.get_frame = frame
+    rig.hardware.capture_photo = controller.capture_photo
+
+    async def muse(session, request):
+        await session.answer(request, REPLY)
+
+    service = make_service(rig, muse, Transcripts("Reachy, take a photo of me."), photo_requests=True)
+
+    async def user():
+        await until(rig, lambda: near(controller, 15))
+        await say_live(rig)
+        await until(rig, lambda: f"tts:{REPLY}" in played(rig.recording.events), 10)
+
+    run(rig, service, user, rest=("listening", "idle"))
+    [(head, held)] = framed
+    assert held == pytest.approx(15, abs=1.5)
+    assert head == pytest.approx(held, abs=.5)
 
 
 def test_a_gaze_cleared_while_the_camera_pauses_drops_the_face_seen_from_it():
