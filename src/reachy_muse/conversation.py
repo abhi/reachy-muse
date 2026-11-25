@@ -3001,7 +3001,7 @@ class VoiceConversation:
         # A short remark over Muse's own reply, such as "okay, thanks", can cut it off but asks for no answer.
         pending = call.accept_turn(endpoint_at=request.timeline.marks["endpoint"],
                                    speech_end_at=request.timeline.marks["speech_end"], words=len(text.split()),
-                                   awaits_answer=not (request.over_muse and word_count(text) <= 2))
+                                   awaits_answer=short or not (request.over_muse and word_count(text) <= 2))
         if call.failed:
             await self._call_lost(call)
             return TurnOutcome.EMPTY

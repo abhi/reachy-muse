@@ -828,8 +828,9 @@ window closes, so Reachy's local chat does not answer greetings in a call.
   such a request reaches it ends the turn, and the request is dropped. A remark
   of two words or fewer besides back-channel sounds, such as "got it", is
   dropped only if Muse is still audible when the turn would be released.
-  "Yes, please" as Muse finishes reaches Muse. "Wait, wait" and "Hold on" take
-  the floor even when short; they stop the reply without cancelling work.
+  "Yes, please" as Muse finishes reaches Muse and waits for an answer.
+  "Wait, wait" and "Hold on" take the floor even when short; they stop the reply
+  without cancelling work.
   A cancel or silence phrase, such as "never mind", still stops Muse. A short
   photo phrase such as "What's this?" gets the remark rule unless Reachy takes
   the photo.

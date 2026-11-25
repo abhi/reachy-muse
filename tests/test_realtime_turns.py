@@ -3236,9 +3236,8 @@ def test_a_take_up_said_after_muse_s_offer_reaches_muse_whatever_the_turn_heard_
     """Contract 2: a request that takes up Muse's offer in Muse's words, said after the offer in short stretches,
     reaches Muse whole at Reachy's endpoint. Here the same turn began while Muse made the offer, about 1.6 to 1.9 s
     before the take-up's first word: with "Oh," or with a 0.3 s sound the companion wrote no word for, such as a
-    cough. The turn's words are weighed against everything Muse played from 1 s before that first sound. The gate
-    drops the opening sound itself as unrecognized (a back-channel sound counts no words), so Muse gets the take-up's
-    1260 ms."""
+    cough. Dropping the unrecognized opening sound resets the echo window to the take-up's voice, so Muse gets
+    the take-up's 1260 ms."""
     assert spoken_over_reply(monkeypatch, caplog, FORECAST_REPLY, turns, after_s=after_s) == (
         1, 1260, 0, [f"Realtime command transcript=arrived words={words} wake_prefix=none outcome=none drop=none"])
 
@@ -3259,8 +3258,7 @@ def test_a_take_up_said_straight_on_after_a_dropped_remark_reaches_muse(monkeypa
 
 def test_a_question_sharing_only_common_words_with_what_muse_says_meanwhile_reaches_muse(monkeypatch, caplog):
     """Contract 2: "Is there parking there?" said over "...and the cafe is on the second floor, next to the gift
-    shop." The alike-word rule takes "there" for "the", so three in four of the words are alike words Muse played
-    in order, and the question is taken for Muse's echo."""
+    shop." The alike-word rule keeps "there" distinct from "the", so the question reaches Muse."""
     turns = [(word_steps("Is there parking there?"), 0)]
     assert spoken_over_reply(monkeypatch, caplog, MUSEUM_REPLY, turns, after_s=4.0) == (
         1, 800, 0,
@@ -3439,7 +3437,8 @@ def test_muse_s_echo_late_in_a_long_sentence_never_reaches_it_whatever_muse_s_sp
         round(len(LONG_SENTENCE) / chars_per_s, 1)]
 
 
-def test_a_short_answer_reaches_muse_when_its_reply_has_gone_quiet(monkeypatch, caplog):
+@pytest.mark.parametrize("answer_delay_s", [0, 11.5])
+def test_a_short_answer_reaches_muse_when_its_reply_has_gone_quiet(monkeypatch, caplog, answer_delay_s):
     caplog.set_level("INFO")
     rig = rig_for(monkeypatch)
     rig.hardware.echo_cancelled_input = True
@@ -3450,6 +3449,7 @@ def test_a_short_answer_reaches_muse_when_its_reply_has_gone_quiet(monkeypatch, 
         if replies == [1]:
             reply_events(sdk, emit, "r1", "It will rain tomorrow afternoon. Want me to set a reminder?", voiced(3.5))
         else:
+            await asyncio.sleep(answer_delay_s)
             reply_events(sdk, emit, f"r{len(replies)}", "Done, I set it for noon.", voiced(1))
 
     calls = ScriptedCalls(answer=answer, every_turn=True)
@@ -3467,14 +3467,17 @@ def test_a_short_answer_reaches_muse_when_its_reply_has_gone_quiet(monkeypatch, 
         before = len(calls.frames)
         await say_over_reply(rig, link, "Yes, please.", ((220, 140), (240, 0)))
         audible_after_words = call.audible
-        await room(rig, 2.5)
+        await room(rig, 3.5 + answer_delay_s)
         heard.append((audible_after_words, calls.barge_ins, voiced_ms(calls.frames[before:]), replies[:],
                       [line for line in caplog.messages if line.startswith("Realtime command ")],
                       conversation._voice[1]._wake_request_open))
+        heard.append(round(sum(len(chunk) for chunk in rig.hardware.played) / rig.hardware.output_sample_rate, 2))
 
     run(rig, conversation, user, rest=("listening", "idle", "thinking", "speaking"), timeout=40)
     assert heard == [(False, 0, 460, [1, 2], [
-        "Realtime command transcript=arrived words=2 wake_prefix=none outcome=none drop=none"], False)]
+        "Realtime command transcript=arrived words=2 wake_prefix=none outcome=none drop=none"], False), 4.5]
+    assert [line for line in caplog.messages if "cue=still_waiting" in line] == (
+        ["Realtime turn ordinal=2 cue=still_waiting"] if answer_delay_s else [])
 
 
 @pytest.mark.parametrize("words, stretches, expected_ms", [
