@@ -63,8 +63,8 @@ class PeopleHardware(CallHardware):
     def __init__(self, recording, controller):
         super().__init__(recording)
         self.controller = controller
-        for name in ('face_snapshot', 'refresh_faces', 'recent_faces', 'look_at_speaker', 'follow_speaker',
-                     'look_at_person', 'face_speaker', 'release_person_gaze', 'allow_face_tracking',
+        for name in ('face_snapshot', 'refresh_faces', 'recent_faces', 'recent_views', 'look_at_speaker',
+                     'follow_speaker', 'look_at_person', 'face_speaker', 'release_person_gaze', 'allow_face_tracking',
                      'hold_view_for_photo', 'capture_photo', 'play_motion'):
             setattr(self, name, getattr(controller, name))
 

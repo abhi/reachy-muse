@@ -343,11 +343,14 @@ class PersonGaze:
             return None
 
     def _remembered(self, view) -> list:
-        """The people seen in the last 30 seconds whom ``view`` does not show, each by their latest face, except
-        any where it looked, since the camera just looked there."""
+        """The people seen in the last 30 seconds outside ``view``, each by their latest face, unless a later
+        pass found their place empty."""
         shown = view.faces if view is not None else ()
-        sightings = [face for face in self.hardware.recent_faces(time.monotonic() - _REMEMBERED_S)
-                     if view is None or face not in shown and not view.covers(face)]
+        since = time.monotonic() - _REMEMBERED_S
+        views = self.hardware.recent_views(since)
+        sightings = [face for face in self.hardware.recent_faces(since)
+                     if (view is None or face not in shown and not view.covers(face))
+                     and not _superseded(face, views)]
         return _people(shown, sightings)
 
     @contextlib.asynccontextmanager
@@ -505,6 +508,11 @@ def _answered_by(requests: list[_Heard], starts: list[float], responses: int) ->
 
 def _away_from(speaker_yaw: float, faces) -> list:
     return [face for face in faces if abs(face.yaw - speaker_yaw) > _SPEAKER_ARC]
+
+
+def _superseded(face, views) -> bool:
+    return any(view.captured_at > face.captured_at and view.covers(face)
+               and all(abs(other.yaw - face.yaw) > _AIM_FOUND for other in view.faces) for view in views)
 
 
 def _people(shown, sightings) -> list:

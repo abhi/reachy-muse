@@ -502,6 +502,46 @@ def test_one_person_remembered_twice_is_nobody_else_for_a_photo_of_my_friend(peo
         "subject=other aim=no_other bearing=no source=none faces=0 turns=0 off_deg=none")
 
 
+def seen_while_facing(controller, scene, head, sightings):
+    assert controller.look_at_person(math.radians(head), 0.0)
+    assert wait_until(lambda: not controller.person_turning and round(math.degrees(controller.head_yaw)) == head)
+    for faces, age in sightings:
+        scene.faces, scene.age = faces, age
+        assert len(controller.refresh_faces().faces) == len(faces)
+    controller.release_person_gaze(turn_back=True)
+    assert wait_until(lambda: not controller.view_changing and abs(math.degrees(controller.head_yaw)) < 1)
+
+
+@pytest.mark.parametrize("sightings", [
+    [(50, 20), (33, 10)],
+    [(50, 25), (43, 20), (36, 15), (33, 10)],
+], ids=["jump", "steps"])
+def test_an_owner_who_moved_is_nobody_else_for_a_photo_of_my_friend(people, caplog, sightings):
+    rig, controller, robot, scene = people
+    scene.doa, scene.view_deg = None, 35
+    seen_while_facing(controller, scene, 20, [([(yaw, .35)], age) for yaw, age in sightings])
+    scene.faces, scene.age = [(33, .35)], 0.0
+    camera, _ = ask(people, caplog, "chat", "take a photo of my friend")
+    assert camera.shots == [(0, -3, 0)]
+    assert aimed(caplog) == aim_fields(
+        "subject=other aim=no_other bearing=no source=none faces=1 turns=0 off_deg=none")
+
+
+@pytest.mark.parametrize("together", [True, False], ids=["one_pass", "separate_passes"])
+def test_two_people_seen_before_a_photo_stay_two(people, caplog, together):
+    rig, controller, robot, scene = people
+    scene.doa, scene.view_deg = None, 35
+    if together:
+        seen_while_facing(controller, scene, 20, [([(50, .12), (33, .35)], 10)])
+    else:
+        seen_while_facing(controller, scene, 20, [([(50, .12)], 20)])
+        scene.faces, scene.age = [(33, .35)], 10
+        assert len(controller.refresh_faces().faces) == 1
+    scene.faces, scene.age = [(33, .35)], 0.0
+    camera, _ = ask(people, caplog, "chat", "take a photo of my friend")
+    assert (camera.shots, aimed(caplog)["aim"]) == ([(35, 0, 15)], "limit")
+
+
 def test_without_faces_or_doa_the_photo_shows_what_reachy_faces(people, caplog):
     rig, controller, robot, scene = people
     scene.faces, scene.doa = [], None

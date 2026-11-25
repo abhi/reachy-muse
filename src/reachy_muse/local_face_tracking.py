@@ -257,6 +257,7 @@ class FaceFollower:
         self._target: FaceTarget | None = None
         self._snapshot: FaceSnapshot | None = None
         self._seen: deque[ObservedFace] = deque(maxlen=SEEN_FACES)
+        self._views: deque[FaceSnapshot] = deque(maxlen=SEEN_FACES)
         self._request: _FaceRequest | None = None
         self._hold_center: float | None = None
         self.last_seen_at: float | None = None
@@ -307,6 +308,10 @@ class FaceFollower:
         """Faces from snapshots captured at or after ``since``, among the last ``SEEN_FACES`` seen."""
         with self._condition:
             return tuple(face for face in self._seen if face.captured_at >= since)
+
+    def views_since(self, since: float) -> tuple[FaceSnapshot, ...]:
+        with self._condition:
+            return tuple(view for view in self._views if view.captured_at >= since)
 
     def hold_center(self, yaw: float | None) -> None:
         with self._condition:
@@ -380,6 +385,7 @@ class FaceFollower:
                             if not self._closed:
                                 self._snapshot = snapshot
                                 self._seen.extend(snapshot.faces)
+                                self._views.append(snapshot)
                                 if request is not None:
                                     request.snapshot = snapshot
                                 if self._active and self._generation == generation:

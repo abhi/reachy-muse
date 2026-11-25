@@ -1301,6 +1301,10 @@ class ReachyController:
         follower = self._face_follower
         return follower.seen_since(since) if follower is not None else ()
 
+    def recent_views(self, since: float) -> tuple:
+        follower = self._face_follower
+        return follower.views_since(since) if follower is not None else ()
+
     def _wave_still(self) -> bool:
         return (not self._stop.is_set()
                 and self._state in ("idle", "listening", "sleeping") and self._failure is None
